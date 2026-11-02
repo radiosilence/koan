@@ -45,6 +45,9 @@ struct KeptTracks {
 }
 
 pub struct TrackBrowser {
+    /// A load failed before any landed: the page draws its header and empty
+    /// state rather than staying held, so the query can still be changed.
+    failed: bool,
     lib: Lib,
     tracks: Vec<Track>,
     total: u64,
@@ -136,6 +139,7 @@ impl TrackBrowser {
             tracks,
             total,
             loaded,
+            failed: false,
             loading: None,
             stale: false,
             request: 0,
@@ -225,6 +229,7 @@ impl TrackBrowser {
                                 return;
                             }
                             this.loading = None;
+                            this.failed = true;
                             // Swapped in but not whole: not the listing, so
                             // the next change reads it again.
                             if swapped {
@@ -504,7 +509,7 @@ impl Render for TrackBrowser {
         self.aim(first..last, window, cx);
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
-        let held = self.loaded.is_none();
+        let held = self.loaded.is_none() && !self.failed;
         let body = if held {
             div().into_any_element()
         } else if self.total == 0 {

@@ -10,7 +10,12 @@
 use koan_core::places;
 
 /// Called first, before the instance lock or the engine reads any of them.
+/// Nothing moves while an earlier version is running on this configuration:
+/// its files are in use, and the launch hands over to it.
 pub fn adopt() {
+    if super::instance::earlier_version_lock().is_some() {
+        return;
+    }
     let state = places::state();
     if let Err(e) = std::fs::create_dir_all(&state) {
         log::warn!("state directory {}: {e}", state.display());
@@ -25,7 +30,7 @@ pub fn adopt() {
     }
     // A lock is not moved: one an earlier version still holds stays with
     // it, and the rest are removed.
-    for name in ["desktop-device.lock", "gui-instance.lock"] {
+    for name in ["desktop-device.lock", super::instance::EARLIER_LOCK] {
         places::drop_old_lock(name);
     }
 }

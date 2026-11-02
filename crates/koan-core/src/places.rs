@@ -23,9 +23,18 @@ const DEFAULT: &str = "default";
 
 /// The config directory's name among the runtime places: `default` for the
 /// platform's own, otherwise its last component and a digest of its full
-/// path, so two throwaway directories named alike stay apart.
+/// path, so two throwaway directories named alike stay apart. Worked out
+/// once per process, with the directory made first, so a path through a
+/// symlink (`/tmp` on macOS) keys the same before and after the engine
+/// creates it.
 pub fn key() -> String {
-    key_for(&config::config_dir(), &config::platform_config_dir())
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        let dir = config::config_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        key_for(&dir, &config::platform_config_dir())
+    })
+    .clone()
 }
 
 fn key_for(dir: &Path, platform: &Path) -> String {
@@ -72,20 +81,18 @@ pub fn cache() -> PathBuf {
 }
 
 /// Moves `name` from the config directory into `to`, once: when it is still
-/// in the config directory and not yet in `to`. Silent; a file that cannot be
-/// moved is left where it was and logged.
+/// in the config directory, holds something, and is not yet in `to`. Silent;
+/// a file that cannot be moved is left where it was and logged, and tried
+/// again at the next launch.
 pub fn adopt(name: &str, to: &Path) {
     let from = config::config_dir().join(name);
     let dest = to.join(name);
-    if !from.exists() || dest.exists() {
+    let holds_something = std::fs::metadata(&from).is_ok_and(|m| m.len() > 0);
+    if !holds_something || dest.exists() {
         return;
     }
-    let moved = std::fs::create_dir_all(to).and_then(|()| {
-        std::fs::rename(&from, &dest).or_else(|_| {
-            // Across volumes: copied, then the original removed.
-            std::fs::copy(&from, &dest).and_then(|_| std::fs::remove_file(&from))
-        })
-    });
+    let moved = std::fs::create_dir_all(to)
+        .and_then(|()| std::fs::rename(&from, &dest).or_else(|_| copy_across(&from, &dest)));
     match moved {
         Ok(()) => log::info!("moved {} to {}", from.display(), dest.display()),
         Err(e) => log::warn!(
@@ -94,6 +101,20 @@ pub fn adopt(name: &str, to: &Path) {
             dest.display()
         ),
     }
+}
+
+/// Across volumes: copied whole beside `dest` and renamed into place, so
+/// `dest` never exists half-written, then the original removed.
+fn copy_across(from: &Path, dest: &Path) -> std::io::Result<()> {
+    let partial = dest.with_extension("part");
+    let copied = std::fs::copy(from, &partial)
+        .and_then(|_| std::fs::File::open(&partial)?.sync_all())
+        .and_then(|()| std::fs::rename(&partial, dest));
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(&partial);
+        return Err(e);
+    }
+    std::fs::remove_file(from)
 }
 
 /// Removes a lock file left in the config directory by an earlier version,
@@ -151,5 +172,29 @@ mod tests {
             "old"
         );
         std::fs::remove_file(config::config_dir().join(name)).ok();
+    }
+
+    #[test]
+    fn an_empty_file_is_not_carried_over() {
+        config::isolate_config_for_tests();
+        let name = "places-adopt-empty";
+        let to = tempfile::tempdir().unwrap();
+        std::fs::write(config::config_dir().join(name), "").unwrap();
+        adopt(name, to.path());
+        assert!(!to.path().join(name).exists());
+        std::fs::remove_file(config::config_dir().join(name)).ok();
+    }
+
+    #[test]
+    fn a_copy_across_volumes_lands_whole_or_not_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let (from, dest) = (dir.path().join("from"), dir.path().join("dest"));
+        std::fs::write(&from, "state").unwrap();
+        copy_across(&from, &dest).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "state");
+        assert!(!from.exists() && !dest.with_extension("part").exists());
+        // A missing source leaves nothing behind.
+        assert!(copy_across(&from, &dir.path().join("other")).is_err());
+        assert!(!dir.path().join("other").exists());
     }
 }

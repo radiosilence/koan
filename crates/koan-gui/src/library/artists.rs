@@ -42,6 +42,9 @@ struct KeptArtists {
 }
 
 pub struct ArtistBrowser {
+    /// A load failed before any landed: the page draws its header and empty
+    /// state rather than staying held, so the query can still be changed.
+    failed: bool,
     lib: Lib,
     artists: Vec<Artist>,
     order: Vec<Playable>,
@@ -119,6 +122,7 @@ impl ArtistBrowser {
             artists,
             order,
             loaded,
+            failed: false,
             loading: None,
             request: 0,
             _load: None,
@@ -184,7 +188,10 @@ impl ArtistBrowser {
                         this.loaded = Some(wanted);
                         this.restore_scroll();
                     }
-                    Err(e) => log::warn!("artists: {e}"),
+                    Err(e) => {
+                        log::warn!("artists: {e}");
+                        this.failed = true;
+                    }
                 }
                 cx.notify();
             })
@@ -365,7 +372,7 @@ impl Render for ArtistBrowser {
         );
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
-        let held = self.loaded.is_none();
+        let held = self.loaded.is_none() && !self.failed;
         let body = if held {
             div().into_any_element()
         } else if self.artists.is_empty() {

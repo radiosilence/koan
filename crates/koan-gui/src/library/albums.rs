@@ -93,6 +93,9 @@ struct KeptAlbums {
 }
 
 pub struct AlbumGrid {
+    /// A load failed before any landed: the page draws its header and empty
+    /// state rather than staying held, so the query can still be changed.
+    failed: bool,
     lib: Lib,
     /// The listing, as its tiles draw it.
     records: Rc<Vec<Rc<Record>>>,
@@ -195,6 +198,7 @@ impl AlbumGrid {
             aimed: None,
             order,
             loaded,
+            failed: false,
             loading: None,
             request: 0,
             _load: None,
@@ -287,7 +291,10 @@ impl AlbumGrid {
                         this.loaded = Some(wanted);
                         this.restore_scroll();
                     }
-                    Err(e) => log::warn!("albums: {e}"),
+                    Err(e) => {
+                        log::warn!("albums: {e}");
+                        this.failed = true;
+                    }
                 }
                 cx.notify();
             })
@@ -841,7 +848,7 @@ impl Render for AlbumGrid {
 
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
-        let held = self.loaded.is_none();
+        let held = self.loaded.is_none() && !self.failed;
         let body = match self.grid {
             _ if held => div().into_any_element(),
             _ if count == 0 => chrome::empty_state(
