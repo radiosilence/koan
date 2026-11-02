@@ -1,0 +1,1 @@
+- **The paused track keeps its bars in the desktop app's lists.** On record and artist pages and in the track browser the current track's bars fall flat on a pause instead of giving way to its number.
