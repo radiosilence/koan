@@ -501,7 +501,7 @@ impl Shell {
                     // with no header of their own.
                     .children(
                         (!self.sidebar_shown)
-                            .then(|| match route {
+                            .then_some(match route {
                                 Route::Queue => Some("queue"),
                                 Route::History => Some("history"),
                                 Route::Downloads => Some("downloads"),

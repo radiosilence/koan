@@ -22,7 +22,7 @@ use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
+use super::tile::{Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 

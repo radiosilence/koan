@@ -106,8 +106,6 @@ pub struct PlaylistPage {
     menu_row: Option<usize>,
     /// The entry playing, when the queue plays one of this playlist's.
     playing: Option<i64>,
-    /// The transport is playing: the playing row's bars move only then.
-    moving: bool,
     /// What the last export had to say.
     note: Option<SharedString>,
     focus: FocusHandle,
@@ -118,11 +116,7 @@ pub struct PlaylistPage {
 impl PlaylistPage {
     pub fn new(lib: Lib, id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>();
-        let (library, playback, playhead) = (
-            mirror.library.clone(),
-            mirror.playback.clone(),
-            mirror.playhead.clone(),
-        );
+        let (library, playback) = (mirror.library.clone(), mirror.playback.clone());
         let row_covers = cx.global::<CoversHandle>().0.clone();
         let subscriptions = vec![
             // An edit here, a sync, another device: the playlist is read again.
@@ -136,13 +130,6 @@ impl PlaylistPage {
                     .and_then(|e| e.playlist_entry_id);
                 if playing != this.playing {
                     this.playing = playing;
-                    cx.notify();
-                }
-            }),
-            cx.observe(&playhead, |this, playhead, cx| {
-                let moving = playhead.read(cx).playing;
-                if moving != this.moving {
-                    this.moving = moving;
                     cx.notify();
                 }
             }),
@@ -173,7 +160,6 @@ impl PlaylistPage {
             drop_at: None,
             menu_row: None,
             playing,
-            moving: playhead.read(cx).playing,
             note: None,
             focus: cx.focus_handle(),
             _loading: None,
@@ -912,7 +898,7 @@ impl PlaylistPage {
         });
         let feed = self.lib.feed.clone();
         let nav = self.lib.nav.read(cx).navigator();
-        let (row_frame, id) = match r {
+        let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &self.items[first..first + len];
                 let id = SharedString::from(format!("h:{}", run[0].queue_item_id));
@@ -973,8 +959,14 @@ impl PlaylistPage {
                     Extras {
                         favourite,
                         feed: Some(feed.clone()),
-                        availability: crate::transfers::of_queue_item(item),
-                        playing: self.moving,
+                        availability: crate::transfers::of_queue_row(
+                            item.status,
+                            item.track_id,
+                            item.on_server,
+                            item.on_disk,
+                            item.track_id
+                                .and_then(|t| feed.read(cx).transfers.get(&t).copied()),
+                        ),
                     },
                     &look,
                 );

@@ -131,6 +131,9 @@ pub enum StateSlice {
     Renderers {
         renderers: Vec<RendererInfo>,
         output: Option<RendererOutput>,
+        /// The last search for renderers was refused the local network: on
+        /// macOS, the app has not been allowed it, and none can be found.
+        local_network_blocked: bool,
     },
     /// What the device in view plays through: this one, or the one being
     /// controlled. `None` while a controlled device has not said.

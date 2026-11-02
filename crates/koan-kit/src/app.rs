@@ -17,9 +17,9 @@ pub use gpui_kit::{
     ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
     IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement,
-    PathPromptOptions, Pixels, Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString,
-    Size, Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window,
-    WindowHandle, WindowId, WindowVisibility, actions, div,
+    PathPromptOptions, Pixels, Point, QuitMode, ReadGlobal, Render, RenderOnce, ScrollEvent,
+    SharedString, Size, Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity,
+    Window, WindowHandle, WindowId, WindowVisibility, actions, div,
 };
 
 /// What a page tells a screen reader where no component says it for the

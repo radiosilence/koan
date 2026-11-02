@@ -151,7 +151,7 @@ just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bi
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
-just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode
+just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode; on macOS launched as a dev bundle, so it has Local Network permission of its own
 just vendor-gpui VER [KIT] # the vendored GPUI crates rebuilt from release VER (gpui-base from gpui-kit's KIT) + vendor/patches; fails loudly on a hunk that does not apply
 just vendor-gpui-patches # vendor/patches written from the vendored copies, after editing one
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
@@ -371,6 +371,8 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit only when it restored it |
 | `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
 | `platform/menus.rs` | The app's menus, in the Mac app's order, described once (`menus`): macOS's menu bar (`set`), and on Linux, which has no global menu bar, the same menus drawn in the window behind the toolbar's kōan button (`in_window`), each item with its keys |
+| `platform/residency.rs` | Keeping running with the window closed (`devices.keep_running`): the quit rule, leaving the Dock for the menu bar on macOS, reopening the window; opening at login, asked of the system (`SMAppService` on macOS, an XDG autostart entry on Linux) |
+| `platform/status_item.rs` | The macOS menu bar item while kept running: the ensō, and a menu of what is playing, play and pause, next, open and quit, rebuilt only when it changes |
 | `platform/startup_error.rs` | The window shown when the engine cannot open, saying what failed and what to do in the engine's words, as the Mac's `StartupErrorView`; closing it quits, and another launch brings it to the front |
 | `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
