@@ -1050,8 +1050,9 @@ impl KoanEngine {
         // A cover kept on this device, read off the engine's pool, before any
         // request.
         let kept = {
-            let (cfg, id) = (cfg.clone(), remote_id.clone());
-            offload::offload(move || koan_core::remote::covers::kept(&cfg, &id, size)).await
+            let id = remote_id.clone();
+            offload::offload(move || koan_core::remote::covers::kept(&Config::cached(), &id, size))
+                .await
         };
         if let Some(data) = kept {
             return Self::remote_cover(track_id, Ok(data));
@@ -5030,11 +5031,11 @@ impl KoanEngine {
         .await
     }
 
-    /// Drop the library index so the next scan rebuilds it.
-    ///
-    /// Favourites survive — they key on the file path. Lyrics, play history and
-    /// acoustic embeddings do not; they key on row ids that are about to stop
-    /// existing.
+    /// Read the whole library again from its sources: the next scan re-reads
+    /// every file and the next sync walks the whole server, and tracks take
+    /// what their tags say now. Rows stay and their sources claim them back,
+    /// so play history, playlists, favourites and lyrics are kept; a row
+    /// nothing claims again goes. See `koan_core::helpers::rebuild_index`.
     pub async fn rebuild_index(self: Arc<Self>) -> Result<RebuildSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;

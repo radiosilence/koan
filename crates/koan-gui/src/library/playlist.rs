@@ -106,6 +106,8 @@ pub struct PlaylistPage {
     menu_row: Option<usize>,
     /// The entry playing, when the queue plays one of this playlist's.
     playing: Option<i64>,
+    /// The transport is playing: the playing row's bars move only then.
+    moving: bool,
     /// What the last export had to say.
     note: Option<SharedString>,
     focus: FocusHandle,
@@ -116,7 +118,11 @@ pub struct PlaylistPage {
 impl PlaylistPage {
     pub fn new(lib: Lib, id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>();
-        let (library, playback) = (mirror.library.clone(), mirror.playback.clone());
+        let (library, playback, playhead) = (
+            mirror.library.clone(),
+            mirror.playback.clone(),
+            mirror.playhead.clone(),
+        );
         let row_covers = cx.global::<CoversHandle>().0.clone();
         let subscriptions = vec![
             // An edit here, a sync, another device: the playlist is read again.
@@ -130,6 +136,13 @@ impl PlaylistPage {
                     .and_then(|e| e.playlist_entry_id);
                 if playing != this.playing {
                     this.playing = playing;
+                    cx.notify();
+                }
+            }),
+            cx.observe(&playhead, |this, playhead, cx| {
+                let moving = playhead.read(cx).playing;
+                if moving != this.moving {
+                    this.moving = moving;
                     cx.notify();
                 }
             }),
@@ -160,6 +173,7 @@ impl PlaylistPage {
             drop_at: None,
             menu_row: None,
             playing,
+            moving: playhead.read(cx).playing,
             note: None,
             focus: cx.focus_handle(),
             _loading: None,
@@ -919,6 +933,8 @@ impl PlaylistPage {
                     Extras {
                         favourite,
                         feed: Some(feed.clone()),
+                        availability: crate::transfers::of_queue_item(item),
+                        playing: self.moving,
                     },
                     &look,
                 );
@@ -945,7 +961,6 @@ impl PlaylistPage {
             }
         };
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)

@@ -75,10 +75,10 @@ impl LibraryPane {
 
     fn rebuild(&self, window: &mut Window, cx: &mut App) {
         let model = self.ctx.model.clone();
-        let sheet = Sheet::new("Clear the library index?")
-            .message("Every artist, album and track is forgotten, so the next scan or sync builds them again. Play counts, lyrics and audio analysis are lost with them. Favourites are kept. Your music files are not touched.")
+        let sheet = Sheet::new("Rebuild the library index?")
+            .message("The next scan re-reads every file and the next sync walks the whole server, and each track takes what its tags say now. Play history, playlists, favourites and lyrics are kept. A track nothing finds again goes. Your music files are not touched.")
             .action(
-                Action::new("Clear Index", move |_, _, cx| {
+                Action::new("Rebuild Index", move |_, _, cx| {
                     model.update(cx, |model, cx| model.rebuild_index(cx))
                 })
                 .destructive(),

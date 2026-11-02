@@ -330,7 +330,12 @@ impl Shell {
                         },
                         window,
                         cx,
-                        move |cx| covers.update(cx, |c, cx| c.clear(None, cx)),
+                        // Run once the window is handed back, so the
+                        // sleeves' textures leave its atlas with them.
+                        move |cx| {
+                            let covers = covers.clone();
+                            cx.defer(move |cx| covers.update(cx, |c, cx| c.clear(None, cx)))
+                        },
                     );
                 })
                 .ok();
@@ -579,7 +584,6 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
-            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::search))
             .on_action(cx.listener(Self::toggle_lyrics))
             .on_action(cx.listener(Self::add_music))

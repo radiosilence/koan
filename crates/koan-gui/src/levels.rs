@@ -47,6 +47,10 @@ struct Registry {
     slots: HashMap<u64, (BarsPlace, Hsla)>,
     /// Each slot drawn as a shader, by its levels.
     shaders: HashMap<u64, BarLevels>,
+    /// Rung as a quad slot goes, so the roots paint again without it: a slot
+    /// goes at the end of the first frame its row is not drawn in, which
+    /// that frame has already painted it into.
+    gone: Option<futures::channel::mpsc::UnboundedSender<()>>,
     next_id: u64,
     /// How high each bar stands, 0 to 1, low band to high: each band
     /// against its own recent range, so a record mastered quiet moves as
@@ -71,10 +75,17 @@ impl Global for Levels {}
 
 pub fn install(cx: &mut App) {
     let feed = cx.new(|_| Feed);
-    cx.set_global(Levels {
-        registry: Arc::default(),
-        feed,
-    });
+    let (gone, mut slots_gone) = futures::channel::mpsc::unbounded();
+    let registry: Arc<Mutex<Registry>> = Arc::default();
+    registry.lock().gone = Some(gone);
+    let repaint = feed.clone();
+    cx.spawn(async move |cx| {
+        while slots_gone.next().await.is_some() {
+            cx.update(|cx| repaint.update(cx, |_, cx| cx.notify()));
+        }
+    })
+    .detach();
+    cx.set_global(Levels { registry, feed });
 }
 
 /// The entity a window's root observes to paint the bars again; none where
@@ -95,8 +106,11 @@ impl Drop for SlotState {
     fn drop(&mut self) {
         // The follow sees an empty registry at its next frame and ends.
         let mut registry = self.registry.lock();
-        registry.slots.remove(&self.id);
+        let painted = registry.slots.remove(&self.id).is_some();
         registry.shaders.remove(&self.id);
+        if painted && let Some(gone) = &registry.gone {
+            gone.unbounded_send(()).ok();
+        }
     }
 }
 

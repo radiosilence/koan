@@ -1,0 +1,1 @@
+- **The apps build again.** A cover kept on the device was looked up with a configuration the code no longer had in scope.

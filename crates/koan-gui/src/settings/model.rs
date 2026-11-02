@@ -496,23 +496,20 @@ impl SettingsModel {
 
     pub fn rebuild_index(&mut self, cx: &mut Context<Self>) {
         self.run(
-            "Clearing the library index",
+            "Rebuilding the library index",
             Uses::WHOLE_LIBRARY,
             cx,
             |engine| engine.rebuild_index(),
             |model, result, cx| match result {
-                Ok(s) => {
-                    // Sleeves are kept by album id, which the rebuilt
-                    // library hands out from 1 again.
-                    crate::covers::Covers::purge(cx);
-                    model.done(
-                        format!(
-                            "Removed {} tracks — scan or sync to rebuild",
-                            count(s.tracks)
-                        ),
-                        cx,
-                    );
-                }
+                // The rows stay, and their sleeves with them: what the next
+                // scan finds changed it says through `art_evictions`.
+                Ok(s) => model.done(
+                    format!(
+                        "{} tracks to read again — scan or sync to rebuild",
+                        count(s.tracks)
+                    ),
+                    cx,
+                ),
                 Err(e) => model.report(describe(&e), cx),
             },
         );

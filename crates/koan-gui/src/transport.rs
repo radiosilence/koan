@@ -28,7 +28,7 @@ use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::{Next, Previous, ShowEq, help};
+use crate::platform::actions::{Next, Previous, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -459,13 +459,16 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     };
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
+            let device = id.clone();
             Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
                 .icon(Icon::Filters)
                 .label("eq")
                 .when(on, |b| b.tone(Tone::Accent))
-                .on_click(|_, window, cx| {
+                // The EQ of the device this row names, which need not be the
+                // one in use.
+                .on_click(move |_, _, cx| {
                     cx.stop_propagation();
-                    window.dispatch_action(Box::new(ShowEq), cx);
+                    crate::dsp::window::open(Some(device.clone()), cx);
                 })
                 .into_any_element()
         }
@@ -548,7 +551,17 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         return menu;
     };
     if let Some(volume) = outputs.volume {
-        menu = menu.control(move |_, _| {
+        menu = menu.control(move |_, cx| {
+            // Read as drawn, not as the menu opened: the menu stays up while
+            // the volume moves.
+            let volume = cx
+                .global::<Mirror>()
+                .outputs
+                .read(cx)
+                .0
+                .as_ref()
+                .and_then(|o| o.volume)
+                .unwrap_or(volume);
             Level::new("renderer-volume", u32::from(volume), 100)
                 .numbered()
                 .on_commit(|to, _, cx| {
@@ -635,6 +648,9 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
             .on_click(move |_, _, cx| crate::dsp::window::open(Some(device.clone()), cx)),
     )
 }
+
+/// How far an arrow key moves the seek bar.
+const SEEK_KEY_MS: u64 = 5_000;
 
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
 /// The control's glyph with icons on, its label without: the theme's two
@@ -1020,25 +1036,31 @@ pub struct Seek {
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
     glide: Glide,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Seek {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
+        let mut subscriptions = vec![
+            cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
+            cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            // The fill is the accent.
+            theme::observe_accent(cx),
+            // Nothing draws the slider while the window is hidden, so
+            // nothing keeps it moving; showing again puts it where it is.
+            cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                this.visible = visibility == WindowVisibility::Visible;
+                this.moved(cx);
+            }),
+        ];
+        // The playing track's download starting or ending shows or takes
+        // away how far its bytes reach.
+        if let Some(transfers) = crate::transfers::entity(cx) {
+            subscriptions.push(cx.observe(&transfers, |_, _, cx| cx.notify()));
+        }
         let mut seek = Self {
-            _subscriptions: [
-                cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
-                cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
-                // The fill is the accent.
-                theme::observe_accent(cx),
-                // Nothing draws the slider while the window is hidden, so
-                // nothing keeps it moving; showing again puts it where it is.
-                cx.observe_window_visibility(window, |this, visibility, _, cx| {
-                    this.visible = visibility == WindowVisibility::Visible;
-                    this.moved(cx);
-                }),
-            ],
+            _subscriptions: subscriptions,
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
@@ -1148,9 +1170,24 @@ impl Render for Seek {
         )
         .absolute()
         .size_full();
+        // How far a track still downloading can be played, moving as its
+        // bytes arrive; nothing once the file is all here.
+        let reach = self
+            .playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .and_then(|e| e.track_id)
+            .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
             .compact()
+            // An arrow key moves five seconds, not a twentieth of the track.
+            .when(duration > 0, |s| {
+                s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
+            })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {

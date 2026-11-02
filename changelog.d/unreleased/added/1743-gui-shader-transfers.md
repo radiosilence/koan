@@ -1,0 +1,1 @@
+- **The desktop app's seek bar shows how much of a downloading track has arrived, and download rings fill smoothly.** Both are drawn on the GPU from the transfer's progress, and lists no longer redraw while a track downloads.

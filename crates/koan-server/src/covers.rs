@@ -480,15 +480,17 @@ impl Covers {
             // The first source that makes a cover, read once for every size
             // wanted.
             let mut sources = self.source_arts(&tracks);
-            let mut source = None;
+            let mut source: Option<Vec<u8>> = None;
             for size in wanted {
-                let art = DECODE.install(|| match &source {
-                    Some(bytes) => encode(bytes, size),
-                    None => sources.find_map(|bytes| {
+                let art = DECODE.install(|| {
+                    if let Some(bytes) = &source {
+                        return encode(bytes, size);
+                    }
+                    sources.find_map(|bytes| {
                         let art = encode(&bytes, size)?;
                         source = Some(bytes);
                         Some(art)
-                    }),
+                    })
                 });
                 used += art.as_ref().map_or(0, |a| a.len() as u64);
                 self.write_disk(&album_key(album, size), art.as_deref());

@@ -83,7 +83,18 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     return float4(colour, u[14]);
 }
 "#,
-    wgsl: "",
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let side = max(size.x, size.y) * u[1].w * u[3].x;
+    let centre = size * 0.5 + vec2<f32>(size.x * u[2].w, size.y * u[3].w) * u[3].y;
+    let uv = (position - (centre - side * 0.5)) / side;
+    let colour = koan_sample(tile, uv).rgb;
+    if (u[1].z > 0.5) {
+        return vec4<f32>(mix(u[2].xyz, colour, u[3].z), 1.0);
+    }
+    return vec4<f32>(colour, u[3].z);
+}
+"#,
     prepare: Some(prepare),
 };
 
@@ -550,7 +561,10 @@ impl Wash {
     /// Where the texture is this frame: its scale over the overscan, and its
     /// travel across the page from -1 to 1.
     fn pose(&self, now: Instant) -> (f32, f32) {
-        let t = now.duration_since(self.epoch).as_secs_f32();
+        // Reduced to the cycle in f64 before narrowing, as the shader's clock
+        // is: in f32, a window open for days counts time in steps a frame
+        // long.
+        let t = (now.duration_since(self.epoch).as_secs_f64() % CYCLE as f64) as f32;
         pose_at(t, self.amplitude.at(now))
     }
 
