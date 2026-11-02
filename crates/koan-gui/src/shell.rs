@@ -52,6 +52,8 @@ pub struct Shell {
     /// The downloads page, while it is on stage: made on arriving and let go
     /// on leaving, so its slices wake nothing while it is not shown.
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
+    /// The kōan menu, drawn in the window where there is no menu bar.
+    koan_menu: crate::components::MenuSlot<()>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
     /// Whether the sidebar shows, and how wide; kept with the window's
@@ -123,6 +125,7 @@ impl Shell {
             queue_controls,
             library: None,
             downloads: None,
+            koan_menu: crate::components::MenuSlot::default(),
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             sidebar_width: f32::from_bits(
@@ -342,6 +345,26 @@ impl Shell {
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.
             .under_window_buttons(!self.sidebar_shown)
+            // No global menu bar off macOS: the menus open from here.
+            .when(cfg!(not(target_os = "macos")), |toolbar| {
+                toolbar.leading(self.koan_menu.trigger_below(
+                    (),
+                    div().id("koan-menu").child(ToolbarButton::new(
+                        "koan-menu-button",
+                        Icon::More,
+                        "kōan",
+                    )),
+                    |this: &mut Self| &mut this.koan_menu,
+                    |_, window, cx| {
+                        Some(crate::components::Menu::build(
+                            window,
+                            cx,
+                            crate::platform::menus::in_window,
+                        ))
+                    },
+                    cx,
+                ))
+            })
             .leading(
                 ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
                     |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),

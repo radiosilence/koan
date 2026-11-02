@@ -352,7 +352,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/dock.rs` | The Dock's menu on macOS, rebuilt from the Playback and Devices slices only when what it shows changes |
 | `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit only when it restored it |
 | `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
-| `platform/menus.rs` | The macOS menu bar, in the Mac app's order |
+| `platform/menus.rs` | The app's menus, in the Mac app's order, described once (`menus`): macOS's menu bar (`set`), and on Linux, which has no global menu bar, the same menus drawn in the window behind the toolbar's kōan button (`in_window`), each item with its keys |
 | `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
