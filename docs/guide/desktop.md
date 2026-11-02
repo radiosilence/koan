@@ -36,6 +36,8 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global m
 
 ## Configuration and the log
 
+If the library cannot be opened (a database written by a newer kōan, a configuration that does not parse), the app says so in a window, in the words every front end uses, and quits when it is closed.
+
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
 What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. Files an earlier version left in the configuration directory are moved there on the first launch.
