@@ -1,0 +1,1 @@
+- **Ctrl-C in the terminal quits the desktop app as ⌘Q does.** The queue, the window's size and unsaved settings are kept rather than lost, and in full screen the sidebar no longer starts under an empty band.

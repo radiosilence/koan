@@ -45,6 +45,10 @@ pub trait TileHost: actions::Menus {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
+
+    /// A screen reader moved to the record's tile: a page that draws only
+    /// what is on screen scrolls it, and its neighbours, into view.
+    fn revealed(&mut self, _album: i64, _cx: &mut Context<Self>) {}
 }
 
 /// A record as its tile draws it: the strings made once, when the listing
@@ -102,6 +106,8 @@ pub struct TileState {
     pub pick: Option<u64>,
     /// Run after a menu verb: ends the pick when the menu acted on one.
     pub after: actions::After,
+    /// Its place among the page's records, of how many, for a screen reader.
+    pub place: (usize, usize),
 }
 
 impl TileState {
@@ -115,6 +121,7 @@ impl TileState {
             && self.show_artist == other.show_artist
             && self.side == other.side
             && self.pick == other.pick
+            && self.place == other.place
             && self.sleeve.same(&other.sleeve)
     }
 }
@@ -152,6 +159,11 @@ impl<V: TileHost> TileView<V> {
         state: TileState,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Made on its colour, the sleeve then fades in over that.
+        let ground = match &state.sleeve {
+            Sleeve::Colour(colour) => Some(*colour),
+            _ => None,
+        };
         Self {
             host,
             record,
@@ -160,7 +172,7 @@ impl<V: TileHost> TileView<V> {
             origin: Rc::new(Cell::new(Point::default())),
             credit_widths: None,
             fade: None,
-            ground: None,
+            ground,
             _accent: crate::theme::observe_accent(cx),
         }
     }
@@ -224,7 +236,7 @@ impl<V: TileHost> TileView<V> {
         }
         self.fade = match (&self.state.sleeve, &state.sleeve) {
             (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade,
-            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::NORMAL => Some(*arrived),
+            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::ARRIVE => Some(*arrived),
             _ => None,
         };
         self.record = record.clone();
@@ -254,10 +266,11 @@ impl<V: TileHost> Render for TileView<V> {
             Sleeve::Ready(image, _) => {
                 let shown = match self.fade.filter(|_| KoanTheme::motion_allowed(cx)) {
                     Some(arrived) => {
-                        let t = arrived.elapsed().as_secs_f32() / Motion::NORMAL.as_secs_f32();
+                        let t = arrived.elapsed().as_secs_f32() / Motion::ARRIVE.as_secs_f32();
                         if t < 1.0 {
-                            // This tile alone, frame by frame, until it lands.
-                            cx.on_next_frame(window, |_, _, cx| cx.notify());
+                            // Frame by frame until it lands, asked as every
+                            // animation asks, so a scroll layer knows.
+                            window.request_animation_frame();
                             Motion::quick_out(t)
                         } else {
                             self.fade = None;
@@ -340,8 +353,47 @@ impl<V: TileHost> Render for TileView<V> {
             album: None,
             after: state.after.clone(),
         };
+        // To a screen reader the tile is one link to its record, read as
+        // what its caption says, with its place among the page's records;
+        // its click opens the record as the title's does.
+        let spoken = p.a11y.then(|| {
+            crate::components::spoken(
+                [record.title.to_string()]
+                    .into_iter()
+                    .chain(state.show_artist.then(|| {
+                        record
+                            .credit
+                            .iter()
+                            .map(|(text, _)| text.as_ref())
+                            .collect()
+                    }))
+                    .chain(record.year.as_ref().map(|y| y.to_string()))
+                    .chain(state.favourite.then(|| "favourite".to_owned()))
+                    .chain(state.playing.then(|| "playing".to_owned())),
+            )
+        });
+        let (place, count) = state.place;
+        let opens = self.host.clone();
+        let reveals = self.host.clone();
         div()
             .id(("tile", id as u64))
+            .when_some(spoken, |tile, spoken| {
+                tile.role(a11y::Role::Link)
+                    .aria_label(spoken)
+                    .aria_position_in_set(place + 1)
+                    .aria_size_of_set(count)
+                    .aria_selected(state.selecting && state.selected)
+                    .on_a11y_action(a11y::AccessibleAction::Click, move |_, window, cx| {
+                        opens
+                            .update(cx, |host, cx| {
+                                host.clicked(id, Part::Title, Modifiers::default(), window, cx)
+                            })
+                            .ok();
+                    })
+                    .on_a11y_action(a11y::AccessibleAction::ScrollIntoView, move |_, _, cx| {
+                        reveals.update(cx, |host, cx| host.revealed(id, cx)).ok();
+                    })
+            })
             .relative()
             .flex()
             .flex_col()

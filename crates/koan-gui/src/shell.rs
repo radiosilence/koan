@@ -1,5 +1,6 @@
-//! The window: a toolbar across the top, the sidebar beside the stage, and
-//! the transport along the foot under both.
+//! The window: the sidebar from the top edge, beside the page column (its
+//! toolbar, then the stage), and the transport along the foot under both.
+//! On macOS the window's buttons sit on the sidebar's ground.
 //!
 //! Each region is a cached view, so a region that changes (the playhead's
 //! slider, a row of the queue) redraws itself and the views that hold it,
@@ -679,16 +680,34 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
-                                .when(WINDOW_BUTTONS.height > Pixels::ZERO, |d| {
-                                    d.child(
-                                        Self::moves_window(div().id("sidebar-drag"), cx)
-                                            .h(WINDOW_BUTTONS.height)
-                                            .flex_shrink_0(),
-                                    )
-                                })
-                                .child(self.sidebar.clone().cached(
-                                    StyleRefinement::default().w_full().flex_1().min_h_0(),
-                                )),
+                                // Room for the window's buttons, which full
+                                // screen hides, and a place to move the
+                                // window by.
+                                .when(
+                                    WINDOW_BUTTONS.height > Pixels::ZERO && !window.is_fullscreen(),
+                                    |d| {
+                                        d.child(
+                                            Self::moves_window(div().id("sidebar-drag"), cx)
+                                                .h(WINDOW_BUTTONS.height)
+                                                .flex_shrink_0(),
+                                        )
+                                    },
+                                )
+                                .child(
+                                    // A landmark to a screen reader: where to go.
+                                    div()
+                                        .id("sidebar-region")
+                                        .role(a11y::Role::Navigation)
+                                        .aria_label("library")
+                                        .w_full()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(self.sidebar.clone().cached(
+                                            StyleRefinement::default().w_full().flex_1().min_h_0(),
+                                        )),
+                                ),
                         )
                     })
                     .trailing(
@@ -703,7 +722,16 @@ impl Render for Shell {
                                     .flex_1()
                                     .min_h_0()
                                     .flex()
-                                    .child(div().flex_1().min_w_0().h_full().child(stage))
+                                    // The page: the main landmark.
+                                    .child(
+                                        div()
+                                            .id("stage")
+                                            .role(a11y::Role::Main)
+                                            .flex_1()
+                                            .min_w_0()
+                                            .h_full()
+                                            .child(stage),
+                                    )
                                     .children(self.lyrics.clone().map(|lyrics| {
                                         lyrics.cached(
                                             StyleRefinement::default()

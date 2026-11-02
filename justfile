@@ -519,8 +519,8 @@ tv_deployment_target := "26.0"
 
 # Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
 # failing on the first patch that does not apply; vendor/ is untouched then.
-vendor-gpui version:
-    scripts/vendor-gpui.sh {{version}}
+vendor-gpui version kit="":
+    scripts/vendor-gpui.sh {{version}} {{kit}}
 
 # Write vendor/patches from the vendored copies: after editing one.
 vendor-gpui-patches:
@@ -1938,8 +1938,7 @@ gui-run *ARGS:
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
-    # Ctrl-C is how the app is quit from here, not a failure.
-    trap 'exit 0' INT
+    # Ctrl-C quits the app as ⌘Q does; it saves what quitting saves.
     cargo run --profile gui-dev -p koan-gui --features runtime-shaders -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,

@@ -97,7 +97,7 @@ impl Toolbar {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        super::accessible(div().id("toolbar"), gpui_kit::Role::Toolbar, None)
             .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()

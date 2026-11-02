@@ -959,8 +959,14 @@ impl PlaylistPage {
                 cx.notify();
             }
         };
+        let list = self.list.clone();
         row_frame
             .selected(selected)
+            .when(p.a11y, |frame| {
+                frame
+                    .place(row, count)
+                    .on_reveal(move |_, _| list.reveal_around(row))
+            })
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })
@@ -1097,6 +1103,7 @@ impl Render for PlaylistPage {
             RowList::new(&self.list, move |row, window, cx| {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
             })
+            .named(self.name())
             .into_any_element()
         };
         div()

@@ -1,0 +1,1 @@
+- **Choosing an EQ preset while controlling another device no longer sends this computer's output to it.** The desktop app's EQ button shows only for this device, and with processing off it is drawn plain and says so.

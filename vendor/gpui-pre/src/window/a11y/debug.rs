@@ -272,6 +272,10 @@ fn node_to_json(
     if node.is_disabled() {
         aria.insert("disabled".into(), json!(true));
     }
+    // KOAN: live regions (#1778).
+    if let Some(v) = node.live() {
+        aria.insert("live".into(), json!(format!("{v:?}")));
+    }
     if let Some(v) = node.orientation() {
         aria.insert("orientation".into(), json!(format!("{v:?}")));
     }

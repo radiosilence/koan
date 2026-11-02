@@ -1,6 +1,6 @@
 use gpui_kit::{
-    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
+    div, px,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -12,6 +12,7 @@ pub struct EmptyState {
     icon: Icon,
     title: SharedString,
     detail: Option<SharedString>,
+    tone: Tone,
 }
 
 impl EmptyState {
@@ -20,7 +21,15 @@ impl EmptyState {
             icon,
             title: label(title),
             detail: None,
+            tone: Tone::Muted,
         }
+    }
+
+    /// Something went wrong rather than nothing being there: the glyph in
+    /// `bad`, as the Mac's startup error draws its warning.
+    pub fn warning(mut self) -> Self {
+        self.tone = Tone::Bad;
+        self
     }
 
     /// A sentence, which keeps its case.
@@ -62,7 +71,7 @@ impl RenderOnce for EmptyState {
                 .child(
                     KoanIcon::new(self.icon)
                         .points(28.0 * look.scale.text)
-                        .tone(Tone::Muted),
+                        .tone(self.tone),
                 )
                 .child(
                     div()

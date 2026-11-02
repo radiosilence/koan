@@ -1,0 +1,1 @@
+- **CI builds GPUI once per push.** The Linux job leaves the design system's crate to the GUI jobs, which already check it.

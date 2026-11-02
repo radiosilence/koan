@@ -1,6 +1,6 @@
-//! Times a slider drag, frame by frame, offscreen: a slider over the theme
-//! sheet, dragged across by synthetic mouse moves, each followed by one
-//! draw. Prints the draw times and how often the sheet beside the slider
+//! Times a slider drag, frame by frame, offscreen: a slider over the
+//! storybook, dragged across by synthetic mouse moves, each followed by one
+//! draw. Prints the draw times and how often the storybook beside the slider
 //! rendered, which should be never: a drag is one slider's business.
 //!
 //! cargo run --release -p koan-gui --example slider_frames
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_gui::components::Slider;
-use koan_gui::sheet::ThemeSheet;
+use koan_gui::storybook::Storybook;
 use koan_gui::theme;
 use koan_kit::app::*;
 // A measuring tool outside the app: GPUI's headless harness and input, driven directly.
@@ -55,7 +55,7 @@ impl Render for Bar {
 
 /// The sheet, counting its renders.
 struct Counted {
-    sheet: Entity<ThemeSheet>,
+    sheet: Entity<Storybook>,
     renders: Rc<Cell<usize>>,
 }
 
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let bar_handle: Rc<Cell<Option<Entity<Bar>>>> = Rc::new(Cell::new(None));
     let held = bar_handle.clone();
     let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |window, cx| {
-        let sheet = cx.new(|cx| ThemeSheet::new(window, cx));
+        let sheet = cx.new(|cx| Storybook::new(window, cx));
         let sheet = cx.new(|_| Counted {
             sheet,
             renders: counted,
