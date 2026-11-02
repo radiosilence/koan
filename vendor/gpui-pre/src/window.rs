@@ -3636,6 +3636,9 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
+        // KOAN: what this present shows of the shaders is taken as shown
+        // (#1641).
+        self.rendered_frame.scene.take_shader_present();
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
@@ -4700,6 +4703,14 @@ impl Window {
         } else {
             vertical_band
         }
+    }
+
+    // KOAN: shader quads (#1641).
+    /// Asks for a refresh with no frame drawn, so a shader whose uniforms
+    /// changed is presented again. Wakes a parked window; a hidden or
+    /// occluded one stays asleep.
+    pub fn request_present(&self) {
+        self.invalidator.wake_platform();
     }
 
     // KOAN: shader quads (#1641).

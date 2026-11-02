@@ -57,12 +57,12 @@ pub fn shader_epoch() -> Instant {
 /// A shader's uniforms, shared between the app and the renderer: written by
 /// the app from any thread, read as each frame is presented.
 ///
-/// While `live` is set the window keeps its refreshes coming and presents
-/// its last frame again on each one where a live shader's uniforms changed
-/// since the last present, or on every one for a `continuous` shader, which
-/// moves with `time` alone. No new frame is drawn either way. Setting `live`
-/// from false needs a frame to notice: draw one (notify the view that paints
-/// the shader) when a shader starts moving. Clearing it lets the window park.
+/// A refresh presents the last frame again, with no new frame drawn, where
+/// a shader on screen changed since the last present, or on every refresh
+/// for a `live` and `continuous` shader, which moves with `time` alone.
+/// While any shader on screen is `live` the window keeps its refreshes
+/// coming; otherwise it parks, and a change is seen at the next refresh,
+/// which `Window::request_present` asks for.
 #[derive(Debug, Default)]
 pub struct ShaderUniforms {
     values: [AtomicU32; SHADER_UNIFORMS],
@@ -78,11 +78,14 @@ impl ShaderUniforms {
         Self::default()
     }
 
-    pub fn set(&self, index: usize, value: f32) {
+    /// Whether the value changed.
+    pub fn set(&self, index: usize, value: f32) -> bool {
         let bits = value.to_bits();
-        if self.values[index].swap(bits, Ordering::Relaxed) != bits {
+        let changed = self.values[index].swap(bits, Ordering::Relaxed) != bits;
+        if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
+        changed
     }
 
     pub fn get(&self, index: usize) -> f32 {
@@ -91,11 +94,13 @@ impl ShaderUniforms {
 
     /// The moment `time` counts from in the program: where an anchor was
     /// taken, so the program reckons from it.
-    pub fn set_origin(&self, origin: Instant) {
+    pub fn set_origin(&self, origin: Instant) -> bool {
         let nanos = origin.saturating_duration_since(shader_epoch()).as_nanos() as u64;
-        if self.origin.swap(nanos, Ordering::Relaxed) != nanos {
+        let changed = self.origin.swap(nanos, Ordering::Relaxed) != nanos;
+        if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
+        changed
     }
 
     /// Seconds from the origin to `now`, as the program reads `time`.
@@ -117,12 +122,11 @@ impl ShaderUniforms {
         self.continuous.store(continuous, Ordering::Relaxed);
     }
 
-    /// Whether this refresh should present: live, and continuous or changed
-    /// since the last time this was asked.
+    /// Whether this refresh should present: changed since the last time
+    /// this was asked, or live and continuous.
     pub fn take_present(&self) -> bool {
-        self.is_live()
-            && (self.continuous.load(Ordering::Relaxed)
-                | self.changed.swap(false, Ordering::Relaxed))
+        let changed = self.changed.swap(false, Ordering::Relaxed);
+        changed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
     }
 
     /// Every value, as a renderer copies them into a frame.
@@ -218,7 +222,8 @@ mod tests {
     fn a_live_shader_presents_once_per_change_unless_continuous() {
         let u = ShaderUniforms::new();
         u.set(0, 1.0);
-        assert!(!u.take_present(), "not live");
+        assert!(u.take_present(), "a change presents, live or not");
+        assert!(!u.take_present());
         u.set_live(true);
         u.set(0, 2.0);
         assert!(u.take_present());

@@ -30,13 +30,13 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage,
-    ShaderProgram, ShaderUniforms, Styled, Task, Window, canvas, div, point, px, size,
+    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
+    Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
 use super::{KoanTheme, Look, Motion, Palette};
-use crate::components::SHADED;
+use crate::components::{Animated, SHADED, ShaderProgram};
 
 /// The texture's side. Blurred to mush, so drawn small and magnified: the
 /// Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
@@ -376,7 +376,7 @@ struct Texture {
 struct Layer<T> {
     texture: T,
     opacity: Ramp,
-    shader: Arc<ShaderUniforms>,
+    shader: Animated,
 }
 
 pub struct Wash {
@@ -476,7 +476,7 @@ impl Wash {
             self.current = texture.map(|texture| Layer {
                 texture,
                 opacity: Ramp::still(1.0),
-                shader: Arc::default(),
+                shader: Animated::new(),
             });
             return;
         }
@@ -502,7 +502,7 @@ impl Wash {
         self.current = texture.map(|texture| Layer {
             texture,
             opacity: Ramp::still(0.0).toward(1.0, now),
-            shader: Arc::default(),
+            shader: Animated::new(),
         });
     }
 
@@ -697,7 +697,7 @@ impl Wash {
         let origin = self.origin(now);
         let amplitude = self.amplitude.uniforms(origin);
         let bg = look.palette.bg.hsla().to_rgb();
-        let mut quads: Vec<(Arc<RenderImage>, Arc<ShaderUniforms>)> = Vec::new();
+        let mut quads: Vec<(Arc<RenderImage>, Animated)> = Vec::new();
         let mut rests = self.amplitude.rests(now);
         let previous = self
             .previous
@@ -709,18 +709,17 @@ impl Wash {
             .map(|l| (l.texture.image.clone(), l.opacity, l.shader.clone()));
         for (image, opacity, shader) in previous.into_iter().chain(current) {
             let first = quads.is_empty();
-            let values = amplitude
+            let values: Vec<f32> = amplitude
                 .into_iter()
                 .chain(opacity.uniforms(origin))
                 .chain([if first { 1.0 } else { 0.0 }, NEAR, bg.r, bg.g, bg.b, REACH])
-                .enumerate();
-            for (i, v) in values {
-                shader.set(i, v);
-            }
+                .collect();
+            shader.set_all(0, &values);
             shader.set(15, RISE);
             shader.set_origin(origin);
-            shader.set_continuous(moving);
-            shader.set_live(moving);
+            // The drift already rests under Reduce Motion (`moving`); a
+            // dissolve still runs, as it does on the Mac.
+            shader.run(moving);
             rests = rests.max(opacity.rests(now));
             quads.push((image, shader));
         }
@@ -738,10 +737,15 @@ impl Wash {
             .when(blank, |d| d.bg(look.palette.bg.hsla()))
             .child(
                 canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
+                    move |_, window, cx| {
+                        for (_, shader) in &quads {
+                            shader.attach(false, window, cx);
+                        }
+                        quads
+                    },
+                    move |bounds, quads, window, _| {
                         for (image, shader) in quads {
-                            window.paint_shader_image(bounds, &WASH, shader, image).ok();
+                            shader.paint(&WASH, Some(image), bounds, window);
                         }
                     },
                 )

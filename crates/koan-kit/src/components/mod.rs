@@ -11,6 +11,7 @@
 //! as it renders. Interactive ones take an id, under which they keep what
 //! the pointer is doing and the state of their transitions.
 
+mod animated;
 mod badge;
 mod bars;
 mod button;
@@ -51,8 +52,9 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
+pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
 pub use badge::{Badge, Chip};
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, SHADED, bars_overlay};
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};

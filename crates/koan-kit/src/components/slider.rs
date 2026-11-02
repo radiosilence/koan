@@ -5,10 +5,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
-    ShaderProgram, ShaderUniforms, SharedString, Styled, Window, canvas, div, px,
+    SharedString, Styled, Window, canvas, div, px,
 };
 
-use super::SHADED;
+use super::{Animated, SHADED, ShaderProgram};
 
 use super::{Handler, child, focus, pointer, ring, track};
 use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole};
@@ -40,7 +40,7 @@ pub struct Slider {
 /// renders, and stops it (`set_moving(false)`) when the value rests or
 /// nothing shows it.
 #[derive(Clone, Default)]
-pub struct Glide(Arc<ShaderUniforms>);
+pub struct Glide(Animated);
 
 impl Glide {
     pub fn new() -> Self {
@@ -49,29 +49,21 @@ impl Glide {
 
     /// `value` at `since`, moving `rate` of the track a second.
     pub fn set(&self, value: f32, rate: f32, since: Instant) {
-        self.0.set(0, value);
-        self.0.set(1, rate);
+        self.0.set_all(0, &[value, rate]);
         self.0.set_origin(since);
     }
 
     /// Whether the value is moving: presented every refresh while it is.
-    /// Starting needs a frame to notice; notify the view showing it.
     pub fn set_moving(&self, moving: bool) {
-        self.0.set_continuous(moving);
-        self.0.set_live(moving);
+        self.0.run(moving);
     }
 
     /// The fill, thumb and their colours, in device pixels.
     fn style(&self, look: &Style) {
-        let u = &self.0;
-        u.set(2, look.fill);
-        u.set(3, look.thumb);
-        u.set(4, look.inset);
+        self.0.set_all(2, &[look.fill, look.thumb, look.inset]);
         for (i, color) in [look.fill_color, look.thumb_color].into_iter().enumerate() {
             let rgba = color.to_rgb();
-            for (j, v) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
-                u.set(8 + i * 4 + j, v);
-            }
+            self.0.set_all(8 + i * 4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
         }
     }
 }
@@ -328,7 +320,7 @@ impl RenderOnce for Slider {
                 let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
                 rail.child(
                     canvas(
-                        move |_, window, _| {
+                        move |_, window, cx| {
                             let scale = window.scale_factor();
                             glide.style(&Style {
                                 fill: FILL * scale,
@@ -337,11 +329,10 @@ impl RenderOnce for Slider {
                                 fill_color,
                                 thumb_color,
                             });
+                            glide.0.attach(false, window, cx);
                             glide
                         },
-                        |bounds, glide, window, _| {
-                            window.paint_shader(bounds, &GLIDE, glide.0.clone());
-                        },
+                        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
                     )
                     .absolute()
                     .top_0()

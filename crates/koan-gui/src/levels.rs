@@ -9,12 +9,10 @@
 //!
 //! On macOS each slot is a shader quad, painted once by its row and replayed
 //! with the row's cached view. The follow writes the bands straight into the
-//! slots' levels and marks them live, and while they are the window presents
-//! its last frame again whenever they move, drawing only the shader quads
-//! over the frame it kept: a moving bar costs a small encode, never a GPUI
-//! frame. A quarter of a second after the bands last moved they stop being
-//! live and the window goes back to sleep; when they move again one frame is
-//! drawn to notice.
+//! slots' levels (koan-kit's `Animated`), and each change wakes the window to
+//! present its last frame again, composing the quads over the layers it kept:
+//! a moving bar costs a small encode, never a GPUI frame, and still bars cost
+//! nothing.
 //!
 //! Elsewhere, until the Linux renderer draws shaders, the bars are quads. A
 //! row draws an empty slot, which records where it was laid out and under
@@ -24,9 +22,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use futures::FutureExt as _;
+use futures::StreamExt as _;
 use koan_kit::app::*;
 use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
 // the colour the caller's palette gives the bars.
@@ -42,8 +40,6 @@ const QUIETEST: f32 = 0.12;
 const FORGET: f32 = 4.0;
 /// The analyser's rate while bars are on screen.
 const FPS: u8 = 60;
-/// How long after the levels last moved the bars stop being presented.
-const STILL: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 struct Registry {
@@ -59,12 +55,10 @@ struct Registry {
     ceiling: [f32; 3],
     stamp: Option<Instant>,
     following: bool,
-    /// The shaders are being presented every refresh.
-    live: bool,
 }
 
-/// What every window's root observes: notified when the bars move (quads)
-/// or start moving (shaders).
+/// What every window's root observes: notified when the bars move, where
+/// they are quads.
 pub struct Feed;
 
 #[derive(Clone)]
@@ -116,7 +110,6 @@ pub fn bars(color: Hsla) -> impl IntoElement {
             registry.next_id += 1;
             let bars = BarLevels::new();
             bars.set(registry.bands);
-            bars.set_live(registry.live);
             SlotState {
                 id: registry.next_id,
                 registry: levels.registry.clone(),
@@ -169,50 +162,24 @@ fn follow(levels: &Levels, cx: &mut App) {
     let stream = engine.viz_stream();
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<()>();
-    let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
-        loop {
-            // Only while presented does stillness need a deadline: a paused
-            // player publishes nothing, and nothing then wakes this.
-            let live = registry.lock().live;
-            let heard = if live {
-                futures::select_biased! {
-                    heard = stream.next().fuse() => match heard {
-                        Some(heard) => Some(heard),
-                        None => break,
-                    },
-                    _ = executor.timer(STILL).fuse() => None,
-                }
-            } else {
-                match stream.next().await {
-                    Some(heard) => Some(heard),
-                    None => break,
-                }
-            };
+        while let Some(heard) = stream.next().await {
             let mut registry = registry.lock();
             if registry.slots.is_empty() && registry.shaders.is_empty() {
                 break;
             }
-            let Some(heard) = heard else {
-                // Still for a while: the bars are presented no longer.
-                if registry.live {
-                    registry.set_live(false);
-                }
-                continue;
-            };
-            if registry.take([heard.low, heard.mid, heard.high]) && registry.notice() {
+            // Shaders are presented by their own windows as the bands are
+            // written; quads need a frame of the roots.
+            if registry.take([heard.low, heard.mid, heard.high]) && !registry.slots.is_empty() {
                 wake.unbounded_send(()).ok();
             }
         }
         // Dropping the stream lets the analyser park.
-        let mut registry = registry.lock();
-        registry.following = false;
-        registry.set_live(false);
+        registry.lock().following = false;
     })
     .detach();
     let feed = levels.feed.clone();
     cx.spawn(async move |cx| {
-        use futures::StreamExt as _;
         while woken.next().await.is_some() {
             cx.update(|cx| feed.update(cx, |_, cx| cx.notify()));
         }
@@ -245,27 +212,6 @@ impl Registry {
         }
         moved
     }
-
-    /// The bars moved: whether a frame must be drawn for the windows to see
-    /// it. Quads are drawn by the frame; shaders need one only to start
-    /// being presented again.
-    fn notice(&mut self) -> bool {
-        if !self.slots.is_empty() {
-            return true;
-        }
-        if self.live {
-            return false;
-        }
-        self.set_live(true);
-        true
-    }
-
-    fn set_live(&mut self, live: bool) {
-        self.live = live;
-        for bars in self.shaders.values() {
-            bars.set_live(live);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -286,18 +232,13 @@ mod tests {
     }
 
     #[test]
-    fn shaders_take_the_bands_and_ask_for_one_frame_to_start() {
+    fn shaders_take_the_bands() {
         let mut registry = Registry::default();
-        let uniforms = BarLevels::new();
-        registry.shaders.insert(1, uniforms.clone());
+        let levels = BarLevels::new();
+        registry.shaders.insert(1, levels.clone());
         assert!(registry.take([0.5, 0.2, 0.1]));
-        assert_eq!(uniforms.band(0), 1.0);
-        assert!(registry.notice());
-        assert!(uniforms.is_live());
+        assert_eq!(levels.band(0), 1.0);
         registry.take([0.25, 0.2, 0.1]);
-        // Already presented every refresh: no frame needed.
-        assert!(!registry.notice());
-        registry.set_live(false);
-        assert!(!uniforms.is_live());
+        assert!((levels.band(0) - 0.5).abs() < 0.01);
     }
 }
