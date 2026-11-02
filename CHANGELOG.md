@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.69.5
+
+### Fixed
+
+- **Covers at a few shared sizes.** Every app asks for covers at one of 150, 300, 600 or 1200 pixels, and a koan server keeps exactly those, making the 300 and 600 every list and grid uses ahead of time, so the desktop app's covers no longer miss what the server has ready.
+- **Covers fill quickly again.** A koan server removes covers an older version kept at sizes no longer served, keeps up to 4 GB and makes every record's covers whenever there is room; the desktop app keeps asking for covers while a server answers a mix of kept and unkept ones, holding back only when it fails or stays slow.
+- **Clear Artwork Cache works in the desktop app.** It says how many covers and how much space it frees, then deletes the covers kept on this device and fetches the ones on screen again.
+- **Covers on screen first, always.** The desktop app cancels a cover's request the moment it scrolls away, and calls off covers off screen when ones on screen are waiting, so a fling no longer leaves the covers you can see queued behind hundreds you cannot.
+
+### Internal
+
+- **The GUI leak check annotates CI rather than failing it.** Hand-built styling in koan-gui shows as warnings on the run; locally the check still fails.
+- **The Linux CI job fits the runner's disk.** Test builds use line-table debug info, and unused preinstalled toolchains are removed first.
+- **CI builds carry no debug info.** Faster builds and smaller caches, and the runners stay within their disk.
+- **The server image is tagged without waiting for the Mac app.** Its release tags follow the Linux builds it ships from.
+- **Crates publish without rebuilding, and the GitHub release does not wait for them.** A release goes out faster and is not held up by crates.io.
+- **The GUI DMG attaches to releases again.** The attach job ran a bash feature macOS's bash lacks and stopped before the DMG.
+
 ## 0.69.4
 
 ### Added
