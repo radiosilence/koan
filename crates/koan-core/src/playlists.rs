@@ -489,6 +489,7 @@ pub fn reconcile_playlists(
     // copy of it would be editing their playlist.
     let mut seen_remote_ids = Vec::new();
 
+    let mut pulls = Vec::new();
     for summary in &remote {
         seen_remote_ids.push(summary.id.clone());
         let local = match queries::playlist_by_remote_id(&db.conn, &summary.id) {
@@ -522,7 +523,14 @@ pub fn reconcile_playlists(
             }
         }
 
-        let full = match client.get_playlist(&summary.id) {
+        pulls.push((summary, local));
+    }
+
+    // Fetched several at once, each a round trip, then stored in the
+    // listing's order.
+    let fetched = fetch_playlists(client, pulls.iter().map(|(s, _)| s.id.as_str()));
+    for ((summary, local), full) in pulls.into_iter().zip(fetched) {
+        let full = match full {
             Ok(full) => full,
             Err(e) => {
                 log::warn!("could not fetch playlist {}: {e}", summary.id);
@@ -553,6 +561,15 @@ pub fn reconcile_playlists(
         // All of it or none: a copy renamed but not refilled, or refilled but
         // not marked synced, would push back as an edit nobody made.
         let stored = queries::atomically(&db.conn, || {
+            // Edited here, or made here from another listing, since it was
+            // decided to pull it: the next sync weighs it again rather than
+            // writing over the edit.
+            let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
+            if now.as_ref().map(|p| (p.id, p.revision))
+                != local.as_ref().map(|p| (p.id, p.revision))
+            {
+                return Ok(false);
+            }
             let id = match &local {
                 Some(local) => local.id,
                 None => queries::create_playlist(
@@ -576,10 +593,15 @@ pub fn reconcile_playlists(
             queries::set_playlist_server_songs(&db.conn, id, &record)?;
             // The rename stamped the local copy as changed; this is the
             // server's copy, so what is here now is what the server has.
-            queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)
+            queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)?;
+            Ok::<_, DbError>(true)
         });
         match stored {
-            Ok(()) => out.pulled += 1,
+            Ok(true) => out.pulled += 1,
+            Ok(false) => log::info!(
+                "playlist {} changed while syncing; left for the next sync",
+                summary.name
+            ),
             Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
         }
     }
@@ -758,6 +780,36 @@ pub fn push_order() {
             }
         })
         .ok();
+}
+
+/// How many playlists are fetched at once.
+const FETCHING: usize = 8;
+
+/// Each playlist `ids` names, fetched `FETCHING` at a time, in the order
+/// named.
+fn fetch_playlists<'a>(
+    client: &SubsonicClient,
+    ids: impl Iterator<Item = &'a str>,
+) -> Vec<Result<crate::remote::client::SubsonicPlaylistFull, SubsonicError>> {
+    let ids: Vec<&str> = ids.collect();
+    let next = parking_lot::Mutex::new(ids.iter().copied().enumerate());
+    let answers = parking_lot::Mutex::new(Vec::with_capacity(ids.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..FETCHING.min(ids.len()) {
+            scope.spawn(|| {
+                loop {
+                    let Some((i, id)) = next.lock().next() else {
+                        return;
+                    };
+                    let answer = client.get_playlist(id);
+                    answers.lock().push((i, answer));
+                }
+            });
+        }
+    });
+    let mut answers = answers.into_inner();
+    answers.sort_by_key(|(i, _)| *i);
+    answers.into_iter().map(|(_, a)| a).collect()
 }
 
 /// Put the songs a server copy named that the library lacked into their
