@@ -85,14 +85,17 @@ fn name_of(config_dir: &Path) -> String {
 /// made, or the instance holding the lock does not answer.
 pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
     let config = koan_core::config::config_dir();
-    std::fs::create_dir_all(&config)?;
+    // One lock per configuration, outside it: the config directory holds
+    // what a person chooses, not what the app writes as it runs.
+    let locks = koan_core::places::runtime();
+    std::fs::create_dir_all(&locks)?;
     let name = name_of(&config);
     let mut lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(config.join("gui-instance.lock"))?;
+        .open(locks.join("gui-instance.lock"))?;
     match lock.try_lock() {
         Ok(()) => {
             // An earlier holder's socket path goes first, so a launch reading

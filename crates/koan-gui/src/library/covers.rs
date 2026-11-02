@@ -1080,18 +1080,20 @@ impl Drop for Covers {
     }
 }
 
-/// `$KOAN_CONFIG_DIR/artwork` for an instance on a configuration of its own
-/// (a test library), since files are named by row id and another library's
-/// ids would show its covers; the platform's cache directory otherwise, and
-/// the temporary directory where there is none. Names it only: see
-/// `prepare_directory`.
+/// The platform's cache directory, and the temporary directory where there
+/// is none: `koan-gui/artwork` for the person's own configuration, where it
+/// has always been, and the configuration's own cache (`places::cache`) for
+/// any other (a test library), since files are named by row id and another
+/// library's ids would show its covers. Never the config directory. Names it
+/// only: see `prepare_directory`.
 fn directory() -> PathBuf {
-    let root = match std::env::var_os("KOAN_CONFIG_DIR") {
-        Some(dir) => PathBuf::from(dir).join("artwork"),
-        None => dirs::cache_dir()
+    let root = if koan_core::places::key() == "default" {
+        dirs::cache_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("koan-gui")
-            .join("artwork"),
+            .join("artwork")
+    } else {
+        koan_core::places::cache().join("artwork")
     };
     root.join(SCHEME)
 }

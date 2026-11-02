@@ -81,6 +81,54 @@ impl TransportMetrics {
     }
 }
 
+/// A grid of record tiles across a width: how many columns, how big each
+/// tile, and the room between and beside them.
+///
+/// The tiles keep one size whatever the width. A window being resized moves
+/// the tiles apart rather than growing them: the spare width is shared out
+/// equally among the gaps and the two side margins, so the grid's edge stays
+/// near the page's margin, and a column is added only once another tile fits
+/// at the least gap, or dropped once one no longer does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileColumns {
+    pub columns: usize,
+    pub side: Pixels,
+    pub gap: Pixels,
+    /// Each side's margin: the page's, and its share of the spare width.
+    pub inset: Pixels,
+}
+
+impl TileColumns {
+    /// A tile's side, in points.
+    pub const SIDE: f32 = 160.0;
+    /// The least gap between tiles in a row.
+    pub const MIN_GAP: f32 = 18.0;
+
+    /// The columns for a list `width` wide with `margin` at either side.
+    /// Narrower than one tile, the one tile shrinks to fit.
+    pub fn for_width(width: Pixels, margin: Pixels) -> Self {
+        let margin = f32::from(margin);
+        let usable = (f32::from(width) - 2.0 * margin).max(1.0);
+        let columns =
+            (((usable + Self::MIN_GAP) / (Self::SIDE + Self::MIN_GAP)).floor() as usize).max(1);
+        let side = Self::SIDE.min(usable.floor());
+        let spare =
+            (usable - side * columns as f32 - Self::MIN_GAP * (columns as f32 - 1.0)).max(0.0);
+        // The gaps between columns and the two margins share the spare width.
+        let share = spare / (columns as f32 + 1.0);
+        Self {
+            columns,
+            side: px(side),
+            gap: px(if columns > 1 {
+                Self::MIN_GAP + share
+            } else {
+                0.0
+            }),
+            inset: px(margin + if columns > 1 { share } else { spare / 2.0 }),
+        }
+    }
+}
+
 /// A record heading's sleeve at 100 %, the Mac queue's.
 const HEADING_SLEEVE: f32 = 52.0;
 

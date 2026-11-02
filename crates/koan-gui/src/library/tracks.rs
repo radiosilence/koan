@@ -36,6 +36,14 @@ struct Query {
     sort: TrackBrowseSort,
 }
 
+/// The browser's listing as it last stood, whole, for the next visit
+/// (`Lib::kept`).
+struct KeptTracks {
+    tracks: Vec<Track>,
+    total: u64,
+    loaded: (Query, u64),
+}
+
 pub struct TrackBrowser {
     lib: Lib,
     tracks: Vec<Track>,
@@ -86,6 +94,16 @@ impl TrackBrowser {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
+                // Only a whole listing: one still being read is read afresh.
+                if this.tracks.len() as u64 == this.total
+                    && let Some(loaded) = this.loaded.take()
+                {
+                    this.lib.kept.put(KeptTracks {
+                        tracks: std::mem::take(&mut this.tracks),
+                        total: this.total,
+                        loaded,
+                    });
+                }
                 let offset = -this.scroll.0.borrow().base_handle.offset().y;
                 this.lib
                     .nav
@@ -98,11 +116,15 @@ impl TrackBrowser {
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter tracks", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), false, window, cx));
+        let (tracks, total, loaded) = match lib.kept.take::<KeptTracks>() {
+            Some(k) => (k.tracks, k.total, Some(k.loaded)),
+            None => (Vec::new(), 0, None),
+        };
         let mut this = Self {
             lib,
-            tracks: Vec::new(),
-            total: 0,
-            loaded: None,
+            tracks,
+            total,
+            loaded,
             loading: None,
             stale: false,
             request: 0,
@@ -121,6 +143,16 @@ impl TrackBrowser {
             waits: 0,
             _subscriptions: subscriptions,
         };
+        // A kept listing draws at once, where the last visit left it.
+        if this.loaded.is_some()
+            && let Some(y) = this.restore.take()
+        {
+            this.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.0), -y));
+        }
         this.reload(cx);
         this
     }
@@ -472,7 +504,12 @@ impl Render for TrackBrowser {
         let last = (((offset + viewport) / row).ceil() as usize).min(self.total as usize);
         let first = ((offset / row).floor() as usize).min(last);
         self.aim(first..last, window, cx);
-        let body = if self.total == 0 && self.loaded.is_some() {
+        // Until its first listing lands the page draws nothing, then header,
+        // total and rows together.
+        let held = self.loaded.is_none();
+        let body = if held {
+            div().into_any_element()
+        } else if self.total == 0 {
             chrome::empty_state(
                 crate::theme::Icon::Track,
                 if narrowed {
@@ -515,7 +552,7 @@ impl Render for TrackBrowser {
             .flex()
             .flex_col()
             .typeset(p, Type::Body, p.ink)
-            .child(header)
+            .when(!held, |d| d.child(header))
             .child(actions::list_menu(
                 div()
                     .id("track-list")

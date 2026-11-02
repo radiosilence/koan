@@ -85,6 +85,13 @@ struct Heading {
     viewport: f32,
 }
 
+/// The grid's listing as it last stood, for the next visit (`Lib::kept`).
+struct KeptAlbums {
+    records: Rc<Vec<Rc<Record>>>,
+    order: Vec<Playable>,
+    loaded: (Query, u64),
+}
+
 pub struct AlbumGrid {
     lib: Lib,
     /// The listing, as its tiles draw it.
@@ -147,6 +154,13 @@ impl AlbumGrid {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
+                if let Some(loaded) = this.loaded.take() {
+                    this.lib.kept.put(KeptAlbums {
+                        records: this.records.clone(),
+                        order: std::mem::take(&mut this.order),
+                        loaded,
+                    });
+                }
                 let offset = px(this.heading.borrow().offset);
                 this.lib
                     .nav
@@ -159,13 +173,17 @@ impl AlbumGrid {
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter albums", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
+        let (records, order, loaded) = match lib.kept.take::<KeptAlbums>() {
+            Some(k) => (k.records, k.order, Some(k.loaded)),
+            None => (Rc::new(Vec::new()), Vec::new(), None),
+        };
         let mut this = Self {
             lib,
-            records: Rc::new(Vec::new()),
+            records,
             tiles: Tiles::default(),
             aimed: None,
-            order: Vec::new(),
-            loaded: None,
+            order,
+            loaded,
             loading: None,
             request: 0,
             _load: None,
@@ -188,6 +206,16 @@ impl AlbumGrid {
             waits: 0,
             _subscriptions: subscriptions,
         };
+        // A kept listing draws at once, where the last visit left it.
+        if this.loaded.is_some()
+            && let Some(y) = this.restore.take()
+        {
+            this.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.0), -y));
+        }
         this.reload(cx);
         this
     }
@@ -482,7 +510,7 @@ impl AlbumGrid {
         div()
             .flex()
             .gap(grid.gap)
-            .px(grid.margin)
+            .px(grid.inset)
             .h(grid.row)
             .children(tiles)
             .into_any_element()
@@ -516,7 +544,10 @@ impl AlbumGrid {
     /// top, rather than the pixel offset, which would land in another band
     /// of records.
     fn relayout(&mut self, grid: Grid) {
-        if let Some(old) = self.grid {
+        // Only the room between tiles moved: every row is where it was.
+        if let Some(old) = self.grid
+            && !old.same_rows(&grid)
+        {
             let top = (self.heading.borrow().offset - f32::from(old.margin)).max(0.0);
             let first = (top / f32::from(old.row)) as usize * old.columns;
             let row = first / grid.columns;
@@ -809,8 +840,12 @@ impl Render for AlbumGrid {
         .absolute()
         .size_full();
 
+        // Until its first listing lands the page draws nothing, then header,
+        // total and tiles together: nothing pops in after the rest.
+        let held = self.loaded.is_none();
         let body = match self.grid {
-            _ if count == 0 && self.loaded.is_some() => chrome::empty_state(
+            _ if held => div().into_any_element(),
+            _ if count == 0 => chrome::empty_state(
                 crate::theme::Icon::Album,
                 if narrowed {
                     "nothing matches"
@@ -851,7 +886,7 @@ impl Render for AlbumGrid {
             .flex()
             .flex_col()
             .typeset(p, Type::Body, p.ink)
-            .child(header)
+            .when(!held, |d| d.child(header))
             .child(actions::list_menu(
                 div()
                     .id("album-grid")

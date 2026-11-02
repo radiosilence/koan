@@ -221,6 +221,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `remote/downloads.rs` | The download store, owned by `SharedPlayerState`: the one table of transfers, keyed by track, with every queue entry waiting on each. `settle` is the one way a transfer's end is told |
 | `upnp/` | Playing to UPnP/DLNA MediaRenderers. SSDP discovery, SOAP, GENA, DIDL-Lite, the tokenised HTTP listener renderers fetch from, and `stream.rs`, which encodes a processed session for one. Hand-rolled on std threads; an event is a reason to ask the renderer where it is, never a reading |
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
+| `places.rs` | Where a front end keeps runtime files outside the config directory: the platform's state, runtime and cache directories under `koan/<key>`, the key naming the config directory, and `adopt` for moving an earlier version's files there |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers/` | Shared by every front end, one module per concern and re-exported as `helpers::*`: `sign_in`, `watch` (folder watching, auto-sync), `sync`, `library` (rebuild, forget-folder/forget-remote), `cache`, `download`, `favourites`, `shares`, `playlist_items`, `credits` (credits and whether a row names its artists), `runs` (which rows are one record), `text` |
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export. Read-only playlists (smart ones here, `readonly` ones there) are never pushed |
@@ -284,7 +285,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
 | `levels.rs` | The playing bars: one analyser subscription while any bar is on screen; rows draw a slot and each window's root paints the bars over its cached content, so a frame redraws the root alone |
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
-| `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `<config dir>/desktop-window` |
+| `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `desktop-window` in the configuration's state directory (`places::state`) |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `koan-kit: theme/mod.rs` | `KoanTheme` (text size, "show icons"), `AccentFeed` (the accent settling; cached views that draw it call `observe_accent`), `Look::of(window, cx)` (a window's appearance and tokens), `KoanStyled::text_role`, `drive` for a window's root, Reduce Motion read from the system, gpui-component's theme dressed in the tokens for its `Input` |
@@ -303,7 +304,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `library/activity.rs` | The Library menu's tasks (rescan, force rescan, rebuild the index, sync) and the rows at the sidebar's foot showing each one running: progress from a `ProgressReporter` for scans started here and from the `Tasks` and `Sync` slices otherwise; scans can be stopped |
 | `library/stage.rs` | The library's part of the stage, for the shell: the page for an album, artist or track route, and a track's details over it |
 | `library/nav.rs` | Each listing's scroll and anchor, and the track whose details are open, kept beside the navigator, which every move goes to |
-| `library/covers.rs` | Library artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/covers.rs` | Library artwork: bytes on disk once per record (the platform cache, per configuration for any but the person's own), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
 | `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
 | `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
 | `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
@@ -311,7 +312,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
 | `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
 | `library/selection.rs` | Picking several things to play together, in tick order |
-| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
+| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` in the state directory by a writer thread |
 | `library/feed.rs` | The slices the library pages read (library version, playing record, transfers, favourites, playlists, connection), to be replaced by `mirror.rs` |
 | `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
 
@@ -330,6 +331,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
+| `platform/runtime_files.rs` | The app's runtime files (window and browse state, the desktop device's id and devices, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
 
 `vendor/` holds patched copies of GPUI's macOS and Linux backends, so an idle window stops waking at every display refresh (#1609); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
