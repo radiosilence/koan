@@ -74,7 +74,7 @@ impl ArtistBrowser {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(point(Pixels::ZERO, -y));
         }
     }
 
@@ -418,7 +418,7 @@ impl Render for ArtistBrowser {
                     .id("artist-list")
                     .flex_1()
                     .min_h_0()
-                    .pt(px(10.0))
+                    .pt(p.look.spaced(10.0))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
