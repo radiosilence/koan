@@ -96,6 +96,13 @@ impl Nav {
         self.offsets.insert(page, offset);
     }
 
+    /// The page opens at its top next time: a shelf's "see all" opens its
+    /// listing from the start.
+    pub fn forget_place(&mut self, page: Page) {
+        self.offsets.remove(&page);
+        self.anchors.remove(&page);
+    }
+
     pub fn anchor(&self, page: Page) -> Option<Anchor> {
         self.anchors.get(&page).copied()
     }

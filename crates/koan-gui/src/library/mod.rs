@@ -1,5 +1,5 @@
-//! The library: the album, artist and track browsers, and the pages of a
-//! record and an artist.
+//! The library: the album, artist and track browsers, the pages of a record
+//! and an artist, and the shelves.
 
 pub mod actions;
 pub mod activity;
@@ -21,6 +21,7 @@ pub mod nav;
 pub mod playlist;
 pub mod rows;
 pub mod selection;
+pub mod shelf;
 pub mod stage;
 pub mod tile;
 pub mod tokens;
@@ -76,6 +77,8 @@ pub struct Lib {
     pub covers: Entity<covers::Covers>,
     pub nav: Entity<nav::Nav>,
     pub browse: Entity<browse::Browse>,
+    /// The sidebar's search, whose results page is a shelf.
+    pub search: Entity<crate::search::Search>,
     /// Set while the album grid's benchmark counts its tiles.
     pub bench: Option<bench::Shared>,
     pub kept: Kept,
@@ -93,6 +96,7 @@ impl Lib {
     ) -> Self {
         let feed = cx.new(|cx| feed::Feed::new(engine.clone(), cx));
         let covers = cx.new(|cx| covers::Covers::new(engine.clone(), cx));
+        let search = cx.new(|_| crate::search::Search::new(engine.clone(), navigator.clone()));
         let nav = cx.new(|cx| nav::Nav::new(navigator, cx));
         let browse = cx.new(|_| browse);
 
@@ -101,11 +105,13 @@ impl Lib {
         // and a server coming back may answer what it failed to.
         let seen = Rc::new(Cell::new((None, 0)));
         let watched = covers.clone();
+        let searched = search.clone();
         cx.observe(&feed, move |feed, cx| {
             let (version, epoch) = {
                 let feed = feed.read(cx);
                 (feed.library_version, feed.connection_epoch)
             };
+            searched.update(cx, |s, cx| s.library_changed(version, cx));
             let (last_version, last_epoch) = seen.replace((version, epoch));
             watched.update(cx, |covers, cx| {
                 if version != last_version && last_version.is_some() {
@@ -124,6 +130,7 @@ impl Lib {
             covers,
             nav,
             browse,
+            search,
             bench,
             kept: Kept::default(),
         }

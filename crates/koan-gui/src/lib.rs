@@ -20,6 +20,7 @@ pub mod paint;
 pub mod platform;
 pub mod queue;
 pub mod root;
+pub mod search;
 pub mod server_banner;
 pub mod session;
 pub mod settings;
