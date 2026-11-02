@@ -305,17 +305,21 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .border_color(look.accent.hsla())
         .child(
             canvas(
-                |bounds, _, cx| cx.default_global::<CursorAt>().0 = Some(bounds),
+                |bounds, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
+                }
                 |_, _, _, _| {},
             )
             .size_full(),
         )
 }
 
-/// Where the keyboard's cursor ring was last drawn: what the menu key opens
-/// a context menu under.
+/// Where the keyboard's cursor ring was drawn, and in which window: what the
+/// menu key opens a context menu under. The key clears it and lets a frame
+/// draw, so only a ring drawn in that frame counts.
 #[derive(Default)]
-pub(crate) struct CursorAt(pub Option<Bounds<Pixels>>);
+pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
 
 impl Global for CursorAt {}
 

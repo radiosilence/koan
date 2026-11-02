@@ -641,14 +641,27 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 open(event.position, window, cx)
             })
-            // The menu key: under the keyboard's cursor, or at the pointer
-            // where none has been drawn.
+            // The menu key: under the keyboard's cursor as the next frame
+            // draws it (the list has revealed the cursor's item, and the key
+            // makes the keyboard the last input, which shows the ring), or
+            // at the pointer where no ring is drawn in that frame. The first
+            // callback runs before that frame draws, the second after it.
             .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
-                let at = cx
-                    .try_global::<super::CursorAt>()
-                    .and_then(|c| c.0)
-                    .map_or_else(|| window.mouse_position(), |b| b.bottom_left());
-                by_key(at, window, cx)
+                cx.default_global::<super::CursorAt>().0 = None;
+                window.refresh();
+                let by_key = by_key.clone();
+                window.on_next_frame(move |window, _| {
+                    window.refresh();
+                    window.on_next_frame(move |window, cx| {
+                        let id = window.window_handle().window_id();
+                        let at = cx
+                            .try_global::<super::CursorAt>()
+                            .and_then(|c| c.0)
+                            .filter(|(drawn, _)| *drawn == id)
+                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        by_key(at, window, cx)
+                    });
+                });
             });
         if let Some((at, menu)) = shown {
             this = this.child(

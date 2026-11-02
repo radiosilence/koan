@@ -596,6 +596,8 @@ impl QueueView {
             return div().into_any_element();
         }
         let selected = self.is_selected(row, cx);
+        let cursor = self.focus.is_focused(window)
+            && self.cursor.as_ref().and_then(|r| self.row_of(r, cx)) == Some(row);
         // The insertion line keeps the accent over a picked row.
         let insertion = p.accent;
         let p = &p.picked(selected);
@@ -701,6 +703,7 @@ impl QueueView {
         let view = cx.entity();
         row_frame
             .selected(selected)
+            .cursor(cursor)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })
@@ -1534,6 +1537,11 @@ impl Render for QueueView {
             .capture_action(cx.listener(
                 |this, _: &crate::components::list_actions::ShowMenu, _, cx| {
                     this.menu_row = this.cursor.as_ref().and_then(|r| this.row_of(r, cx));
+                    // On screen, so the menu opens over it.
+                    if let Some(row) = this.menu_row {
+                        this.list.reveal(row);
+                        cx.notify();
+                    }
                 },
             ))
             .on_action(cx.listener(Self::play_selected))
