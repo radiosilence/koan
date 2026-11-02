@@ -18,6 +18,7 @@ pub mod format;
 pub mod header;
 pub mod info;
 pub mod nav;
+pub mod playlist;
 pub mod rows;
 pub mod selection;
 pub mod stage;

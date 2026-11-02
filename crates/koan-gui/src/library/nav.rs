@@ -66,6 +66,11 @@ impl Nav {
         }
     }
 
+    /// The window's navigator, for links that lead from a page's rows.
+    pub fn navigator(&self) -> Entity<Navigator> {
+        self.navigator.clone()
+    }
+
     pub fn current(&self, cx: &App) -> Page {
         self.navigator.read(cx).current()
     }

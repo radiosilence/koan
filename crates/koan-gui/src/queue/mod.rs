@@ -13,17 +13,13 @@ use std::collections::{HashMap, HashSet};
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{ListAlignment, ListOffset, ListState, list};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, px};
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::ListScrollEvent;
+// the colour a row part is drawn in, chosen from the theme by the caller.
+use koan_kit::raw::Hsla;
 
 use crate::components::{
     Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle, KoanContextMenu, Menu, MenuEntry,
-    MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind, RowMetrics, TableRow,
-    ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarSelection,
+    MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind, RowList, RowListState, RowMetrics,
+    RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -119,7 +115,7 @@ impl Render for DragPreview {
 pub struct QueueView {
     queue: Entity<Queue>,
     focus: FocusHandle,
-    list: ListState,
+    list: RowListState,
     /// The `Queue::whole` the list was last reset for.
     whole: u64,
     /// Picked queue items. A heading reads as picked when its whole run is.
@@ -178,7 +174,7 @@ impl QueueView {
                 let rewinds = nav.read(cx).rewinds(Route::Queue);
                 if rewinds != this.rewinds {
                     this.rewinds = rewinds;
-                    this.list.scroll_to(ListOffset::default());
+                    this.list.scroll_to_top();
                     // Held now, not at the next paint: a queue sent whole in
                     // between must keep the top, not the row left behind.
                     this.top = None;
@@ -188,11 +184,10 @@ impl QueueView {
         ];
         // The list calls this as it scrolls, with its own state held, so the
         // handler reads the queue and never the list.
-        let list = ListState::new(0, ListAlignment::Top, px(400.));
+        let list = RowListState::new();
         let weak = cx.weak_entity();
-        list.set_scroll_handler(move |event: &ListScrollEvent, _, cx| {
-            weak.update(cx, |this, cx| this.keep_top(event.visible_range.start, cx))
-                .ok();
+        list.on_scroll(move |start, _, cx| {
+            weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
         });
         let mut view = Self {
             queue,
@@ -260,14 +255,13 @@ impl QueueView {
         let queue = self.queue.read(cx);
         self.whole = queue.whole;
         self.selected.retain(|id| queue.at.contains_key(id));
-        let top = self.list.logical_scroll_top();
+        let top = self.list.top();
         // A hint for the rows not yet measured, so the scrollbar is sized for
         // the whole queue from the first frame.
-        self.list
-            .reset_with_uniform_height(queue.rows.len(), RowMetrics::estimate(RowKind::Text));
+        self.list.reset(queue.rows.len(), RowKind::Text);
         let kept = self.top.take();
         let landing = match kept.and_then(|(r, at)| Some((self.row_of(&r, cx)?, at))) {
-            Some((row, at)) => ListOffset {
+            Some((row, at)) => RowOffset {
                 item_ix: row,
                 // The offset into the row belongs to it only if it is still
                 // the row the list was at.
@@ -278,7 +272,7 @@ impl QueueView {
                 },
             },
             // The row is gone: stay at the same place in the list.
-            None => ListOffset {
+            None => RowOffset {
                 item_ix: top.item_ix,
                 offset_in_item: Pixels::ZERO,
             },
@@ -468,7 +462,7 @@ impl QueueView {
         } else {
             self.select_only(to, cx);
         }
-        self.list.scroll_to_reveal_item(to);
+        self.list.reveal(to);
         cx.notify();
     }
 
@@ -646,6 +640,7 @@ impl QueueView {
                     nav: &self.nav,
                     row: &id,
                     picked: selected,
+                    waiting: true,
                 };
                 let frame = heading(
                     TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
@@ -664,6 +659,7 @@ impl QueueView {
                     nav: &self.nav,
                     row: &id,
                     picked: selected,
+                    waiting: true,
                 };
                 let item = &queue.items[ix];
                 let numbering = Numbering {
@@ -852,7 +848,12 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
     )
 }
 
-fn line(content: impl Into<SharedString>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
+pub(crate) fn line(
+    content: impl Into<SharedString>,
+    role: TypeRole,
+    color: Hsla,
+    p: &Paint,
+) -> Div {
     div()
         .min_w_0()
         .truncate()
@@ -863,7 +864,7 @@ fn line(content: impl Into<SharedString>, role: TypeRole, color: Hsla, p: &Paint
 
 /// A record's run as its heading sums it up: the year, how many tracks, how
 /// long, and the codec where the run has one.
-fn detail(run: &[QueueItem]) -> String {
+pub(crate) fn detail(run: &[QueueItem]) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(year) = run[0].year.as_ref().filter(|y| !y.is_empty()) {
         parts.push(year.clone());
@@ -899,12 +900,15 @@ fn glyph(icon: Icon, word: &'static str, role: TypeRole, color: Hsla, p: &Paint)
 
 /// What every part of one row draws with: the look, where links lead, and
 /// the row's own id, which names its parts.
-struct Look<'a> {
-    p: &'a Paint,
-    nav: &'a Entity<Navigator>,
-    row: &'a SharedString,
+pub(crate) struct Look<'a> {
+    pub p: &'a Paint,
+    pub nav: &'a Entity<Navigator>,
+    pub row: &'a SharedString,
     /// Picked: drawn in `on_selection`, which `p` already is.
-    picked: bool,
+    pub picked: bool,
+    /// Rows of the queue mark a track waiting to play; a playlist's rows
+    /// are not waiting for anything.
+    pub waiting: bool,
 }
 
 impl Look<'_> {
@@ -916,18 +920,18 @@ impl Look<'_> {
 /// How a track row numbers itself: by disc and track on a record with a
 /// second disc, and wider wherever any record in the queue does.
 #[derive(Clone, Copy)]
-struct Numbering {
-    by_disc: bool,
-    wide: bool,
+pub(crate) struct Numbering {
+    pub by_disc: bool,
+    pub wide: bool,
 }
 
 /// A track row's heart and transfer.
-struct Extras {
+pub(crate) struct Extras {
     /// `None` for a track the library does not hold, or before it loads.
-    favourite: Option<bool>,
-    feed: Option<Entity<Feed>>,
+    pub favourite: Option<bool>,
+    pub feed: Option<Entity<Feed>>,
     /// How far the transfer has come, when the server said how big.
-    progress: Option<f64>,
+    pub progress: Option<f64>,
 }
 
 fn link(
@@ -949,7 +953,7 @@ fn credit(parts: &[CreditPart], fallback: &str, part: &str, look: &Look) -> Vec<
     )
 }
 
-fn heading(
+pub(crate) fn heading(
     row: TableRow,
     first: &QueueItem,
     detail: String,
@@ -980,7 +984,7 @@ fn heading(
         .line(line(detail, TypeRole::Fine, p.muted, p))
 }
 
-fn track(
+pub(crate) fn track(
     row: TableRow,
     item: &QueueItem,
     grouped: bool,
@@ -1052,9 +1056,10 @@ fn track(
                 p.bad,
                 p,
             )),
-            EntryStatus::Queued | EntryStatus::Downloading => d.when(p.look.icons, |d| {
-                d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
-            }),
+            EntryStatus::Queued | EntryStatus::Downloading => d
+                .when(p.look.icons && look.waiting, |d| {
+                    d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
+                }),
         });
     let row = row.lead(if p.look.icons { MARK } else { MARK_WORD }, mark);
     let row = if grouped {
@@ -1172,7 +1177,7 @@ impl QueueView {
     /// Scrolls to the playing row, if there is one.
     fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
         if let Some((_, row)) = self.playing_row(cx) {
-            self.list.scroll_to_reveal_item(row);
+            self.list.reveal(row);
             cx.notify();
         }
     }
@@ -1193,7 +1198,7 @@ impl QueueView {
         if self.following {
             self.following = false;
         } else if let Some((id, row)) = self.playing_row(cx) {
-            self.list.scroll_to_reveal_item(row);
+            self.list.reveal(row);
             self.following = true;
             self.followed = Some(id);
         }
@@ -1210,7 +1215,7 @@ impl QueueView {
             None => self.following = false,
             Some((id, row)) => {
                 if self.followed.as_ref() != Some(&id) {
-                    self.list.scroll_to_reveal_item(row);
+                    self.list.reveal(row);
                     self.followed = Some(id);
                 }
             }
@@ -1396,7 +1401,7 @@ impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         self.readings = None;
-        let top = self.list.logical_scroll_top().item_ix;
+        let top = self.list.top().item_ix;
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
         let view = cx.entity();
@@ -1428,7 +1433,7 @@ impl Render for QueueView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &TopOfQueue, _, cx| {
-                this.list.scroll_to(ListOffset::default());
+                this.list.scroll_to_top();
                 this.top = None;
                 cx.notify();
             }))
@@ -1489,17 +1494,10 @@ impl Render for QueueView {
                     .into_any_element()
             } else {
                 let view = view.clone();
-                div()
-                    .size_full()
-                    .child(
-                        list(self.list.clone(), move |row, window, cx| {
-                            view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
-                        })
-                        .size_full(),
-                    )
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.list))
-                    .into_any_element()
+                RowList::new(&self.list, move |row, window, cx| {
+                    view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
+                })
+                .into_any_element()
             }))
             .koan_context_menu("queue-menu", window, cx, {
                 let view = view.clone();
