@@ -231,9 +231,15 @@ impl RowMetrics {
 
     /// A page's margin on every side, and what a row's content is inset by
     /// so it lines up under the page's header. One figure, so the page's
-    /// edge is tuned in one place; 16 for now, where the spec gives 32.
+    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     pub fn page_margin(look: &Look) -> Pixels {
-        look.space(Space::L)
+        Self::page_margin_on(&look.scale)
+    }
+
+    /// `page_margin` for a layout that has the scale and not the look: a
+    /// tile grid working out its columns.
+    pub fn page_margin_on(scale: &Scale) -> Pixels {
+        px(Space::L.points() * scale.space)
     }
 
     /// Above a page's header: the page's margin, as the spec has it on
@@ -312,7 +318,7 @@ impl TileGrid {
     /// The grid of a page `width` wide: the page's margin clear at each
     /// side, so the grid's edge is the header's and the rows'.
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        Self::inside(width, px(Space::Xxl.points() * scale.space), scale)
+        Self::inside(width, RowMetrics::page_margin_on(scale), scale)
     }
 
     /// Whether `other` places the rows as this does: the same columns and
