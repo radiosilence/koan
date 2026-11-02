@@ -31,6 +31,28 @@ pub enum Route {
     Artist(i64),
 }
 
+impl Route {
+    /// A route by name, for tools that open the app somewhere: `albums`,
+    /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`.
+    pub fn named(name: &str) -> Option<Route> {
+        let id = |s: &str| s.parse::<i64>().ok();
+        match name.split_once(':') {
+            Some(("album", n)) => id(n).map(Route::Album),
+            Some(("artist", n)) => id(n).map(Route::Artist),
+            _ => match name {
+                "queue" => Some(Route::Queue),
+                "albums" => Some(Route::Albums),
+                "artists" => Some(Route::Artists),
+                "tracks" => Some(Route::Tracks),
+                "favourites" => Some(Route::Favourites),
+                "recent" => Some(Route::RecentlyPlayed),
+                "downloaded" => Some(Route::OnDevice),
+                _ => None,
+            },
+        }
+    }
+}
+
 /// What choosing a route did.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Chosen {

@@ -13,7 +13,8 @@
 //! neither announces a device nor takes the devices port.
 //!
 //! Each pass prints the queue row at the top of the list as it ends, so the
-//! numbers carry proof that the list moved.
+//! numbers carry proof that the list moved. `KOAN_GUI_ROUTE` (a
+//! `Route::named` name) opens the app on another page to measure it instead.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
