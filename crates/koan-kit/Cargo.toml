@@ -9,10 +9,16 @@ publish = false
 
 [features]
 profiler = ["gpui-kit/profiler"]
+# GPUI's Metal shaders compiled when the app starts rather than when it is
+# built: a build then needs the Command Line Tools, not Xcode's Metal
+# toolchain. For development; releases compile them ahead, as by default.
+runtime-shaders = ["dep:gpui_platform", "gpui_platform/runtime_shaders"]
 test-support = ["gpui-kit/test-support"]
 
 [dependencies]
 gpui-kit = "0.8.1"
+# Named only for `runtime-shaders`: gpui-kit reaches it already.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", optional = true }
 # The wash's bake and the accent's sampling, in the version GPUI builds
 # against; PNG for the theme sheet's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }

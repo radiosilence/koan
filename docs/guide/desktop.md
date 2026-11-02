@@ -43,8 +43,10 @@ What the app writes as it runs stays out of the configuration directory, which m
 ## Running a build from source
 
 ```bash
-KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
+KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui --features runtime-shaders
 ```
+
+On a Mac, `runtime-shaders` has GPUI compile its Metal shaders when the app starts, so the Command Line Tools are enough to build it (`just gui-run` turns it on). Without it the shaders are compiled with the app, which needs Xcode's Metal toolchain; releases are built that way.
 
 A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
 

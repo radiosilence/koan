@@ -2,6 +2,8 @@
 
 Copies of published crates carried with patches until the patches are taken upstream. Each is wired in through `[patch.crates-io]` in the workspace `Cargo.toml` and excluded from the workspace, so it builds under its own settings and `cargo fmt --all` leaves it alone. Every change to a copy is marked with a `KOAN:` comment; `grep -rn KOAN: vendor/` lists them.
 
+`vendor/patches/<crate>.patch` is each copy's change from its crates.io release, and what is reviewed and carried forward; the copies stay committed so a build needs nothing more. A copy is its release, without `Cargo.lock`, examples or benches, plus its patch, and CI checks that it is (`just vendor-gpui-check`). After editing a vendored file, `just vendor-gpui-patches` writes the patches again; commit both.
+
 ## What is carried
 
 | Crate | Version | Patches |
@@ -31,4 +33,4 @@ GPUI's macOS and X11 backends ask for a frame on every display refresh for as lo
 - **macOS** (`gpui-pre-macos/src/window.rs`, `display_link.rs`): the window's display link parks after three frames no one asked for. `frame_waker` and `schedule_frame` only signal a main-queue dispatch source, since GPUI can call them while the window's state is locked; its handler restarts a parked link. Visibility still starts and stops the link as before. After herdr-app's patch for gpui-pre-macos 0.3.8.
 - **X11** (`gpui-pre-linux/src/linux/x11/client.rs`, `window.rs`): the refresh timer drops itself after three refreshes no one asked for and the window's refresh state becomes `Parked`. A window's waker sets a flag of its own and rings a calloop ping, so it never borrows the client's state; the ping's handler restarts the timers of parked, visible windows that asked for a frame.
 
-To move to a new GPUI release: copy the release's crates from `~/.cargo/registry/src/`, reapply every `KOAN:` hunk, and check that the release has not taken the change upstream already.
+To move to a new GPUI release, `just vendor-gpui <version>` fetches each crate's release from crates.io, checks it against the checksum the crates.io index records, and applies its patch. It stops at the first patch that does not apply, leaving `vendor/` as it was, and names the file and line. Reapply that crate's `KOAN:` hunks by hand against the release (drop any the release has taken upstream), run `just vendor-gpui-patches`, and move the pins in `Cargo.toml`.
