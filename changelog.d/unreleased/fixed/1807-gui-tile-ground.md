@@ -1,0 +1,1 @@
+- **The desktop app builds again.** A record tile read its state after handing it over.
