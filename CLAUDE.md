@@ -293,7 +293,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
 | `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `<config dir>/desktop-window` |
 | `time.rs` | A duration as a clock: `m:ss`, or `h:mm:ss` from an hour |
-| `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
+| `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `fling` flings the album grid to its end and back and prints the process's footprint at each stage; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `examples/` (others) | `settings_shot.rs` (each Settings pane to a PNG), `cold_covers.rs` (a screen of sleeves from a cold cache), `settings_frames.rs` and `slider_frames.rs` (offscreen frame times), `filter_check.rs`, and `gen_library.rs`, which `just gui-library` runs |
 | `koan-kit: app.rs` | The app model pages are written in: entities, contexts, views, events, actions, focus, tasks, `div` and its layout traits, and the platform services the app uses. What a page sizes, colours or draws by hand is not here |
@@ -320,7 +320,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/tokens.rs`, `library/format.rs` | The theme as the library pages draw it (`Paint`, text in a role); figures as the Mac app writes them |
 | `library/stage.rs` | The library's part of the stage, for the shell: the page for an album, artist or track route, and a track's details over it |
 | `library/nav.rs` | Each listing's scroll and anchor, and the track whose details are open, kept beside the navigator, which every move goes to |
-| `library/covers.rs` | Library artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/covers.rs` | Library artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size, held to what the lists ask for and a screen more, each eviction dropping the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
 | `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
 | `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
 | `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
@@ -329,7 +329,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
 | `library/selection.rs` | Picking several things to play together, in tick order |
 | `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
-| `library/feed.rs` | The slices the library pages read (library version, record and track playing, downloads by record, favourites), until `mirror.rs` replaces it |
+| `library/feed.rs` | What the library pages read, derived from `mirror.rs`'s slices (library version, record and track playing, downloads by record, connection), with the favourites and playlists read from the engine as the library moves |
 | `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
 
 `just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
