@@ -1439,7 +1439,7 @@ impl Render for QueueView {
             }))
             .on_action(cx.listener(|this, _: &EndOfQueue, _, cx| {
                 if let Some(last) = this.rows(cx).len().checked_sub(1) {
-                    this.list.scroll_to_reveal_item(last);
+                    this.list.reveal(last);
                     cx.notify();
                 }
             }))

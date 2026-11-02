@@ -20,10 +20,10 @@ use super::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag, PlaylistDrag};
 use crate::components::sheet::{Confirm, confirm, name};
 use crate::components::{
-    Badge, Button, ButtonKind, Cover, CoverArt, EmptyState, INSERTION, IconToggle, KoanContextMenu,
-    Menu, MenuEntry, MenuPanel, MenuRow, Mosaic, Page, PageHeader, PlayButton, RowKind, RowList,
-    RowListState, RowMetrics, RowOffset, ShuffleButton, TableRow, ToolbarButton, ToolbarGroup,
-    ToolbarMenu, ToolbarSelection,
+    Badge, Cover, CoverArt, EmptyState, INSERTION, IconToggle, KoanContextMenu, Menu, MenuEntry,
+    MenuPanel, MenuRow, Mosaic, Page, PageHeader, PlayButton, RowKind, RowList, RowListState,
+    RowMetrics, RowOffset, ShuffleButton, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
+    ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::command;
@@ -725,8 +725,10 @@ impl PlaylistPage {
             );
             if fillable {
                 selection = selection.action("playlist-remove", "remove", move |_, window, cx| {
-                    let entries = described(&remove.read(cx).selected_items());
-                    remove.read(cx).ask_remove(entries, window, cx);
+                    remove.update(cx, |this, cx| {
+                        let entries = described(&this.selected_items());
+                        this.ask_remove(entries, window, cx);
+                    });
                 });
             }
             controls = controls.child(selection).spacer();
@@ -800,7 +802,7 @@ impl PlaylistPage {
                             .disabled(!shufflable)
                             .on_click(move |_, window, cx| {
                                 c1(window, cx);
-                                shuffle.read(cx).ask_shuffle(window, cx);
+                                shuffle.update(cx, |this, cx| this.ask_shuffle(window, cx));
                             }),
                     )
                     .child(
@@ -808,7 +810,7 @@ impl PlaylistPage {
                             .disabled(!renamable)
                             .on_click(move |_, window, cx| {
                                 c2(window, cx);
-                                rename.read(cx).ask_rename(window, cx);
+                                rename.update(cx, |this, cx| this.ask_rename(window, cx));
                             }),
                     )
                     .child(MenuRow::new("playlist-export", "export as M3U8…").on_click(
@@ -820,7 +822,7 @@ impl PlaylistPage {
                     .child(MenuRow::new("playlist-delete", "delete…").on_click(
                         move |_, window, cx| {
                             c4(window, cx);
-                            delete.read(cx).ask_delete(window, cx);
+                            delete.update(cx, |this, cx| this.ask_delete(window, cx));
                         },
                     ))
             },
@@ -831,7 +833,7 @@ impl PlaylistPage {
         &mut self,
         row: usize,
         p: &Paint,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows.len();
@@ -1044,7 +1046,7 @@ fn row_menu(
         .icon(Icon::Remove)
         .on_click(move |_, window, cx| {
             if let Some(view) = view.upgrade() {
-                view.read(cx).ask_remove(entries.clone(), window, cx);
+                view.update(cx, |this, cx| this.ask_remove(entries.clone(), window, cx));
             }
         }),
     )
@@ -1054,15 +1056,21 @@ impl Render for PlaylistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         #[cfg(feature = "profiler")]
-        crate::measure::TOP.store(self.list.top().item_ix, std::sync::atomic::Ordering::Relaxed);
+        crate::measure::TOP.store(
+            self.list.top().item_ix,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if self.drop_at.is_some() && !cx.has_active_drag() {
             self.drop_at = None;
         }
         if self.loaded && self.playlist.is_none() {
-            return div().size_full().child(
-                EmptyState::new(Icon::Playlist, "playlist not found")
-                    .detail("It was deleted, here or on another device."),
-            );
+            return div()
+                .size_full()
+                .child(
+                    EmptyState::new(Icon::Playlist, "playlist not found")
+                        .detail("It was deleted, here or on another device."),
+                )
+                .into_any_element();
         }
         let count = self.rows.len();
         let fillable = self.fillable();
@@ -1149,6 +1157,7 @@ impl Render for PlaylistPage {
                 let view = view.clone();
                 move |menu, window, cx| row_menu(menu, &view, window, cx)
             })
+            .into_any_element()
     }
 }
 
