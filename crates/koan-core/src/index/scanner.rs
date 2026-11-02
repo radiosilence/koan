@@ -256,7 +256,15 @@ fn index_planned(
             result.incomplete = stopped;
             let prune = !found.audio.is_empty();
             // Its playlists wait for a scan that reads the tracks they name.
-            indexed.push((path, Vec::new(), Vec::new(), prune, seen, result));
+            indexed.push((
+                path,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                prune,
+                seen,
+                result,
+            ));
             continue;
         }
         // A folder with no audio is taken for one not mounted, as stale
@@ -281,7 +289,15 @@ fn index_planned(
         // A database that would not take one folder's writes is not asked
         // for the next one's.
         stopped |= result.incomplete;
-        indexed.push((path, found.playlists, settled, prune, seen, result));
+        indexed.push((
+            path,
+            found.playlists,
+            found.covers,
+            settled,
+            prune,
+            seen,
+            result,
+        ));
     }
 
     let arrived: Vec<i64> = indexed
@@ -290,7 +306,7 @@ fn index_planned(
         .collect();
     let incomplete = indexed.iter().any(|(.., result)| result.incomplete);
     let mut total = ScanResult::default();
-    for (path, playlists, settled, prune, seen, mut result) in indexed {
+    for (path, playlists, covers, settled, prune, seen, mut result) in indexed {
         // Stale removal decides what is missing by what the scan did *not*
         // see. After a cancellation that is most of the library, so it would
         // delete a library rather than tidy one; after lost writes, a file
@@ -309,6 +325,11 @@ fn index_planned(
         }
         if !result.cancelled {
             result.playlists += super::playlist_files::import(db, &playlists, &settled);
+        }
+        // Read in full and stored in full, or a missing image may be one the
+        // scan never reached.
+        if !settled.is_empty() && !result.cancelled && !result.incomplete {
+            super::cover_files::settle_root(&db.conn, &path, &covers);
         }
         merge(&mut total, result);
     }
@@ -383,6 +404,7 @@ pub fn scan_dirs(
 
     let mut files = Vec::new();
     let mut playlists = Vec::new();
+    let mut covers = Vec::new();
     let mut walked = Vec::new();
     let mut settled = Vec::new();
     // Library folders named whole, scanned as `scan_folders` scans them.
@@ -418,6 +440,7 @@ pub fn scan_dirs(
                 let found = walk(&dir, &mut result);
                 files.extend(found.audio);
                 playlists.extend(found.playlists);
+                covers.extend(found.covers);
                 walked.push(dir.clone());
                 if result.unreadable == before {
                     settled.push(dir);
@@ -472,6 +495,7 @@ pub fn scan_dirs(
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
         }
+        super::cover_files::settle_dir(&db.conn, dir, &covers);
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
     if result.added > 0 {
@@ -551,6 +575,8 @@ struct Walked {
     audio: Vec<PathBuf>,
     /// Playlist files: see `playlist_files`.
     playlists: Vec<PathBuf>,
+    /// Cover images beside the tracks: see `cover_files`.
+    covers: Vec<PathBuf>,
 }
 
 /// Every audio and playlist file under `path`. `follow_links` means a symlink
@@ -579,6 +605,9 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
             }
             Ok(e) if e.file_type().is_file() && is_playlist_file(e.path()) => {
                 found.playlists.push(e.path().to_path_buf())
+            }
+            Ok(e) if e.file_type().is_file() && super::folder_art::is_cover_file(e.path()) => {
+                found.covers.push(e.path().to_path_buf())
             }
             Ok(_) => {}
             Err(e) => {
@@ -1953,6 +1982,83 @@ mod tests {
             vec![("album".into(), album_id), ("track".into(), track_id)],
             "only the records under the folder rescanned"
         );
+    }
+
+    /// Where the folder watcher hears nothing, the full scans (start-up,
+    /// periodic, Rescan, forced) are what find a record's art changing: a
+    /// re-tagged file, and a cover image added, replaced or removed. The
+    /// first look only records the images, and nothing unchanged is named.
+    #[test]
+    fn full_scans_tell_the_apps_when_a_record_s_art_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let (album, other) = (music.join("Album"), music.join("Other"));
+        std::fs::create_dir_all(album.join("CD1")).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        test_utils::generate_wav(&album.join("CD1/a.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&other.join("b.wav"), 44100, 1, 0.2, 16);
+        std::fs::write(other.join("folder.png"), b"png").unwrap();
+        let db = test_db(dir.path());
+        let albums = |db: &Database| -> Vec<i64> {
+            db.conn
+                .prepare("SELECT id FROM art_evictions WHERE kind = 'album' ORDER BY seq")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let album_of = |db: &Database, name: &str| -> i64 {
+            db.conn
+                .query_row(
+                    "SELECT album_id FROM tracks WHERE path LIKE ?1",
+                    [format!("%/{name}")],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let clear = |db: &Database| db.conn.execute("DELETE FROM art_evictions", []).unwrap();
+        let scan = |db: &Database, force: bool| {
+            full_scan(
+                db,
+                std::slice::from_ref(&music),
+                ScanOptions {
+                    force,
+                    ..Default::default()
+                },
+                None,
+            )
+        };
+        scan(&db, false);
+        assert!(albums(&db).is_empty(), "the first look names nothing");
+        let (a, b) = (album_of(&db, "CD1/a.wav"), album_of(&db, "b.wav"));
+
+        scan(&db, false);
+        scan(&db, true);
+        assert!(albums(&db).is_empty(), "nothing changed: {:?}", albums(&db));
+
+        // An image added above a disc folder names the record in it.
+        std::fs::write(album.join("cover.jpg"), b"jpeg").unwrap();
+        scan(&db, false);
+        assert_eq!(albums(&db), [a]);
+        clear(&db);
+
+        // Replaced, as a longer file.
+        std::fs::write(album.join("cover.jpg"), b"another jpeg").unwrap();
+        scan(&db, false);
+        assert_eq!(albums(&db), [a]);
+        clear(&db);
+
+        // Removed.
+        std::fs::remove_file(other.join("folder.png")).unwrap();
+        scan(&db, false);
+        assert_eq!(albums(&db), [b]);
+        clear(&db);
+
+        // A re-tagged file, which a forced scan reads like any other.
+        test_utils::generate_wav(&other.join("b.wav"), 44100, 1, 0.3, 16);
+        scan(&db, true);
+        assert_eq!(albums(&db), [b]);
     }
 
     #[test]

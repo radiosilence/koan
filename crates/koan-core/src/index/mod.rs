@@ -1,3 +1,4 @@
+mod cover_files;
 pub mod folder_art;
 mod id3v2_pictures;
 pub mod lane;
