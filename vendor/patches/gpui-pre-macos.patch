@@ -71,6 +71,51 @@ index 8732bad..3283755 100644
  //! macOS platform implementation for GPUI.
  //!
  //! macOS screens have a y axis that goes up from the bottom of the screen and
+diff --git a/src/platform.rs b/src/platform.rs
+index 8fd2066..e22aed1 100644
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -189,6 +189,10 @@ pub(crate) struct MacPlatformState {
+     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
+     finish_launching: Option<Box<dyn FnOnce()>>,
+     dock_menu: Option<Retained<NSMenu>>,
++    // KOAN: where the Dock menu's actions sit in `menu_actions`, which an
++    // item's tag indexes: a new Dock menu replaces them rather than adding
++    // to them, so a menu rebuilt on every track change does not grow it.
++    dock_actions: Option<(usize, usize)>,
+     menus: Option<Vec<OwnedMenu>>,
+     keyboard_mapper: Rc<MacKeyboardMapper>,
+     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
+@@ -252,6 +256,7 @@ impl MacPlatform {
+             open_urls: None,
+             finish_launching: None,
+             dock_menu: None,
++            dock_actions: None,
+             on_keyboard_layout_change: None,
+             thermal_observer: None,
+             on_displays_changed: None,
+@@ -1141,10 +1146,20 @@ impl Platform for MacPlatform {
+     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
+         unsafe {
+             let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
+-            let mut state = self.0.lock();
++            let mut guard = self.0.lock();
++            let state = &mut *guard;
++            // KOAN: the last Dock menu's actions go, when nothing was added
++            // after them (the menu bar's would sit there).
++            if let Some((start, len)) = state.dock_actions.take()
++                && start + len == state.menu_actions.len()
++            {
++                state.menu_actions.truncate(start);
++            }
++            let start = state.menu_actions.len();
+             let actions = &mut state.menu_actions;
+             let delegate: *mut AnyObject = msg_send![app, delegate];
+             state.dock_menu = Some(self.create_dock_menu(menu, delegate, actions, keymap));
++            state.dock_actions = Some((start, state.menu_actions.len() - start));
+         }
+     }
+ 
 diff --git a/src/window.rs b/src/window.rs
 index f2208d3..049c73f 100644
 --- a/src/window.rs

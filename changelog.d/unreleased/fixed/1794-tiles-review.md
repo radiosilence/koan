@@ -1,0 +1,1 @@
+- **The playing track's title in the desktop app's Dock menu no longer pauses the music when clicked.** Covers fade in over their record's colour rather than flashing, and an artist whose photo has gone no longer holds an empty box in their header.

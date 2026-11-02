@@ -160,7 +160,11 @@ impl<V: TileHost> TileView<V> {
             origin: Rc::new(Cell::new(Point::default())),
             credit_widths: None,
             fade: None,
-            ground: None,
+            // Made on its colour, the sleeve then fades in over that.
+            ground: match &state.sleeve {
+                Sleeve::Colour(colour) => Some(*colour),
+                _ => None,
+            },
             _accent: crate::theme::observe_accent(cx),
         }
     }
@@ -224,7 +228,7 @@ impl<V: TileHost> TileView<V> {
         }
         self.fade = match (&self.state.sleeve, &state.sleeve) {
             (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade,
-            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::NORMAL => Some(*arrived),
+            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::ARRIVE => Some(*arrived),
             _ => None,
         };
         self.record = record.clone();
@@ -254,10 +258,11 @@ impl<V: TileHost> Render for TileView<V> {
             Sleeve::Ready(image, _) => {
                 let shown = match self.fade.filter(|_| KoanTheme::motion_allowed(cx)) {
                     Some(arrived) => {
-                        let t = arrived.elapsed().as_secs_f32() / Motion::NORMAL.as_secs_f32();
+                        let t = arrived.elapsed().as_secs_f32() / Motion::ARRIVE.as_secs_f32();
                         if t < 1.0 {
-                            // This tile alone, frame by frame, until it lands.
-                            cx.on_next_frame(window, |_, _, cx| cx.notify());
+                            // Frame by frame until it lands, asked as every
+                            // animation asks, so a scroll layer knows.
+                            window.request_animation_frame();
                             Motion::quick_out(t)
                         } else {
                             self.fade = None;
