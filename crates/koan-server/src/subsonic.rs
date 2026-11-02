@@ -3328,6 +3328,11 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
             match cover_tracks(&db, kind, id) {
                 Ok(groups) => {
                     drop(db);
+                    // None of its files to read: nothing is known, and
+                    // nothing kept.
+                    if !groups.iter().any(|tracks| crate::covers::readable(tracks)) {
+                        return None;
+                    }
                     Some(
                         groups
                             .iter()

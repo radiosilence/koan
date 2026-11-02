@@ -462,13 +462,25 @@ impl Covers {
                     break;
                 }
             };
-            if tracks.is_empty() {
+            // Files that cannot be read (a volume not mounted yet) say
+            // nothing about whether the album has art: nothing is kept, and
+            // the next pass tries again.
+            if !readable(&tracks) {
                 continue;
             }
-            // The source read once for every size wanted.
-            let source = self.source_art(&tracks);
+            // The first source that makes a cover, read once for every size
+            // wanted.
+            let mut sources = self.source_arts(&tracks);
+            let mut source = None;
             for size in wanted {
-                let art = DECODE.install(|| source.as_deref().and_then(|b| encode(b, size)));
+                let art = DECODE.install(|| match &source {
+                    Some(bytes) => encode(bytes, size),
+                    None => sources.find_map(|bytes| {
+                        let art = encode(&bytes, size)?;
+                        source = Some(bytes);
+                        Some(art)
+                    }),
+                });
                 used += art.as_ref().map_or(0, |a| a.len() as u64);
                 self.write_disk(&album_key(album, size), art.as_deref());
             }
@@ -539,14 +551,15 @@ impl Covers {
         art.map(Bytes::from)
     }
 
-    /// The art of the first of `tracks` that has any, as found: an image beside
-    /// it, or the art embedded in it. Unresized.
-    fn source_art(&self, tracks: &[TrackRow]) -> Option<Vec<u8>> {
+    /// The art of each of the first of `tracks` that has any, as found, read
+    /// as asked for: an image beside it, or the art embedded in it.
+    /// Unresized.
+    fn source_arts<'a>(&self, tracks: &'a [TrackRow]) -> impl Iterator<Item = Vec<u8>> + 'a {
         tracks
             .iter()
             .filter_map(|t| crate::subsonic::track_file_path(t).map(PathBuf::from))
             .take(TRACKS_TRIED)
-            .find_map(|p| match koan_core::index::folder_art::folder_cover(&p) {
+            .filter_map(|p| match koan_core::index::folder_art::folder_cover(&p) {
                 Some(image) => std::fs::read(image).ok(),
                 None => koan_core::index::metadata::extract_cover_art(&p),
             })
@@ -662,6 +675,17 @@ fn dir_bytes(dir: &Path) -> u64 {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+/// Whether any of `tracks`' files can be read: when none can (a volume not
+/// mounted, a download not landed), not finding art says nothing about the
+/// album, and is not remembered.
+pub(crate) fn readable(tracks: &[TrackRow]) -> bool {
+    tracks
+        .iter()
+        .filter_map(crate::subsonic::track_file_path)
+        .take(TRACKS_TRIED)
+        .any(|p| Path::new(&p).exists())
 }
 
 /// Hold `dir` to `budget` bytes, removing the covers read least recently
