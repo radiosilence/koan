@@ -144,8 +144,9 @@ pub struct QueueView {
     /// the crosshair, off by a scroll of the person's own or with nothing
     /// playing. For the session only.
     following: bool,
-    /// The queue item last brought into view while following.
+    /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
+    followed_row: Option<usize>,
     /// The transport is playing: the cursor's row moves its bars only then,
     /// and shows the play mark while paused or stopped.
     playing: bool,
@@ -215,6 +216,7 @@ impl QueueView {
             feed: None,
             following: false,
             followed: None,
+            followed_row: None,
             playing: cx.global::<Mirror>().playhead.read(cx).playing,
             _subscriptions: subscriptions,
         };
@@ -1192,23 +1194,29 @@ impl Focusable for QueueView {
 }
 
 impl QueueView {
-    /// Scrolls to the playing row, if there is one.
+    /// Scrolls to the playing row and follows it, as the crosshair does.
     fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
-        if let Some((_, row)) = self.playing_row(cx) {
+        if !self.following {
+            self.toggle_follow(cx);
+        } else if let Some((_, row)) = self.playing_row(cx) {
             self.list.reveal(row);
             cx.notify();
         }
     }
 
-    /// The playing item and its row.
+    /// The cursor's row: the track playing, or the one the player waits
+    /// on while it downloads or after it failed, which a row's status names
+    /// otherwise.
     fn playing_row(&self, cx: &App) -> Option<(String, usize)> {
-        let queue = self.queue.read(cx);
-        let item = queue
-            .items
-            .iter()
-            .find(|item| item.status == EntryStatus::Playing)?;
-        let row = *queue.track_rows.get(&item.queue_item_id)?;
-        Some((item.queue_item_id.clone(), row))
+        let id = cx
+            .global::<Mirror>()
+            .playback
+            .read(cx)
+            .0
+            .queue_item_id
+            .clone()?;
+        let row = *self.queue.read(cx).track_rows.get(&id)?;
+        Some((id, row))
     }
 
     /// The crosshair: jump to the playing track and follow it, or stop.
@@ -1219,6 +1227,7 @@ impl QueueView {
             self.list.reveal(row);
             self.following = true;
             self.followed = Some(id);
+            self.followed_row = Some(row);
         }
         cx.notify();
     }
@@ -1231,10 +1240,12 @@ impl QueueView {
         }
         match self.playing_row(cx) {
             None => self.following = false,
+            // Revealed when it changes, and when an edit moves it.
             Some((id, row)) => {
-                if self.followed.as_ref() != Some(&id) {
+                if self.followed.as_ref() != Some(&id) || self.followed_row != Some(row) {
                     self.list.reveal(row);
                     self.followed = Some(id);
+                    self.followed_row = Some(row);
                 }
             }
         }
@@ -1305,6 +1316,7 @@ impl QueueView {
                     },
                     self.following,
                 )
+                .disabled(count == 0)
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
@@ -1488,12 +1500,15 @@ impl Render for QueueView {
                 this.selected.clear();
                 cx.notify();
             }))
+            // Moving the view by hand stops following, as a scroll does.
             .on_action(cx.listener(|this, _: &TopOfQueue, _, cx| {
+                this.following = false;
                 this.list.scroll_to_top();
                 this.top = None;
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EndOfQueue, _, cx| {
+                this.following = false;
                 if let Some(last) = this.rows(cx).len().checked_sub(1) {
                     this.list.reveal(last);
                     cx.notify();

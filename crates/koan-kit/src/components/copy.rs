@@ -107,6 +107,7 @@ impl RenderOnce for CopyButton {
 pub struct CopyText {
     id: ElementId,
     value: SharedString,
+    help: Option<SharedString>,
 }
 
 impl CopyText {
@@ -114,7 +115,15 @@ impl CopyText {
         Self {
             id: id.into(),
             value: value.into(),
+            help: None,
         }
+    }
+
+    /// The tooltip, where "copy" does not say what is copied: "copy the
+    /// server's address".
+    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
+        self.help = Some(label(help.into()));
+        self
     }
 }
 
@@ -125,6 +134,7 @@ impl RenderOnce for CopyText {
         let copied = state.read(cx).copied;
         let ink = look.palette.ink.hsla();
         let value = self.value;
+        let help = self.help.unwrap_or_else(|| label("copy"));
         div()
             .id(self.id)
             .cursor_pointer()
@@ -140,7 +150,7 @@ impl RenderOnce for CopyText {
             } else {
                 value.clone()
             })
-            .tooltip(|window, cx| Tooltip::view(label("copy"), window, cx))
+            .tooltip(move |window, cx| Tooltip::view(help.clone(), window, cx))
             .on_click(move |_, _, cx| copy(&state, &value, cx))
     }
 }

@@ -252,7 +252,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### ProgressRow and StatusBlock (Mac: `ActivityIndicator`, `SidebarView`'s foot)
 
-`ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it.
+`ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it. A `link` line ("connected to …") opens what its tooltip names when clicked.
 
 ### Choice menus (Mac: the EQ's pop-up menus)
 

@@ -69,7 +69,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::{
     AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, Pixels, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};

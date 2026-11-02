@@ -18,7 +18,7 @@ pub use gpui_kit::{
     IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels,
     Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful,
-    StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowHandle,
+    StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowId,
     WindowVisibility, actions, div,
 };
 

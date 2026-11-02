@@ -186,16 +186,20 @@ impl RenderOnce for ProgressRow {
                 .child(text)
         };
         let stop = self.on_stop.map(|stop| {
+            // A glyph draws in its own colour, so the hover reaches it
+            // through the button's group: dim at rest, `muted` under the
+            // pointer.
+            let group = SharedString::from(format!("stop-{:?}", self.id));
             div()
                 .id((self.id.clone(), "stop"))
+                .group(group.clone())
                 .flex_none()
                 .cursor_pointer()
-                .text_color(muted.opacity(0.6))
-                .hover(move |s| s.text_color(muted))
                 .child(
                     KoanIcon::new(Icon::Deselect)
                         .role(TypeRole::Fine)
-                        .color(muted),
+                        .color(muted.opacity(0.6))
+                        .hover_color(group, muted),
                 )
                 .tooltip(|window, cx| {
                     super::Tooltip::view(

@@ -110,8 +110,8 @@ mod tests {
     use std::rc::Rc;
 
     use gpui_kit::{
-        AnyWindowHandle, Context, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-        MouseUpEvent, PlatformInput, Render, TestAppContext, point, px,
+        AnyWindowHandle, AppContext, Context, Modifiers, MouseButton, MouseDownEvent,
+        MouseMoveEvent, MouseUpEvent, PlatformInput, Render, TestAppContext, point, px,
     };
 
     use super::*;

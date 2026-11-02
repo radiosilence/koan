@@ -176,6 +176,9 @@ impl Render for LibraryPane {
                     .into_any_element(),
                 Button::new("rescan", ButtonKind::Bordered)
                     .label("Rescan Everything")
+                    .help(crate::theme::label(
+                        "Re-read every file's tags, ignoring the scan cache",
+                    ))
                     .disabled(scanning)
                     .on_click(move |_, _, cx| model_force.update(cx, |m, cx| m.scan(true, cx)))
                     .into_any_element(),
