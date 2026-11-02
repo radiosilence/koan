@@ -268,6 +268,28 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 `SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
 
+## Accessibility
+
+Every koan-kit component reports itself to the accessibility tree GPUI builds over AccessKit (VoiceOver, Orca, UI Automation), so a page made from the kit is read without code of its own. The tree is built only while assistive technology is attached, so this costs nothing otherwise. Each sets its role and name beside its id (`accessible` in `components/mod.rs`) and answers a reader's click with the handler a pointer would call (`answers_click`):
+
+| Component | Role, name and state |
+|---|---|
+| `Button`, `ToolbarButton`, `PlayButton`, `ShuffleButton` | Button, named by the label or a glyph's tooltip ("shuffle Hounds of Love") |
+| `Toggle`, `IconToggle` | Switch, toggled |
+| `Slider` (`named`), `Level` | Slider: the value, its range and step, and the low end's text as the value said ("1:00"); Increment and Decrement step it as the arrow keys do |
+| `Stepper` | SpinButton, with value, range and step; Increment and Decrement |
+| `Segmented` | RadioGroup of RadioButtons, selected, with their place in the set |
+| `Picker` | ComboBox, the choice as its value, expanded while open |
+| `MenuPanel`, `MenuRow` | Menu of MenuItems, a checkbox item where it ticks, its second line as the description |
+| `NavRow`, `NavHeading` | Link, selected where it is; Heading |
+| `PageHeader`'s title, `SectionHeading` | Heading, levels 1 and 2 |
+| `Badge` | Label |
+| `ProgressRow` | ProgressIndicator, with its share and its counts |
+| `EmptyState` | Group, named by what it says |
+| sheets' `panel`, `Viewer` | Dialog |
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree.
+
 ## Swift roles and their GPUI components
 
 | Swift (`KoanTheme.swift`, `Views/`) | GPUI |

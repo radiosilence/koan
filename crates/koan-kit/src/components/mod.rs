@@ -385,3 +385,28 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         .size_full()
         .into_any_element()
 }
+
+/// A control as a screen reader meets it: its role and its name. The tree
+/// is built only while assistive technology is attached, so this costs
+/// nothing otherwise. See docs/design/koan-kit.md, "Accessibility".
+pub(crate) fn accessible<E: StatefulInteractiveElement>(
+    element: E,
+    role: gpui_kit::Role,
+    name: Option<SharedString>,
+) -> E {
+    let element = element.role(role);
+    match name {
+        Some(name) => element.aria_label(name),
+        None => element,
+    }
+}
+
+/// Answers a screen reader's click as a pointer's would, with `handler`.
+pub(crate) fn answers_click<E: StatefulInteractiveElement>(
+    element: E,
+    handler: Handler<gpui_kit::ClickEvent>,
+) -> E {
+    element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
+        handler(&gpui_kit::ClickEvent::default(), window, cx)
+    })
+}

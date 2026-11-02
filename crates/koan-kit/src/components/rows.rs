@@ -7,7 +7,7 @@ use gpui_kit::{
     div,
 };
 
-use super::{Handler, child, fade, fill, transition};
+use super::{Handler, accessible, answers_click, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
@@ -106,13 +106,16 @@ impl RenderOnce for NavRow {
         );
         let on_click = self.on_click;
         let ink = look.palette.ink.hsla();
+        let name = self.label.clone();
         let label = div()
             .min_w_0()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
             .child(self.label);
-        self.base
+        // A link to a screen reader: to its place, selected where it is.
+        accessible(self.base, gpui_kit::Role::Link, Some(name))
+            .aria_selected(self.selected)
             .relative()
             .flex()
             .flex_none()
@@ -156,7 +159,8 @@ impl RenderOnce for NavRow {
                 ),
             })
             .when_some(on_click, |row, on_click| {
-                row.cursor_pointer()
+                answers_click(row, on_click.clone())
+                    .cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
     }
@@ -188,18 +192,25 @@ impl NavHeading {
 impl RenderOnce for NavHeading {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
-            .flex()
-            .flex_none()
-            .items_end()
-            .justify_between()
-            .pt(look.space(Space::L))
-            .pb(look.space(Space::Xs))
-            .px(look.space(Space::L))
-            .text_role(TypeRole::Fine, &look)
-            .text_color(look.palette.ink.hsla())
-            .child(self.title)
-            .children(self.trailing)
+        accessible(
+            div().id(ElementId::Name(
+                format!("nav-heading-{}", self.title).into(),
+            )),
+            gpui_kit::Role::Heading,
+            Some(self.title.clone()),
+        )
+        .aria_level(2)
+        .flex()
+        .flex_none()
+        .items_end()
+        .justify_between()
+        .pt(look.space(Space::L))
+        .pb(look.space(Space::Xs))
+        .px(look.space(Space::L))
+        .text_role(TypeRole::Fine, &look)
+        .text_color(look.palette.ink.hsla())
+        .child(self.title)
+        .children(self.trailing)
     }
 }
 

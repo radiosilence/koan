@@ -6,7 +6,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 
-use super::{Handler, MenuPanel, MenuRow, child, focus, ring};
+use super::{Handler, MenuPanel, MenuRow, accessible, answers_click, child, focus, ring};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
@@ -80,8 +80,11 @@ impl RenderOnce for Picker {
             .unwrap_or_default();
 
         let toggle = open.clone();
-        let mut picker = div()
-            .id(self.id.clone())
+        // A combo box to a screen reader: what is chosen is its value, and
+        // a click opens it as the pointer's does.
+        let mut picker = accessible(div().id(self.id.clone()), gpui_kit::Role::ComboBox, None)
+            .aria_value(shown.clone())
+            .aria_expanded(is_open)
             .relative()
             .flex()
             .flex_none()
@@ -104,7 +107,16 @@ impl RenderOnce for Picker {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
             let (surface, pressed) = (look.palette.surface.hsla(), look.palette.hover.hsla());
-            picker = picker
+            let opens: Handler<gpui_kit::ClickEvent> = {
+                let toggle = open.clone();
+                std::sync::Arc::new(move |_, _, cx| {
+                    toggle.update(cx, |open, cx| {
+                        *open = true;
+                        cx.notify();
+                    })
+                })
+            };
+            picker = answers_click(picker, opens)
                 .cursor_pointer()
                 .hover(move |s| s.bg(surface))
                 .active(move |s| s.bg(pressed))
