@@ -12,7 +12,8 @@
 //! - **The frame loop.** Driven by values, a change wakes the window to
 //!   present once (`Animated::set`); nothing runs between changes. Driven by
 //!   the clock (`Animated::run`), the window presents every refresh while it
-//!   runs, and `time` in the program counts from the origin set.
+//!   runs, and `time` in the program counts from the origin set. A
+//!   transition runs for its length and stops by itself (`run_for`).
 //! - **Parking.** A window with nothing changing or running parks, as an
 //!   idle window does. A hidden or occluded window is not woken, and a quad
 //!   off screen is not in the scene, so it costs nothing.
@@ -30,7 +31,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -96,11 +97,24 @@ impl Animated {
     /// Whether the clock runs: presented every refresh while it does, for a
     /// drawing that moves with `time`.
     pub fn run(&self, running: bool) {
+        self.0.uniforms.set_live_until(None);
         if self.0.running.swap(running, Ordering::Relaxed) != running {
             self.0.uniforms.set_continuous(running);
             self.0.uniforms.set_live(running);
             self.wake();
         }
+    }
+
+    /// Runs the clock for `length` from now and then stops by itself, with
+    /// nothing to stop it: a transition.
+    pub fn run_for(&self, length: Duration) {
+        self.0
+            .uniforms
+            .set_live_until(Some(Instant::now() + length));
+        self.0.running.store(true, Ordering::Relaxed);
+        self.0.uniforms.set_continuous(true);
+        self.0.uniforms.set_live(true);
+        self.wake();
     }
 
     pub fn is_running(&self) -> bool {

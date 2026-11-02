@@ -71,6 +71,10 @@ pub struct ShaderUniforms {
     changed: AtomicBool,
     /// Nanoseconds from [`shader_epoch`] to the origin `time` counts from.
     origin: AtomicU64,
+    /// Nanoseconds from [`shader_epoch`] after which `live` lapses by
+    /// itself; 0 for never. A transition is live for its length and no
+    /// longer, with nothing to stop it.
+    until: AtomicU64,
 }
 
 impl ShaderUniforms {
@@ -114,7 +118,19 @@ impl ShaderUniforms {
     }
 
     pub fn is_live(&self) -> bool {
-        self.live.load(Ordering::Relaxed)
+        self.live.load(Ordering::Relaxed) && {
+            let until = self.until.load(Ordering::Relaxed);
+            until == 0 || (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) < until
+        }
+    }
+
+    /// Live until `deadline` and no longer; `None` for as long as `live` is
+    /// set.
+    pub fn set_live_until(&self, deadline: Option<Instant>) {
+        let nanos = deadline.map_or(0, |d| {
+            (d.saturating_duration_since(shader_epoch()).as_nanos() as u64).max(1)
+        });
+        self.until.store(nanos, Ordering::Relaxed);
     }
 
     /// Presented on every refresh while live, for a shader moved by `time`.

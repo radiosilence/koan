@@ -7,7 +7,7 @@ use gpui_kit::{
     div,
 };
 
-use super::{Handler, child, fade, fill};
+use super::{Handler, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
@@ -325,7 +325,7 @@ impl RenderOnce for FigureCell {
 impl RenderOnce for ListRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let selected = fade(
+        let selected = transition(
             child(&self.id, "selected"),
             self.selected,
             Motion::FAST,
@@ -352,7 +352,7 @@ impl RenderOnce for ListRow {
             .px(look.space(Space::M))
             .py(look.spaced(12.0))
             .min_h(HIT)
-            .child(fill(look.palette.surface.hsla(), selected))
+            .child(fill(look.palette.surface.hsla(), &selected))
             .children(self.number.map(|number| {
                 div()
                     .relative()

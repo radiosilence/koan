@@ -2,7 +2,7 @@
 //! assistants over MCP, and scrobbling to ListenBrainz. Each where the
 //! server has it.
 
-use crate::components::{Button, ButtonKind, TextField};
+use crate::components::{Button, ButtonKind, Spinner, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{Assistants, ScrobblingConnection};
 use koan_kit::app::*;
@@ -228,9 +228,7 @@ impl IntegrationsPane {
                 footer = error.clone();
                 tone = Tone::Ink;
             }
-            None => {
-                rows.push(text("Loading…", TypeRole::Body, Tone::Muted, look).into_any_element())
-            }
+            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
         }
         div()
             .child(section(Some("Assistants"), rows, None, look))
@@ -281,9 +279,7 @@ impl IntegrationsPane {
                     look,
                 ));
             }
-            None => {
-                rows.push(text("Checking…", TypeRole::Body, Tone::Muted, look).into_any_element())
-            }
+            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
             // The server could not say whether the account is connected, so
             // neither state is shown.
             Some(Err(_)) => rows.push(buttons(
