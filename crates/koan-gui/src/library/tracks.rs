@@ -230,6 +230,7 @@ impl TrackBrowser {
                             }
                             this.loading = None;
                             this.failed = true;
+                            cx.notify();
                             // Swapped in but not whole: not the listing, so
                             // the next change reads it again.
                             if swapped {
