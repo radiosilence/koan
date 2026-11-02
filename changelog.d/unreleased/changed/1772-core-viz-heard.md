@@ -1,0 +1,1 @@
+- **The playing bars and the spectrum show what you hear.** They fall with the pause fade, rise with the resume, follow a sleep timer's fade and lie flat while muted, in every app and the terminal UI: the analyser now scales what it reads by the gain the output applied, on top of the ReplayGain and EQ it already saw.
