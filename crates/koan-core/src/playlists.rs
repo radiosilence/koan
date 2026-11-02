@@ -527,82 +527,87 @@ pub fn reconcile_playlists(
     }
 
     // Fetched several at once, each a round trip, then stored in the
-    // listing's order.
-    let fetched = fetch_playlists(client, pulls.iter().map(|(s, _)| s.id.as_str()));
-    for ((summary, local), full) in pulls.into_iter().zip(fetched) {
-        let full = match full {
-            Ok(full) => full,
-            Err(e) => {
-                log::warn!("could not fetch playlist {}: {e}", summary.id);
-                continue;
-            }
-        };
-
-        let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
-        let track_ids = match queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids) {
-            Ok(ids) => ids,
-            Err(e) => {
-                log::warn!("could not read playlist {}: {e}", summary.name);
-                continue;
-            }
-        };
-        let unknown = track_ids.iter().filter(|t| t.is_none()).count();
-        if unknown > 0 {
-            log::info!(
-                "playlist {}: {unknown} of {} songs are not in the library; \
-                 they stay on the server",
-                summary.name,
-                track_ids.len()
-            );
-        }
-        let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
-        let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
-
-        // All of it or none: a copy renamed but not refilled, or refilled but
-        // not marked synced, would push back as an edit nobody made.
-        let stored = queries::atomically(&db.conn, || {
-            // Edited here, or made here from another listing, since it was
-            // decided to pull it: the next sync weighs it again rather than
-            // writing over the edit.
-            let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-            if now.as_ref().map(|p| (p.id, p.revision))
-                != local.as_ref().map(|p| (p.id, p.revision))
-            {
-                return Ok(false);
-            }
-            let id = match &local {
-                Some(local) => local.id,
-                None => queries::create_playlist(
-                    &db.conn,
-                    queries::LOCAL_USER,
-                    &summary.name,
-                    summary.comment.as_deref(),
-                )?,
+    // listing's order, a chunk at a time: a phone holds one chunk's songs,
+    // not every playlist's, and a playlist is stored soon after the decision
+    // to pull it.
+    for chunk in pulls.chunks(FETCHING * 4) {
+        let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
+        for ((summary, local), full) in chunk.iter().zip(fetched) {
+            let (summary, local) = (*summary, local.clone());
+            let full = match full {
+                Ok(full) => full,
+                Err(e) => {
+                    log::warn!("could not fetch playlist {}: {e}", summary.id);
+                    continue;
+                }
             };
-            queries::rename_playlist(&db.conn, id, &summary.name)?;
-            queries::set_playlist_readonly(&db.conn, id, summary.readonly)?;
-            queries::set_playlist_remote(
-                &db.conn,
-                id,
-                &summary.id,
-                summary.owner.as_deref(),
-                summary.public,
-                &account,
-            )?;
-            queries::merge_server_tracks(&db.conn, id, &track_ids)?;
-            queries::set_playlist_server_songs(&db.conn, id, &record)?;
-            // The rename stamped the local copy as changed; this is the
-            // server's copy, so what is here now is what the server has.
-            queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)?;
-            Ok::<_, DbError>(true)
-        });
-        match stored {
-            Ok(true) => out.pulled += 1,
-            Ok(false) => log::info!(
-                "playlist {} changed while syncing; left for the next sync",
-                summary.name
-            ),
-            Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
+
+            let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
+            let track_ids = match queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids) {
+                Ok(ids) => ids,
+                Err(e) => {
+                    log::warn!("could not read playlist {}: {e}", summary.name);
+                    continue;
+                }
+            };
+            let unknown = track_ids.iter().filter(|t| t.is_none()).count();
+            if unknown > 0 {
+                log::info!(
+                    "playlist {}: {unknown} of {} songs are not in the library; \
+                 they stay on the server",
+                    summary.name,
+                    track_ids.len()
+                );
+            }
+            let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
+            let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
+
+            // All of it or none: a copy renamed but not refilled, or refilled but
+            // not marked synced, would push back as an edit nobody made.
+            let stored = queries::atomically(&db.conn, || {
+                // Edited here, or made here from another listing, since it was
+                // decided to pull it: the next sync weighs it again rather than
+                // writing over the edit.
+                let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
+                if now.as_ref().map(|p| (p.id, p.revision))
+                    != local.as_ref().map(|p| (p.id, p.revision))
+                {
+                    return Ok(false);
+                }
+                let id = match &local {
+                    Some(local) => local.id,
+                    None => queries::create_playlist(
+                        &db.conn,
+                        queries::LOCAL_USER,
+                        &summary.name,
+                        summary.comment.as_deref(),
+                    )?,
+                };
+                queries::rename_playlist(&db.conn, id, &summary.name)?;
+                queries::set_playlist_readonly(&db.conn, id, summary.readonly)?;
+                queries::set_playlist_remote(
+                    &db.conn,
+                    id,
+                    &summary.id,
+                    summary.owner.as_deref(),
+                    summary.public,
+                    &account,
+                )?;
+                queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+                queries::set_playlist_server_songs(&db.conn, id, &record)?;
+                // The rename stamped the local copy as changed; this is the
+                // server's copy, so what is here now is what the server has.
+                queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)?;
+                Ok::<_, DbError>(true)
+            });
+            match stored {
+                Ok(true) => out.pulled += 1,
+                Ok(false) => log::info!(
+                    "playlist {} changed while syncing; left for the next sync",
+                    summary.name
+                ),
+                Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
+            }
         }
     }
 
