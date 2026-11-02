@@ -727,16 +727,17 @@ fn control(
         Some(false) => (p.muted, None),
         None => (p.ink, None),
     };
-    // 44 points to hit, as the spec asks, but only the glyph's width in the
-    // layout: the rest of the hit area reaches into the gaps beside it, so
-    // the glyphs sit as far apart as the Mac's.
+    // 44 points wide to hit, as the spec asks, but only the glyph's width in
+    // the layout: the rest of the hit area reaches into the gaps beside it,
+    // so the glyphs sit as far apart as the Mac's. As tall as the controls'
+    // row, which the transport's metrics keep clear of the seek bar.
     let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
     let reach = (theme::HIT - glyph) / 2.;
     div()
         .id(id)
         .w(theme::HIT)
         .mx(-reach)
-        .h(theme::HIT)
+        .h_full()
         .flex()
         .items_center()
         .justify_center()
@@ -881,12 +882,10 @@ impl Render for Transport {
             .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
-        // The controls and the seek bar centred in the bar as the Mac's:
-        // as much space above the play button's outline as below the seek
-        // row. The rows' hit areas, taller than what they draw, may overlap.
+        // The controls and the seek bar placed by koan-kit's metrics: centred
+        // in the bar as the Mac's, the controls' hit row never reaching the
+        // seek row or above the rule.
         let rows = TransportMetrics::centre_rows(&p.look);
-        let controls_top = rows.outline_top - (theme::HIT - rows.outline) / 2.;
-        let seek_top = rows.track_centre - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
             .h_full()
@@ -894,10 +893,10 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(controls_top)
+                    .top(rows.controls_top)
                     .left_0()
                     .right_0()
-                    .h(theme::HIT)
+                    .h(rows.controls_height)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -939,7 +938,7 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(seek_top)
+                    .top(rows.seek_top)
                     .left_0()
                     .right_0()
                     .h(TransportMetrics::SEEK)
