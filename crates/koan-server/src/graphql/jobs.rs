@@ -68,13 +68,13 @@ impl JobRegistry {
         &self,
         kind: &'static str,
         reason: Option<&'static str>,
-    ) -> Result<Job, Job> {
+    ) -> Result<Job, Box<Job>> {
         let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
             .find(|j| j.kind == kind && j.state == JobState::Running)
         {
-            return Err(running.clone());
+            return Err(Box::new(running.clone()));
         }
         if jobs.len() >= MAX_HISTORY {
             let finished: Vec<String> = jobs
@@ -135,7 +135,7 @@ impl JobRegistry {
     {
         let job = match self.start(kind, None) {
             Ok(job) => job,
-            Err(running) => return Ok(running),
+            Err(running) => return Ok(*running),
         };
         let id = job.id.clone();
         let registry = self.clone();
@@ -324,8 +324,11 @@ pub(crate) fn record_watch(registry: &JobRegistry) -> impl Fn(&WatchScan) + Send
                 .lock()
                 .retain(|_, j| j.kind != WATCH || j.state == JobState::Running);
             // The watch runs one scan at a time, so none of its kind is live.
-            let (Ok(job) | Err(job)) = registry.start(WATCH, Some(reason));
-            *running.lock() = Some(registry.handle(&job.id));
+            let id = match registry.start(WATCH, Some(reason)) {
+                Ok(job) => job.id,
+                Err(job) => job.id,
+            };
+            *running.lock() = Some(registry.handle(&id));
         }
         WatchScan::Read { done, total } => {
             if let Some(job) = running.lock().as_ref() {
