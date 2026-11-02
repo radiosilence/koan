@@ -91,8 +91,11 @@ pub struct MenuRow {
     rich: bool,
     /// A small glyph after the label: how a place is reached.
     reach: Option<Icon>,
-    /// Buttons at the row's end, before the tick.
+    /// Buttons at the row's end, before the tick, each in a slot of its own.
     trailing: Vec<AnyElement>,
+    /// How many slots the rows around it keep at their ends, so every row's
+    /// buttons line up whether or not its slots are filled.
+    slots: usize,
     /// The keys that do the same, at the row's end in `muted`.
     keys: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
@@ -113,9 +116,49 @@ impl MenuRow {
             rich: false,
             reach: None,
             trailing: Vec::new(),
+            slots: 0,
             keys: None,
             on_click: None,
         }
+    }
+
+    /// Keep `slots` slots at the row's end, its own buttons in the last of
+    /// them: the most any row of its menu has.
+    pub fn slots(mut self, slots: usize) -> Self {
+        self.slots = slots;
+        self
+    }
+
+    /// A quiet, compact glyph at the row's end, in a slot of its own, that
+    /// does something to what the row names without choosing it: "move
+    /// here", "forget this device". `help` is its tooltip and its name to a
+    /// screen reader.
+    pub fn action(
+        self,
+        id: impl Into<ElementId>,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.lit_action(id, icon, help, false, run)
+    }
+
+    /// `action`, its glyph in the accent while `lit`.
+    pub fn lit_action(
+        self,
+        id: impl Into<ElementId>,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        lit: bool,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.trailing(MenuAction {
+            id: id.into(),
+            icon,
+            help: help.into(),
+            lit,
+            run: Arc::new(run),
+        })
     }
 
     /// The keys that do the same, as a menu bar shows them: "⌘K", "Ctrl+K".
@@ -208,6 +251,58 @@ impl MenuRow {
     }
 }
 
+/// How wide a rich row's second line may be before it ends in an ellipsis:
+/// the Mac picker's width less the glyph column and the row's insets.
+const DETAIL_WIDTH: f32 = 260.0;
+
+/// A row's secondary action: a glyph in `muted`, its slot's width, `surface`
+/// under the pointer, with its tooltip.
+#[derive(IntoElement)]
+struct MenuAction {
+    id: ElementId,
+    icon: Icon,
+    help: SharedString,
+    lit: bool,
+    run: Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+}
+
+impl MenuAction {
+    /// A slot's width, in points.
+    const SLOT: f32 = 28.0;
+}
+
+impl RenderOnce for MenuAction {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let (help, run) = (self.help.clone(), self.run);
+        super::accessible(
+            div().id(self.id),
+            gpui_kit::Role::Button,
+            Some(self.help.clone()),
+        )
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(look.spaced(MenuAction::SLOT))
+        .cursor_pointer()
+        .hover(|button| button.bg(look.palette.hover.hsla()))
+        .child(
+            KoanIcon::new(self.icon)
+                .role(TypeRole::Control)
+                .color(if self.lit {
+                    look.color(Tone::Accent)
+                } else {
+                    look.palette.muted.hsla()
+                }),
+        )
+        .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
+        .on_click(move |event, window, cx| {
+            cx.stop_propagation();
+            run(event, window, cx)
+        })
+    }
+}
+
 impl RenderOnce for MenuRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
@@ -233,24 +328,36 @@ impl RenderOnce for MenuRow {
             .gap(look.space(Space::Xs))
             .child(label)
             .children(reach.map(|icon| KoanIcon::new(icon).role(TypeRole::Fine).color(muted)));
+        // One line of detail, as wide as `DETAIL_WIDTH`; what does not fit
+        // is in its tooltip.
         let text = match detail {
-            Some((detail, warns)) => div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(name)
-                .child(
-                    div()
-                        .text_role(TypeRole::Fine, &look)
-                        .text_color(if warns {
-                            look.palette.bad.hsla()
-                        } else {
-                            muted
-                        })
-                        .child(detail),
-                ),
+            Some((detail, warns)) => {
+                let full = detail.clone();
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(name)
+                    .child(
+                        div()
+                            .id("detail")
+                            .max_w(look.spaced(DETAIL_WIDTH))
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_role(TypeRole::Fine, &look)
+                            .text_color(if warns {
+                                look.palette.bad.hsla()
+                            } else {
+                                muted
+                            })
+                            .child(detail)
+                            .tooltip(move |window, cx| {
+                                super::Tooltip::view(full.clone(), window, cx)
+                            }),
+                    )
+            }
             None => div().relative().flex_1().child(name),
         };
         let rich = self.rich;
@@ -310,11 +417,23 @@ impl RenderOnce for MenuRow {
                 }
             }))
             .child(text)
-            .children(
-                self.trailing
-                    .into_iter()
-                    .map(|t| div().relative().flex_none().child(t)),
-            )
+            // Empty slots first, so the filled ones sit at the end, level
+            // with the same slots on every other row.
+            .children((self.trailing.len()..self.slots).map(|_| {
+                div()
+                    .relative()
+                    .flex_none()
+                    .w(look.spaced(MenuAction::SLOT))
+            }))
+            .children(self.trailing.into_iter().map(|t| {
+                div()
+                    .relative()
+                    .flex_none()
+                    .min_w(look.spaced(MenuAction::SLOT))
+                    .flex()
+                    .justify_center()
+                    .child(t)
+            }))
             .children(self.keys.map(|keys| {
                 div()
                     .relative()
