@@ -714,6 +714,9 @@ mod tests {
     use gpui_kit::TestAppContext;
 
     use super::*;
+    // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
+    // own `#[test]` into itself.
+    use core::prelude::v1::test;
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
         names.iter().fold(menu, |menu, name| {
