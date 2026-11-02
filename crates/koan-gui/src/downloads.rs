@@ -43,6 +43,15 @@ pub struct DownloadsPage {
     /// The cache's limit in bytes, `None` for none; read as the page opens.
     limit: Option<u64>,
     _limit: Task<()>,
+    focus: FocusHandle,
+    /// The keyboard's place in the list.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
+    /// What the keys last moved to, for the list to scroll to.
+    revealed: Option<usize>,
+    /// How many transfers the list shows, as of the last frame.
+    count: usize,
     _subscriptions: [Subscription; 3],
 }
 
@@ -62,6 +71,11 @@ impl DownloadsPage {
             figures: mirror.figures,
             cache: mirror.cache,
             limit: None,
+            focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
+            revealed: None,
+            count: 0,
             _limit: cx.spawn(async move |this, cx| {
                 let limit = read.await;
                 this.update(cx, |this, cx| {
@@ -91,7 +105,25 @@ impl DownloadsPage {
         )
     }
 
-    fn row(&self, t: &Transfer, p: &Paint, window: &mut Window, cx: &App) -> AnyElement {
+    /// The record a transfer came off, which is where to find it.
+    fn open(nav: &Entity<Navigator>, album: Option<i64>, cx: &mut App) {
+        if let Some(album) = album {
+            nav.update(cx, |nav, cx| {
+                if nav.go(Route::Album(album)) {
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    fn row(
+        &self,
+        index: usize,
+        t: &Transfer,
+        p: &Paint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let id = t.track_id;
         let figure = self
             .figures
@@ -127,6 +159,7 @@ impl DownloadsPage {
             ProgressBar::new(("bar", id as u64), crate::transfers::progress(id, cx))
         });
         let row = TableRow::new(("download", id as u64), RowKind::Text)
+            .cursor(self.keyed && self.cursor.at == Some(index))
             .title(
                 div()
                     .text_role(TypeRole::Body, &p.look)
@@ -157,20 +190,16 @@ impl DownloadsPage {
             )
             .figure(VERB, verb(t));
         let album = t.album_id;
-        let nav = self.nav.clone();
         div()
             .id(("download-row", id as u64))
             .cursor_pointer()
-            .on_click(move |_, _, cx| {
-                // The record it came off, which is where to find it.
-                if let Some(album) = album {
-                    nav.update(cx, |nav, cx| {
-                        if nav.go(Route::Album(album)) {
-                            cx.notify();
-                        }
-                    });
-                }
-            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.focus, cx);
+                // The keyboard carries on from the row clicked.
+                this.cursor.at = Some(index);
+                this.cursor.anchor = Some(index);
+                Self::open(&this.nav, album, cx);
+            }))
             .child(row)
             .into_any_element()
     }
@@ -180,6 +209,9 @@ impl Render for DownloadsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let transfers = self.transfers.read(cx).0.clone();
+        self.keyed = self.focus.is_focused(window);
+        self.count = transfers.len();
+        self.cursor.clamp(self.count);
         let settled = transfers
             .iter()
             .filter(|t| matches!(t.state, TransferState::Done | TransferState::Failed))
@@ -192,11 +224,52 @@ impl Render for DownloadsPage {
         } else {
             let rows: Vec<AnyElement> = transfers
                 .iter()
-                .map(|t| self.row(t, &p, window, cx))
+                .enumerate()
+                .map(|(index, t)| self.row(index, t, &p, window, cx))
                 .collect();
-            ScrollArea::new("downloads", div().flex().flex_col().children(rows)).into_any_element()
+            ScrollArea::items("downloads", rows)
+                .reveal(self.revealed)
+                .into_any_element()
         };
-        Page::new(header).body(body)
+        crate::library::keys::keyed(
+            div()
+                .key_context("List")
+                .track_focus(&self.focus)
+                .size_full(),
+            cx,
+        )
+        .child(Page::new(header).body(body))
+    }
+}
+
+impl Focusable for DownloadsPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+/// ↑ ↓ walk the transfers and Return opens the record one came off; the
+/// row's verb is the next stop for Tab. Nothing here is picked.
+impl crate::library::keys::KeyedList for DownloadsPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.count
+    }
+
+    fn pick(&mut self, _: usize, _: usize, _: &mut Context<Self>) {}
+
+    fn toggle(&mut self, _: usize, _: &mut Context<Self>) {}
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.revealed = Some(ix);
+    }
+
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let album = self.transfers.read(cx).0.get(ix).and_then(|t| t.album_id);
+        Self::open(&self.nav, album, cx);
     }
 }
 

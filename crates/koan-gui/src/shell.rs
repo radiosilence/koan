@@ -283,6 +283,8 @@ impl Shell {
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
+        } else if route == Route::Downloads {
+            window.focus(&self.downloads(cx).focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
             // A library page is made as the stage draws it, and takes the
@@ -294,12 +296,22 @@ impl Shell {
         cx.notify();
     }
 
+    /// The downloads page, made when first shown and dropped on leaving.
+    fn downloads(&mut self, cx: &mut Context<Self>) -> Entity<crate::downloads::DownloadsPage> {
+        let nav = self.nav.clone();
+        self.downloads
+            .get_or_insert_with(|| cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx)))
+            .clone()
+    }
+
     /// The window's regions in F6's order: the sidebar while it shows, the
     /// page, the transport.
     fn regions(&self, cx: &App) -> Vec<FocusHandle> {
         let route = self.nav.read(cx).current();
         let page = if route == Route::Queue {
             Some(self.queue.focus_handle(cx))
+        } else if route == Route::Downloads {
+            self.downloads.as_ref().map(|d| d.focus_handle(cx))
         } else {
             self.library
                 .as_ref()
@@ -338,6 +350,9 @@ impl Shell {
         self.queue.update(cx, |_, cx| cx.notify());
         if let Some(library) = &self.library {
             library.update(cx, |_, cx| cx.notify());
+        }
+        if let Some(downloads) = &self.downloads {
+            downloads.update(cx, |_, cx| cx.notify());
         }
         cx.notify();
     }
@@ -573,16 +588,10 @@ impl Render for Shell {
             self.downloads = None;
         }
         let stage = match route {
-            Route::Downloads => {
-                let nav = self.nav.clone();
-                self.downloads
-                    .get_or_insert_with(|| {
-                        cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx))
-                    })
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element()
-            }
+            Route::Downloads => self
+                .downloads(cx)
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
             Route::Queue => self
                 .queue
                 .clone()
