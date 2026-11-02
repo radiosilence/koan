@@ -90,6 +90,10 @@ pub const DSP_PROFILES: &str = "koanDspProfiles";
 /// `/rest/koanDspDeleted` lists the account's, `/rest/koanDspRestore` saves
 /// one again as a new edit, which every device then adopts.
 pub const DSP_DELETED: &str = "koanDspDeleted";
+/// The account's order of its playlists, kept on the server: `getPlaylists`
+/// lists them in it, and `/rest/koanPlaylistOrder` sets it from a client's
+/// reorder. See `crate::playlists::push_order`.
+pub const PLAYLIST_ORDER: &str = "koanPlaylistOrder";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

@@ -32,6 +32,12 @@ pub fn list_panel(look: &Look) -> Div {
     panel(look).w(px(680.0)).h(relative(0.8)).max_h(px(640.0))
 }
 
+/// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
+/// ends in a table of paths that fills the rest, as organise's preview does.
+pub fn wide_panel(look: &Look) -> Div {
+    panel(look).w(px(880.0)).h(relative(0.85))
+}
+
 /// A sheet's head: its title in the app's words, and its actions trailing.
 pub fn head(title: impl AsRef<str>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
     head_data(label(title), actions, look)
@@ -179,6 +185,51 @@ struct Ask {
 #[derive(Default)]
 pub struct Asking {
     ask: Option<Ask>,
+    /// A sheet of the app's own, a view that lives while it shows (organise's
+    /// preview), under any question it asks.
+    sheet: Option<AnyView>,
+}
+
+/// Shows `view` as the window's sheet, over the shell and under the
+/// question host, replacing any sheet showing. The view draws its own
+/// `panel`; the host draws the scrim and the placement.
+pub fn present(view: impl Into<AnyView>, cx: &mut App) {
+    let view = view.into();
+    asking(cx).update(cx, |a, cx| {
+        a.sheet = Some(view);
+        cx.notify();
+    });
+}
+
+/// Takes the sheet away.
+pub fn close(cx: &mut App) {
+    asking(cx).update(cx, |a, cx| {
+        if a.sheet.take().is_some() {
+            cx.notify();
+        }
+    });
+}
+
+/// The sheet presented, placed over the window, for the shell to draw under
+/// `overlay`.
+pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let view = asking(cx).read(cx).sheet.clone()?;
+    let look = Look::of(window, cx);
+    Some(
+        div()
+            .id("sheet")
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .items_start()
+            .pt(look.space(Space::Xxl))
+            .bg(look.palette.bg.hsla().opacity(0.6))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(view)
+            .into_any_element(),
+    )
 }
 
 struct AskingHandle(Entity<Asking>);

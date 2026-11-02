@@ -59,6 +59,7 @@ impl LibraryStage {
                 | Page::RecentlyPlayed
                 | Page::OnDevice
                 | Page::Search
+                | Page::Playlist(_)
         )
     }
 
@@ -101,6 +102,13 @@ impl LibraryStage {
                 let page = cx.new(|cx| super::tracks::TrackBrowser::new(lib, window, cx));
                 slot.update(cx, |s, cx| {
                     s.show(&page, super::tracks::TrackBrowser::controls, cx)
+                });
+                page.into()
+            }
+            Page::Playlist(id) => {
+                let page = cx.new(|cx| super::playlist::PlaylistPage::new(lib, id, window, cx));
+                slot.update(cx, |s, cx| {
+                    s.show(&page, super::playlist::PlaylistPage::controls, cx)
                 });
                 page.into()
             }

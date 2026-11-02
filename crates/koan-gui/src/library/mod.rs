@@ -18,6 +18,7 @@ pub mod format;
 pub mod header;
 pub mod info;
 pub mod nav;
+pub mod playlist;
 pub mod rows;
 pub mod selection;
 pub mod shelf;
@@ -44,6 +45,30 @@ pub fn listen<V: 'static, E: ?Sized + 'static>(
     }
 }
 
+/// Each browser's last listing, kept when it goes away: the next visit draws
+/// it whole at once, totals included, and swaps in a fresh one only if the
+/// query or the library moved. Keyed by the browser's own type.
+#[derive(Clone, Default)]
+pub struct Kept(
+    Rc<std::cell::RefCell<std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any>>>>,
+);
+
+impl Kept {
+    pub fn put<T: 'static>(&self, listing: T) {
+        self.0
+            .borrow_mut()
+            .insert(std::any::TypeId::of::<T>(), Box::new(listing));
+    }
+
+    pub fn take<T: 'static>(&self) -> Option<T> {
+        self.0
+            .borrow_mut()
+            .remove(&std::any::TypeId::of::<T>())
+            .and_then(|kept| kept.downcast().ok())
+            .map(|kept| *kept)
+    }
+}
+
 /// What every library page reads and acts through.
 #[derive(Clone)]
 pub struct Lib {
@@ -56,6 +81,7 @@ pub struct Lib {
     pub search: Entity<crate::search::Search>,
     /// Set while the album grid's benchmark counts its tiles.
     pub bench: Option<bench::Shared>,
+    pub kept: Kept,
 }
 
 impl Lib {
@@ -106,6 +132,7 @@ impl Lib {
             browse,
             search,
             bench,
+            kept: Kept::default(),
         }
     }
 }

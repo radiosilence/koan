@@ -33,12 +33,14 @@ pub enum Route {
 
 impl Route {
     /// A route by name, for tools that open the app somewhere: `albums`,
-    /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`.
+    /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
+    /// `playlist:<id>`.
     pub fn named(name: &str) -> Option<Route> {
         let id = |s: &str| s.parse::<i64>().ok();
         match name.split_once(':') {
             Some(("album", n)) => id(n).map(Route::Album),
             Some(("artist", n)) => id(n).map(Route::Artist),
+            Some(("playlist", n)) => id(n).map(Route::Playlist),
             _ => match name {
                 "queue" => Some(Route::Queue),
                 "albums" => Some(Route::Albums),

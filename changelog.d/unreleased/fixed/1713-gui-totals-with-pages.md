@@ -1,0 +1,1 @@
+- **Library totals arrive with their pages in the desktop app.** The album, artist and track browsers draw their header, total and rows together, and a revisit draws at once from the listing it last showed.

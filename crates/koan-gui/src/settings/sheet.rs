@@ -62,6 +62,9 @@ pub struct Sheet {
     /// What the way out does, for a sheet whose question someone else is
     /// waiting on the answer to. Nothing, otherwise.
     dismissed: Option<Dismissed>,
+    /// Shown only this once (a key, a password in an invite): another sheet
+    /// waits behind it rather than replacing it.
+    kept: bool,
 }
 
 impl Sheet {
@@ -74,7 +77,21 @@ impl Sheet {
             actions: Vec::new(),
             dismiss: label("Cancel"),
             dismissed: None,
+            kept: false,
         }
+    }
+
+    /// What it shows is shown only this once: a sheet put up meanwhile waits
+    /// until this one is closed.
+    pub fn kept(mut self) -> Self {
+        self.kept = true;
+        self
+    }
+
+    /// Whether another sheet must wait behind it: it is shown once, or asks
+    /// a question someone is waiting on.
+    fn holds(&self) -> bool {
+        self.kept || self.dismissed.is_some()
     }
 
     /// The way out answers the question, as Decline does a device waiting
@@ -138,6 +155,8 @@ pub fn field(
 #[derive(Default)]
 pub struct Sheets {
     open: Option<Sheet>,
+    /// Sheets put up while one that holds was open, in turn.
+    waiting: std::collections::VecDeque<Sheet>,
     focus: Option<FocusHandle>,
     /// Where the keyboard was before the sheet, to go back to.
     before: Option<FocusHandle>,
@@ -145,15 +164,17 @@ pub struct Sheets {
 }
 
 impl Sheets {
-    /// Puts a sheet up, replacing any other, with the keyboard in its first
-    /// field or on the sheet. Return in a field runs the sheet's last action,
-    /// as the default button does.
+    /// Puts a sheet up, with the keyboard in its first field or on the
+    /// sheet. It replaces one that is open, unless that one is shown once or
+    /// waits on an answer, when it goes up after it. Return in a field runs
+    /// the sheet's last action, as the default button does.
     pub fn show(&mut self, sheet: Sheet, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.as_ref().is_some_and(Sheet::holds) {
+            self.waiting.push_back(sheet);
+            return;
+        }
         if self.open.is_none() {
             self.before = window.focused(cx);
-        } else if let Some(dismissed) = self.open.as_ref().and_then(|s| s.dismissed.clone()) {
-            // The sheet it replaces was asked and not answered.
-            dismissed(window, cx);
         }
         let focus = cx.focus_handle();
         match sheet.fields.first() {
@@ -198,6 +219,9 @@ impl Sheets {
         if let Some(before) = self.before.take() {
             window.focus(&before, cx);
         }
+        if let Some(next) = self.waiting.pop_front() {
+            self.show(next, window, cx);
+        }
         cx.notify();
     }
 
@@ -240,11 +264,23 @@ impl Sheets {
         self.open.is_some()
     }
 
-    /// What the sheet up does when it goes unanswered, for the window to
-    /// run as it closes: a device waiting to pair is declined, not left
-    /// waiting.
-    pub fn unanswered(&self) -> Option<Dismissed> {
-        self.open.as_ref().and_then(|s| s.dismissed.clone())
+    /// What the sheets up and waiting do when they go unanswered, for the
+    /// window to run as it closes: a device waiting to pair is declined, not
+    /// left waiting.
+    pub fn unanswered(&self) -> Vec<Dismissed> {
+        self.open
+            .iter()
+            .chain(&self.waiting)
+            .filter_map(|s| s.dismissed.clone())
+            .collect()
+    }
+
+    /// The sheets up and waiting that show something only once, taken for
+    /// the next Settings window as this one closes.
+    pub fn take_kept(&mut self) -> Vec<Sheet> {
+        let mut kept: Vec<Sheet> = self.open.take().into_iter().filter(|s| s.kept).collect();
+        kept.extend(self.waiting.drain(..).filter(|s| s.kept));
+        kept
     }
 
     /// The sheet up, over its scrim, if one is.

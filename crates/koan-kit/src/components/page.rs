@@ -17,6 +17,7 @@ pub struct PageHeader {
     art: Option<AnyElement>,
     lead: Vec<AnyElement>,
     detail: Option<AnyElement>,
+    badges: Vec<super::Badge>,
     actions: Vec<AnyElement>,
     body: Option<AnyElement>,
     trailing: Option<AnyElement>,
@@ -36,6 +37,7 @@ impl PageHeader {
             art: None,
             lead: Vec::new(),
             detail: None,
+            badges: Vec::new(),
             actions: Vec::new(),
             body: None,
             trailing: None,
@@ -59,6 +61,13 @@ impl PageHeader {
     /// links.
     pub fn detail(mut self, detail: impl IntoElement) -> Self {
         self.detail = Some(detail.into_any_element());
+        self
+    }
+
+    /// After the detail, on its line: what kind of thing the page shows, where
+    /// that changes what can be done to it ("smart", "read-only").
+    pub fn badge(mut self, badge: super::Badge) -> Self {
+        self.badges.push(badge);
         self
     }
 
@@ -227,12 +236,19 @@ impl RenderOnce for PageHeader {
                         let title = title.debug_selector(|| "page-header-title".into());
                         title
                     })
-                    .children(self.detail.map(|detail| {
-                        div()
-                            .text_role(TypeRole::Control, &look)
-                            .text_color(p.muted.hsla())
-                            .child(detail)
-                    }))
+                    .when(self.detail.is_some() || !self.badges.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(look.space(Space::S))
+                                .text_role(TypeRole::Control, &look)
+                                .text_color(p.muted.hsla())
+                                .children(self.detail)
+                                .children(self.badges),
+                        )
+                    })
                     .when(!self.actions.is_empty(), |d| {
                         d.child(
                             div()
@@ -259,6 +275,12 @@ impl RenderOnce for PageHeader {
             }))
     }
 }
+
+/// The header's play glyph, the Mac's 17 points at the chosen text size:
+/// the square is the prominent action's, and its glyph fills it as one.
+const PLAY_GLYPH: f32 = 17.0;
+/// The shuffle glyph beside it, the Mac's 15 points.
+const SHUFFLE_GLYPH: f32 = 15.0;
 
 /// A header's play: the page's one prominent action, as the Mac draws it
 /// in the theme. A square in a hairline accent outline with the play glyph
@@ -320,7 +342,7 @@ impl RenderOnce for PlayButton {
                 super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
             } else {
                 crate::theme::KoanIcon::new(crate::theme::Icon::Play)
-                    .role(TypeRole::Body)
+                    .points(PLAY_GLYPH * look.scale.size)
                     .color(look.text_color(crate::theme::Tone::Accent))
                     .into_any_element()
             })
@@ -380,7 +402,7 @@ impl RenderOnce for ShuffleButton {
             })
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
-                    .role(TypeRole::Body)
+                    .points(SHUFFLE_GLYPH * look.scale.size)
                     .tone(crate::theme::Tone::Muted),
             )
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {

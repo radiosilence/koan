@@ -185,32 +185,43 @@ impl EqBody {
         let picked = self.picked.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
             let o = engine.clone().dsp_overview_for(picked).await;
-            let response = match &o.device {
-                Some(d) => {
-                    engine
-                        .clone()
-                        .dsp_output_response_for(d.clone(), super::model::GRAPH_RATE)
-                        .await
+            // The whole chain's response, each stage's and this machine's
+            // outputs (so one with no EQ yet can be picked), read together.
+            let response = async {
+                match &o.device {
+                    Some(d) => {
+                        engine
+                            .clone()
+                            .dsp_output_response_for(d.clone(), super::model::GRAPH_RATE)
+                            .await
+                    }
+                    None => None,
                 }
-                None => None,
             };
-            // This machine's outputs, so one with no EQ yet can be picked.
-            let outputs: Vec<String> = engine
-                .clone()
-                .devices()
-                .await
-                .map(|d| d.into_iter().map(|d| d.name).collect())
-                .unwrap_or_default();
-            let mut curves = HashMap::new();
-            for name in o.active.iter().chain(o.chain.iter().map(|e| &e.name)) {
-                if let Some(r) = engine
+            let outputs = async {
+                engine
                     .clone()
-                    .dsp_response(name.clone(), super::model::GRAPH_RATE)
+                    .devices()
                     .await
-                {
-                    curves.insert(name.clone(), r.total);
-                }
-            }
+                    .map(|d| d.into_iter().map(|d| d.name).collect::<Vec<String>>())
+                    .unwrap_or_default()
+            };
+            let stages = futures::future::join_all(
+                o.active
+                    .iter()
+                    .chain(o.chain.iter().map(|e| &e.name))
+                    .map(|name| {
+                        let (engine, name) = (engine.clone(), name.clone());
+                        async move {
+                            let r = engine
+                                .dsp_response(name.clone(), super::model::GRAPH_RATE)
+                                .await;
+                            r.map(|r| (name, r.total))
+                        }
+                    }),
+            );
+            let (response, outputs, stages) = futures::join!(response, outputs, stages);
+            let curves: HashMap<_, _> = stages.into_iter().flatten().collect();
             this.update(cx, |page, cx| {
                 let flat = o.active.is_none() && o.chain.is_empty();
                 let parts = parts(&o, response.as_ref());

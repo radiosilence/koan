@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
+use koan_ffi::{KoanEngine, StateSlice, TransferState};
 use koan_kit::app::*;
 
 use super::drag::Playable;
@@ -23,8 +23,6 @@ pub struct Feed {
     pub favourites_revision: u64,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
-    /// The track under the cursor is playing rather than paused or waiting.
-    pub playing: bool,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
     /// Each track with a transfer, and where it is: a row's availability.
@@ -38,6 +36,9 @@ pub struct Feed {
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
+    /// The newest read of the playlists asked for: an older one landing
+    /// after it is dropped.
+    playlists_read: u64,
     favourites: Favourites,
     /// One read at a time; one asked for while another runs makes it read
     /// again when it lands.
@@ -63,12 +64,12 @@ impl Feed {
             favourites_revision: 0,
             playing_album: None,
             playing_track: None,
-            playing: false,
             arriving: HashMap::new(),
             transfers: HashMap::new(),
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
+            playlists_read: 0,
             favourites: Favourites::default(),
             favourites_reading: false,
             favourites_stale: false,
@@ -98,13 +99,9 @@ impl Feed {
                     let entry = now_playing.entry.as_ref();
                     let album = entry.and_then(|e| e.album_id);
                     let track = entry.and_then(|e| e.track_id);
-                    let playing = now_playing.state == PlayState::Playing && !now_playing.waiting;
-                    if (album, track, playing)
-                        != (self.playing_album, self.playing_track, self.playing)
-                    {
+                    if (album, track) != (self.playing_album, self.playing_track) {
                         self.playing_album = album;
                         self.playing_track = track;
-                        self.playing = playing;
                         changed = true;
                     }
                 }
@@ -180,6 +177,8 @@ impl Feed {
 
     pub fn reload_playlists(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
+        self.playlists_read += 1;
+        let read = self.playlists_read;
         cx.spawn(async move |this, cx| {
             let playlists = match engine.playlists().await {
                 Ok(p) => p,
@@ -189,6 +188,9 @@ impl Feed {
                 }
             };
             this.update(cx, |feed, cx| {
+                if read != feed.playlists_read {
+                    return;
+                }
                 feed.playlists = playlists
                     .into_iter()
                     .filter(|p| !p.readonly)

@@ -9,6 +9,7 @@ use platform::instance::{self, Launch, Opened};
 
 fn main() {
     platform::logging::init();
+    platform::runtime_files::adopt();
     let paths = instance::argv_paths();
     let (opened, opening) = mpsc::unbounded();
     match instance::claim(&paths) {

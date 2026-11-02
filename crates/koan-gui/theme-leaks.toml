@@ -61,7 +61,6 @@ raw = 1
 
 ["library/chrome.rs"]
 number = 2
-container = 1
 raw = 6
 
 ["library/covers.rs"]
@@ -80,8 +79,8 @@ raw = 2
 raw = 1
 
 ["library/tile.rs"]
-number = 18
-fixed = 2
+number = 26
+fixed = 3
 raw = 10
 
 ["library/tokens.rs"]
@@ -128,8 +127,7 @@ fixed = 8
 raw = 7
 
 ["queue/mod.rs"]
-number = 1
-raw = 8
+raw = 1
 
 ["root.rs"]
 raw = 1
@@ -174,9 +172,6 @@ raw = 3
 
 ["shell.rs"]
 raw = 5
-
-["sidebar.rs"]
-raw = 2
 
 ["transport.rs"]
 number = 4
