@@ -1,0 +1,1 @@
+- **A release's desktop DMG is attached even when its Linux packages are not.** Each GUI package goes up on its own, and the notary's full wait fits the job.
