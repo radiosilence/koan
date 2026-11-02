@@ -888,8 +888,26 @@ index ae98aa5..ea0f6a4 100644
      if let Some(v) = node.orientation() {
          aria.insert("orientation".into(), json!(format!("{v:?}")));
      }
+diff --git a/src/window/a11y.rs b/src/window/a11y.rs
+index 5b63821..d5794cd 100644
+--- a/src/window/a11y.rs
++++ b/src/window/a11y.rs
+@@ -221,6 +221,13 @@ impl A11y {
+         self.active_this_frame
+     }
+ 
++    // KOAN: #1778.
++    /// As assistive technology attaching or leaving would set it.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn set_active_flag(&self, active: bool) {
++        self.active_flag.store(active, Ordering::SeqCst);
++    }
++
+     pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
+         self.focus_ids.insert(node_id, focus_id);
+     }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..2590a40 100644
+index c559412..de0eb09 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1913,28 +1913,40 @@ impl Window {
@@ -1023,10 +1041,19 @@ index c559412..2590a40 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7158,13 @@ impl Window {
+@@ -7074,6 +7158,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  
++    /// KOAN: acts as though assistive technology attached (or left), for
++    /// tests: the test platform never attaches any, so no tree is built
++    /// otherwise (#1778).
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn set_a11y_active_for_test(&mut self, active: bool) {
++        self.a11y.set_active_flag(active);
++        self.refresh();
++    }
++
 +    /// KOAN: handles `request` as though assistive technology had sent it,
 +    /// for tests that drive elements the way a screen reader does (#1776).
 +    #[cfg(not(target_family = "wasm"))]

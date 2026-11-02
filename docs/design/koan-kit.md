@@ -290,16 +290,17 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `Toolbar` | Toolbar |
 | `TableRow` (`spoken`, `place`, `on_reveal`) | ListItem, or Heading for a record's heading, read as one line ("Cloudbusting, Kate Bush, Hounds of Love, 5:10, favourite"); its place in the list; selected. The links and the heart inside stay reachable as its children |
 | `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
-| `Banner`, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
-| `ProgressRow` | announced politely as it moves |
+| `Banner`'s message, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
 
-A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another.
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
 
-A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row and its neighbours into view (`RowListState::reveal_around`, `reveal_around` for a `uniform_list`), so the next row is drawn before the reader reaches it.
+What only a reader reads, a row's spoken line, its place and its reveal, is worked out only while one is attached (`Window::is_a11y_active`; koan-gui's `Paint::a11y`), since a list's rows are made again at every scroll frame.
+
+A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row's neighbours into view (`RowListState::reveal_around`; `reveal_around` for a `uniform_list`, which keeps one scroll and so asks for the neighbour the reader is heading for), so the next row is drawn before the reader reaches it.
 
 Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would.
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
 
 ## Swift roles and their GPUI components
 

@@ -37,11 +37,21 @@ pub fn spoken_list(id: impl Into<ElementId>, name: impl Into<SharedString>) -> S
     super::accessible(div().id(id), gpui_kit::Role::List, Some(name.into()))
 }
 
-/// Scrolls row `ix` of a `uniform_list` to the middle, with rows either side
-/// of it drawn: what a screen reader moving down the list needs, since only
-/// rows drawn are in the accessibility tree.
-pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize) {
-    handle.scroll_to_item(ix, ScrollStrategy::Center);
+/// Scrolls the row past row `ix` of a `uniform_list`'s `count` on screen, the
+/// one before it where `ix` is at the top: a screen reader moving through the
+/// list reaches only rows drawn, so the next one is drawn before it gets
+/// there. The handle keeps one scroll, so only the neighbour the reader is
+/// heading for is asked for.
+pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let target = if ix <= handle.logical_scroll_top_index() {
+        ix.saturating_sub(1)
+    } else {
+        (ix + 1).min(count - 1)
+    };
+    handle.scroll_to_item(target, ScrollStrategy::Nearest);
 }
 
 /// A scroll offset `y` down from the top, as a list's handle takes it.

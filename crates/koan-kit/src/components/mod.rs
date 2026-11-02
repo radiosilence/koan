@@ -447,7 +447,10 @@ pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString
 }
 
 /// Something the app says on its own, read out as it appears without
-/// moving focus: politely, or at once when something went wrong.
+/// moving focus: politely, or at once when something went wrong. The text is
+/// both name and value, since VoiceOver announces a live node's value and
+/// Orca its name; and the element must be a leaf, since a live region's
+/// descendants are live too and would be announced again.
 pub(crate) fn announced<E: StatefulInteractiveElement>(
     element: E,
     text: SharedString,
@@ -461,8 +464,9 @@ pub(crate) fn announced<E: StatefulInteractiveElement>(
         } else {
             gpui_kit::Role::Status
         },
-        Some(text),
+        Some(text.clone()),
     )
+    .aria_value(text)
     .aria_live(if alarm {
         gpui_kit::accesskit::Live::Assertive
     } else {

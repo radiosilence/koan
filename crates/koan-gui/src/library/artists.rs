@@ -276,14 +276,16 @@ impl ArtistBrowser {
         let count = self.artists.len();
         let scroll = self.scroll.clone();
         TableRow::new(("artist", id as u64), RowKind::Line)
-            .spoken(crate::components::spoken([
-                artist.name.as_str(),
-                chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
-                chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
-                if favourite { "favourite" } else { "" },
-            ]))
-            .place(index, count)
-            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index))
+            .when(p.a11y, |row| {
+                row.spoken(crate::components::spoken([
+                    artist.name.as_str(),
+                    chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
+                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
+                    if favourite { "favourite" } else { "" },
+                ]))
+                .place(index, count)
+                .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+            })
             .selected(selected)
             // Exactly the glyph's width, so it starts on the header's edge.
             .lead_exact(

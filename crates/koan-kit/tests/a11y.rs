@@ -92,9 +92,17 @@ fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Rc<Cell<u32>>, Rc<Cell<f32
     });
     let page = Page::default();
     let (queued, seek) = (page.queued.clone(), page.seek.clone());
-    let window = cx.add_window(|_, _| page);
+    let window: AnyWindowHandle = cx.add_window(|_, _| page).into();
+    attach(window, cx);
+    (window, queued, seek)
+}
+
+/// A screen reader attaching: GPUI builds the tree only while one is.
+fn attach(window: AnyWindowHandle, cx: &mut TestAppContext) {
+    window
+        .update(cx, |_, window, _| window.set_a11y_active_for_test(true))
+        .expect("the window");
     cx.run_until_parked();
-    (window.into(), queued, seek)
 }
 
 fn tree(window: AnyWindowHandle, cx: &mut TestAppContext) -> String {
@@ -261,7 +269,7 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
         revealed: revealed.clone(),
     };
     let window: AnyWindowHandle = cx.add_window(|_, _| queue).into();
-    cx.run_until_parked();
+    attach(window, cx);
     let tree = tree(window, cx);
 
     let (_, list) = node(&tree, "queue");
@@ -277,6 +285,7 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     let (_, banner) = node(&tree, "the server can't be reached");
     assert_eq!(banner["role"], "Alert");
     assert_eq!(banner["live"], "Assertive");
+    assert_eq!(banner["value"], "the server can't be reached");
     let (_, note) = node(&tree, "Waiting for the TV to wake");
     assert_eq!(note["role"], "Status");
     assert_eq!(note["live"], "Polite");

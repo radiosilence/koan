@@ -9,7 +9,6 @@
 
 use std::collections::HashSet;
 use std::ops::Range;
-use std::rc::Rc;
 use std::time::Duration;
 
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
@@ -20,7 +19,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
@@ -371,12 +370,9 @@ impl TrackBrowser {
             cursor: self.keyed && self.cursor.at == Some(index),
             kind: crate::components::RowKind::Art,
             place: Some((index, self.total as usize)),
-            reveal: Some({
-                let scroll = self.scroll.clone();
-                Rc::new(move |_: &mut Window, _: &mut App| {
-                    crate::components::reveal_around(&scroll, index)
-                })
-            }),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), index, self.total as usize)),
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }

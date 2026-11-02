@@ -46,7 +46,7 @@ impl RenderOnce for Banner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let color = look.text_color(self.tone);
-        super::announced(div().id("banner"), self.message.clone(), self.tone)
+        div()
             .flex()
             .items_center()
             .gap(look.space(Space::M))
@@ -57,7 +57,15 @@ impl RenderOnce for Banner {
             .text_role(TypeRole::Fine, &look)
             .text_color(color)
             .child(KoanIcon::new(self.icon).role(TypeRole::Fine).color(color))
-            .child(div().flex_1().min_w_0().line_clamp(2).child(self.message))
+            .child(
+                // The message alone is announced: the action beside it
+                // stays a button.
+                super::announced(div().id("banner"), self.message.clone(), self.tone)
+                    .flex_1()
+                    .min_w_0()
+                    .line_clamp(2)
+                    .child(self.message),
+            )
             .children(self.action.map(|(label, run)| {
                 Button::new("banner-action", ButtonKind::Compact)
                     .label(label)

@@ -24,6 +24,9 @@ pub struct Paint {
     pub bad: Hsla,
     pub selection: Hsla,
     pub on_selection: Hsla,
+    /// Assistive technology is attached: what only a screen reader reads
+    /// (rows' spoken lines, their places) is worked out only then.
+    pub a11y: bool,
 }
 
 impl Paint {
@@ -44,6 +47,7 @@ impl Paint {
             bad: p.bad.hsla(),
             selection: p.selection.hsla(),
             on_selection: p.on_selection.hsla(),
+            a11y: window.is_a11y_active(),
         }
     }
 

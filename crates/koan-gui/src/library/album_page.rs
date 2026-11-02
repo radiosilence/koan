@@ -14,7 +14,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
@@ -274,12 +274,9 @@ impl AlbumPage {
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
             place: Some((index, self.tracks.len())),
-            reveal: Some({
-                let scroll = self.scroll.clone();
-                Rc::new(move |_: &mut Window, _: &mut App| {
-                    crate::components::reveal_around(&scroll, i)
-                })
-            }),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), i, self.lines.len())),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }

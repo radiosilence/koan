@@ -962,8 +962,11 @@ impl PlaylistPage {
         let list = self.list.clone();
         row_frame
             .selected(selected)
-            .place(row, count)
-            .on_reveal(move |_, _| list.reveal_around(row))
+            .when(p.a11y, |frame| {
+                frame
+                    .place(row, count)
+                    .on_reveal(move |_, _| list.reveal_around(row))
+            })
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })

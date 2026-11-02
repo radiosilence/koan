@@ -700,8 +700,11 @@ impl QueueView {
         let list = self.list.clone();
         row_frame
             .selected(selected)
-            .place(row, count)
-            .on_reveal(move |_, _| list.reveal_around(row))
+            .when(p.a11y, |frame| {
+                frame
+                    .place(row, count)
+                    .on_reveal(move |_, _| list.reveal_around(row))
+            })
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })
@@ -1015,11 +1018,15 @@ pub(crate) fn heading(
     } else {
         (&first.album_artist_credit, &first.album_artist)
     };
-    let row = row.spoken(crate::components::spoken([
-        first.album.as_str(),
-        artist.as_str(),
-        detail.as_str(),
-    ]));
+    let row = if p.a11y {
+        row.spoken(crate::components::spoken([
+            first.album.as_str(),
+            artist.as_str(),
+            detail.as_str(),
+        ]))
+    } else {
+        row
+    };
     let album = link(
         look.id("album", 0),
         first.album.clone(),
@@ -1143,28 +1150,32 @@ pub(crate) fn track(
                     d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
                 }),
         });
-    let length = item.duration_ms.map(crate::time::clock).unwrap_or_default();
-    let row = row.spoken(crate::components::spoken([
-        item.title.as_str(),
-        if grouped && !item.credit_differs {
-            ""
-        } else {
-            item.artist.as_str()
-        },
-        if grouped { "" } else { item.album.as_str() },
-        length.as_str(),
-        meaning.unwrap_or(""),
-        if extras.favourite == Some(true) {
-            "favourite"
-        } else {
-            ""
-        },
-        extras
-            .availability
-            .as_ref()
-            .and_then(|a| a.help())
-            .unwrap_or(""),
-    ]));
+    let row = if p.a11y {
+        let length = item.duration_ms.map(crate::time::clock).unwrap_or_default();
+        row.spoken(crate::components::spoken([
+            item.title.as_str(),
+            if grouped && !item.credit_differs {
+                ""
+            } else {
+                item.artist.as_str()
+            },
+            if grouped { "" } else { item.album.as_str() },
+            length.as_str(),
+            meaning.unwrap_or(""),
+            if extras.favourite == Some(true) {
+                "favourite"
+            } else {
+                ""
+            },
+            extras
+                .availability
+                .as_ref()
+                .and_then(|a| a.help())
+                .unwrap_or(""),
+        ]))
+    } else {
+        row
+    };
     let row = row.lead(if p.look.icons { MARK } else { MARK_WORD }, mark);
     let row = if grouped {
         row.lead(if numbering.wide { PLACE_WIDE } else { PLACE }, place)
