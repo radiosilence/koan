@@ -101,6 +101,24 @@ impl Button {
         }
     }
 
+    /// A glyph alone, which says what it does only in its tooltip: `help`
+    /// names the action, with its keys where it has them ("back (⌘[)"). The
+    /// way to make one, so none goes without.
+    pub fn icon_only(id: impl Into<ElementId>, icon: Icon, help: impl Into<SharedString>) -> Self {
+        Self::new(id, ButtonKind::Icon).icon(icon).help(help)
+    }
+
+    /// `icon_only`, outlined: the transport's play button.
+    pub fn icon_outlined(
+        id: impl Into<ElementId>,
+        icon: Icon,
+        help: impl Into<SharedString>,
+    ) -> Self {
+        Self::new(id, ButtonKind::IconOutlined)
+            .icon(icon)
+            .help(help)
+    }
+
     /// The tooltip, in place of a glyph-only button's label, and on a button
     /// with words too: "back (⌘[)", as the Mac's buttons say.
     pub fn help(mut self, help: impl Into<SharedString>) -> Self {
@@ -214,6 +232,10 @@ impl RenderOnce for Button {
         let glyph_only = matches!(kind, ButtonKind::Icon | ButtonKind::IconOutlined)
             || (kind == ButtonKind::Toolbar && look.icons && self.icon.is_some());
         let show_glyph = glyph_only || look.icons;
+        debug_assert!(
+            !glyph_only || self.help.is_some() || self.label.is_some(),
+            "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
+        );
         let role = kind.role();
 
         let mut button = div()
