@@ -1,0 +1,1 @@
+- **koan-gui: the Mac's hidden appearance mode.** Its switch, its palette for the accent and wash, and the tracks that bring it out, kept per device as on the Mac.
