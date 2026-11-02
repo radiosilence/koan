@@ -1949,8 +1949,11 @@ gui-run *ARGS:
     # gets: every SSDP and Bonjour packet is refused, and no renderer or
     # nearby koan appears. The bundle declares the reason, so macOS asks.
     cargo build --profile gui-dev -p koan-gui --features runtime-shaders
-    app="$PWD/target/gui-dev/kōan dev.app"
-    mkdir -p "$app/Contents/MacOS"
+    # An ASCII name, so the path matches itself however a tool normalises
+    # the ō: `pkill -f` below did not find "kōan dev.app".
+    app="$PWD/target/gui-dev/koan dev.app"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
     # A new file, never the signed one rewritten in place: macOS keeps a
     # binary's signature by its file and kills a launch that no longer
     # matches it.
@@ -1964,6 +1967,7 @@ gui-run *ARGS:
         <key>CFBundleExecutable</key><string>koan-gui</string>
         <key>CFBundleIdentifier</key><string>{{gui_id}}.dev</string>
         <key>CFBundleName</key><string>kōan dev</string>
+        <key>CFBundleIconFile</key><string>AppIcon</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>LSMinimumSystemVersion</key><string>{{gui_macos}}</string>
         <key>NSHighResolutionCapable</key><true/>
@@ -1988,7 +1992,7 @@ gui-run *ARGS:
     while read -r name; do
         envs+=(--env "$name=${!name}")
     done < <(compgen -e | grep -E '^(KOAN_|RUST_)')
-    tty=$(tty 2>/dev/null || echo /dev/null)
+    tty=$(tty 2>/dev/null) || tty=/dev/null
     # Ctrl-C reaches `open`, not the app: handed on, it quits as ⌘Q does.
     trap 'pkill -INT -f "$app/Contents/MacOS/koan-gui" || true' INT
     open -W -n "${envs[@]}" --stdout "$tty" --stderr "$tty" "$app" --args {{ARGS}}
