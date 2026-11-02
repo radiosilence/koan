@@ -199,6 +199,7 @@ impl WindowRoot {
     fn follow(&mut self, playback: &Entity<Playback>, again: bool, cx: &mut Context<Self>) {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
+        let playing_album = now.entry.as_ref().and_then(|entry| entry.album_id);
         // Off, there is no wash and the accent is mint, as with no record.
         let shown = cx.try_global::<ShownRecord>().and_then(|s| s.0);
         let album = shown
@@ -208,7 +209,6 @@ impl WindowRoot {
         // The rainbow paints over the record: its sheen in the wash, its
         // accent its own. The record's is fetched again once it goes.
         if crate::rainbow::Rainbow::drawn(cx) {
-            let playing_album = now.entry.as_ref().and_then(|entry| entry.album_id);
             if self.rainbow && playing_album != self.swept && self.swept.is_some() && self.active {
                 let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
                 let brat = crate::rainbow::Painted::now() == Some(true);
