@@ -539,8 +539,9 @@ impl ApiServer {
                     // to sign in rather than refused), so it sits outside the GraphQL auth
                     // layer. Built before the auth routes take their state.
                     // A standing server keeps every album's grid cover ready; an
-                    // app sharing its own library makes them as asked.
-                    if !embedded {
+                    // app sharing its own library, and the API beside the
+                    // terminal UI, make them as asked.
+                    if profile == Profile::Headless {
                         covers.warm(pool.clone());
                     }
                     let ui_routes = (!embedded).then(|| crate::ui::router(

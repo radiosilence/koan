@@ -70,7 +70,9 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 
 The queue keeps its place and selection when you visit another page and come back.
 
-Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued.
+Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued. "new" beside the playlists heading makes an empty playlist, and tracks, records or artists dropped on the heading make one holding them; "add to playlist" in any context menu offers a new playlist too, and the queue's ⋯ saves the queue as one.
+
+A playlist's page is laid out as the queue is, grouped by record or flat (the album toggle in the toolbar, remembered per playlist). Play and shuffle are in its header; the toolbar holds undo and redo, and under ⋯ play next, add to queue, shuffle the order, rename, export as M3U8 and delete. Rows are selected as in the queue and dragged to reorder, with the insertion line showing where they land; tracks, records and playlists dropped between rows are added there, and files dropped on the page are added at the end. Delete removes the selected rows. Removing, shuffling the order, renaming and deleting say what will change before they do it, and every edit but deleting can be undone. Smart playlists, playlists read from files in the library and playlists the server marks read-only say so in the header and take no edits.
 
 ## Settings
 

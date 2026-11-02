@@ -1012,7 +1012,8 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     if column_exists(conn, "users", "sealed_password")? {
         conn.execute("ALTER TABLE users DROP COLUMN sealed_password", [])?;
     }
-    // A client more than this far behind purges its whole cache instead.
+    // A client further behind than this purges its whole cache instead
+    // (`art_evictions_since`).
     conn.execute(
         "DELETE FROM art_evictions WHERE seq < (SELECT MAX(seq) FROM art_evictions) - 50000",
         [],

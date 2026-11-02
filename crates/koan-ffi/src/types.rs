@@ -2498,6 +2498,9 @@ pub struct ArtEvictions {
     pub albums: Vec<i64>,
     pub artists: Vec<i64>,
     pub tracks: Vec<i64>,
+    /// The mark passed was older than the entries kept, or from another
+    /// database: everything cached by id goes, not only what is named.
+    pub purge: bool,
 }
 
 /// An account on a server, as one link. What a tapped invite carries and what

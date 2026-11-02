@@ -24,10 +24,6 @@ raw = 17
 ["dsp/manage.rs"]
 raw = 2
 
-["dsp/menu.rs"]
-number = 1
-raw = 5
-
 ["dsp/page.rs"]
 number = 20
 raw = 11
@@ -45,10 +41,6 @@ container = 1
 ["dsp/stage.rs"]
 raw = 2
 
-["dsp/window.rs"]
-number = 4
-raw = 5
-
 ["levels.rs"]
 number = 2
 raw = 8
@@ -65,8 +57,7 @@ number = 9
 raw = 7
 
 ["library/artists.rs"]
-number = 2
-raw = 5
+raw = 4
 
 ["library/bench.rs"]
 raw = 1
@@ -117,9 +108,7 @@ number = 2
 raw = 3
 
 ["platform/about.rs"]
-number = 2
 container = 1
-raw = 5
 
 ["platform/actions.rs"]
 raw = 5
@@ -134,13 +123,10 @@ raw = 4
 raw = 1
 
 ["platform/shortcuts_sheet.rs"]
-number = 27
-fixed = 8
-raw = 7
+raw = 1
 
 ["queue/mod.rs"]
-number = 1
-raw = 8
+raw = 1
 
 ["root.rs"]
 raw = 1
@@ -178,19 +164,12 @@ raw = 3
 number = 1
 raw = 3
 
-["settings/qr.rs"]
-number = 2
-raw = 5
-
 ["settings/sheet.rs"]
 number = 1
 raw = 5
 
 ["shell.rs"]
 raw = 5
-
-["sidebar.rs"]
-raw = 2
 
 ["transport.rs"]
 number = 4

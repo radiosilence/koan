@@ -208,30 +208,6 @@ pub struct EngineState {
     /// Woken on every publish. Carries the clock so a receiver that was busy
     /// still sees it moved.
     tick: tokio::sync::watch::Sender<u64>,
-    /// A seek asked for and not yet reached.
-    seek: parking_lot::Mutex<Option<PendingSeek>>,
-}
-
-/// How near the playhead must come to where a seek asked to land to count as
-/// having landed.
-pub const SEEK_TOLERANCE_MS: u64 = 750;
-/// How long a seek waits for the engine before the playhead is given back.
-pub const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Where a seek asked the playhead to land, and the anchors held back
-/// meanwhile.
-///
-/// A seek goes down a channel to the player thread, which restarts decoding
-/// before the position moves. An anchor published in that gap still holds the
-/// old position, and a client drawing it would snap its bar back before the
-/// new position arrives. So the asked-for position is published at once, and
-/// anchors far from it are held until one comes near or the seek's patience
-/// runs out, when the latest held is published: a seek the engine refused
-/// cannot wedge the bar.
-struct PendingSeek {
-    asked: Anchor,
-    deadline: Instant,
-    held: Option<StateSlice>,
 }
 
 impl EngineState {
@@ -240,78 +216,7 @@ impl EngineState {
             slots: parking_lot::Mutex::new(Slots::default()),
             sending: [const { parking_lot::Mutex::new(()) }; SLOTS],
             tick: tokio::sync::watch::channel(0).0,
-            seek: parking_lot::Mutex::new(None),
         })
-    }
-
-    /// A seek to `position_ms` was asked for: every client's playhead goes
-    /// there now, and stays there until the engine reports being near it.
-    pub fn seek_requested(self: &Arc<Self>, position_ms: u64, seekable_ms: u64, playing: bool) {
-        let now = Instant::now();
-        let deadline = now + SEEK_PATIENCE;
-        *self.seek.lock() = Some(PendingSeek {
-            asked: Anchor {
-                position_ms,
-                playing,
-                at: now,
-            },
-            deadline,
-            held: None,
-        });
-        self.store(
-            StateSlice::Playhead {
-                position_ms,
-                seekable_ms,
-                playing,
-            },
-            true,
-        );
-        // The playhead may never move again to settle a refused seek.
-        let state = Arc::downgrade(self);
-        let _ = std::thread::Builder::new()
-            .name("koan-seek".into())
-            .spawn(move || {
-                std::thread::sleep(SEEK_PATIENCE);
-                if let Some(state) = state.upgrade() {
-                    state.give_up_seek(deadline);
-                }
-            });
-    }
-
-    /// The seek that gave up at `deadline` is over: the latest anchor held
-    /// back is the playhead.
-    fn give_up_seek(&self, deadline: Instant) {
-        let held = {
-            let mut seek = self.seek.lock();
-            match seek.as_ref() {
-                Some(pending) if pending.deadline == deadline => {
-                    seek.take().and_then(|pending| pending.held)
-                }
-                _ => return,
-            }
-        };
-        if let Some(held) = held {
-            self.store(held, true);
-        }
-    }
-
-    /// Whether a playhead anchor is held back by a seek still landing.
-    fn held_by_seek(&self, slice: &StateSlice) -> bool {
-        let StateSlice::Playhead { position_ms, .. } = slice else {
-            return false;
-        };
-        let mut seek = self.seek.lock();
-        let Some(pending) = seek.as_mut() else {
-            return false;
-        };
-        let now = Instant::now();
-        let near = pending.asked.reckoning(now).abs_diff(*position_ms) <= SEEK_TOLERANCE_MS;
-        if near || now >= pending.deadline {
-            *seek = None;
-            return false;
-        }
-        pending.held = Some(slice.clone());
-        true
     }
 
     /// Replace a slice. A no-op when it says the same thing as the last one,
@@ -335,13 +240,6 @@ impl EngineState {
     }
 
     fn send(&self, slice: StateSlice, always: bool) {
-        if self.held_by_seek(&slice) {
-            return;
-        }
-        self.store(slice, always);
-    }
-
-    fn store(&self, slice: StateSlice, always: bool) {
         let i = slice.slot() as usize;
         let _sending = self.sending[i].lock();
         let last = self.slots.lock().latest[i].clone();
@@ -465,53 +363,6 @@ impl Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn playhead_of(state: &EngineState) -> Option<u64> {
-        let mut seen = [0; SLOTS];
-        state
-            .since(&mut seen)
-            .into_iter()
-            .find_map(|slice| match slice {
-                StateSlice::Playhead { position_ms, .. } => Some(position_ms),
-                _ => None,
-            })
-    }
-
-    fn playhead(position_ms: u64) -> StateSlice {
-        StateSlice::Playhead {
-            position_ms,
-            seekable_ms: 300_000,
-            playing: false,
-        }
-    }
-
-    #[test]
-    fn a_stale_anchor_after_a_seek_does_not_move_the_bar_back() {
-        let state = EngineState::new();
-        state.reanchor(playhead(1_000));
-        state.seek_requested(60_000, 300_000, false);
-        assert_eq!(playhead_of(&state), Some(60_000));
-        // Published before the player thread took the seek.
-        state.reanchor(playhead(1_000));
-        assert_eq!(playhead_of(&state), Some(60_000));
-        // The engine landing near where it was asked to.
-        state.reanchor(playhead(60_200));
-        assert_eq!(playhead_of(&state), Some(60_200));
-        // Settled: anchors pass again.
-        state.reanchor(playhead(5_000));
-        assert_eq!(playhead_of(&state), Some(5_000));
-    }
-
-    #[test]
-    fn a_refused_seek_gives_the_playhead_back() {
-        let state = EngineState::new();
-        state.seek_requested(60_000, 300_000, false);
-        state.reanchor(playhead(1_000));
-        assert_eq!(playhead_of(&state), Some(60_000));
-        let deadline = state.seek.lock().as_ref().map(|p| p.deadline).unwrap();
-        state.give_up_seek(deadline);
-        assert_eq!(playhead_of(&state), Some(1_000));
-    }
 
     use crate::types::RunRole;
     use std::time::Duration;

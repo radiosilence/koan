@@ -114,7 +114,7 @@ impl AlbumPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
                 // The window takes the playing record's colours back, unless
                 // another record's page has taken them meanwhile.
                 if cx
