@@ -1951,6 +1951,10 @@ gui-run *ARGS:
     cargo build --profile gui-dev -p koan-gui --features runtime-shaders
     app="$PWD/target/gui-dev/kōan dev.app"
     mkdir -p "$app/Contents/MacOS"
+    # A new file, never the signed one rewritten in place: macOS keeps a
+    # binary's signature by its file and kills a launch that no longer
+    # matches it.
+    rm -f "$app/Contents/MacOS/koan-gui"
     cp "${CARGO_TARGET_DIR:-target}/gui-dev/koan-gui" "$app/Contents/MacOS/koan-gui"
     cat > "$app/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
@@ -1975,10 +1979,14 @@ gui-run *ARGS:
         id="koan development"
     fi
     codesign --force --sign "${id:--}" "$app" 2>/dev/null
-    envs=(--env "KOAN_CONFIG_DIR=$KOAN_CONFIG_DIR")
-    for name in KOAN_LOG RUST_LOG RUST_BACKTRACE KOAN_GUI_MEASURE; do
-        if [ -n "${!name:-}" ]; then envs+=(--env "$name=${!name}"); fi
-    done
+    # An app started by `open` runs from /, and has none of this shell's
+    # variables but those handed to it: every KOAN_ and RUST_ one, the
+    # configuration directory made absolute.
+    export KOAN_CONFIG_DIR="$(cd "$KOAN_CONFIG_DIR" && pwd)"
+    envs=()
+    while read -r name; do
+        envs+=(--env "$name=${!name}")
+    done < <(compgen -e | grep -E '^(KOAN_|RUST_)')
     tty=$(tty 2>/dev/null || echo /dev/null)
     # Ctrl-C reaches `open`, not the app: handed on, it quits as ⌘Q does.
     trap 'pkill -INT -f "$app/Contents/MacOS/koan-gui" || true' INT
