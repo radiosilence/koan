@@ -12,8 +12,9 @@
 //! `KOAN_DEVICES__NEARBY=false KOAN_DEVICES__DISCOVERABLE=false` so the run
 //! neither announces a device nor takes the devices port.
 //!
-//! Each pass prints the queue row at the top of the list as it ends, so the
-//! numbers carry proof that the list moved.
+//! Each pass prints the row at the top of the list as it ends, so the
+//! numbers carry proof that the list moved. `KOAN_GUI_MEASURE_ROUTE=playlist:<id>`
+//! opens the window on that playlist's page, and the pass scrolls it instead.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -29,8 +30,16 @@ use koan_kit::raw::profiler::journal::{ForegroundJournalEntry, IntervalBoundary}
 const STEPS: usize = 300;
 const STEP: Pixels = px(40.);
 
-/// The queue row at the top of the list, kept by the queue as it scrolls.
+/// The row at the top of the measured list, kept by the queue or the
+/// playlist page as it scrolls.
 pub static TOP: AtomicUsize = AtomicUsize::new(0);
+
+/// The page a measuring run opens on, from `KOAN_GUI_MEASURE_ROUTE`.
+pub fn route() -> Option<crate::navigator::Route> {
+    let value = std::env::var("KOAN_GUI_MEASURE_ROUTE").ok()?;
+    let id = value.strip_prefix("playlist:")?.parse().ok()?;
+    Some(crate::navigator::Route::Playlist(id))
+}
 
 pub fn start(cx: &mut App) {
     match std::env::var("KOAN_GUI_MEASURE").as_deref() {
@@ -158,15 +167,19 @@ fn scroll(cx: &mut App) {
                     .ok();
                 background.timer(Duration::from_millis(16)).await;
             }
-            let rows = cx.update(|cx| {
-                cx.global::<crate::mirror::Mirror>()
-                    .queue
-                    .read(cx)
-                    .rows
-                    .len()
-            });
             let top = TOP.load(Ordering::Relaxed);
-            println!("scrolled {pass}: top row {top} of {rows}");
+            if route().is_some() {
+                println!("scrolled {pass}: top row {top}");
+            } else {
+                let rows = cx.update(|cx| {
+                    cx.global::<crate::mirror::Mirror>()
+                        .queue
+                        .read(cx)
+                        .rows
+                        .len()
+                });
+                println!("scrolled {pass}: top row {top} of {rows}");
+            }
         }
         window
             .update(cx, |_, window, _| {

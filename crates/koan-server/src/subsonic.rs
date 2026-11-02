@@ -4795,13 +4795,10 @@ async fn koan_playlist_order(
                 .all("id")
                 .filter_map(|raw| playlist_id(db, Some(raw)).ok())
                 .collect();
-            queries::set_account_playlist_order(&db.conn, user, &ids)
+            // Passed on upstream when this server is signed in there as the
+            // account, as its other playlist edits are.
+            koan_core::playlists::set_account_order(db, user, &ids)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            // A server that is itself signed in upstream, as this account,
-            // passes the order on, as it does its other playlist edits.
-            if matches!(queries::auth::is_local_user(&db.conn, user), Ok(true)) {
-                koan_core::playlists::push_order();
-            }
             crate::clients::changed();
             Ok(b)
         })
