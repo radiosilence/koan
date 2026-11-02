@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod badge;
+mod banner;
 mod button;
 mod cover;
 mod dense;
@@ -52,6 +53,7 @@ use gpui_kit::{
 };
 
 pub use badge::{Badge, Chip};
+pub use banner::Banner;
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
