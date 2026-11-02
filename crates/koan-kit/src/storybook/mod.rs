@@ -3,11 +3,13 @@
 //! theme takes from the app and the system: the appearance, the accent (a
 //! sample sleeve among them, to show its tone mapping and the wash), the
 //! text size, Reduce Motion and Show icons. `cargo run -p koan-kit` opens
-//! it; `--png DIR` draws each page offscreen instead (see `main.rs`).
+//! it; `examples/storybook.rs` draws each page offscreen instead.
 //!
 //! The window's root is the shape every app window takes: the wash and the
 //! content as two cached views, so a frame of the drift redraws the wash
 //! alone.
+
+mod more;
 
 use std::sync::Arc;
 
@@ -43,10 +45,14 @@ pub enum Story {
     Progress,
     Feedback,
     Bars,
+    Collections,
+    Lists,
+    Panels,
+    Motion,
 }
 
 impl Story {
-    pub const ALL: [Story; 12] = [
+    pub const ALL: [Story; 16] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -59,6 +65,10 @@ impl Story {
         Story::Progress,
         Story::Feedback,
         Story::Bars,
+        Story::Collections,
+        Story::Lists,
+        Story::Panels,
+        Story::Motion,
     ];
 
     /// Its name in the sidebar, and its PNG's.
@@ -76,6 +86,10 @@ impl Story {
             Story::Progress => "progress",
             Story::Feedback => "feedback",
             Story::Bars => "toolbars and headers",
+            Story::Collections => "collections",
+            Story::Lists => "tables and lists",
+            Story::Panels => "panels and sheets",
+            Story::Motion => "motion and drag",
         }
     }
 
@@ -166,6 +180,7 @@ pub struct StoryContent {
     empty_field: Entity<InputState>,
     tooltip: Entity<Tooltip>,
     outputs: Entity<Menu>,
+    more: more::State,
     _accent: Subscription,
 }
 
@@ -215,6 +230,7 @@ impl StoryContent {
                     })
                     .note("Living room plays the original files. ReplayGain and fades don't apply.")
             }),
+            more: more::State::new(window, cx),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -316,7 +332,12 @@ impl StoryContent {
             )
     }
 
-    fn page(&mut self, look: &Look, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn page(
+        &mut self,
+        look: &Look,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let entity = cx.entity();
         let set = |change: fn(&mut StoryContent, bool)| {
             let entity = entity.clone();
@@ -336,6 +357,9 @@ impl StoryContent {
                 .gap(look.space(Space::M))
         };
         match self.story {
+            Story::Collections | Story::Lists | Story::Panels | Story::Motion => {
+                self.more(look, window, cx)
+            }
             Story::Type => {
                 let mut v = vec![SectionHeader::new("Type").into_any_element()];
                 v.extend([
@@ -954,9 +978,11 @@ impl Render for StoryContent {
                     })
             }));
         let controls = self.controls(&look, cx);
-        let page = self.page(&look, cx);
+        let page = self.page(&look, window, cx);
+        let viewer = self.viewer(cx);
         div()
             .font_family(theme::FONT_FAMILY)
+            .relative()
             .size_full()
             .flex()
             .child(nav)
@@ -979,6 +1005,7 @@ impl Render for StoryContent {
                         )),
                     ),
             )
+            .children(viewer)
     }
 }
 
