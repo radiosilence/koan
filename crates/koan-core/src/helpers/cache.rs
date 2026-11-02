@@ -87,9 +87,7 @@ pub fn evict_cache(
         log::warn!("cache eviction: failed to clear DB: {e}");
     }
     if current > limit {
-        let covers = crate::remote::covers::trim(cfg, (current - limit) as u64) as i64;
-        current -= covers;
-        freed += covers;
+        freed += crate::remote::covers::trim(cfg, (current - limit) as u64) as i64;
     }
     remove_empty_dirs(&cfg.cache_dir());
     if freed > 0 {

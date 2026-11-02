@@ -76,10 +76,12 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
 /// `keep`, on the store's own writer thread, for a caller on an async runtime
 /// or a page's lane that should not wait on the disk.
 pub fn keep_later(id: String, size: Option<u32>, data: Vec<u8>) {
-    static WRITER: std::sync::OnceLock<crossbeam_channel::Sender<(String, Option<u32>, Vec<u8>)>> =
+    /// A cover to keep: its id, the size asked for and its bytes.
+    type Keeping = (String, Option<u32>, Vec<u8>);
+    static WRITER: std::sync::OnceLock<crossbeam_channel::Sender<Keeping>> =
         std::sync::OnceLock::new();
     let writer = WRITER.get_or_init(|| {
-        let (tx, rx) = crossbeam_channel::unbounded::<(String, Option<u32>, Vec<u8>)>();
+        let (tx, rx) = crossbeam_channel::unbounded::<Keeping>();
         std::thread::Builder::new()
             .name("koan-cover-store".into())
             .spawn(move || {
@@ -267,9 +269,8 @@ fn pass() {
     }
     let total = missing.len() as u64;
     log::info!("cover preload: {total} records to fetch");
-    let mut done = 0;
-    set_progress(Some(Preload { done, total }));
-    for id in missing {
+    set_progress(Some(Preload { done: 0, total }));
+    for (done, id) in (1..).zip(missing) {
         let cfg = Config::cached();
         if !may_run(&seen()) || !cfg.remote.preload_covers {
             break;
@@ -284,7 +285,6 @@ fn pass() {
                 break;
             }
         }
-        done += 1;
         set_progress(Some(Preload { done, total }));
     }
     set_progress(None);
