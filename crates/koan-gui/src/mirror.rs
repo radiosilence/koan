@@ -116,12 +116,12 @@ impl Queue {
         }
     }
 
-    /// Lays the rows out again, grouped or flat, as the queue sent whole
-    /// would be: a view sees `whole` move and resets its list.
-    pub fn regroup(&mut self, grouped: bool) {
+    /// Takes rows laid out off the main thread for this queue, as the queue
+    /// sent whole would be: a view sees `whole` move and resets its list.
+    fn take_rows(&mut self, grouped: bool, rows: Vec<Row>, track_rows: HashMap<String, usize>) {
         self.grouped = grouped;
-        self.rows = rows::build(&self.base, grouped);
-        self.track_rows = track_rows(&self.rows, &self.base);
+        self.rows = rows;
+        self.track_rows = track_rows;
         self.whole = self.whole.wrapping_add(1);
     }
 
@@ -152,6 +152,37 @@ impl Queue {
 }
 
 /// The track row of each queue item.
+/// Lays `queue` out again, grouped or flat, on the background executor: a
+/// queue of 50,000 rows is no frame's work. The rows land only if the queue
+/// was not sent whole meanwhile, which lays itself out, and if `grouped` is
+/// still what is wanted.
+pub fn regroup(queue: &Entity<Queue>, grouped: bool, cx: &mut App) {
+    let (version, base) = {
+        let q = queue.read(cx);
+        (q.version, q.base.clone())
+    };
+    let queue = queue.downgrade();
+    let laid = cx.background_spawn(async move {
+        let rows = rows::build(&base, grouped);
+        let track_rows = track_rows(&rows, &base);
+        (rows, track_rows)
+    });
+    cx.spawn(async move |cx| {
+        let (rows, track_rows) = laid.await;
+        queue
+            .update(cx, |q, cx| {
+                let wanted =
+                    crate::window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
+                if q.version == version && wanted == grouped {
+                    q.take_rows(grouped, rows, track_rows);
+                    cx.notify();
+                }
+            })
+            .ok();
+    })
+    .detach();
+}
+
 fn track_rows(rows: &[Row], items: &[QueueItem]) -> HashMap<String, usize> {
     rows.iter()
         .enumerate()
@@ -287,10 +318,20 @@ impl Mirror {
         for slice in batch {
             let slice = match slice {
                 Prepared::Queue(next) => {
+                    // Laid out under the grouping read when it was prepared:
+                    // one toggled since, or read from the saved layout since,
+                    // lays it out again, off this thread as well.
+                    let stale = next.grouped
+                        != crate::window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
                     self.queue.update(cx, |queue, cx| {
                         replaced.push(queue.replace(next));
                         cx.notify();
                     });
+                    if stale {
+                        let grouped =
+                            crate::window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
+                        regroup(&self.queue, grouped, cx);
+                    }
                     continue;
                 }
                 Prepared::Playhead(next) => {
