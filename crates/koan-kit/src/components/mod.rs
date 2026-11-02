@@ -29,6 +29,7 @@ mod panel;
 mod picker;
 pub(crate) mod placeholder;
 mod progress;
+mod qr;
 mod ring;
 mod rows;
 mod scroll;
@@ -42,6 +43,7 @@ mod stepper;
 mod table;
 mod toggle;
 mod toolbar;
+mod window;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -71,6 +73,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
 pub use progress::{ProgressBar, ProgressRow};
+pub use qr::QrCode;
 pub use ring::ProgressRing;
 pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
@@ -86,6 +89,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use window::SecondaryWindow;
 
 use crate::theme::{Look, MARK, Motion};
 

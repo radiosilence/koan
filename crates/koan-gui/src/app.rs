@@ -30,6 +30,9 @@ const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 
 /// The engine and what follows it, as globals every view reads: the mirror
 /// of its state and the cover cache.
+/// The app's name to the desktop on Linux, for every window it opens.
+pub const APP_ID: &str = "koan-gui";
+
 pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(engine, cx);
     cx.set_global(mirror);
@@ -152,7 +155,7 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // The `.desktop` file's StartupWMClass.
-        app_id: Some("koan-gui".into()),
+        app_id: Some(APP_ID.into()),
         ..Default::default()
     };
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.

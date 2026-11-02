@@ -172,6 +172,14 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it.
 
+### QrCode (Mac: the invite and pairing codes)
+
+`QrCode::new(dark, side)` from the modules row by row, and `element(side, margin)`: dark runs as quads on a light quiet zone in either appearance, since phones read that best.
+
+### SecondaryWindow (Mac: Settings, the EQ window, About)
+
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+
 ## Swift roles and their GPUI components
 
 | Swift (`KoanTheme.swift`, `Views/`) | GPUI |
