@@ -656,6 +656,13 @@ impl LoudnessMeter {
     /// Takes in what was played between `previous` and `played`, both
     /// counts of interleaved samples. A count that went back is a new
     /// decode session, which starts the meter over.
+    /// Nobody is reading the loudness: drop the meter, so that when someone
+    /// does it starts from what is heard then, not from a gap.
+    fn rest(&mut self) {
+        self.r128 = None;
+        self.loudness = Loudness::default();
+    }
+
     fn measure(&mut self, buffer: &VizBuffer, previous: u64, played: u64) -> Loudness {
         if played < previous || previous == u64::MAX {
             if let Some(r) = &mut self.r128 {
@@ -720,6 +727,10 @@ fn analysis_loop(
     let mut spare_waveform: Vec<f32> = Vec::new();
     let mut last_reads = u64::MAX;
     let mut last_read_at = Instant::now();
+    // Whole frames read: the loudness meter runs only while someone reads
+    // them, and starts afresh when someone does again.
+    let mut last_frame_reads = u64::MAX;
+    let mut last_frame_read_at = Instant::now();
     let mut last_played = u64::MAX;
 
     while running.load(Ordering::Relaxed) {
@@ -769,7 +780,16 @@ fn analysis_loop(
             }
         } else {
             viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
-            loudness = meter.measure(&viz_buffer, previous, played);
+            let frame_reads = snapshot.frame_reads();
+            if frame_reads != last_frame_reads {
+                last_frame_reads = frame_reads;
+                last_frame_read_at = start;
+            }
+            if start.duration_since(last_frame_read_at) <= IDLE_AFTER {
+                loudness = meter.measure(&viz_buffer, previous, played);
+            } else {
+                meter.rest();
+            }
 
             // ── Phase 2: compute (no lock held) ──────────────────────────────
             state.analyze(

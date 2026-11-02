@@ -30,8 +30,7 @@ raw = 3
 container = 1
 
 ["levels.rs"]
-number = 2
-raw = 8
+raw = 1
 
 ["library/album_page.rs"]
 raw = 4
