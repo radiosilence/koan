@@ -9,7 +9,7 @@
 
 mod form;
 pub mod model;
-mod panes;
+pub(crate) mod panes;
 mod qr;
 pub mod sharing;
 mod sheet;

@@ -802,33 +802,36 @@ pub enum ModeLabel {
 }
 
 impl ModeLabel {
-    pub fn render(&self, look: &Look) -> AnyElement {
+    /// What it says, in the theme's case, with its glyph and tone: the same
+    /// words in Settings and at the foot of the sidebar.
+    pub fn line(&self) -> (Icon, String, Tone) {
         match self {
-            ModeLabel::Sharing(port) => note(
-                label(format!("Sharing on port {port}")),
+            ModeLabel::Sharing(port) => (
                 Icon::Server,
+                label(format!("Sharing on port {port}")).to_string(),
                 Tone::Muted,
-                look,
             ),
-            ModeLabel::NotSharing(why) => note(
-                format!("{}{why}", label("Not sharing: ")),
+            ModeLabel::NotSharing(why) => (
                 Icon::Warning,
+                format!("{}{why}", label("Not sharing: ")),
                 Tone::Bad,
-                look,
             ),
-            ModeLabel::Connected(host) => note(
-                format!("{}{host}", label("Connected to ")),
+            ModeLabel::Connected(host) => (
                 Icon::Server,
+                format!("{}{host}", label("Connected to ")),
                 Tone::Muted,
-                look,
             ),
-            ModeLabel::Own => note(
-                label("Playing this device's own library"),
+            ModeLabel::Own => (
                 Icon::Library,
+                label("Playing this device's own library").to_string(),
                 Tone::Muted,
-                look,
             ),
         }
+    }
+
+    pub fn render(&self, look: &Look) -> AnyElement {
+        let (icon, text, tone) = self.line();
+        note(text, icon, tone, look)
     }
 }
 

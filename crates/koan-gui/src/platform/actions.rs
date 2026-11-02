@@ -31,8 +31,10 @@ use koan_kit::raw::OperatingSystem;
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
 
-/// Where bare keys are live: inside the window, outside any text field.
-const BARE_CONTEXT: &str = "koan && !Input";
+/// Where bare keys are live: inside the window, outside any text field, and
+/// not while a question or a menu holds the keyboard, where space would
+/// otherwise play behind it.
+const BARE_CONTEXT: &str = "koan && !Input && !Ask && !KoanMenu";
 
 /// What the shell's text fields call their context (gpui-base's `Input`).
 #[cfg(test)]
