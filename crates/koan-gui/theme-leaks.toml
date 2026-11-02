@@ -50,8 +50,7 @@ number = 4
 raw = 5
 
 ["levels.rs"]
-number = 2
-raw = 8
+raw = 1
 
 ["library/album_page.rs"]
 raw = 4
