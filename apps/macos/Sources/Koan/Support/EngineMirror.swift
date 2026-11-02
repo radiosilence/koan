@@ -78,6 +78,7 @@ final class EngineMirror: Observable {
     private var _scanning = false
     private var _syncing = false
     private var _syncProgress: SyncProgress?
+    private var _covers: CoverPreload?
     private var _devices: [DeviceInfo] = []
     private var _devicesAt = Date.now
     private var _target: String?
@@ -129,6 +130,12 @@ final class EngineMirror: Observable {
     var syncProgress: SyncProgress? {
         access(\.syncProgress)
         return _syncProgress
+    }
+
+    /// How far fetching every record's cover ahead has got, while it runs.
+    var covers: CoverPreload? {
+        access(\.covers)
+        return _covers
     }
 
     var queue: [QueueItem] {
@@ -484,6 +491,8 @@ final class EngineMirror: Observable {
             }
         case .sync(let progress):
             mutate(\.syncProgress) { _syncProgress = progress }
+        case .covers(let progress):
+            mutate(\.covers) { _covers = progress }
         case .devices(let devices, let target, let targetReach):
             mutate(\.devices) {
                 _devices = devices

@@ -84,7 +84,7 @@ struct NowPlayingPage: View {
                 .backgroundStyle(.clear)
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
-            AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(16))
+            AlbumArtwork(source: source, size: .hero, cornerRadius: KoanTheme.radius(16))
                 .koanShadow(0.35, radius: 40, y: 20)
                 .transition(.opacity)
         } else {

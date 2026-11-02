@@ -27,18 +27,30 @@ pub fn evict_cache(
     let Some(limit) = cfg.cache_limit_bytes().map(|l| l as i64) else {
         return 0;
     };
-    let mut current = match queries::total_cache_size(&db.conn) {
+    // Kept covers count with the downloads and go first: one is a small
+    // request to fetch again, a download is the music itself.
+    let downloads = match queries::total_cache_size(&db.conn) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("cache eviction: failed to query cache size: {e}");
             return 0;
         }
     };
+    let artwork = crate::remote::covers::bytes(cfg) as i64;
+    let mut covers_freed: i64 = 0;
+    if downloads + artwork > limit {
+        covers_freed =
+            crate::remote::covers::trim(cfg, (downloads + artwork - limit) as u64) as i64;
+        if covers_freed > 0 {
+            cache_shrank(covers_freed as u64);
+        }
+    }
+    let mut current = downloads + artwork - covers_freed;
     if current <= limit {
         if verbose {
             log::info!("cache within limit: {current} / {limit} bytes");
         }
-        return 0;
+        return covers_freed as u64;
     }
     let files = match queries::cached_files_lru(&db.conn) {
         Ok(f) => f,
@@ -89,7 +101,7 @@ pub fn evict_cache(
         cache_shrank(freed as u64);
         log::info!("cache eviction freed {freed} bytes");
     }
-    freed as u64
+    (freed + covers_freed) as u64
 }
 
 /// How many of `upcoming` — the playing track, then the rest of the queue in
@@ -177,7 +189,7 @@ pub fn measure_cache(cfg: &Config) -> u64 {
     bytes
 }
 
-pub(super) fn cache_grew(bytes: u64) {
+pub(crate) fn cache_grew(bytes: u64) {
     CACHE_BYTES.fetch_add(bytes, Ordering::Relaxed);
     crate::signal::engine_changed().bump();
 }

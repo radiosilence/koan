@@ -15,10 +15,16 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import okio.Buffer
 
-/** How big a cover is wanted: a thumbnail for lists and grids, or the whole image. */
+/**
+ * How big a cover is wanted: a thumbnail for lists and grids, a large one for
+ * a page or a player that fills the screen, or the original for the artwork
+ * viewer. The large one is a size every koan server makes; the original is
+ * read from the music file on the server, so only the viewer asks for it.
+ */
 enum class ArtSize(val px: UInt?) {
     Thumb(300u),
-    Full(null),
+    Large(1200u),
+    Original(null),
 }
 
 /**
@@ -40,7 +46,7 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
         fun track(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Track, id, size)
 
         /** The artist's photograph, from Wikimedia Commons: one size, the network on a miss. */
-        fun artist(id: Long) = Art(Kind.Artist, id, ArtSize.Full)
+        fun artist(id: Long) = Art(Kind.Artist, id, ArtSize.Original)
     }
 }
 
