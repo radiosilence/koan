@@ -1,0 +1,1 @@
+- **The desktop app builds again.** Stopping a TV's waking from the devices menu called its confirmation without the TV's name.
