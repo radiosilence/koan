@@ -136,27 +136,33 @@ impl StoryContent {
                                 story.more.picked[index] = !story.more.picked[index];
                             }))
                     });
-                let tiles = [WARM, COOL, WARM].into_iter().enumerate().map(|(index, colour)| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(look.space(Space::Xs))
-                        .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
-                        .child(text(
-                            ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
-                            TypeRole::Control,
-                            Tone::Ink,
-                            look,
-                        ))
-                        .into_any_element()
-                });
-                let rows = LIST.into_iter().enumerate().map(|(index, (title, artist, length))| {
-                    TableRow::new(("story-collection-row", index), RowKind::Text)
-                        .title(text(title, TypeRole::Body, Tone::Ink, look))
-                        .line(text(artist, TypeRole::Meta, Tone::Muted, look))
-                        .figure(48.0, text(length, TypeRole::Meta, Tone::Muted, look))
-                        .into_any_element()
-                });
+                let tiles = [WARM, COOL, WARM]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, colour)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(look.space(Space::Xs))
+                            .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
+                            .child(text(
+                                ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
+                                TypeRole::Control,
+                                Tone::Ink,
+                                look,
+                            ))
+                            .into_any_element()
+                    });
+                let rows = LIST
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (title, artist, length))| {
+                        TableRow::new(("story-collection-row", index), RowKind::Text)
+                            .title(text(title, TypeRole::Body, Tone::Ink, look))
+                            .line(text(artist, TypeRole::Meta, Tone::Muted, look))
+                            .figure(48.0, text(length, TypeRole::Meta, Tone::Muted, look))
+                            .into_any_element()
+                    });
                 vec![
                     SectionHeader::new("Page header with play and shuffle").into_any_element(),
                     PageHeader::new("Low Tide Arcade")
@@ -169,7 +175,12 @@ impl StoryContent {
                             ],
                             look.spaced(120.0),
                         ))
-                        .detail(text("12 tracks · 48 min", TypeRole::Control, Tone::Muted, look))
+                        .detail(text(
+                            "12 tracks · 48 min",
+                            TypeRole::Control,
+                            Tone::Muted,
+                            look,
+                        ))
                         .action(PlayButton::new("story-play", "play"))
                         .action(ShuffleButton::new("story-shuffle", "Low Tide Arcade"))
                         .action(PlayButton::new("story-play-loading", "play").loading(true))
@@ -224,11 +235,21 @@ impl StoryContent {
                         .w(look.spaced(260.0))
                         .child(name_line(
                             vec![
-                                link_text("story-link-1", "Low Tide Arcade", ink, Some(link_action(|_, _, _| {})))
-                                    .into_any_element(),
+                                link_text(
+                                    "story-link-1",
+                                    "Low Tide Arcade",
+                                    ink,
+                                    Some(link_action(|_, _, _| {})),
+                                )
+                                .into_any_element(),
                                 div().child(", ").into_any_element(),
-                                link_text("story-link-2", "The Breakwater Collective featuring Coin Return", ink, Some(link_action(|_, _, _| {})))
-                                    .into_any_element(),
+                                link_text(
+                                    "story-link-2",
+                                    "The Breakwater Collective featuring Coin Return",
+                                    ink,
+                                    Some(link_action(|_, _, _| {})),
+                                )
+                                .into_any_element(),
                             ],
                             TypeRole::Body,
                             look.palette.muted.hsla(),
@@ -255,7 +276,10 @@ impl StoryContent {
                     .rows([
                         DenseRow::new().cell("105").cell("+4.5").cell("low shelf"),
                         DenseRow::new().cell("1,200").cell("-2.0").cell("peak"),
-                        DenseRow::new().cell("8,400").cell("+1.5").cell("high shelf"),
+                        DenseRow::new()
+                            .cell("8,400")
+                            .cell("+1.5")
+                            .cell("high shelf"),
                     ])
                     .into_any_element(),
                     SectionHeader::new("A virtual table").into_any_element(),
@@ -287,7 +311,10 @@ impl StoryContent {
             Story::Panels => {
                 let split = self.more.split;
                 let line = self.more.line;
-                let lines = LYRICS.iter().map(|line| SharedString::from(*line)).collect();
+                let lines = LYRICS
+                    .iter()
+                    .map(|line| SharedString::from(*line))
+                    .collect();
                 vec![
                     SectionHeader::new("A form").into_any_element(),
                     frame(240.0)
@@ -299,15 +326,13 @@ impl StoryContent {
                                         .row(FormRow::new("Watch for changes").value("on"))
                                         .footer("kōan rescans a folder when its files change."),
                                 )
-                                .section(
-                                    FormSection::new().row(
-                                        FormRow::new("Share link").control(CopyButton::new(
-                                            "story-copy",
-                                            "copy link",
-                                            "https://koan.rocks/s/abc",
-                                        )),
-                                    ),
-                                )
+                                .section(FormSection::new().row(
+                                    FormRow::new("Share link").control(CopyButton::new(
+                                        "story-copy",
+                                        "copy link",
+                                        "https://koan.rocks/s/abc",
+                                    )),
+                                ))
                                 .build(look),
                         )
                         .into_any_element(),
@@ -328,10 +353,13 @@ impl StoryContent {
                                     SuggestionPanel::new("story-suggestions")
                                         .child(SuggestionHeading::new("Records"))
                                         .child(
-                                            SuggestionRow::new("story-suggest-1", "Low Tide Arcade")
-                                                .detail("Low Tide Arcade")
-                                                .icon(Icon::Album)
-                                                .lit(true),
+                                            SuggestionRow::new(
+                                                "story-suggest-1",
+                                                "Low Tide Arcade",
+                                            )
+                                            .detail("Low Tide Arcade")
+                                            .icon(Icon::Album)
+                                            .lit(true),
                                         )
                                         .child(
                                             SuggestionRow::new("story-suggest-2", "Lowlands")
@@ -341,9 +369,12 @@ impl StoryContent {
                                         )
                                         .child(SuggestionHeading::new("Artists"))
                                         .child(
-                                            SuggestionRow::new("story-suggest-3", "Low Tide Arcade")
-                                                .icon(Icon::Artist)
-                                                .picked(true),
+                                            SuggestionRow::new(
+                                                "story-suggest-3",
+                                                "Low Tide Arcade",
+                                            )
+                                            .icon(Icon::Artist)
+                                            .picked(true),
                                         ),
                                 ),
                         )
@@ -351,20 +382,18 @@ impl StoryContent {
                     SectionHeader::new("Inspector and synced lines").into_any_element(),
                     frame(280.0)
                         .w(look.spaced(320.0))
-                        .child(
-                            Inspector::new("lyrics").body(
-                                SyncedLines::new("story-lines", lines, Some(line)).on_line({
-                                    let entity = entity.clone();
-                                    move |index, _, cx| {
-                                        let index = *index;
-                                        entity.update(cx, |story, cx| {
-                                            story.more.line = index;
-                                            cx.notify();
-                                        })
-                                    }
-                                }),
-                            ),
-                        )
+                        .child(Inspector::new("lyrics").body(
+                            SyncedLines::new("story-lines", lines, Some(line)).on_line({
+                                let entity = entity.clone();
+                                move |index, _, cx| {
+                                    let index = *index;
+                                    entity.update(cx, |story, cx| {
+                                        story.more.line = index;
+                                        cx.notify();
+                                    })
+                                }
+                            }),
+                        ))
                         .into_any_element(),
                     frame(160.0)
                         .w(look.spaced(320.0))
@@ -378,7 +407,11 @@ impl StoryContent {
                         .child(
                             SplitView::new("story-split", split, px(120.0), px(400.0), px(220.0))
                                 .leading(div().p(look.space(Space::M)).child("leading"))
-                                .trailing(div().p(look.space(Space::M)).child("trailing; drag the edge"))
+                                .trailing(
+                                    div()
+                                        .p(look.space(Space::M))
+                                        .child("trailing; drag the edge"),
+                                )
                                 .on_resize({
                                     let entity = entity.clone();
                                     move |width, _, cx| {
@@ -445,7 +478,12 @@ impl StoryContent {
                         .child(PlayingBars::new(look.accent.hsla(), move |_, _, _| {
                             Some(levels.clone())
                         }))
-                        .child(text("bands held at 70, 45 and 25 %", TypeRole::Meta, Tone::Muted, look))
+                        .child(text(
+                            "bands held at 70, 45 and 25 %",
+                            TypeRole::Meta,
+                            Tone::Muted,
+                            look,
+                        ))
                         .into_any_element(),
                     SectionHeader::new("Drag and drop").into_any_element(),
                     div()
@@ -490,13 +528,21 @@ impl StoryContent {
                         .border_color(look.palette.rule.hsla())
                         .child("right-click for a menu")
                         .koan_context_menu("story-context-menu", window, cx, |menu, _, _| {
-                            menu.item(MenuEntry::new("play").icon(Icon::Play).on_click(|_, _, _| {}))
-                                .item(
-                                    MenuEntry::new("add to queue")
-                                        .icon(Icon::QueueSection)
-                                        .on_click(|_, _, _| {}),
-                                )
-                                .item(MenuEntry::new("forget").destructive().on_click(|_, _, _| {}))
+                            menu.item(
+                                MenuEntry::new("play")
+                                    .icon(Icon::Play)
+                                    .on_click(|_, _, _| {}),
+                            )
+                            .item(
+                                MenuEntry::new("add to queue")
+                                    .icon(Icon::QueueSection)
+                                    .on_click(|_, _, _| {}),
+                            )
+                            .item(
+                                MenuEntry::new("forget")
+                                    .destructive()
+                                    .on_click(|_, _, _| {}),
+                            )
                         })
                         .into_any_element(),
                 ]
@@ -540,7 +586,7 @@ fn sample_code() -> QrCode {
     finder(&mut dark, SIDE - 7, 0);
     for y in 0..SIDE {
         for x in 0..SIDE {
-            let free = !((y < 8 && (x < 8 || x >= SIDE - 8)) || (y >= SIDE - 8 && x < 8));
+            let free = !((y < 8 && !(8..SIDE - 8).contains(&x)) || (y >= SIDE - 8 && x < 8));
             if free && (x * 7 + y * 13 + x * y) % 5 < 2 {
                 dark[y * SIDE + x] = true;
             }

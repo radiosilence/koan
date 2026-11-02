@@ -1278,7 +1278,7 @@ fn fetch_lane(
                     && queue.next_fetch().is_none()
                     && shared
                         .fetchers
-                        .fetch_update(
+                        .try_update(
                             std::sync::atomic::Ordering::AcqRel,
                             std::sync::atomic::Ordering::Acquire,
                             |n| (n > WINDOW_START).then(|| n - 1),

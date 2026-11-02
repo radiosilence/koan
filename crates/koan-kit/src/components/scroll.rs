@@ -17,7 +17,7 @@ pub struct ScrollArea {
 }
 
 enum Content {
-    Column(Div),
+    Column(Box<Div>),
     Items(Vec<AnyElement>),
 }
 
@@ -26,7 +26,7 @@ impl ScrollArea {
     pub fn new(id: impl Into<ElementId>, content: Div) -> Self {
         Self {
             id: id.into(),
-            content: Content::Column(content),
+            content: Content::Column(Box::new(content)),
             reveal: None,
         }
     }
@@ -71,7 +71,7 @@ impl RenderOnce for ScrollArea {
             .relative()
             .size_full()
             .child(match self.content {
-                Content::Column(column) => scrolled.child(column),
+                Content::Column(column) => scrolled.child(*column),
                 Content::Items(items) => scrolled.flex().flex_col().children(items),
             })
             .child(Scrollbar::vertical(&handle))

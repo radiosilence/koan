@@ -58,7 +58,7 @@ impl RenderOnce for Segmented {
             let mut option = accessible(
                 div().id(index),
                 gpui_kit::Role::RadioButton,
-                Some(option.clone().into()),
+                Some(option.clone()),
             )
             .aria_toggled(toggled(index == selected))
             .aria_position_in_set(index + 1)
@@ -75,6 +75,7 @@ impl RenderOnce for Segmented {
             .whitespace_nowrap()
             .child(option);
             if let Some(on_change) = self.on_change.clone() {
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let choose: Handler<gpui_kit::ClickEvent> = {
                     let on_change = on_change.clone();
                     Arc::new(move |_, window, cx| on_change(&index, window, cx))

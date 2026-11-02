@@ -129,7 +129,7 @@ pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
 /// The lock an earlier version takes in the config directory, while a
 /// running one holds it.
 pub fn earlier_version_lock() -> Option<File> {
-    let mut lock = OpenOptions::new()
+    let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .open(koan_core::config::config_dir().join(EARLIER_LOCK))
