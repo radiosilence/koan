@@ -162,7 +162,7 @@ private fun Header(album: Album, tracks: List<Track>) {
         Modifier.padding(horizontal = LocalKoanTokens.current.gutter),
         art = {
             Sleeve(
-                Art.album(album.id, ArtSize.Full),
+                Art.album(album.id, ArtSize.Large),
                 Modifier.clickable(remember { MutableInteractionSource() }, indication = null, onClickLabel = "Show artwork") { viewing = true },
                 size = 200.dp,
             )
@@ -182,6 +182,6 @@ private fun Header(album: Album, tracks: List<Track>) {
         },
     )
     if (viewing) {
-        ArtworkViewer(Art.album(album.id, ArtSize.Full), album.title, listOf(credit.text, details).filter { it.isNotEmpty() }.joinToString(" · ")) { viewing = false }
+        ArtworkViewer(Art.album(album.id, ArtSize.Original), album.title, listOf(credit.text, details).filter { it.isNotEmpty() }.joinToString(" · ")) { viewing = false }
     }
 }

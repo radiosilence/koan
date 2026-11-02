@@ -364,7 +364,7 @@ struct TrackListView: View {
 
     @ViewBuilder private var sleeve: some View {
         if let artwork {
-            AlbumArtwork(source: artwork, cornerRadius: KoanTheme.radius(8))
+            AlbumArtwork(source: artwork, size: .hero, cornerRadius: KoanTheme.radius(8))
                 .frame(width: sleeveSize, height: sleeveSize)
                 .koanShadow(0.3, radius: 10, y: 4)
                 .showsArtworkFullSize(

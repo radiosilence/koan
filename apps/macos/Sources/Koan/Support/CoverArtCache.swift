@@ -25,7 +25,7 @@ import SwiftUI
 /// released. `NSCache` bounds it and hands memory back under pressure.
 ///
 /// Full size is deliberately never cached. It is for one sheet at a time, and
-/// decoding it from a warm disk cache is quick enough that holding a 1000px
+/// decoding it from a warm disk cache is quick enough that holding an original
 /// bitmap for every record you happened to click on is not worth the resident
 /// memory.
 ///
@@ -40,14 +40,6 @@ import SwiftUI
 /// still reach it through `@Environment`. Nothing on it is observed — a cache
 /// is not SwiftUI state — so there is no registrar and nothing to notify.
 final class CoverArtCache: Observable, @unchecked Sendable {
-    /// What we ask the server for, and what lands on disk.
-    ///
-    /// One size serves the grid, the rows and the viewer, because there is one
-    /// blob per record. Large enough that the opened sleeve holds up on a
-    /// retina display, small enough that a library's worth of them is a cache
-    /// rather than a second copy of the artwork.
-    private static let sourcePixels: UInt32 = 1000
-
     /// Roughly 250 grid tiles, or thousands of row thumbnails. `NSCache` evicts
     /// under memory pressure on its own, so this is a ceiling rather than a
     /// target.
@@ -195,7 +187,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         await decodes.join(key) { [weak self] in
             guard let self else { return nil }
             let epoch = self.locked { self.generation(of: record) }
-            guard let data = await self.bytes(for: source) else { return nil }
+            guard let data = await self.bytes(for: source, size: size) else { return nil }
             let space = self.displaySpace
             let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
                 Self.decode(data, to: size, in: space)
@@ -208,7 +200,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 // cached copy goes so a later launch asks the server again.
                 // Not for full size, which can fail on an image that
                 // thumbnails fine, nor for bytes an eviction has replaced.
-                if size != .full { self.discard(record, from: epoch) }
+                if size.fetched == 600 { self.discard(record, from: epoch) }
                 return nil
             }
             // Full size belongs to whichever sheet asked for it and goes when
@@ -304,31 +296,47 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     // MARK: - Bytes
 
-    /// The record's encoded artwork, from disk or the network. One fetch per
-    /// record however many sizes are waiting on it.
-    func bytes(for source: AlbumArtwork.Source) async -> Data? {
+    /// The record's encoded artwork at the size `size` is drawn from, from
+    /// disk or the network. One fetch per record and fetched size however
+    /// many sizes are waiting on it. The original, for the viewer, is not
+    /// kept on disk.
+    func bytes(for source: AlbumArtwork.Source, size: AlbumArtwork.Size = .tile) async -> Data? {
         let key = Self.key(source)
         guard !locked({ absent.contains(key) }) else { return nil }
 
+        let pixels = size.fetched
+        let load = Self.load(key, pixels)
         let engine = self.engine
-        let file = directory?.appendingPathComponent(Self.filename(for: key))
+        let file = pixels.flatMap { _ in directory?.appendingPathComponent(Self.filename(for: load)) }
         let keep = keeper(file, of: key, from: locked { generation(of: key) })
-        let payload = await loads.join(key) {
+        let payload = await loads.join(load) {
             guard !Task.isCancelled else { return .failed }
             // Every step off both the main actor and the cooperative pool —
             // see `ImageWork`.
             if let file, let cached = await ImageWork.onDisk({ try? Data(contentsOf: file) }) {
                 return .art(cached)
             }
-            return await Self.fetch(source, engine, keep: keep)
+            return await Self.fetch(source, engine, pixels: pixels, keep: keep)
         }
 
-        // Nothing recorded: the next tile that asks tries again.
+        // Nothing recorded: the next tile that asks tries again. Only the
+        // standard size says a record has no art; a larger one missing says
+        // nothing the tile does not.
         guard case .art(let data) = payload else {
-            if case .none = payload { locked { _ = absent.insert(key) } }
+            if case .none = payload, pixels == 600 { locked { _ = absent.insert(key) } }
             return nil
         }
         return data
+    }
+
+    /// What one fetch of a record's bytes is known by: the record at the
+    /// standard size, the record and the size otherwise.
+    private static func load(_ record: String, _ pixels: UInt32?) -> String {
+        switch pixels {
+        case 600: record
+        case let pixels?: "\(record)#\(pixels)"
+        case nil: "\(record)#original"
+        }
     }
 
     // MARK: - Keys
@@ -359,6 +367,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
         _ engine: KoanEngine,
+        pixels: UInt32?,
         keep: (@Sendable (Data) -> Void)?
     ) async -> Fetched {
         do {
@@ -368,9 +377,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             let data: Data?
             switch source {
             case .album(let albumId):
-                data = try await engine.albumCoverArt(albumId: albumId, size: sourcePixels)?.data
+                data = try await engine.albumCoverArt(albumId: albumId, size: pixels)?.data
             case .track(let trackId):
-                data = try await engine.coverArt(trackId: trackId, size: sourcePixels)?.data
+                data = try await engine.coverArt(trackId: trackId, size: pixels)?.data
             case .artist(let artistId):
                 data = try await engine.artistImage(artistId: artistId)?.data
             }
@@ -466,7 +475,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Bumped when the meaning of a cache file changes, and the directory of
     /// any other scheme goes. A file is one record's own artwork at one size:
     /// never a server's placeholder, which the engine answers as no art.
-    private static let scheme = "v3"
+    private static let scheme = "v4"
 
     private static func makeDirectory() -> URL? {
         guard let caches = FileManager.default.urls(
@@ -590,7 +599,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     private func evict(_ source: AlbumArtwork.Source) {
         let key = Self.key(source)
-        for size in [AlbumArtwork.Size.thumb, .tile, .full] {
+        for size in [AlbumArtwork.Size.thumb, .tile, .large, .full] {
             memory.removeObject(forKey: Self.key(source, size) as NSString)
         }
         locked {
@@ -598,8 +607,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             colours.removeObject(forKey: key as NSString)
             evictions[bucket(of: key)] += 1
         }
-        if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
-            writes.sync { _ = try? FileManager.default.removeItem(at: file) }
+        for pixels in [UInt32(600), 1200] {
+            if let file = directory?.appendingPathComponent(Self.filename(for: Self.load(key, pixels))) {
+                writes.sync { _ = try? FileManager.default.removeItem(at: file) }
+            }
         }
     }
 

@@ -739,6 +739,15 @@ private struct RemoteSettings: View {
                     .koanText(.fine, .muted)
             }
 
+            Section {
+                Toggle("Fetch every record's cover ahead", isOn: model.binding(\.preloadCovers)).koanToggle()
+            } header: {
+                KoanSectionHeader("Covers")
+            } footer: {
+                Text("Covers are fetched in the background, after what is on screen, so browsing never waits for one. They are kept with the downloads and count against the same limit. Turning this off removes nothing already fetched.")
+                    .koanText(.fine, .muted)
+            }
+
             #if os(tvOS)
             if model.settings.remoteSignedIn {
                 ServerQueueSection(model: model)
