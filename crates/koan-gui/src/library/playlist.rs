@@ -864,11 +864,10 @@ impl PlaylistPage {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = match covers::image(album, side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            };
-            Cover::new(art, side).into_any_element()
+            let art = covers::art(album, side, cx);
+            Cover::new(art, side)
+                .id(("sleeve", row as u64))
+                .into_any_element()
         });
         let feed = self.lib.feed.clone();
         let nav = self.lib.nav.read(cx).navigator();

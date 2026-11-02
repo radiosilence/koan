@@ -1,0 +1,1 @@
+- **Artwork that is still loading shows the kōan ensō drawing itself, on the very mark a missing cover shows, and the picture fades in over it.** Everywhere covers are drawn: the album grid, rows, record and artist pages, the transport and the queue.

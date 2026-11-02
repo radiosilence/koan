@@ -3,7 +3,6 @@
 //! Left, the record and track playing; centre, the controls over the seek
 //! slider; right, the format, the sleep and output menus, and EQ.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{
@@ -14,14 +13,12 @@ use koan_kit::app::*;
 use koan_kit::raw::{Hsla, px};
 // the bounds a cached view keeps between frames.
 use koan_kit::raw::StyleRefinement;
-// decoded images handed to the renderer.
-use koan_kit::raw::RenderImage;
 // painted and hit-tested by hand: drawing koan-kit has no component for.
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider, TransportMetrics,
+    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
+    MenuSlot, SHADED, Slider, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -49,7 +46,7 @@ pub struct Transport {
     menus: MenuSlot<Menu>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
-    cover: Option<Arc<RenderImage>>,
+    cover: CoverArt,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -193,7 +190,7 @@ impl Transport {
             renderers: mirror.renderers,
             devices: mirror.devices,
             menus: MenuSlot::default(),
-            cover: None,
+            cover: CoverArt::Missing,
             eq: None,
             eq_profile: None,
             _eq_load: None,
@@ -775,7 +772,7 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -818,7 +815,7 @@ impl Render for Transport {
                             })
                         },
                     )
-                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+                    .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
             )
             .child(
                 div()

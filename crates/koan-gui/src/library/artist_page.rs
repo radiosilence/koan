@@ -670,7 +670,7 @@ impl ArtistPage {
                     width: side,
                     height: side,
                 },
-                Cover::new(art, side),
+                Cover::new(art, side).id(("artist-photo-cover", id as u64)),
             )
             .arriving(arriving)
         });
@@ -779,7 +779,8 @@ impl ArtistPage {
         match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
             Sleeve::Ready(image, _) => Some(CoverArt::Image(image)),
             Sleeve::Colour(colour) => Some(CoverArt::Colour(colour)),
-            Sleeve::Waiting | Sleeve::None => None,
+            Sleeve::Waiting => Some(CoverArt::Loading),
+            Sleeve::None => None,
         }
     }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {

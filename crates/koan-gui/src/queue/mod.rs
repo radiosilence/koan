@@ -104,10 +104,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(match covers::image(Some(album), side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            }),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
             None => chip,
         }
     }
@@ -601,11 +598,10 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = match covers::image(album, side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            };
-            Cover::new(art, side).into_any_element()
+            let art = covers::art(album, side, cx);
+            Cover::new(art, side)
+                .id(("sleeve", row as u64))
+                .into_any_element()
         });
         // What a track row reads beyond its item: its heart. A transfer's
         // progress its availability mark reads each frame it is drawn.
