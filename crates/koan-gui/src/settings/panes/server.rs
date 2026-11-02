@@ -5,9 +5,8 @@
 use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_ffi::{ConnectionInfo, Settings};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
@@ -535,6 +534,24 @@ impl ServerPane {
             Some("Automatic sync"),
             sync_rows,
             Some("Each sync asks the server only for what changed since the last.".into()),
+            look,
+        ));
+        sections.push(section(
+            Some("Covers"),
+            vec![{
+                let model = self.ctx.model.clone();
+                Toggle::new(
+                    "preload-covers",
+                    "Fetch every record's cover ahead",
+                    settings.preload_covers,
+                )
+                .on_change(move |on, _, cx| {
+                    let on = *on;
+                    model.update(cx, |m, cx| m.edit(cx, move |s| s.preload_covers = on))
+                })
+                .into_any_element()
+            }],
+            Some("Covers are fetched in the background, after what is on screen, so browsing never waits for one. They are kept with the downloads and count against the same limit. Turning this off removes nothing already fetched.".into()),
             look,
         ));
         sections.push(self.downloads(settings, look, cx));

@@ -19,3 +19,10 @@ pub use gpui_kit::{
     Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful, Subscription,
     Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowVisibility, actions, div,
 };
+
+/// The text input koan-kit's fields draw (`TextField`, `FilterField`): a
+/// page owns its state and listens to its events, and a field that leads a
+/// list takes the arrows and Escape from it.
+pub mod input {
+    pub use gpui_kit::component::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
+}

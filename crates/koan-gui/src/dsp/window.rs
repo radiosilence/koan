@@ -2,11 +2,7 @@
 //! output in use, or on a device a preset menu names, and brought to the
 //! front when it is open already.
 
-use koan_kit::app::{App, AppContext, Bounds, Global, WindowHandle};
-// the platform window and its options.
-use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, size};
+use koan_kit::app::{App, AppContext, Global, WindowHandle};
 
 use super::{Dsp, EqPage};
 use crate::engine::engine;
@@ -46,20 +42,10 @@ pub fn open(device: Option<String>, cx: &mut App) {
         }
     }
     let dsp = cx.global::<EqWindow>().dsp.clone();
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(760.), px(900.)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(560.), px(520.))),
-        titlebar: Some(TitlebarOptions {
-            title: Some("EQ".into()),
-            ..Default::default()
-        }),
-        app_id: Some("koan-gui".into()),
-        ..Default::default()
-    };
+    let options = crate::components::SecondaryWindow::new("EQ", crate::app::APP_ID)
+        .size(760.0, 900.0)
+        .min(560.0, 520.0)
+        .options(cx);
     let mut made = None;
     let opened = cx.open_window(options, |window, cx| {
         let page = cx.new(|cx| EqPage::new(dsp, device, window, cx));

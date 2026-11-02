@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.R
 import cc.blit.koan.art.Art
+import cc.blit.koan.art.ArtSize
 import cc.blit.koan.art.NoArt
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
@@ -132,6 +133,11 @@ fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null)
                 colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
             )
         } else {
+            // A large cover draws over its thumbnail, which is usually held
+            // already, so it shows at once and sharpens when its own bytes land.
+            if (art.size == ArtSize.Large) {
+                AsyncImage(art.copy(size = ArtSize.Thumb), null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+            }
             AsyncImage(
                 art,
                 description,

@@ -47,9 +47,11 @@ import cc.blit.koan.ffi.DspPoint
 import cc.blit.koan.ffi.DspProfileDetail
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspResponse
+import cc.blit.koan.ffi.DspDeviceAction
 import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ffi.DspTargetName
 import cc.blit.koan.ffi.DspTargets
+import cc.blit.koan.ffi.dspDeviceAction
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
@@ -553,14 +555,15 @@ enum class DeviceAction(val words: String) {
     Correct("Use for"),
 }
 
-/** The one thing `name`'s page offers on a device, by what it is and what the device plays. */
-fun deviceAction(name: String, role: DspRole, active: String?, inChain: Boolean) = when {
-    name == active && role == DspRole.TUNING -> DeviceAction.MoveToFilters
-    name == active -> DeviceAction.StopCorrecting
-    inChain -> DeviceAction.TakeOutOfFilters
-    role == DspRole.TUNING -> DeviceAction.AddToFilters
-    else -> DeviceAction.Correct
-}
+/** The one thing `name`'s page offers on a device, by what it is and what the device plays: the core's rule. */
+fun deviceAction(name: String, role: DspRole, active: String?, inChain: Boolean) =
+    when (dspDeviceAction(name, role, active, inChain)) {
+        DspDeviceAction.STOP_CORRECTING -> DeviceAction.StopCorrecting
+        DspDeviceAction.MOVE_TO_FILTERS -> DeviceAction.MoveToFilters
+        DspDeviceAction.TAKE_OUT_OF_FILTERS -> DeviceAction.TakeOutOfFilters
+        DspDeviceAction.ADD_TO_FILTERS -> DeviceAction.AddToFilters
+        DspDeviceAction.CORRECT -> DeviceAction.Correct
+    }
 
 /**
  * A profile's graph, and where it can be edited the graph as an editor: a

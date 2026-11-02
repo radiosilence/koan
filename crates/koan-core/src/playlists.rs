@@ -709,6 +709,26 @@ pub fn reorder(db: &Database, ids: &[i64]) -> Result<(), DbError> {
     Ok(())
 }
 
+/// A server setting `user`'s playlist order from a client's list. When this
+/// server is itself signed in upstream as that account, the order is marked
+/// unsent with its write, under the lane, and sent on, so a sync of this
+/// server's own never adopts the upstream order over it.
+pub fn set_account_order(db: &Database, user: i64, ids: &[i64]) -> Result<(), DbError> {
+    let upstream = matches!(queries::auth::is_local_user(&db.conn, user), Ok(true));
+    {
+        let _lane = ORDER_LANE.lock();
+        if upstream {
+            ORDER_UNSENT.store(true, Ordering::Relaxed);
+            ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
+        queries::set_account_playlist_order(&db.conn, user, ids)?;
+    }
+    if upstream {
+        push_order();
+    }
+    Ok(())
+}
+
 /// Send the sidebar's order to the server in the background, if it keeps one.
 /// The send reads the order when it goes, so a burst of reorders sends the
 /// last.

@@ -330,38 +330,47 @@ impl Covers {
 
     /// Drops the entries of albums the library has named in `art_evictions`
     /// since the last look (deleted, or rescanned with perhaps another image
-    /// beside them), so their next request reads the files again. One indexed
-    /// read when nothing has changed.
+    /// beside them), so their next request reads the files again. A mark the
+    /// table has outlived (entries pruned past it, or a database made afresh)
+    /// drops every album's entry, since their ids may now be other records'.
+    /// A few indexed reads when nothing has changed.
     pub(crate) fn forget_evicted(&self, conn: &rusqlite::Connection) {
-        let Ok(newest) =
-            conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM art_evictions", [], |r| {
-                r.get::<_, i64>(0)
-            })
-        else {
-            return;
-        };
         let mut seen = self.evicted.lock();
         let Some(since) = *seen else {
             // No entries kept yet: nothing to forget.
-            *seen = Some(newest);
-            self.mark(newest);
+            if let Ok(now) = koan_core::db::queries::art_evictions_since(conn, i64::MAX) {
+                *seen = Some(now.seq);
+                self.mark(now.seq);
+            }
             return;
         };
-        if newest <= since {
+        let Ok(gone) = koan_core::db::queries::art_evictions_since(conn, since) else {
+            return;
+        };
+        if gone.seq == since && !gone.purge {
             return;
         }
-        if let Ok(mut stmt) =
-            conn.prepare("SELECT DISTINCT id FROM art_evictions WHERE kind = 'album' AND seq > ?1")
-            && let Ok(ids) = stmt.query_map([since], |r| r.get::<_, i64>(0))
-        {
-            for id in ids.flatten() {
-                for size in SIZES {
-                    let _ = std::fs::remove_file(self.dir.join(album_key(id, size)));
+        if gone.purge {
+            if let Ok(read) = std::fs::read_dir(&self.dir) {
+                for entry in read.flatten() {
+                    let name = entry.file_name();
+                    if matches!(parse(&name.to_string_lossy()), Some((Some(_), _))) {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            log::info!("covers: the library's evictions outran the cache; album covers dropped");
+        } else {
+            for (kind, id) in &gone.named {
+                if kind == "album" {
+                    for size in SIZES {
+                        let _ = std::fs::remove_file(self.dir.join(album_key(*id, size)));
+                    }
                 }
             }
         }
-        *seen = Some(newest);
-        self.mark(newest);
+        *seen = Some(gone.seq);
+        self.mark(gone.seq);
         drop(seen);
         self.poke();
     }
@@ -462,13 +471,25 @@ impl Covers {
                     break;
                 }
             };
-            if tracks.is_empty() {
+            // Files that cannot be read (a volume not mounted yet) say
+            // nothing about whether the album has art: nothing is kept, and
+            // the next pass tries again.
+            if !readable(&tracks) {
                 continue;
             }
-            // The source read once for every size wanted.
-            let source = self.source_art(&tracks);
+            // The first source that makes a cover, read once for every size
+            // wanted.
+            let mut sources = self.source_arts(&tracks);
+            let mut source = None;
             for size in wanted {
-                let art = DECODE.install(|| source.as_deref().and_then(|b| encode(b, size)));
+                let art = DECODE.install(|| match &source {
+                    Some(bytes) => encode(bytes, size),
+                    None => sources.find_map(|bytes| {
+                        let art = encode(&bytes, size)?;
+                        source = Some(bytes);
+                        Some(art)
+                    }),
+                });
                 used += art.as_ref().map_or(0, |a| a.len() as u64);
                 self.write_disk(&album_key(album, size), art.as_deref());
             }
@@ -526,6 +547,10 @@ impl Covers {
         if let Some(hit) = self.read_disk(first_key) {
             return hit;
         }
+        // Files that cannot be read now say nothing: no miss is kept.
+        if !readable(tracks) {
+            return None;
+        }
         let art = DECODE.install(|| {
             sources.iter().find_map(|(source, _)| {
                 let bytes = match source {
@@ -539,14 +564,15 @@ impl Covers {
         art.map(Bytes::from)
     }
 
-    /// The art of the first of `tracks` that has any, as found: an image beside
-    /// it, or the art embedded in it. Unresized.
-    fn source_art(&self, tracks: &[TrackRow]) -> Option<Vec<u8>> {
+    /// The art of each of the first of `tracks` that has any, as found, read
+    /// as asked for: an image beside it, or the art embedded in it.
+    /// Unresized.
+    fn source_arts<'a>(&self, tracks: &'a [TrackRow]) -> impl Iterator<Item = Vec<u8>> + 'a {
         tracks
             .iter()
             .filter_map(|t| crate::subsonic::track_file_path(t).map(PathBuf::from))
             .take(TRACKS_TRIED)
-            .find_map(|p| match koan_core::index::folder_art::folder_cover(&p) {
+            .filter_map(|p| match koan_core::index::folder_art::folder_cover(&p) {
                 Some(image) => std::fs::read(image).ok(),
                 None => koan_core::index::metadata::extract_cover_art(&p),
             })
@@ -662,6 +688,17 @@ fn dir_bytes(dir: &Path) -> u64 {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+/// Whether any of `tracks`' files can be read: when none can (a volume not
+/// mounted, a download not landed), not finding art says nothing about the
+/// album, and is not remembered.
+pub(crate) fn readable(tracks: &[TrackRow]) -> bool {
+    tracks
+        .iter()
+        .filter_map(crate::subsonic::track_file_path)
+        .take(TRACKS_TRIED)
+        .any(|p| Path::new(&p).exists())
 }
 
 /// Hold `dir` to `budget` bytes, removing the covers read least recently
@@ -894,6 +931,29 @@ mod tests {
         assert_eq!(made.get(), 2);
         assert_eq!(covers.album_cover(3, GRID, || None), None);
         assert!(!dir.path().join(album_key(3, GRID)).exists());
+    }
+
+    /// A database made afresh numbers its evictions from the start again, and
+    /// gives old albums' ids to new ones: every album's entry goes.
+    #[test]
+    fn a_new_database_drops_every_album() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(EVICTED), "500").unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE art_evictions (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, id INTEGER);
+             INSERT INTO art_evictions (kind, id) VALUES ('track', 9);",
+        )
+        .unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        covers.album_cover(1, GRID, || Some(Some(Bytes::from_static(b"x"))));
+        covers.forget_evicted(&conn);
+        assert!(!dir.path().join(album_key(1, GRID)).exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(EVICTED)).unwrap(),
+            "1"
+        );
     }
 
     /// Albums the library names after the first look lose their entries;

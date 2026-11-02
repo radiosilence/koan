@@ -38,6 +38,10 @@ object SleeveAccents {
     fun forget(art: Art) {
         known.remove(art)
     }
+
+    fun clear() {
+        known.evictAll()
+    }
 }
 
 /** The cover `art` decoded with readable pixels, or `null` when there is none. */

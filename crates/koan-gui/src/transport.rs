@@ -20,7 +20,8 @@ use koan_kit::raw::RenderImage;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
+    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
+    Slider,
     TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
@@ -971,10 +972,14 @@ impl Render for Transport {
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. While it runs, one
-/// timer is set for the next moment the slider or the times would draw
-/// differently (the next pixel of the fill, or the next second); paused or
-/// stopped, nothing is set, so a koan at rest costs nothing.
+/// The position is reckoned from the playhead's anchor. Where the renderer
+/// draws shaders, the slider glides: the anchor is handed to it (`Glide`) and
+/// the GPU reckons the fill per present, so it moves continuously with no
+/// frame drawn, and a new anchor (a seek, a pause, the next track) corrects
+/// it. While it runs, one timer is set for the next moment the times would
+/// read differently (the next second), and elsewhere for the fill's next
+/// pixel too; paused or stopped, nothing is set and nothing presents, so a
+/// koan at rest costs nothing.
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
@@ -986,6 +991,7 @@ pub struct Seek {
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
+    glide: Glide,
     _subscriptions: [Subscription; 4],
 }
 
@@ -1011,6 +1017,7 @@ impl Seek {
             tick: None,
             dragging: None,
             width: Default::default(),
+            glide: Glide::new(),
         };
         seek.schedule(cx);
         seek
@@ -1029,6 +1036,19 @@ impl Seek {
         self.tick = None;
         let anchor = *self.playhead.read(cx);
         let duration = self.duration_ms(cx);
+        let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        if duration > 0 {
+            self.glide.set(
+                (anchor.position_ms as f64 / duration as f64) as f32,
+                if anchor.playing {
+                    1000.0 / duration as f32
+                } else {
+                    0.0
+                },
+                anchor.at,
+            );
+        }
+        self.glide.set_moving(moving);
         if !self.visible || !anchor.playing || duration == 0 {
             return;
         }
@@ -1038,7 +1058,7 @@ impl Seek {
         }
         let to_second = 1000 - position % 1000;
         let width = self.width.get();
-        let to_pixel = if width > 0.0 {
+        let to_pixel = if width > 0.0 && !SHADED {
             (duration as f32 / width).ceil() as u64
         } else {
             to_second
@@ -1069,6 +1089,7 @@ impl Seek {
         if duration > 0 {
             command(cx, "seek", move |e| e.seek(target));
         }
+        self.schedule(cx);
         cx.notify();
     }
 }
@@ -1089,7 +1110,8 @@ impl Render for Seek {
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
         // The playhead the slider shows comes from the engine, which holds a
-        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // seek's target until it lands there (`SharedPlayerState::request_seek`,
+        // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
         let width = self.width.clone();
         let measure = canvas(
@@ -1100,11 +1122,15 @@ impl Render for Seek {
         .size_full();
         let slider = Slider::new("seek", share)
             .compact()
+            .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {
                 change.update(cx, |this, cx| {
-                    this.dragging = Some(*share);
+                    let started = this.dragging.replace(*share).is_none();
+                    if started {
+                        this.schedule(cx);
+                    }
                     cx.notify();
                 })
             })
