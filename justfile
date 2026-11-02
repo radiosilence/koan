@@ -1982,6 +1982,7 @@ gui-run *ARGS:
     # An app started by `open` runs from /, and has none of this shell's
     # variables but those handed to it: every KOAN_ and RUST_ one, the
     # configuration directory made absolute.
+    mkdir -p "$KOAN_CONFIG_DIR"
     export KOAN_CONFIG_DIR="$(cd "$KOAN_CONFIG_DIR" && pwd)"
     envs=()
     while read -r name; do
