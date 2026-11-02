@@ -61,6 +61,7 @@ pub struct Scene {
     pub shader_layers: Option<Box<ShaderLayers>>,
 }
 
+/// A scene split where its shaders are drawn (#1641).
 // KOAN: (#1641) a scene with shaders, split where they are drawn: `layers[0]`
 // first, then the shaders of `groups[0]` (a range of `Scene::shaders`), then
 // `layers[1]`, and so on, `layers` one longer than `groups`. Each layer holds
@@ -68,7 +69,9 @@ pub struct Scene {
 // orders, ready for a renderer to draw into a texture of its own.
 #[derive(Default)]
 pub struct ShaderLayers {
+    /// The primitives drawn before, between and after the groups.
     pub layers: Vec<Scene>,
+    /// Each group's shaders, as a range of `Scene::shaders`.
     pub groups: Vec<Range<usize>>,
 }
 
