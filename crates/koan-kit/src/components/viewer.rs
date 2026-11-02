@@ -42,10 +42,15 @@ impl Viewer {
     /// leaves the margins and the caption, and never smaller than 320. What
     /// the owner decodes the picture at.
     pub fn side(size: Size<Pixels>, look: &Look) -> Pixels {
-        let margin = look.spaced(Self::MARGIN);
+        Self::fit(size, look.scale.space)
+    }
+
+    /// `side` on a spacing scale of `space`.
+    fn fit(size: Size<Pixels>, space: f32) -> Pixels {
+        let margin = px(Self::MARGIN * space);
         let width = size.width - margin * 2.0;
-        let height = size.height - margin * 2.0 - look.spaced(Self::CAPTION);
-        width.min(height).max(look.spaced(Self::LEAST))
+        let height = size.height - margin * 2.0 - px(Self::CAPTION * space);
+        width.min(height).max(px(Self::LEAST * space))
     }
 }
 
@@ -94,5 +99,23 @@ impl RenderOnce for Viewer {
                     .child(line(self.title, TypeRole::TitleSmall, p.strong.hsla()))
                     .children(self.detail.map(|d| line(d, TypeRole::Meta, p.muted.hsla()))),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// The largest square the margins and caption leave, never below the
+    /// least: a wide window is bound by its height, a tiny one by the floor.
+    #[test]
+    fn the_cover_fills_what_the_window_leaves() {
+        let wide = Viewer::fit(size(px(1600.), px(900.)), 1.0);
+        assert_eq!(wide, px(900. - 96. - 76.));
+        let tall = Viewer::fit(size(px(700.), px(1200.)), 1.0);
+        assert_eq!(tall, px(700. - 96.));
+        let tiny = Viewer::fit(size(px(200.), px(200.)), 1.0);
+        assert_eq!(tiny, px(320.));
     }
 }

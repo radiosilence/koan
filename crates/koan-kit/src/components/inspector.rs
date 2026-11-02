@@ -131,6 +131,11 @@ impl RenderOnce for SyncedLines {
             items.push(
                 div()
                     .id(ix)
+                    .map(|d| {
+                        #[cfg(test)]
+                        let d = d.debug_selector(move || format!("synced-line-{ix}"));
+                        d
+                    })
                     .w_full()
                     .px(pad)
                     .py(look.spaced(5.5))
@@ -164,4 +169,55 @@ pub fn plain_text(text: impl Into<SharedString>, look: &Look) -> Div {
         .text_role(TypeRole::Control, look)
         .text_color(look.palette.ink.hsla())
         .child(text.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use core::prelude::v1::test;
+
+    struct Lines {
+        clicked: Rc<Cell<Option<usize>>>,
+    }
+
+    impl Render for Lines {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicked = self.clicked.clone();
+            div().w(px(280.)).h(px(400.)).child(
+                SyncedLines::new(
+                    "lines",
+                    vec!["one".into(), "".into(), "three".into()],
+                    Some(2),
+                )
+                .on_line(move |ix, _, _| clicked.set(Some(*ix))),
+            )
+        }
+    }
+
+    /// A click on a line hands its index over, an empty line keeping its
+    /// place among the others.
+    #[gpui_kit::test]
+    fn a_click_names_the_line(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let clicked = Rc::new(Cell::new(None));
+        let (_, cx) = cx.add_window_view(|_, _| Lines {
+            clicked: clicked.clone(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let at = cx
+            .debug_bounds("synced-line-2")
+            .expect("the line is drawn")
+            .center();
+        cx.simulate_click(at, Modifiers::default());
+        assert_eq!(clicked.get(), Some(2));
+    }
 }
