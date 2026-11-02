@@ -620,7 +620,7 @@ impl super::keys::KeyedList for TrackBrowser {
 
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         self.scroll
-            .scroll_to_item(ix, crate::components::ScrollStrategy::Top);
+            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {

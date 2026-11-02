@@ -89,7 +89,8 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
-        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+        Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
+        PageUp, Pick, Right, Up,
     };
 }
 pub use empty::EmptyState;

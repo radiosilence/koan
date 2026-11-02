@@ -619,6 +619,7 @@ impl ArtistPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
+                cursor: false,
                 show_artist,
                 side: grid.side,
                 sleeve,

@@ -579,7 +579,7 @@ impl super::keys::KeyedList for AlbumPage {
             .position(|l| matches!(l, Line::Track { index, .. } if *index == ix));
         if let Some(line) = line {
             self.scroll
-                .scroll_to_item(line, crate::components::ScrollStrategy::Top);
+                .scroll_to_item(line, crate::components::ScrollStrategy::Nearest);
         }
     }
 

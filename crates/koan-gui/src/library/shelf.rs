@@ -465,6 +465,7 @@ impl ShelfPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
+                cursor: false,
                 show_artist: true,
                 side: grid.side,
                 sleeve,
