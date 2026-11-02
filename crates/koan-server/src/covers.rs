@@ -538,6 +538,10 @@ impl Covers {
         if let Some(hit) = self.read_disk(first_key) {
             return hit;
         }
+        // Files that cannot be read now say nothing: no miss is kept.
+        if !readable(tracks) {
+            return None;
+        }
         let art = DECODE.install(|| {
             sources.iter().find_map(|(source, _)| {
                 let bytes = match source {

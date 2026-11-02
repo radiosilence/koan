@@ -3323,6 +3323,7 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         state.covers.forget_evicted(&db.conn);
         let mut db = Some(db);
         let mut missing = None;
+        let mut unreadable = false;
         let art = state.covers.album_cover(id, size, || {
             let db = db.take()?;
             match cover_tracks(&db, kind, id) {
@@ -3331,6 +3332,7 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
                     // None of its files to read: nothing is known, and
                     // nothing kept.
                     if !groups.iter().any(|tracks| crate::covers::readable(tracks)) {
+                        unreadable = true;
                         return None;
                     }
                     Some(
@@ -3348,14 +3350,28 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         if let Some(e) = missing {
             return Err(e);
         }
-        art
+        (art, unreadable)
     } else {
         let groups = cover_tracks(&db, kind, id)?;
         drop(db);
-        groups
+        let art = groups
             .iter()
-            .find_map(|tracks| state.covers.cover(tracks, size))
+            .find_map(|tracks| state.covers.cover(tracks, size));
+        let unreadable =
+            art.is_none() && !groups.iter().any(|tracks| crate::covers::readable(tracks));
+        (art, unreadable)
     };
+    // None of the record's files can be read now (a volume not mounted):
+    // not knowing is said as such, so a client asks again rather than
+    // remembering a record with no art.
+    let (art, unreadable) = art;
+    if art.is_none() && unreadable {
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "60")],
+        )
+            .into_response());
+    }
     // A record without art is answered with the ensō, as Navidrome answers
     // its own placeholder, so a client always has an image to draw. It is
     // marked so koan's own clients can draw theirs instead, and kept only
