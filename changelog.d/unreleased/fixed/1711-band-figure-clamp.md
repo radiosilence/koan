@@ -1,0 +1,1 @@
+- **Editing one figure of an EQ band no longer changes its others.** A band imported past the hand-edit limits, such as a Q of 30 from REW, keeps that figure when its gain or frequency is edited, so the profile still matches its file.
