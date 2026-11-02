@@ -130,7 +130,12 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| Root::new(view, window, cx))
     });
     match opened {
-        Ok(handle) => cx.global_mut::<Settings>().window = Some(handle),
+        Ok(handle) => {
+            cx.global_mut::<Settings>().window = Some(handle);
+            // Now the Settings window: it takes what a closed one left unseen.
+            let model = cx.global::<Settings>().model.clone();
+            model.update(cx, |_, cx| cx.notify());
+        }
         Err(e) => log::error!("the settings window did not open: {e}"),
     }
 }
@@ -282,11 +287,20 @@ impl SettingsWindow {
             self.show(Tab::Server, window, cx);
         }
         // A key or an invite made in a window that closed before it could
-        // show it.
-        let unseen = self
-            .ctx
-            .model
-            .update(cx, |m, _| std::mem::take(&mut m.unseen));
+        // show it. Only the Settings window takes them: a closing one is
+        // not it any more.
+        let live = cx.has_global::<Settings>()
+            && cx
+                .global::<Settings>()
+                .window
+                .is_some_and(|h| h.window_id() == window.window_handle().window_id());
+        let unseen = if live {
+            self.ctx
+                .model
+                .update(cx, |m, _| std::mem::take(&mut m.unseen))
+        } else {
+            Vec::new()
+        };
         for sheet in unseen {
             self.ctx
                 .sheets
@@ -447,6 +461,11 @@ impl SettingsWindow {
 /// Cancel would be, and those showing something only once go to the next
 /// Settings window.
 fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
+    // No longer the Settings window: what it hands on below waits for the
+    // next one rather than coming back to this one as it goes.
+    if cx.has_global::<Settings>() {
+        cx.global_mut::<Settings>().window = None;
+    }
     for dismissed in sheets.read(cx).unanswered() {
         dismissed(window, cx);
     }
