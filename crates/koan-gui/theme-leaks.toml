@@ -58,10 +58,6 @@ raw = 6
 number = 3
 raw = 4
 
-["library/info.rs"]
-number = 1
-raw = 2
-
 ["library/rows.rs"]
 number = 2
 raw = 2
