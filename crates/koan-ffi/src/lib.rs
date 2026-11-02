@@ -1012,14 +1012,22 @@ impl KoanEngine {
             let engine = self.clone();
             return offload::offload(move || engine.cover_art_of(Some(row), size)).await;
         };
-        let cfg = Config::cached();
-        if !cfg.remote.enabled {
+        // Building a client blocks (and panics inside a tokio runtime), so it
+        // is made off the caller's thread.
+        let client = offload::offload(|| {
+            let cfg = Config::cached();
+            if !cfg.remote.enabled {
+                return Ok(None);
+            }
+            koan_core::helpers::subsonic_client(&cfg)
+                .map(Some)
+                .ok_or_else(|| KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                })
+        })
+        .await?;
+        let Some(client) = client else {
             return Ok(None);
-        }
-        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-            return Err(KoanError::Remote {
-                message: koan_core::helpers::remote_unavailable(&cfg),
-            });
         };
         let track_id = row.id;
         let answer = offload::cancellable(async move {
