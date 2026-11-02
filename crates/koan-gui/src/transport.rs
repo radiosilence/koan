@@ -168,7 +168,7 @@ impl Transport {
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
-                    if this.cover.is_none() {
+                    if !matches!(this.cover, CoverArt::Image(_)) {
                         let album = this
                             .playback
                             .read(cx)
