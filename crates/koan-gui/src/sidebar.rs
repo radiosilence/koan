@@ -50,7 +50,7 @@ pub struct Sidebar {
     /// Where a playlist dragged among the playlists would land: before the
     /// playlist at this index, or after the last at the count.
     drop_playlist: Option<usize>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
 }
 
 impl Sidebar {
@@ -73,6 +73,9 @@ impl Sidebar {
                 // The selected row is in the accent, and this view is cached.
                 theme::observe_accent(cx),
                 // A global, which a cached view hears of only by observing.
+                // What became of music moved, or a command another device
+                // did not take.
+                cx.observe_global::<crate::notice::Notice>(|_, cx| cx.notify()),
                 cx.observe_global::<Imports>(|this, cx| {
                     let running = cx.global::<Imports>().running;
                     if running > 0 && this.importing == 0 {
@@ -388,6 +391,11 @@ impl Render for Sidebar {
                 self.import_problem
                     .clone()
                     .map(|problem| NavNote::new(problem, Tone::Bad)),
+            )
+            .children(
+                cx.try_global::<crate::notice::Notice>()
+                    .and_then(|n| n.text.clone())
+                    .map(|(text, tone)| NavNote::new(text, tone)),
             )
     }
 }

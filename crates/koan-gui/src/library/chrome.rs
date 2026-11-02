@@ -18,7 +18,8 @@ use super::selection::Selection;
 use super::tokens::{self, Paint, Type, Typeset};
 use super::{Lib, actions};
 use crate::components::{
-    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle, ToolbarButton,
+    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, SelectionBar, TextField, Toggle,
+    ToolbarButton,
 };
 use crate::theme::{Icon, Space};
 
@@ -35,8 +36,8 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
     format!("{grouped} {}", if n == 1 { one } else { many })
 }
 
-/// A library page's header: its title with the count under it, and its
-/// actions trailing, top-aligned on the grid's margin.
+/// A library page's header: koan-kit's `PageHeader`, its title with the
+/// count under it and its actions trailing, at the grid's margin.
 pub fn page_header(
     p: &Paint,
     title: &'static str,
@@ -44,20 +45,13 @@ pub fn page_header(
     actions: impl IntoElement,
 ) -> Div {
     div()
-        .flex()
-        .items_start()
-        .justify_between()
         .px(crate::components::RowMetrics::page_margin(&p.look))
         .pt(p.space(Space::L))
-        .gap(p.space(Space::L))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .child(div().typeset(p, Type::Title, p.strong).child(title))
-                .child(div().typeset(p, Type::Meta, p.muted).child(detail)),
+            crate::components::PageHeader::new(title)
+                .detail(detail)
+                .trailing(actions),
         )
-        .child(actions)
 }
 
 /// An empty listing, centred in the page.
@@ -519,7 +513,7 @@ pub trait Picking: Sized + 'static {
 /// Along the foot of a page while picking: how many, and the verbs. Each verb
 /// ends the mode.
 pub fn selection_bar<V: Picking>(
-    p: &Paint,
+    _: &Paint,
     lib: &Lib,
     selection: &Selection,
     page: Entity<V>,
@@ -527,90 +521,85 @@ pub fn selection_bar<V: Picking>(
 ) -> impl IntoElement {
     let picked: Vec<Playable> = selection.picked().to_vec();
     let n = picked.len();
-    let verb = |id: &'static str, label: &'static str, act: fn(&Lib, &[Playable], &mut App)| {
-        let (lib, picked, page) = (lib.clone(), picked.clone(), page.clone());
-        text_button(id, label).on_click(move |_, _, cx| {
+    let end = {
+        let page = page.clone();
+        move |cx: &mut App| {
+            page.update(cx, |page, cx| {
+                page.selection_mut().end();
+                cx.notify();
+            })
+        }
+    };
+    let verb = |act: fn(&Lib, &[Playable], &mut App)| {
+        let (lib, picked, end) = (lib.clone(), picked.clone(), end.clone());
+        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
             if picked.is_empty() {
                 return;
             }
             act(&lib, &picked, cx);
-            page.update(cx, |page, cx| {
-                page.selection_mut().end();
-                cx.notify();
-            });
-        })
+            end(cx);
+        }
     };
     let playlists = lib.feed.read(cx).playlists.clone();
-    let (lib2, picked2, page2) = (lib.clone(), picked.clone(), page.clone());
-    let done = page.clone();
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .px(crate::components::RowMetrics::page_margin(&p.look))
-        .py(p.space(Space::M))
-        .border_t_1()
-        .border_color(p.rule)
-        .bg(p.bg)
-        .child(
-            div()
-                .typeset(p, Type::Meta, p.ink)
-                .child(count(n as u64, "picked", "picked")),
+    let (lib2, picked2, end2) = (lib.clone(), picked.clone(), end.clone());
+    let organise = {
+        let (lib, picked, end) = (lib.clone(), picked.clone(), end.clone());
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            if picked.is_empty() {
+                return;
+            }
+            actions::organise(&lib, &picked, window, cx);
+            end(cx);
+        }
+    };
+    SelectionBar::new(count(n as u64, "picked", "picked"))
+        .verb(
+            "sel-play",
+            "play",
+            verb(|lib, p, cx| actions::play(lib, p, false, cx).detach()),
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(verb("sel-play", "play", |lib, p, cx| {
-                    actions::play(lib, p, false, cx).detach()
-                }))
-                .child(verb("sel-next", "play next", |lib, p, cx| {
-                    actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()
-                }))
-                .child(verb("sel-queue", "add to queue", |lib, p, cx| {
-                    actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()
-                }))
-                .child(
-                    Popover::new("sel-playlist")
-                        .appearance(false)
-                        .arrow(false)
-                        .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
-                        .content(move |_, window, cx| {
-                            let p = &Paint::of(window, cx);
-                            if playlists.is_empty() {
-                                return panel(p)
-                                    .p(p.space(Space::M))
-                                    .typeset(p, Type::Control, p.muted)
-                                    .child("no playlists")
-                                    .into_any_element();
-                            }
-                            MenuPanel::new()
-                                .children(playlists.iter().enumerate().map(|(i, (id, name))| {
-                                    let (lib, picked, page, id) =
-                                        (lib2.clone(), picked2.clone(), page2.clone(), *id);
-                                    choice_row(p, ("sel-pl", i), name.clone(), false).on_click(
-                                        cx.listener(move |state, _, window, cx| {
-                                            actions::add_to_playlist(&lib, id, &picked, cx);
-                                            page.update(cx, |page, cx| {
-                                                page.selection_mut().end();
-                                                cx.notify();
-                                            });
-                                            state.dismiss(window, cx);
-                                        }),
-                                    )
-                                }))
-                                .into_any_element()
-                        }),
-                )
-                .child(verb("sel-fav", "favourite", actions::favourite))
-                .child(text_button("sel-done", "done").on_click(move |_, _, cx| {
-                    done.update(cx, |page, cx| {
-                        page.selection_mut().end();
-                        cx.notify();
-                    })
-                })),
+        .verb(
+            "sel-next",
+            "play next",
+            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()),
         )
+        .verb(
+            "sel-queue",
+            "add to queue",
+            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
+        )
+        .element(
+            Popover::new("sel-playlist")
+                .appearance(false)
+                .arrow(false)
+                .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
+                .content(move |_, window, cx| {
+                    let p = &Paint::of(window, cx);
+                    if playlists.is_empty() {
+                        return panel(p)
+                            .p(p.space(Space::M))
+                            .typeset(p, Type::Control, p.muted)
+                            .child("no playlists")
+                            .into_any_element();
+                    }
+                    MenuPanel::new()
+                        .children(playlists.iter().enumerate().map(|(i, (id, name))| {
+                            let (lib, picked, end, id) =
+                                (lib2.clone(), picked2.clone(), end2.clone(), *id);
+                            choice_row(p, ("sel-pl", i), name.clone(), false).on_click(cx.listener(
+                                move |state, _, window, cx| {
+                                    actions::add_to_playlist(&lib, id, &picked, cx);
+                                    end(cx);
+                                    state.dismiss(window, cx);
+                                },
+                            ))
+                        }))
+                        .into_any_element()
+                }),
+        )
+        .verb("sel-fav", "favourite", verb(actions::favourite))
+        .verb("sel-organise", "organise…", organise)
+        .on_done(move |_, _, cx| end(cx))
 }
 
 #[cfg(test)]

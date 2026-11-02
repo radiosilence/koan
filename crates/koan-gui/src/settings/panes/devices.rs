@@ -105,6 +105,12 @@ impl DevicesPane {
             return;
         }
         self.code.update(cx, |s, cx| s.set_value("", window, cx));
+        self.approve_pair(typed, window, cx);
+    }
+
+    /// The same question for `pair`, a pairing's id or a typed code: from
+    /// the field, or from a `koan.rocks/pair/` link opened from outside.
+    pub fn approve_pair(&mut self, typed: String, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.ctx.model.clone();
         let engine = model.read(cx).engine().clone();
         let sharing = self.ctx.sharing.read(cx);

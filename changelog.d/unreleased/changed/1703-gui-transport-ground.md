@@ -1,0 +1,1 @@
+- **The desktop app's transport on its own ground, balanced as the Mac's.** It keeps its ground with the wash under the whole window, its controls and seek bar sit centred in a 64-point bar, and the trailing glyphs and the page header's play and shuffle glyphs are drawn at the Mac's sizes.

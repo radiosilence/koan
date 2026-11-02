@@ -44,9 +44,14 @@ pub struct Shell {
     /// The queue's controls, in the toolbar while the queue shows.
     queue_controls: Entity<library::controls::ControlsSlot>,
     transport: Entity<Transport>,
+    /// What is wrong with the server, across the top of every page.
+    banner: Entity<crate::server_banner::ServerBanner>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
     library: Option<Entity<LibraryStage>>,
+    /// The downloads page, while it is on stage: made on arriving and let go
+    /// on leaving, so its slices wake nothing while it is not shown.
+    downloads: Option<Entity<crate::downloads::DownloadsPage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
     /// Whether the sidebar shows, and how wide; kept with the window's
@@ -111,11 +116,13 @@ impl Shell {
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
             transport: cx.new(|cx| Transport::new(&nav, window, cx)),
+            banner: cx.new(crate::server_banner::ServerBanner::new),
             nav,
             focus: cx.focus_handle(),
             queue,
             queue_controls,
             library: None,
+            downloads: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             sidebar_width: f32::from_bits(
@@ -410,7 +417,21 @@ impl Render for Shell {
                 )
             }
         };
-        let stage = match self.nav.read(cx).current() {
+        let route = self.nav.read(cx).current();
+        if route != Route::Downloads {
+            self.downloads = None;
+        }
+        let stage = match route {
+            Route::Downloads => {
+                let nav = self.nav.clone();
+                self.downloads
+                    .get_or_insert_with(|| {
+                        cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx))
+                    })
+                    .clone()
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element()
+            }
             Route::Queue => self
                 .queue
                 .clone()
@@ -512,6 +533,7 @@ impl Render for Shell {
                             .flex()
                             .flex_col()
                             .child(self.toolbar(window, cx))
+                            .child(self.banner.clone())
                             .child(div().flex_1().min_h_0().child(stage))
                             .when(!washed, |d| d.child(transport())),
                     )
@@ -529,6 +551,10 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(
+                ask::presented(window, cx)
+                    .map(|s| deferred(div().absolute().inset_0().child(s)).with_priority(2)),
+            )
             .children(
                 ask::overlay(window, cx)
                     .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),

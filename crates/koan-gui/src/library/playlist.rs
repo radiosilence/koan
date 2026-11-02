@@ -924,7 +924,6 @@ impl PlaylistPage {
                     Extras {
                         favourite,
                         feed: Some(feed.clone()),
-                        progress: None,
                     },
                     &look,
                 );
