@@ -131,7 +131,8 @@ impl From<Sleeve> for crate::components::CoverArt {
         match sleeve {
             Sleeve::Ready(image, _) => CoverArt::Image(image),
             Sleeve::Colour(colour) => CoverArt::Colour(colour),
-            Sleeve::Waiting | Sleeve::None => CoverArt::Missing,
+            Sleeve::Waiting => CoverArt::Loading,
+            Sleeve::None => CoverArt::Missing,
         }
     }
 }

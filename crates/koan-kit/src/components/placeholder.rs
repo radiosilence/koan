@@ -5,6 +5,12 @@
 //!
 //! The mark is an SVG the icon assets serve, so GPUI rasterises it once per
 //! size into the atlas and every placeholder after that is one sprite.
+//!
+//! While what it stands for is still loading, the same ensō draws itself
+//! instead: the `Spinner`, placed so its stroke lies exactly on the mark's,
+//! same diameter, brush and centre, in the mark's colour. Loading turning
+//! into no picture leaves the mark where the spinner was, with nothing
+//! moving.
 
 use gpui_kit::*;
 
@@ -46,12 +52,22 @@ const MARK: f32 = 0.48;
 #[derive(IntoElement)]
 pub struct Placeholder {
     side: Pixels,
+    loading: bool,
 }
 
 impl Placeholder {
     /// `side` is the square it fills.
     pub fn new(side: Pixels) -> Self {
-        Self { side }
+        Self {
+            side,
+            loading: false,
+        }
+    }
+
+    /// Still loading: the mark draws itself.
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
     }
 }
 
@@ -59,19 +75,28 @@ impl RenderOnce for Placeholder {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let p = look.palette;
-        div()
+        let ink = p.muted.hsla().opacity(0.5);
+        let mark = self.side * MARK;
+        let ground = div()
+            .relative()
             .size(self.side)
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
-            .bg(p.rule.hsla())
-            .child(
-                svg()
-                    .path(ENSO)
-                    .size(self.side * MARK)
-                    .text_color(p.muted.hsla().opacity(0.5)),
-            )
+            .bg(p.rule.hsla());
+        if !self.loading {
+            return ground.child(svg().path(ENSO).size(mark).text_color(ink));
+        }
+        let (side, offset) = super::spinner::on_mark(mark);
+        let half = self.side / 2.0;
+        ground.child(
+            div()
+                .absolute()
+                .left(half + offset.x - side / 2.0)
+                .top(half + offset.y - side / 2.0)
+                .child(super::Spinner::new(side).color(ink)),
+        )
     }
 }
 

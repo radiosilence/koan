@@ -41,6 +41,7 @@ pub struct Spinner {
     /// The room what is loading will take, held so nothing moves when it
     /// arrives: the spinner is centred in it.
     reserve: Option<Size<Pixels>>,
+    color: Option<Hsla>,
 }
 
 impl Spinner {
@@ -49,7 +50,14 @@ impl Spinner {
         Self {
             side,
             reserve: None,
+            color: None,
         }
+    }
+
+    /// Drawn in `color` rather than `muted`: the placeholder's faded mark.
+    pub fn color(mut self, color: Hsla) -> Self {
+        self.color = Some(color);
+        self
     }
 
     /// Holds exactly `room`, the size of what is loading, with the spinner
@@ -135,6 +143,30 @@ fn stroke(side: Pixels) -> Rc<Stroke> {
             .or_insert_with(|| Rc::new(lay_out(f32::from(side))))
             .clone()
     })
+}
+
+/// Where a spinner goes so its ensō lies exactly on the mark the
+/// `Placeholder` draws at `mark` points a side (the trace's 512-point space
+/// at that size): its square's side, and its centre's offset from the
+/// mark's. The spinner fits the stroke's own extent, brush and all, to its
+/// square; the mark draws the whole 512-point space, margins included. The
+/// brush then comes out the mark's stroke width.
+pub(crate) fn on_mark(mark: Pixels) -> (Pixels, Point<Pixels>) {
+    let points = trace();
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for &(x, y) in points {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    let unit = f32::from(mark) / 512.0;
+    let extent = (max_x - min_x).max(max_y - min_y) + BRUSH;
+    let centre = ((min_x + max_x) / 2.0 - 256.0, (min_y + max_y) / 2.0 - 256.0);
+    (
+        px(extent * unit),
+        point(px(centre.0 * unit), px(centre.1 * unit)),
+    )
 }
 
 /// Smooth at both ends, so the head eases in and out of each half.
@@ -296,7 +328,7 @@ fn bake_field() -> Field {
 impl RenderOnce for Spinner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let color = look.palette.muted.hsla();
+        let color = self.color.unwrap_or(look.palette.muted.hsla());
         let moving = KoanTheme::motion_allowed(cx);
         if SHADED {
             let field = FIELD_IMAGE.with(Rc::clone);

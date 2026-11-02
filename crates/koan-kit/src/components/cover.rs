@@ -4,11 +4,19 @@
 //! caller as `CoverArt`; koan-kit knows nothing of where it was fetched.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui_kit::*;
 
-use super::Placeholder;
-use crate::theme::Look;
+use super::{FadeIn, Placeholder};
+use crate::theme::{Look, Motion};
+
+/// A named cover's arrival: it showed loading, and when its picture came.
+#[derive(Default)]
+struct Arrival {
+    waited: bool,
+    landed: Option<Instant>,
+}
 
 /// What a cover shows.
 #[derive(Clone)]
@@ -18,7 +26,10 @@ pub enum CoverArt {
     /// The picture's average colour, standing in while its bitmap uploads:
     /// it already carries the record.
     Colour(Hsla),
-    /// No picture, or none yet.
+    /// Still being fetched or decoded: the placeholder's ensō drawing
+    /// itself, on the very mark `Missing` shows.
+    Loading,
+    /// No picture.
     Missing,
 }
 
@@ -26,6 +37,7 @@ pub enum CoverArt {
 pub struct Cover {
     art: CoverArt,
     size: Size<Pixels>,
+    id: Option<ElementId>,
 }
 
 impl Cover {
@@ -33,12 +45,24 @@ impl Cover {
         Self {
             art,
             size: size(side, side),
+            id: None,
         }
+    }
+
+    /// Names the cover, so a picture that arrives after it showed loading
+    /// fades in over the spinner rather than replacing it.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// A tile of a mosaic: a cover cut to `size`, its middle kept.
     pub fn sized(art: CoverArt, size: Size<Pixels>) -> Self {
-        Self { art, size }
+        Self {
+            art,
+            size,
+            id: None,
+        }
     }
 }
 
@@ -51,16 +75,53 @@ impl RenderOnce for Cover {
             .flex_none()
             .overflow_hidden()
             .bg(look.palette.surface.hsla());
+        let side = self.size.width.min(self.size.height);
+        // Whether this cover showed loading, and when its picture came: the
+        // picture fades in over the spinner once, and stands still after.
+        let arrived = self
+            .id
+            .as_ref()
+            .map(|id| window.use_keyed_state(id.clone(), cx, |_, _| Arrival::default()));
         match self.art {
-            CoverArt::Image(image) => ground.child(
-                img(ImageSource::Render(image))
+            CoverArt::Image(image) => {
+                let picture = img(ImageSource::Render(image))
                     .size_full()
-                    .object_fit(ObjectFit::Cover),
-            ),
-            CoverArt::Colour(colour) => ground.bg(colour),
-            CoverArt::Missing => {
-                ground.child(Placeholder::new(self.size.width.min(self.size.height)))
+                    .object_fit(ObjectFit::Cover);
+                let fading = arrived.as_ref().is_some_and(|state| {
+                    state.update(cx, |a, _| {
+                        let at = *a.landed.get_or_insert_with(Instant::now);
+                        a.waited && at.elapsed() < Motion::NORMAL
+                    })
+                });
+                match (fading, self.id) {
+                    (true, Some(id)) => ground
+                        .relative()
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .child(Placeholder::new(side).loading(true)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .child(FadeIn::new(super::child(&id, "art"), picture.size_full())),
+                        ),
+                    _ => ground.child(picture),
+                }
             }
+            CoverArt::Colour(colour) => ground.bg(colour),
+            CoverArt::Loading => {
+                if let Some(state) = &arrived {
+                    state.update(cx, |a, _| {
+                        a.waited = true;
+                        a.landed = None;
+                    });
+                }
+                ground.child(Placeholder::new(side).loading(true))
+            }
+            CoverArt::Missing => ground.child(Placeholder::new(side)),
         }
     }
 }
