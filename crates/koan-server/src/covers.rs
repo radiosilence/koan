@@ -441,6 +441,7 @@ impl Covers {
         });
         let mut made = 0usize;
         let mut state = WarmState::Idle;
+        let mut finished = true;
         for (done, album) in albums.into_iter().enumerate() {
             let wanted: Vec<u32> = WARMED
                 .into_iter()
@@ -456,7 +457,10 @@ impl Covers {
                 Ok(db) => {
                     koan_core::db::queries::tracks_for_album(&db.conn, album).unwrap_or_default()
                 }
-                Err(_) => break,
+                Err(_) => {
+                    finished = false;
+                    break;
+                }
             };
             if tracks.is_empty() {
                 continue;
@@ -479,9 +483,10 @@ impl Covers {
                 break;
             }
         }
+        // A pass the database stopped keeps the count it reached.
         self.set_warm(|w| {
             w.state = state;
-            if state == WarmState::Idle {
+            if state == WarmState::Idle && finished {
                 w.done = total;
             }
             w.finished = Some(std::time::SystemTime::now());
