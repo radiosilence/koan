@@ -91,10 +91,16 @@ fn keep_miss(cfg: &Config, id: &str) {
 /// longer this device's.
 pub fn forget(cfg: &Config) {
     let dir = directory(cfg);
-    if dir.exists()
-        && let Err(e) = std::fs::remove_dir_all(&dir)
-    {
-        log::warn!("artwork {}: {e}", dir.display());
+    if !dir.exists() {
+        return;
+    }
+    let held = bytes(cfg);
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => crate::helpers::cache_shrank(held),
+        Err(e) => {
+            log::warn!("artwork {}: {e}", dir.display());
+            crate::helpers::measure_cache(cfg);
+        }
     }
 }
 
@@ -369,9 +375,10 @@ fn pass() {
         match client.get_cover_art(&id, Some(PRELOAD_SIZE)) {
             Ok(data) if data.is_empty() => keep_miss(&cfg, &id),
             Ok(data) => keep(&cfg, &id, Some(PRELOAD_SIZE), &data),
-            // The server has none for this record: remembered, so the next
-            // pass does not ask again.
-            Err(SubsonicError::Api { .. } | SubsonicError::BadResponse) => keep_miss(&cfg, &id),
+            // The server says it has no such cover: remembered, so the next
+            // pass does not ask again. Any other refusal (a restart, a
+            // proxy's 502, a lapsed sign-in) says nothing about the record.
+            Err(SubsonicError::Api { code: 70, .. }) => keep_miss(&cfg, &id),
             Err(e) => {
                 log::info!("cover preload paused: {e}");
                 break;
