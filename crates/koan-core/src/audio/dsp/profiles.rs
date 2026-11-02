@@ -1491,6 +1491,24 @@ fn band_values(
     ))
 }
 
+/// `band` set to `kind` and the figures given, each held within its range
+/// only where it changed: a figure given as the band already has it is kept,
+/// so an imported band outside the hand-edit ranges (a Q of 30 from a REW
+/// export) keeps that figure while another is edited. `held` is the figures
+/// as `band_values` held them.
+fn apply_band(
+    band: &mut crate::config::EqFilter,
+    given: (f64, f64, f64),
+    held: (crate::config::EqFilterKind, f64, f64, f64),
+) {
+    let keep = |old: f64, given: f64, held: f64| if given == old { old } else { held };
+    let (kind, freq, gain_db, q) = held;
+    band.kind = kind;
+    band.freq = keep(band.freq, given.0, freq);
+    band.gain_db = keep(band.gain_db, given.1, gain_db);
+    band.q = keep(band.q, given.2, q);
+}
+
 /// A curve's points held within a band's ranges, in order of frequency.
 fn curve_points(points: &[(f64, f64)]) -> Result<Vec<(f64, f64)>, String> {
     if points.is_empty() {
@@ -1538,10 +1556,10 @@ pub fn preview_band(
     q: f64,
     rate: u32,
 ) -> Option<Response> {
-    let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q).ok()?;
+    let held = band_values(kind, freq, gain_db, q).ok()?;
     preview(name, index, rate, |f| match f {
         crate::config::DspFilter::Band(b) => {
-            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            apply_band(b, (freq, gain_db, q), held);
             true
         }
         _ => false,
@@ -1566,7 +1584,8 @@ pub fn preview_curve(
 }
 
 /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
-/// `gain_db` and `q`, held within the ranges a band may have. Its channels
+/// `gain_db` and `q`, each figure that changed held within the ranges a band
+/// may have (see `apply_band`). Its channels
 /// are kept. Delays, mixes and graphic curves are not edited this way.
 /// Refused for a correction, which plays as made.
 pub fn set_band(
@@ -1608,10 +1627,10 @@ pub fn edit_band(
     q: f64,
 ) -> Result<Edited, String> {
     use crate::config::DspFilter;
-    let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q)?;
+    let held = band_values(kind, freq, gain_db, q)?;
     edit_filter(name, index, expected, |filter| match filter {
         DspFilter::Band(b) => {
-            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            apply_band(b, (freq, gain_db, q), held);
             true
         }
         _ => false,
@@ -4611,6 +4630,42 @@ mod tests {
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody", None).is_err());
         assert!(set_curve("Mine", 0, &[(100.0, 1.0)]).is_err(), "a band");
+    }
+
+    /// Editing one figure of a band leaves the others as they were, even
+    /// outside the hand-edit ranges; a figure that changes is held to them.
+    #[test]
+    fn an_edit_holds_only_the_figure_it_changes() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Imported".into(),
+                filters: vec![DspFilter::Band(EqFilter {
+                    kind: EqFilterKind::Peaking,
+                    freq: 5.0,
+                    gain_db: -3.0,
+                    q: 30.0,
+                    channels: Vec::new(),
+                })],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let band = || match &detail("Imported").unwrap().filters[0] {
+            DspFilter::Band(b) => (b.freq, b.gain_db, b.q),
+            other => panic!("not a band: {other:?}"),
+        };
+        set_band("Imported", 0, "peaking", 5.0, 2.0, 30.0).unwrap();
+        assert_eq!(band(), (5.0, 2.0, 30.0), "only the gain moved");
+        let preview = preview_band("Imported", 0, "peaking", 5.0, 4.0, 30.0, 48000).unwrap();
+        assert_eq!(preview.bands.len(), 1);
+        set_band("Imported", 0, "peaking", 5.0, 2.0, 25.0).unwrap();
+        assert_eq!(band(), (5.0, 2.0, 20.0), "a Q typed is held to its range");
     }
 
     /// An edit that names the filter it last saw is refused once another
