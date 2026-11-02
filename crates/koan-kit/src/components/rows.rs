@@ -10,6 +10,9 @@ use gpui_kit::{
 use super::{Handler, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
+/// The hover group a nav row's glyph brightens by.
+const NAV_ROW: &str = "koan-nav-row";
+
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
 /// accent rule on the leading edge, and no fill.
@@ -112,7 +115,9 @@ impl RenderOnce for NavRow {
             .whitespace_nowrap()
             .text_ellipsis()
             .child(self.label);
+        let selected = self.selected;
         self.base
+            .group(NAV_ROW)
             .relative()
             .flex()
             .flex_none()
@@ -137,7 +142,16 @@ impl RenderOnce for NavRow {
             .children(
                 self.icon
                     .filter(|_| look.icons && self.art.is_none())
-                    .map(|icon| KoanIcon::new(icon).color(color)),
+                    // A glyph draws in its own colour: it brightens with the
+                    // label under the pointer by the row's group.
+                    .map(|icon| {
+                        let glyph = KoanIcon::new(icon).color(color);
+                        if selected {
+                            glyph
+                        } else {
+                            glyph.hover_color(NAV_ROW, ink)
+                        }
+                    }),
             )
             .children(self.art)
             .map(|row| match self.detail {

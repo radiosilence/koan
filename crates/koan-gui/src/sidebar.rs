@@ -45,6 +45,9 @@ pub struct Sidebar {
     loading: Option<Task<()>>,
     /// The library's art cache, once the library has loaded.
     covers: Option<(Entity<Covers>, [Subscription; 2])>,
+    /// The faces not yet in memory at the last render: a sleeve landing
+    /// redraws the sidebar only when it is one of these.
+    pending: std::collections::HashSet<Key>,
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
@@ -71,6 +74,7 @@ impl Sidebar {
             faces: HashMap::new(),
             loading: None,
             covers: None,
+            pending: Default::default(),
             importing: 0,
             drop_playlist: None,
             reorders: 0,
@@ -137,7 +141,12 @@ impl Sidebar {
         self.covers = Some((
             covers.clone(),
             [
-                cx.observe(&covers, |_, _, cx| cx.notify()),
+                cx.observe(&covers, |this, covers, cx| {
+                    let covers = covers.read(cx);
+                    if this.pending.iter().any(|key| covers.has(*key)) {
+                        cx.notify();
+                    }
+                }),
                 cx.on_release(move |this, cx| {
                     if let Some((covers, _)) = &this.covers {
                         covers.update(cx, |c, cx| c.release(id, cx));
@@ -493,18 +502,29 @@ impl Sidebar {
                     .collect()
             })
             .collect();
-        let (sleeves, more) = covers.update(cx, |c, cx| {
+        // Below whatever a page shows: the sidebar's faces are small and
+        // there are few, but a page's sleeves on screen come first.
+        let (sleeves, more, pending) = covers.update(cx, |c, cx| {
             c.request(
                 owner,
-                keys.iter().flatten().map(|key| (*key, Priority::Visible)),
+                keys.iter()
+                    .flatten()
+                    .map(|key| (*key, Priority::Ahead(0.0))),
             );
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let sleeves = keys
                 .iter()
                 .map(|keys| keys.iter().map(|key| c.sleeve(*key)).collect())
                 .collect();
-            (sleeves, more)
+            let pending = keys
+                .iter()
+                .flatten()
+                .filter(|k| !c.has(**k))
+                .copied()
+                .collect();
+            (sleeves, more, pending)
         });
+        self.pending = pending;
         if more {
             window.request_animation_frame();
         }
