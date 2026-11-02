@@ -69,6 +69,11 @@ pub struct Shell {
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
+        // A measuring run can open on the page it measures.
+        #[cfg(feature = "profiler")]
+        if let Some(route) = crate::measure::route() {
+            nav.update(cx, |nav, _| nav.go(route));
+        }
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
         let queue_controls = cx.new(|cx| {
             let mut slot = library::controls::ControlsSlot::default();

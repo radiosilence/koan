@@ -1053,6 +1053,8 @@ fn row_menu(
 impl Render for PlaylistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
+        #[cfg(feature = "profiler")]
+        crate::measure::TOP.store(self.list.top().item_ix, std::sync::atomic::Ordering::Relaxed);
         if self.drop_at.is_some() && !cx.has_active_drag() {
             self.drop_at = None;
         }

@@ -6,7 +6,9 @@
 //! `KOAN_CONFIG_DIR`. `KOAN_SHOT_TRACKS=n` fills the queue with n of the
 //! library's tracks, scanned from that configuration's folders, first, and
 //! saves that session. `KOAN_SHOT_ROUTE` (`albums`, `artists`, `tracks`,
-//! `album:<id>`, `artist:<id>`) draws that page instead of the queue.
+//! `album:<id>`, `artist:<id>`, `playlist:<id>`) draws that page instead of
+//! the queue. With `KOAN_SHOT_TRACKS`, a playlist of the same tracks is made
+//! too, and its id printed.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -26,6 +28,7 @@ fn route() -> Option<Route> {
     match value.split_once(':') {
         Some(("album", n)) => id(n).map(Route::Album),
         Some(("artist", n)) => id(n).map(Route::Artist),
+        Some(("playlist", n)) => id(n).map(Route::Playlist),
         _ => match value.as_str() {
             "albums" => Some(Route::Albums),
             "artists" => Some(Route::Artists),
@@ -66,7 +69,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect();
         ids.sort_unstable();
         let ids: Vec<i64> = ids.iter().cycle().take(count).copied().collect();
-        futures::executor::block_on(engine.clone().replace_queue(ids, None, false))?;
+        futures::executor::block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
+        let playlist =
+            futures::executor::block_on(engine.clone().create_playlist("Shot".into(), ids))?;
+        println!("playlist {}", playlist.id);
         futures::executor::block_on(engine.clone().pause())?;
         // Kept for the app to restore, which is how frame times are measured
         // against a queue of this size.
