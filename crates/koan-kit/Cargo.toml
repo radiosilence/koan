@@ -23,7 +23,6 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", optional =
 # against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 futures = "0.3"
-log = "0.4"
 parking_lot = "0.13"
 smallvec = "1"
 

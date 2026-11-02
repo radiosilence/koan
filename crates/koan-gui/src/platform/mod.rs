@@ -11,9 +11,12 @@ pub mod instance;
 pub mod logging;
 pub mod media;
 pub mod menus;
+pub mod residency;
 pub mod runtime_files;
 pub mod shortcuts_sheet;
 pub mod startup_error;
+#[cfg(target_os = "macos")]
+pub mod status_item;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,10 +81,9 @@ pub fn init(
     mut opened: UnboundedReceiver<Opened>,
     cx: &mut App,
 ) -> impl Future<Output = Option<u32>> + 'static {
-    // As the Mac app does unless it is kept running in the menu bar, which
-    // this app has no menu bar item for: closing the last window quits.
-    // GPUI's default on macOS keeps the process with nothing to bring back.
-    cx.set_quit_mode(koan_kit::raw::QuitMode::LastWindowClosed);
+    // As the Mac app does: closing the last window quits, unless kōan is
+    // kept running (`residency`), when it stays in the menu bar.
+    residency::init(engine, cx);
     actions::register(engine, cx);
     about::init(cx);
     shortcuts_sheet::bind(cx);
@@ -163,8 +165,15 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
 }
 
 /// Bring the app and its window to the front.
-pub(crate) fn to_front(cx: &mut App) {
+pub fn to_front(cx: &mut App) {
     cx.activate(true);
+    // Kept running with the main window closed: it opens again.
+    if residency::keep_running(cx)
+        && crate::app::main_window(cx).is_none()
+        && crate::app::show_window(cx)
+    {
+        return;
+    }
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }
