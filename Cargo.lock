@@ -5505,6 +5505,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "parking_lot 0.13.0",
+ "serde_json",
  "smallvec",
 ]
 
