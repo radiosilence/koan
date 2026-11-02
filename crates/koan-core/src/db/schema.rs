@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 31;
+pub const SCHEMA_VERSION: i64 = 32;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -148,6 +148,17 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         -- Forgetting a track deletes its scan cache entry by track id, and the
         -- primary key is the path.
         CREATE INDEX IF NOT EXISTS idx_scan_cache_track ON scan_cache(track_id);
+
+        -- Cover images beside the tracks (`cover.jpg`, `folder.png`…) as the
+        -- last scan of their folder saw them. A scan finding one added,
+        -- replaced or removed names the records under it in art_evictions:
+        -- no track row changes when an image does, and without the folder
+        -- watcher's events a scan is the only thing that looks.
+        CREATE TABLE IF NOT EXISTS cover_files (
+            path  TEXT PRIMARY KEY,
+            mtime INTEGER NOT NULL,
+            size  INTEGER NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS remote_servers (
             id        INTEGER PRIMARY KEY,

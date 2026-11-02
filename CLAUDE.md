@@ -199,6 +199,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `index/lane.rs` | One scan at a time: every scanner entry point (full scan, folder and directory rescans) waits for the lane; an import does not, and waits only for a folder being forgotten. The scan in it can be cancelled by the person (`cancel_all`, which the apps' Cancel calls) or by forgetting a folder it covers (`cancel_under`) |
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
+| `index/cover_files.rs` | Cover images beside the tracks as the last full scan saw them (`cover_files`); one added, replaced or removed names the records under it in `art_evictions`, since no track row changes |
 | `index/folder_art.rs` | Covers as image files beside the tracks (`cover.*`, `folder.*`, `front.*`, Navidrome's order), ahead of embedded art. `cover_art` is what every cover lookup calls. Directory listings kept against the directory's mtime |
 | `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 | `format` | fb2k-compatible template engine, re-exported from sift (`sift-music`) — the tagger shared with other importers. Change it there |
