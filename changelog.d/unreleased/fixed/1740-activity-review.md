@@ -1,0 +1,1 @@
+- **The desktop app's Rebuild Index asks before clearing the library**, and leaves no sleeve on the wrong record. Playing bars stop when the music does and leave with their row, and Clear Artwork Cache brings back the covers on screen at once.
