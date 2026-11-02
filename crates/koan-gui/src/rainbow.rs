@@ -8,7 +8,8 @@
 //!
 //! Off, it costs nothing. On, its one timer, the accent's step every two
 //! seconds, runs only while a window of the app is in front and motion is
-//! allowed.
+//! allowed (neither Reduce Motion nor Low Power), and stops or starts as
+//! those change.
 
 use std::time::Duration;
 
@@ -187,6 +188,9 @@ pub fn install(cx: &mut App) {
         }
     })
     .detach();
+    // Reduce Motion or Low Power switched while it is on: the cycle stops
+    // or starts again.
+    cx.observe_global::<KoanTheme>(refresh).detach();
     let playback = cx.global::<Mirror>().playback.clone();
     cx.observe(&playback, |playback, cx| {
         let entry = playback.read(cx).0.entry.clone();
@@ -251,7 +255,7 @@ pub fn set_active(active: bool, cx: &mut App) {
 /// windows, and sets the accent now.
 fn refresh(cx: &mut App) {
     let drawn = Rainbow::drawn(cx);
-    let cycling = drawn && cx.global::<Rainbow>().active && !cx.reduce_motion();
+    let cycling = drawn && cx.global::<Rainbow>().active && KoanTheme::motion_allowed(cx);
     if drawn {
         let r = cx.global::<Rainbow>();
         let colours = r.palette();

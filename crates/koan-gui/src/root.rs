@@ -30,6 +30,8 @@ pub struct WindowRoot {
     wash_tint: u32,
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
+    /// The wash shows the rainbow's sheen.
+    rainbow: bool,
     _subscriptions: [Subscription; 6],
     /// The playing bars moved: painted again over the cached content.
     /// This window's bars, where they are quads, and whether it shows.
@@ -59,6 +61,7 @@ impl WindowRoot {
             record_colours,
             wash_tint,
             fetching: None,
+            rainbow: false,
             _subscriptions: [
                 cx.observe_global::<ShownRecord>(move |this, cx| this.follow(&shown, false, cx)),
                 theme::follow_appearance(window, cx),
@@ -129,12 +132,18 @@ impl WindowRoot {
         // The rainbow paints over the record: its sheen in the wash, its
         // accent its own. The record's is fetched again once it goes.
         if crate::rainbow::Rainbow::drawn(cx) {
-            self.album = None;
-            self.fetching = None;
-            let sheen = crate::rainbow::Rainbow::sheen(cx);
-            self.wash.update(cx, |wash, cx| wash.set_sleeve(sheen, cx));
+            // Painted once on the way in, and again only when what is painted
+            // changes; a change to what plays leaves it be.
+            if !self.rainbow || again {
+                self.rainbow = true;
+                self.album = None;
+                self.fetching = None;
+                let sheen = crate::rainbow::Rainbow::sheen(cx);
+                self.wash.update(cx, |wash, cx| wash.set_sleeve(sheen, cx));
+            }
             return;
         }
+        self.rainbow = false;
         if album == self.album && !again {
             return;
         }
