@@ -79,6 +79,9 @@ pub struct Button {
     destructive: bool,
     disabled: bool,
     selected: bool,
+    /// What the tooltip says in place of the label: what it does, and the
+    /// keys that do the same.
+    help: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -93,8 +96,16 @@ impl Button {
             destructive: false,
             disabled: false,
             selected: false,
+            help: None,
             on_click: None,
         }
+    }
+
+    /// The tooltip, in place of a glyph-only button's label, and on a button
+    /// with words too: "back (⌘[)", as the Mac's buttons say.
+    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
+        self.help = Some(help.into());
+        self
     }
 
     /// The label, an app word, drawn lowercase. A glyph-only button keeps it
@@ -261,7 +272,7 @@ impl RenderOnce for Button {
                     }
                 })),
         );
-        let tooltip = self.label.filter(|_| glyph_only);
+        let tooltip = self.help.or(self.label.filter(|_| glyph_only));
         if let Some(tooltip) = tooltip {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));

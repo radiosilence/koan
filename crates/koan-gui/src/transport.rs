@@ -28,7 +28,7 @@ use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::ShowEq;
+use crate::platform::actions::{Next, Previous, ShowEq, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -696,6 +696,12 @@ const TEXT_BUTTON: &str = "transport-text-button";
 
 /// A transport control: `on` for the two that toggle, underlined in the
 /// accent while on and `muted` while off, as an icon toggle is.
+/// A transport control's tooltip.
+fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = SharedString::from(text);
+    move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
+}
+
 fn control(
     id: &'static str,
     icon: Icon,
@@ -869,11 +875,13 @@ impl Render for Transport {
                     )
                     .child(
                         control("previous", Icon::Previous, "prev", None, &p)
+                            .tooltip(tip(help("previous track", &Previous, cx)))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
                         control("next", Icon::Next, "next", None, &p)
+                            .tooltip(tip(help("next track", &Next, cx)))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
