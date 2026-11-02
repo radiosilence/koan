@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::Config;
 use crate::db::connection::{Database, DbError};
@@ -464,6 +464,9 @@ pub fn reconcile_playlists(
     let mut out = PlaylistSync::default();
     let account = account_key(url, username);
 
+    // Read before the listing: a reorder made or sent after this point is
+    // newer than the listing's order, which is then not adopted.
+    let order_generation = ORDER_GENERATION.load(Ordering::Acquire);
     let remote = match client.get_playlists() {
         Ok(lists) => lists,
         Err(e) => {
@@ -622,7 +625,7 @@ pub fn reconcile_playlists(
         }
     }
 
-    sync_order(db, client, &remote);
+    sync_order(db, client, &remote, order_generation);
     fill_missing_songs(db);
     out
 }
@@ -632,15 +635,26 @@ pub fn reconcile_playlists(
 /// server's order, as an edit from another device would.
 static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
 
-/// Held while the order goes either way, so a sync never adopts the server's
-/// order over a reorder on its way there, and two sends land in the order
-/// they were made.
+/// Held while the order goes either way, and while a reorder is written, so
+/// a sync never adopts the server's order over a reorder on its way there,
+/// and two sends land in the order they were made.
 static ORDER_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Moved by every reorder written here and every send. A sync adopts the
+/// server's listing only if this has not moved since the listing was asked
+/// for: otherwise the listing predates an order this device has since made
+/// or sent, and adopting it would undo that until the next sync.
+static ORDER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// The sidebar's order and the server's, on a server that keeps one
 /// (`koanPlaylistOrder`): a reorder not yet sent is sent, otherwise the
 /// listing's order is adopted. Playlists either side lacks keep their places.
-fn sync_order(db: &Database, client: &SubsonicClient, listing: &[SubsonicPlaylist]) {
+fn sync_order(
+    db: &Database,
+    client: &SubsonicClient,
+    listing: &[SubsonicPlaylist],
+    listed_at: u64,
+) {
     let keeps_order = crate::remote::profile::for_auth(client.auth())
         .is_some_and(|p| p.offers(crate::remote::profile::PLAYLIST_ORDER));
     if !keeps_order {
@@ -649,6 +663,9 @@ fn sync_order(db: &Database, client: &SubsonicClient, listing: &[SubsonicPlaylis
     let _lane = ORDER_LANE.lock();
     if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
         send_order(db, client);
+        return;
+    }
+    if ORDER_GENERATION.load(Ordering::Acquire) != listed_at {
         return;
     }
     let order: Vec<String> = listing.iter().map(|p| p.id.clone()).collect();
@@ -665,9 +682,14 @@ fn send_order(db: &Database, client: &SubsonicClient) {
     let sent = queries::remote_playlist_order(&db.conn)
         .map_err(|e| e.to_string())
         .and_then(|ids| client.set_playlist_order(&ids).map_err(|e| e.to_string()));
-    if let Err(e) = sent {
-        log::warn!("could not send the playlist order to the server: {e}");
-        ORDER_UNSENT.store(true, Ordering::Relaxed);
+    match sent {
+        Ok(()) => {
+            ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
+        Err(e) => {
+            log::warn!("could not send the playlist order to the server: {e}");
+            ORDER_UNSENT.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -675,7 +697,14 @@ fn send_order(db: &Database, client: &SubsonicClient) {
 /// it to a server that keeps the account's order. What every app's reorder
 /// goes through.
 pub fn reorder(db: &Database, ids: &[i64]) -> Result<(), DbError> {
-    queries::reorder_playlists(&db.conn, ids)?;
+    {
+        // Marked unsent with the write, under the lane: a sync taking the
+        // lane after it sends this order rather than adopting the server's.
+        let _lane = ORDER_LANE.lock();
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
+        queries::reorder_playlists(&db.conn, ids)?;
+    }
     push_order();
     Ok(())
 }
@@ -1543,6 +1572,53 @@ mod tests {
             )),
             _ => ok(String::new()),
         }
+    }
+
+    /// A listing asked for before this device made or sent a reorder is
+    /// older than that order, and is not adopted over it.
+    #[test]
+    fn a_listing_older_than_a_send_is_not_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let (p1, p2) = (id("p1"), id("p2"));
+        let order = || -> Vec<i64> {
+            queries::list_playlists(&db.conn, queries::LOCAL_USER)
+                .unwrap()
+                .iter()
+                .map(|p| p.id)
+                .collect()
+        };
+
+        // The listing is read, then this device reorders and the order goes
+        // out before the sync gets to adopting it.
+        let listed_at = ORDER_GENERATION.load(Ordering::Acquire);
+        let stale = client.get_playlists().unwrap();
+        queries::reorder_playlists(&db.conn, &[p2, p1]).unwrap();
+        ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
+        sync_order(&db, &client, &stale, listed_at);
+        assert_eq!(order(), [p2, p1], "the newer order stands");
+
+        sync_order(
+            &db,
+            &client,
+            &stale,
+            ORDER_GENERATION.load(Ordering::Acquire),
+        );
+        assert_eq!(order(), [p1, p2], "a listing newer than it is adopted");
     }
 
     #[test]

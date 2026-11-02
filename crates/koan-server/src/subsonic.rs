@@ -4776,6 +4776,11 @@ async fn koan_playlist_order(
                 .collect();
             queries::set_account_playlist_order(&db.conn, user, &ids)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            // A server that is itself signed in upstream, as this account,
+            // passes the order on, as it does its other playlist edits.
+            if matches!(queries::auth::is_local_user(&db.conn, user), Ok(true)) {
+                koan_core::playlists::push_order();
+            }
             crate::clients::changed();
             Ok(b)
         })
