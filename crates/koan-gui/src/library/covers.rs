@@ -27,9 +27,10 @@ use futures::channel::mpsc;
 use koan_ffi::KoanEngine;
 use koan_kit::app::*;
 // decoded images handed to the renderer.
+use crate::theme::Hsla;
 use koan_kit::raw::RenderImage;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, Rgba};
+// a sleeve's average colour, computed from its pixels.
+use koan_kit::raw::Rgba;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
@@ -1473,8 +1474,6 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Sizes for the keys the tests make.
-    use koan_kit::raw::px;
 
     #[test]
     fn only_finished_covers_are_covers() {
@@ -1504,9 +1503,9 @@ mod tests {
 
     #[test]
     fn keys_round_up_to_a_bucket() {
-        assert_eq!(Key::new(Art::Album(1), px(200.0), 2.0).px, 416);
-        assert_eq!(Key::new(Art::Album(1), px(208.0), 2.0).px, 416);
-        assert_eq!(Key::new(Art::Album(1), px(0.0), 1.0).px, BUCKET);
+        assert_eq!(Key::new(Art::Album(1), Pixels::from(200.0), 2.0).px, 416);
+        assert_eq!(Key::new(Art::Album(1), Pixels::from(208.0), 2.0).px, 416);
+        assert_eq!(Key::new(Art::Album(1), Pixels::from(0.0), 1.0).px, BUCKET);
     }
 
     #[test]

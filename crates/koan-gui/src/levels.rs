@@ -24,11 +24,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::theme::Hsla;
 use futures::StreamExt as _;
 use koan_kit::app::*;
 use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
-// the colour the caller's palette gives the bars.
-use koan_kit::raw::Hsla;
 use parking_lot::Mutex;
 
 use crate::engine::engine;

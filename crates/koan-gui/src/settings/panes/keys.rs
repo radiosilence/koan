@@ -11,8 +11,6 @@ use crate::theme::{Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, day, item, section, text};
@@ -272,7 +270,7 @@ impl Render for Keys {
                 rows.push(buttons(
                     vec![
                         div()
-                            .w(px(260.))
+                            .w(look.spaced(260.0))
                             .child(TextField::new(&self.name))
                             .into_any_element(),
                         Button::new("new-secret", ButtonKind::Bordered)

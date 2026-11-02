@@ -10,10 +10,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::theme::Hsla;
 use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
-// a sleeve's colour, kept to fade the sleeve in over.
-use koan_kit::raw::Hsla;
 
 use super::actions;
 use super::covers::Sleeve;
