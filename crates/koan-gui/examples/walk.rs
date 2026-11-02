@@ -6,8 +6,12 @@
 //! renderer draws it, as `window_shot` does.
 //!
 //! The PNGs are named as the Mac app's evidence renderer names its framed
-//! windows (`window-albums-dark.png`), at the same size, so `just
-//! gui-compare` can set the two apps side by side.
+//! windows (`window-albums-dark.png`, `window-album-<id>-dark.png`), at the
+//! same size, so `just gui-compare` can set the two apps side by side. The
+//! record, artist and playlist it walks are written to `<out>/ids.env` as
+//! the renderer's `KOAN_RENDER_ALBUM`, `KOAN_RENDER_ARTIST` and
+//! `KOAN_RENDER_PLAYLIST`, so the Mac draws the same ones. PNGs left from an
+//! earlier walk are removed first, so none is compared out of date.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
 //! `KOAN_CONFIG_DIR`, whose library folders it scans first. The frame times
@@ -41,12 +45,12 @@ const STEPS: usize = 120;
 const STEP: f32 = 40.0;
 
 struct Page {
-    name: &'static str,
+    name: String,
     route: Route,
 }
 
 struct Timing {
-    name: &'static str,
+    name: String,
     frames: Vec<Duration>,
 }
 
@@ -69,6 +73,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             .unwrap_or_else(|| "target/gui-walk".into()),
     );
     std::fs::create_dir_all(&out)?;
+    for entry in std::fs::read_dir(&out)?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("window-") && name.ends_with(".png") {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
     let budget = Duration::from_secs_f64(
         std::env::var("KOAN_WALK_BUDGET_MS")
             .ok()
@@ -88,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
-    let pages = prepare(&engine)?;
+    let pages = prepare(&engine, &out)?;
 
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
@@ -118,7 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for page in pages {
         if only
             .as_ref()
-            .is_some_and(|only| !only.iter().any(|o| o == page.name))
+            .is_some_and(|only| !only.iter().any(|o| page.name.starts_with(o.as_str())))
         {
             continue;
         }
@@ -136,7 +146,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             cx.capture_screenshot(window)?.save(&file)?;
         }
         timings.push(Timing {
-            name: page.name,
+            name: page.name.clone(),
             frames: scroll(&mut cx, window)?,
         });
     }
@@ -156,7 +166,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if p95 > budget { "  over budget" } else { "" }
         );
         if p95 > budget {
-            over.push(t.name);
+            over.push(t.name.clone());
         }
     }
     println!("PNGs in {}", out.display());
@@ -172,9 +182,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Scans the configured folders, and makes what the pages need to show
-/// something: a queue, a playlist, a favourite record. Returns every page,
-/// the ones that need a record, an artist or a playlist with theirs.
-fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<Page>, Box<dyn Error>> {
+/// something: a queue and a playlist. Returns every page, the ones that need
+/// a record, an artist or a playlist with theirs, whose ids go to
+/// `<out>/ids.env` for the Mac's renderer.
+fn prepare(
+    engine: &std::sync::Arc<KoanEngine>,
+    out: &std::path::Path,
+) -> Result<Vec<Page>, Box<dyn Error>> {
     use futures::executor::block_on;
     block_on(engine.clone().scan_reporting(false, None))?;
     let tracks = block_on(engine.clone().random_tracks(600, None))?;
@@ -184,59 +198,64 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<Page>, Box<dyn Err
     let artist = tracks.iter().find_map(|t| t.artist_id);
     let mut pages = vec![
         Page {
-            name: "queue",
+            name: "queue".into(),
             route: Route::Queue,
         },
         Page {
-            name: "albums",
+            name: "albums".into(),
             route: Route::Albums,
         },
         Page {
-            name: "artists",
+            name: "artists".into(),
             route: Route::Artists,
         },
         Page {
-            name: "tracks",
+            name: "tracks".into(),
             route: Route::Tracks,
         },
         Page {
-            name: "favourites",
+            name: "favourites".into(),
             route: Route::Favourites,
         },
         Page {
-            name: "recent",
+            name: "recent".into(),
             route: Route::RecentlyPlayed,
         },
         Page {
-            name: "history",
+            name: "history".into(),
             route: Route::History,
         },
         Page {
-            name: "downloads",
+            name: "downloads".into(),
             route: Route::Downloads,
         },
     ];
+    let mut env = String::new();
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
         block_on(engine.clone().pause())?;
         let playlist = block_on(engine.clone().create_playlist("Walk".into(), ids))?;
+        env.push_str(&format!("KOAN_RENDER_PLAYLIST={}\n", playlist.id));
         pages.push(Page {
-            name: "playlist",
+            name: "playlist".into(),
             route: Route::Playlist(playlist.id),
         });
     }
     if let Some(album) = album {
+        env.push_str(&format!("KOAN_RENDER_ALBUM={album}\n"));
         pages.push(Page {
-            name: "album",
+            name: format!("album-{album}"),
             route: Route::Album(album),
         });
     }
     if let Some(artist) = artist {
+        env.push_str(&format!("KOAN_RENDER_ARTIST={artist}\n"));
         pages.push(Page {
-            name: "artist",
+            name: "artist".into(),
             route: Route::Artist(artist),
         });
     }
+    std::fs::write(out.join("ids.env"), env)?;
     Ok(pages)
 }
 

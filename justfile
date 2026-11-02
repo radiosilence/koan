@@ -42,6 +42,8 @@ gui-compare out="target/gui-compare":
     cfg="$PWD/{{out}}/mac-config"
     rm -rf "$cfg" "{{out}}/mac" && cp -R "{{out}}/gui/config" "$cfg"
     printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
+    # The record, artist and playlist the walk drew.
+    set -a && . "{{out}}/gui/ids.env" && set +a
     KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
         KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
         -ApplePersistenceIgnoreState YES
