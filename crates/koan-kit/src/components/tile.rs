@@ -11,95 +11,12 @@ use std::sync::Arc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Placeholder, TileColumns};
+use super::Placeholder;
+#[cfg(test)]
+use super::{TileColumns, TileGrid};
+#[cfg(test)]
 use crate::theme::tokens::Scale;
-use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole};
-
-/// The record grid: `TileColumns` across the width, and each row's height.
-/// Every tile is the same size, so nothing is measured.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TileGrid {
-    pub columns: usize,
-    pub side: Pixels,
-    /// Between tiles in a row: at least `TileColumns::MIN_GAP`, with a share
-    /// of the spare width.
-    pub gap: Pixels,
-    /// Above the first row and below the last: the page's margin.
-    pub margin: Pixels,
-    /// Either side of a row: the page's margin and a share of the spare
-    /// width.
-    pub inset: Pixels,
-    /// A row's height, its spacing below included.
-    pub row: Pixels,
-}
-
-impl TileGrid {
-    /// Below a row's captions, before the next row.
-    pub const LINE_GAP: f32 = 22.0;
-    /// Between sleeve, title and credit.
-    pub const CAPTION_GAP: f32 = 7.0;
-
-    /// The grid for a list `width` wide, with captions on `scale`. The
-    /// margin is the page's, so the grid's edge is the header's and the
-    /// rows'.
-    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        let margin = px(Space::Xxl.points() * scale.space);
-        let columns = TileColumns::for_width(width, margin);
-        Self {
-            columns: columns.columns,
-            side: columns.side,
-            gap: columns.gap,
-            margin,
-            inset: columns.inset,
-            row: columns.side + Self::caption_height(scale) + px(Self::LINE_GAP),
-        }
-    }
-
-    /// Whether `other` places the rows as this does: the same columns and
-    /// row height, so a row is where it was and only the room between tiles
-    /// moved.
-    pub fn same_rows(&self, other: &TileGrid) -> bool {
-        self.columns == other.columns && self.row == other.row
-    }
-
-    pub fn rows(&self, items: usize) -> usize {
-        items.div_ceil(self.columns)
-    }
-
-    /// Between sleeve, title and credit, as laid out.
-    pub fn caption_gap() -> Pixels {
-        px(Self::CAPTION_GAP)
-    }
-
-    /// A tile's height: its sleeve and caption, without the gap below.
-    pub fn tile_height(&self) -> Pixels {
-        self.row - px(Self::LINE_GAP)
-    }
-
-    /// The caption under a sleeve: title in `meta`, credit in `fine`, each
-    /// after `CAPTION_GAP`.
-    pub fn caption_height(scale: &Scale) -> Pixels {
-        let line = |role: TypeRole| role.points() * scale.text * role.line_height();
-        px(Self::CAPTION_GAP + line(TypeRole::Meta) + Self::CAPTION_GAP + line(TypeRole::Fine))
-    }
-
-    /// Where a tile's title and credit lines start and how tall each is,
-    /// below the sleeve's top: what the tile's owner tells its parts apart
-    /// by.
-    pub fn caption_lines(look: &Look, side: Pixels) -> (Range, Range) {
-        let gap = Self::CAPTION_GAP;
-        let title = f32::from(look.line_height(TypeRole::Meta));
-        let credit = f32::from(look.line_height(TypeRole::Fine));
-        let title_top = f32::from(side) + gap;
-        let credit_top = title_top + title + gap;
-        (
-            title_top..title_top + title,
-            credit_top..credit_top + credit,
-        )
-    }
-}
-
-type Range = std::ops::Range<f32>;
+use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
 /// The sleeve as a tile shows it.
 pub enum TileSleeve {

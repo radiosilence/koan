@@ -130,6 +130,33 @@ impl RenderOnce for Toolbar {
     }
 }
 
+/// The page's name in the toolbar's middle, in the app's words: what says
+/// which page this is when the sidebar, which otherwise does, is hidden.
+#[derive(IntoElement)]
+pub struct ToolbarTitle {
+    title: SharedString,
+}
+
+impl ToolbarTitle {
+    pub fn new(title: impl AsRef<str>) -> Self {
+        Self {
+            title: crate::theme::label(title),
+        }
+    }
+}
+
+impl RenderOnce for ToolbarTitle {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .min_w_0()
+            .truncate()
+            .text_role(crate::theme::TypeRole::Body, &look)
+            .text_color(look.palette.strong.hsla())
+            .child(self.title)
+    }
+}
+
 /// What a page puts in the toolbar, in groups as the Mac's toolbar items:
 /// the filter field, then its buttons a fixed spacer after it, 2 points
 /// apart, then the selection's controls a spacer further on. Pages declare
