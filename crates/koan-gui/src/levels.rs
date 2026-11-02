@@ -1,21 +1,23 @@
 //! The playing indicators: three bars moving with the music, wherever a
-//! playing row or record is on screen.
+//! playing row or record is on screen. koan-kit draws them (`PlayingBars`);
+//! this is what moves them.
 //!
 //! One subscription to the analyser for the whole app, read only while a bar
 //! is on screen; with none, the stream is dropped and the analyser parks.
 //! Nothing is polled: the analyser publishes a frame and the follow, on the
 //! background executor, wakes on it.
 //!
-//! On macOS each bar is a shader quad (`shader.rs`, GPUI's `paint_shader`),
-//! painted once by its row and replayed with the row's cached view. The
-//! follow writes the levels straight into the quads' uniforms and marks them
-//! live, and the window presents its last frame again each refresh while
-//! they are: a moving bar costs an encode, never a GPUI frame. A quarter of a
-//! second after the levels last moved they stop being live and the window
-//! goes back to sleep; when they move again one frame is drawn to notice.
+//! On macOS each slot is a shader quad, painted once by its row and replayed
+//! with the row's cached view. The follow writes the bands straight into the
+//! slots' levels and marks them live, and while they are the window presents
+//! its last frame again whenever they move, drawing only the shader quads
+//! over the frame it kept: a moving bar costs a small encode, never a GPUI
+//! frame. A quarter of a second after the bands last moved they stop being
+//! live and the window goes back to sleep; when they move again one frame is
+//! drawn to notice.
 //!
-//! Elsewhere, until the Linux renderer draws shaders, the bars are quads.
-//! A row draws an empty slot, which records where it was laid out and under
+//! Elsewhere, until the Linux renderer draws shaders, the bars are quads. A
+//! row draws an empty slot, which records where it was laid out and under
 //! which clip, and each window's root paints the bars over its content
 //! (`paint`), so a frame of the bars redraws the root alone, whose content is
 //! a cached view and is replayed.
@@ -25,18 +27,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::FutureExt as _;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
+// the colour the caller's palette gives the bars.
+use koan_kit::raw::Hsla;
 use parking_lot::Mutex;
 
 use crate::engine::engine;
 
-/// The bars' size: three 3-point bars 2 points apart, 12 points tall.
-const BAR: f32 = 3.0;
-const GAP: f32 = 2.0;
-pub const SIDE: Pixels = px(12.);
-/// How far a bar stands with nothing playing through it, so a still bar
-/// reads as a mark rather than as nothing.
-const FLOOR: f32 = 0.15;
 /// A band below this is room tone: it never sets a ceiling, and silence is
 /// measured against it, so a quiet passage stays flat.
 const QUIETEST: f32 = 0.12;
@@ -47,56 +45,12 @@ const FPS: u8 = 60;
 /// How long after the levels last moved the bars stop being presented.
 const STILL: Duration = Duration::from_millis(250);
 
-#[cfg(target_os = "macos")]
-const SHADED: bool = true;
-#[cfg(not(target_os = "macos"))]
-const SHADED: bool = false;
-
-/// The bars as a fragment program. Uniforms: 0..3 the bands, 4..8 the
-/// colour, 8 a bar's width and 9 the gap, in device pixels, 10 the floor.
-pub static BARS: ShaderProgram = ShaderProgram {
-    name: "koan-playing-bars",
-    msl: r#"
-float4 shade(float2 position, float2 size, float time, constant float *u) {
-    float pitch = u[8] + u[9];
-    int i = int(floor(position.x / pitch));
-    if (i < 0 || i > 2 || position.x - float(i) * pitch > u[8]) {
-        return float4(0.0);
-    }
-    float top = size.y * (1.0 - max(u[i], u[10]));
-    float cover = clamp(position.y - top + 0.5, 0.0, 1.0);
-    return float4(u[4], u[5], u[6], u[7] * cover);
-}
-"#,
-    wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
-    let pitch = u[2].x + u[2].y;
-    let i = i32(floor(position.x / pitch));
-    if (i < 0 || i > 2 || position.x - f32(i) * pitch > u[2].x) {
-        return vec4<f32>(0.0);
-    }
-    var bands = u[0];
-    let top = size.y * (1.0 - max(bands[i], u[2].z));
-    let cover = clamp(position.y - top + 0.5, 0.0, 1.0);
-    return vec4<f32>(u[1].xyz, u[1].w * cover);
-}
-"#,
-};
-
-/// Where a bar was laid out, for the root to paint it: quads only.
-#[derive(Clone, Copy)]
-struct Slot {
-    window: WindowId,
-    bounds: Bounds<Pixels>,
-    mask: ContentMask<Pixels>,
-    color: Hsla,
-}
-
 #[derive(Default)]
 struct Registry {
-    /// Where each slot was laid out (quads), or its uniforms (shaders).
-    slots: HashMap<u64, Slot>,
-    shaders: HashMap<u64, Arc<ShaderUniforms>>,
+    /// Where each slot drawn as quads was laid out, and in what colour.
+    slots: HashMap<u64, (BarsPlace, Hsla)>,
+    /// Each slot drawn as a shader, by its levels.
+    shaders: HashMap<u64, BarLevels>,
     next_id: u64,
     /// How high each bar stands, 0 to 1, low band to high: each band
     /// against its own recent range, so a record mastered quiet moves as
@@ -140,7 +94,7 @@ pub fn feed(cx: &App) -> Option<Entity<Feed>> {
 struct SlotState {
     id: u64,
     registry: Arc<Mutex<Registry>>,
-    uniforms: Arc<ShaderUniforms>,
+    levels: BarLevels,
 }
 
 impl Drop for SlotState {
@@ -155,57 +109,35 @@ impl Drop for SlotState {
 /// The playing bars in `color`. Inside an element with an id, which keys the
 /// slot's state.
 pub fn bars(color: Hsla) -> impl IntoElement {
-    canvas(
-        move |bounds, window, cx| {
-            let levels = cx.try_global::<Levels>().cloned()?;
-            let state = window.use_keyed_state("playing-bars", cx, |_, _| {
-                let mut registry = levels.registry.lock();
-                registry.next_id += 1;
-                let uniforms = Arc::new(ShaderUniforms::new());
-                for (i, band) in registry.bands.iter().enumerate() {
-                    uniforms.set(i, *band);
-                }
-                uniforms.set_live(registry.live);
-                SlotState {
-                    id: registry.next_id,
-                    registry: levels.registry.clone(),
-                    uniforms,
-                }
-            });
-            let (id, uniforms) = {
-                let state = state.read(cx);
-                (state.id, state.uniforms.clone())
-            };
+    PlayingBars::new(color, move |place, window, cx| {
+        let levels = cx.try_global::<Levels>().cloned()?;
+        let state = window.use_keyed_state("playing-bars", cx, |_, _| {
+            let mut registry = levels.registry.lock();
+            registry.next_id += 1;
+            let bars = BarLevels::new();
+            bars.set(registry.bands);
+            bars.set_live(registry.live);
+            SlotState {
+                id: registry.next_id,
+                registry: levels.registry.clone(),
+                levels: bars,
+            }
+        });
+        let (id, bars) = {
+            let state = state.read(cx);
+            (state.id, state.levels.clone())
+        };
+        {
+            let mut registry = levels.registry.lock();
             if SHADED {
-                let scale = window.scale_factor();
-                let rgba = color.to_rgb();
-                for (i, v) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
-                    uniforms.set(4 + i, v);
-                }
-                uniforms.set(8, BAR * scale);
-                uniforms.set(9, GAP * scale);
-                uniforms.set(10, FLOOR);
-                levels.registry.lock().shaders.insert(id, uniforms.clone());
+                registry.shaders.insert(id, bars.clone());
             } else {
-                let slot = Slot {
-                    window: window.window_handle().window_id(),
-                    bounds,
-                    mask: window.content_mask(),
-                    color,
-                };
-                levels.registry.lock().slots.insert(id, slot);
+                registry.slots.insert(id, (place, color));
             }
-            follow(&levels, cx);
-            Some(uniforms)
-        },
-        move |bounds, uniforms, window, _| {
-            if SHADED && let Some(uniforms) = uniforms {
-                window.paint_shader(bounds, &BARS, uniforms);
-            }
-        },
-    )
-    .size(SIDE)
-    .flex_shrink_0()
+        }
+        follow(&levels, cx);
+        Some(bars)
+    })
 }
 
 /// Paints this window's bars over everything drawn before it, where they
@@ -215,29 +147,14 @@ pub fn paint(cx: &App) -> impl IntoElement + use<> {
         .try_global::<Levels>()
         .map(|levels| levels.registry.clone())
         .unwrap_or_default();
-    canvas(
-        |_, _, _| {},
-        move |_, _, window, _| {
-            let here = window.window_handle().window_id();
-            let registry = registry.lock();
-            let bands = registry.bands;
-            for slot in registry.slots.values().filter(|s| s.window == here) {
-                window.with_content_mask(Some(slot.mask), |window| {
-                    for (i, band) in bands.iter().enumerate() {
-                        let height = slot.bounds.size.height * band.max(FLOOR);
-                        let x = slot.bounds.origin.x + px(i as f32 * (BAR + GAP));
-                        let y = slot.bounds.origin.y + slot.bounds.size.height - height;
-                        window.paint_quad(fill(
-                            Bounds::new(point(x, y), size(px(BAR), height)),
-                            slot.color,
-                        ));
-                    }
-                });
-            }
-        },
-    )
-    .absolute()
-    .size_full()
+    bars_overlay(move |window| {
+        let here = window.window_handle();
+        let registry = registry.lock();
+        let bands = registry.bands;
+        for (place, color) in registry.slots.values().filter(|(p, _)| p.window == here) {
+            place.paint(window, bands, *color);
+        }
+    })
 }
 
 /// Starts reading the analyser, if nothing is yet. The levels are read and
@@ -322,10 +239,8 @@ impl Registry {
         let moved = next != self.bands;
         self.bands = next;
         if moved {
-            for uniforms in self.shaders.values() {
-                for (i, band) in next.iter().enumerate() {
-                    uniforms.set(i, *band);
-                }
+            for bars in self.shaders.values() {
+                bars.set(next);
             }
         }
         moved
@@ -347,16 +262,15 @@ impl Registry {
 
     fn set_live(&mut self, live: bool) {
         self.live = live;
-        for uniforms in self.shaders.values() {
-            uniforms.set_live(live);
+        for bars in self.shaders.values() {
+            bars.set_live(live);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{QUIETEST, Registry, ShaderUniforms};
-    use std::sync::Arc;
+    use super::{BarLevels, QUIETEST, Registry};
 
     #[test]
     fn a_band_is_measured_against_its_own_recent_loudest() {
@@ -374,10 +288,10 @@ mod tests {
     #[test]
     fn shaders_take_the_bands_and_ask_for_one_frame_to_start() {
         let mut registry = Registry::default();
-        let uniforms = Arc::new(ShaderUniforms::new());
+        let uniforms = BarLevels::new();
         registry.shaders.insert(1, uniforms.clone());
         assert!(registry.take([0.5, 0.2, 0.1]));
-        assert_eq!(uniforms.get(0), 1.0);
+        assert_eq!(uniforms.band(0), 1.0);
         assert!(registry.notice());
         assert!(uniforms.is_live());
         registry.take([0.25, 0.2, 0.1]);

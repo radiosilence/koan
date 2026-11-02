@@ -21,7 +21,7 @@ use koan_ffi::{
     ConnectionInfo, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo, QueueItem,
     QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer, TransferFigure,
 };
-use koan_kit::raw::{App, AppContext, Entity, Global};
+use koan_kit::app::{App, AppContext, Entity, Global};
 
 use crate::queue::rows::{self, Row};
 
@@ -78,6 +78,10 @@ pub struct Queue {
     pub rows: Vec<Row>,
     /// The track row of each queue item.
     pub track_rows: HashMap<String, usize>,
+    /// The records whose rows number by disc and track.
+    pub disc_records: std::collections::HashSet<i64>,
+    /// Whether `rows` are laid out under record headings.
+    pub grouped: bool,
     /// The rows the latest patch changed, put back from `base` before the
     /// next is applied, since each patch is relative to the base.
     patched: Vec<usize>,
@@ -93,15 +97,10 @@ impl Queue {
             .rev()
             .map(|(row, item)| (item.queue_item_id.clone(), row))
             .collect();
-        let rows = rows::build(&items);
-        let track_rows = rows
-            .iter()
-            .enumerate()
-            .filter_map(|(row, r)| match r {
-                Row::Track { ix, .. } => Some((items[*ix].queue_item_id.clone(), row)),
-                Row::Heading { .. } => None,
-            })
-            .collect();
+        let grouped = crate::window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
+        let rows = rows::build(&items, grouped);
+        let disc_records = rows::disc_records(&items);
+        let track_rows = track_rows(&rows, &items);
         Self {
             items: items.clone(),
             base: items,
@@ -110,8 +109,19 @@ impl Queue {
             at,
             rows,
             track_rows,
+            disc_records,
+            grouped,
             patched: Vec::new(),
         }
+    }
+
+    /// Lays the rows out again, grouped or flat, as the queue sent whole
+    /// would be: a view sees `whole` move and resets its list.
+    pub fn regroup(&mut self, grouped: bool) {
+        self.grouped = grouped;
+        self.rows = rows::build(&self.base, grouped);
+        self.track_rows = track_rows(&self.rows, &self.base);
+        self.whole = self.whole.wrapping_add(1);
     }
 
     /// Takes the prepared queue's place, returning the one it replaces for
@@ -138,6 +148,17 @@ impl Queue {
         }
         true
     }
+}
+
+/// The track row of each queue item.
+fn track_rows(rows: &[Row], items: &[QueueItem]) -> HashMap<String, usize> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(row, r)| match r {
+            Row::Track { ix, .. } => Some((items[*ix].queue_item_id.clone(), row)),
+            Row::Heading { .. } => None,
+        })
+        .collect()
 }
 
 /// Moves whenever the library's rows change. Pages that read the library ask

@@ -1891,6 +1891,8 @@ gui-run *ARGS:
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
+    # Ctrl-C is how the app is quit from here, not a failure.
+    trap 'exit 0' INT
     cargo run --profile gui-dev -p koan-gui -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
@@ -1991,7 +1993,7 @@ _gui-linux:
     debarch=$(dpkg --print-architecture)
     shlibs="$out/shlibs"
     rm -rf "$shlibs" && mkdir -p "$shlibs/debian"
-    printf 'Source: koan-gui\n\nPackage: koan-gui\n' > "$shlibs/debian/control"
+    printf 'Source: koan-gui\n\nPackage: koan-gui\nArchitecture: any\n' > "$shlibs/debian/control"
     bin="$PWD/$deb/usr/bin/koan-gui"
     linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$bin" | sed -n 's/^shlibs:Depends=//p')
     {

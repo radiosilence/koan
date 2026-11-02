@@ -10,9 +10,13 @@ use std::sync::Arc;
 use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::InputState;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
+// overlays placed against another element.
+use koan_kit::raw::{anchored, deferred};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;

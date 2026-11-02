@@ -3,8 +3,9 @@
 //! in `meta` and `fine`, names leading and values trailing.
 
 use koan_ffi::{InfoField, TrackDetails};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{px, relative};
 
 use super::format;
 use super::tokens::{Paint, Type, Typeset};

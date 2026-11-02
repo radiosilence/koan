@@ -8,8 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use koan_ffi::KoanEngine;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the platform window and its options.
+use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{px, size};
 
 use crate::covers::Covers;
 use crate::engine::Engine;
@@ -17,7 +20,7 @@ use crate::mirror::{Mirror, Queue};
 use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
-use crate::{queue, settings, shell, window_state};
+use crate::{queue, settings, window_state};
 
 /// How long the window waits for the restored queue before opening anyway.
 const RESTORE_WAIT: Duration = Duration::from_millis(500);
@@ -36,6 +39,8 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     crate::platform::dock::follow(engine, cx);
     settings::install(engine.clone(), cx);
     crate::dsp::window::init(cx);
+    // Reads the mirror set up above.
+    crate::library::activity::init(cx);
 }
 
 /// Opens the window once the restored session is in the mirror, and keeps
@@ -60,8 +65,6 @@ pub fn start(
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
-    // Reads the mirror `install` sets up.
-    crate::library::activity::init(cx);
     settings::resume(cx);
     cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));
     let queue = cx.global::<Mirror>().queue.clone();
@@ -144,13 +147,14 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     let options = WindowOptions {
         window_bounds: Some(bounds),
-        window_min_size: Some(shell::MIN_SIZE),
+        window_min_size: Some(crate::components::RowMetrics::WINDOW_MIN),
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // The `.desktop` file's StartupWMClass.
         app_id: Some("koan-gui".into()),
         ..Default::default()
     };
+    // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             window_state::save(window.window_bounds(), cx);
@@ -181,7 +185,7 @@ fn titlebar() -> TitlebarOptions {
         TitlebarOptions {
             title: Some("kōan".into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(12.), px(12.))),
+            traffic_light_position: Some(crate::components::ToolbarMetrics::WINDOW_BUTTONS_ORIGIN),
         }
     } else {
         TitlebarOptions {

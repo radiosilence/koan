@@ -7,9 +7,11 @@ use std::time::Duration;
 use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_ffi::{ConnectionInfo, Settings};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};

@@ -928,6 +928,55 @@ impl KoanEngine {
     }
 }
 
+/// Calls for front ends that link the engine as a Rust library, not reached
+/// through uniffi.
+impl KoanEngine {
+    /// `album_cover_art`, with a remote cover's request cancelled when the
+    /// returned future is dropped: the desktop app drops it as the cover
+    /// scrolls out of view, so the request stops on its connection and its
+    /// place goes to a cover on screen. Local covers are read as
+    /// `album_cover_art` reads them.
+    pub async fn album_cover_art_cancellable(
+        self: Arc<Self>,
+        album_id: i64,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        let engine = self.clone();
+        let row = offload::offload(move || {
+            queries::cover_track_for_album(&engine.db()?.conn, album_id).map_err(db_err)
+        })
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let remote = (row.path.is_none() && row.cached_path.is_none())
+            .then(|| row.remote_id.clone())
+            .flatten();
+        let Some(remote_id) = remote else {
+            let engine = self.clone();
+            return offload::offload(move || engine.cover_art_of(Some(row), size)).await;
+        };
+        let cfg = Config::cached();
+        if !cfg.remote.enabled {
+            return Ok(None);
+        }
+        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
+            return Err(KoanError::Remote {
+                message: koan_core::helpers::remote_unavailable(&cfg),
+            });
+        };
+        let track_id = row.id;
+        let answer = offload::cancellable(async move {
+            client.get_cover_art_cancellable(&remote_id, size).await
+        })
+        .await
+        .ok_or_else(|| KoanError::Remote {
+            message: "cover request cancelled".into(),
+        })?;
+        Self::remote_cover(track_id, answer)
+    }
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -1092,6 +1141,13 @@ impl KoanEngine {
     }
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
+        // Every client's bar lands where it was asked to now, not when the
+        // player thread gets there; see `state::PendingSeek`.
+        let playing = self.state.playback_state()
+            == koan_core::player::state::PlaybackState::Playing
+            && self.state.playhead_moving();
+        self.out
+            .seek_requested(position_ms, self.state.seekable_ms(), playing);
         offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
     }
 
@@ -1652,6 +1708,13 @@ impl KoanEngine {
         .await
     }
 
+    /// How many cover requests to a server may run at once. The phone apps
+    /// keep the engine's default; the desktop app bounds its own fetches by
+    /// what is on screen and sets this to its ceiling.
+    pub fn set_cover_fetch_limit(&self, limit: u32) {
+        koan_core::remote::client::set_cover_fetch_limit(limit as usize);
+    }
+
     /// The record's artwork, asked for by the record.
     ///
     /// Every track on an album shares its cover, so the track whose art stands
@@ -1761,20 +1824,21 @@ impl KoanEngine {
     }
 
     /// The artist's photograph. Hits the network; the caller caches it.
+    /// `None` only when the artist has no photograph: a download that failed
+    /// is an error, worth asking for again.
     pub async fn artist_image(
         self: Arc<Self>,
         artist_id: i64,
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
-            Ok(
-                koan_core::artist_info::image(koan_core::db::pool::shared(), artist_id)
-                    .ok()
-                    .flatten()
-                    .map(|data| CoverArt {
-                        mime: sniff_mime(&data).to_string(),
-                        data,
-                    }),
-            )
+            let data = koan_core::artist_info::image(koan_core::db::pool::shared(), artist_id)
+                .map_err(|e| KoanError::Remote {
+                    message: e.to_string(),
+                })?;
+            Ok(data.map(|data| CoverArt {
+                mime: sniff_mime(&data).to_string(),
+                data,
+            }))
         })
         .await
     }
@@ -5298,6 +5362,35 @@ impl OrganizeSelection {
 
 // --- Internals -------------------------------------------------------------
 
+/// A core's turn at reading and resizing a local cover. A screen of a
+/// hundred records asks for a hundred at once; run together they thrash the
+/// cores and every cover lands late, where queued at the cores' width the
+/// first land first.
+struct CoverCore;
+
+static COVER_CORES: parking_lot::Mutex<usize> = parking_lot::Mutex::new(0);
+static COVER_CORE_FREE: parking_lot::Condvar = parking_lot::Condvar::new();
+
+impl CoverCore {
+    fn take() -> Self {
+        // Half the cores: an app decodes what lands on the other half.
+        let width = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(1));
+        let mut busy = COVER_CORES.lock();
+        while *busy >= width {
+            COVER_CORE_FREE.wait(&mut busy);
+        }
+        *busy += 1;
+        Self
+    }
+}
+
+impl Drop for CoverCore {
+    fn drop(&mut self) {
+        *COVER_CORES.lock() -= 1;
+        COVER_CORE_FREE.notify_one();
+    }
+}
+
 impl KoanEngine {
     async fn toggle(
         self: Arc<Self>,
@@ -5693,8 +5786,14 @@ impl KoanEngine {
         };
         let track_id = row.id;
 
-        if let Some(art) = local_cover_art(&row) {
-            return Ok(Some(fit_cover(art, size)));
+        // Reading and resizing a local cover is CPU work: as many at once as
+        // there are cores, however many are asked for. A record with no file
+        // here goes straight to the server, never waiting behind them.
+        if row.path.is_some() || row.cached_path.is_some() {
+            let _core = CoverCore::take();
+            if let Some(art) = local_cover_art(&row) {
+                return Ok(Some(fit_cover(art, size)));
+            }
         }
 
         let Some(remote_id) = row.remote_id else {
@@ -5714,18 +5813,25 @@ impl KoanEngine {
                 message: koan_core::helpers::remote_unavailable(&cfg),
             });
         };
-        match client.get_cover_art(&remote_id, size) {
+        // The server answered and it has nothing: normal, and worth
+        // remembering. A timeout or a dropped connection says nothing about
+        // whether art exists, so it is reported, for the caller to ask again.
+        Self::remote_cover(track_id, client.get_cover_art(&remote_id, size))
+    }
+
+    /// Turns a server's answer for a cover into what `album_cover_art`
+    /// returns: no art when the server has none, an error when it could not
+    /// say.
+    fn remote_cover(
+        track_id: i64,
+        answer: Result<Vec<u8>, SubsonicError>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        match answer {
             Ok(data) if !data.is_empty() => {
                 let mime = sniff_mime(&data).to_string();
                 Ok(Some(CoverArt { data, mime }))
             }
-            // The server answered and it has nothing. Normal, and worth
-            // remembering: this record has no art and never will.
             Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => Ok(None),
-            // A timeout or a dropped connection says nothing about whether
-            // art exists. Reported rather than swallowed, so the caller can
-            // ask again instead of recording "this album has none" for the
-            // rest of the session — and so it appears in the log at all.
             Err(e) => {
                 log::warn!("cover art for track {track_id} failed: {e}");
                 Err(KoanError::Remote {

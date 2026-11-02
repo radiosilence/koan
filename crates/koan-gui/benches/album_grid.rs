@@ -32,6 +32,7 @@ fn engine() -> Arc<KoanEngine> {
 /// The grid on a library, ready to scroll, with its tile counter.
 fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Recorder>>) {
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         koan_gui::theme::init(cx);
     });

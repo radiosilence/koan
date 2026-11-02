@@ -1,0 +1,1 @@
+- **Covers on screen first, always.** The desktop app cancels a cover's request the moment it scrolls away, and calls off covers off screen when ones on screen are waiting, so a fling no longer leaves the covers you can see queued behind hundreds you cannot.

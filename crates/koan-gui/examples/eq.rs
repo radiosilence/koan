@@ -25,9 +25,9 @@ use std::time::Duration;
 use koan_ffi::{DspStarter, DspTuningEntry, KoanEngine};
 use koan_gui::dsp::{Dsp, EqPage, profile::ProfilePage};
 use koan_gui::theme;
-use koan_kit::raw::{
-    AppContext, Bounds, HeadlessAppContext, WindowBounds, WindowOptions, px, size,
-};
+use koan_kit::app::{AppContext, Bounds};
+// GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+use koan_kit::raw::{HeadlessAppContext, WindowBounds, WindowOptions, px, size};
 
 const WIDTH: f32 = 900.0;
 const HEIGHT: f32 = 1100.0;
@@ -72,7 +72,7 @@ fn throwaway() -> Result<(), Box<dyn Error>> {
 /// turns.
 fn settle(
     cx: &mut HeadlessAppContext,
-    window: koan_kit::raw::AnyWindowHandle,
+    window: koan_kit::app::AnyWindowHandle,
 ) -> Result<(), Box<dyn Error>> {
     for _ in 0..40 {
         cx.run_until_parked();
@@ -166,14 +166,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     seed(&engine)?;
 
     if window_mode {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::application()
             .with_assets(theme::icons::Assets)
             .run(move |cx| {
+                // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
                 koan_kit::raw::init(cx);
                 theme::init(cx);
                 koan_gui::app::install(&engine, cx);
                 let dsp = Dsp::new(engine.clone(), cx);
                 let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT)), cx);
+                // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
                 koan_kit::raw::open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -190,13 +193,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
+        // geometry and colours computed at runtime, not chosen from the theme.
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
         koan_gui::app::install(&engine, cx);
@@ -224,6 +230,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 });
                 sheets.update(cx, |s, cx| s.view(view, cx));
             }
+            // gpui-component's focus and click extensions, for the shell's own handling.
             cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
         })?;
         cx.update_window(window.into(), |_, window, cx| {
@@ -245,7 +252,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn drag(
     cx: &mut HeadlessAppContext,
-    dsp: koan_kit::raw::Entity<Dsp>,
+    dsp: koan_kit::app::Entity<Dsp>,
 ) -> Result<(), Box<dyn Error>> {
     use koan_kit::raw::{
         Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
@@ -266,6 +273,7 @@ fn drag(
         });
         graph = Some(view.read(cx).graph());
         sheets.update(cx, |s, cx| s.view(view, cx));
+        // gpui-component's focus and click extensions, for the shell's own handling.
         cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
     })?;
     let graph = graph.expect("the profile page has a graph");

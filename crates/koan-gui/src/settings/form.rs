@@ -4,8 +4,7 @@
 
 use crate::components::ScrollArea;
 use crate::theme::{Icon, KoanStyled, Look, Tone, TypeRole};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 pub use crate::components::FormRow as Row;
 use crate::components::{Form, FormSection, form_buttons, form_item, form_note, form_text};

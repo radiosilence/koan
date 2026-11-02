@@ -25,14 +25,18 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use koan_ffi::KoanEngine;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// decoded images handed to the renderer.
+use koan_kit::raw::RenderImage;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, Rgba};
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
 /// What is asked of the engine, and what lands on disk: large enough for a
 /// record's own page on a 2× display, small enough that a library's worth is
 /// a cache rather than a second copy of the artwork.
-const SOURCE_PIXELS: u32 = 1000;
+const SOURCE_PIXELS: u32 = 600;
 
 /// Roughly 360 grid tiles at 2×. A ceiling: entries drawn in the last moment,
 /// or still held by an element, are never evicted to meet it.
@@ -42,12 +46,12 @@ const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
 
-/// How many bytes of new sleeves a frame takes into the GPU's atlas: about
-/// three tiles at 2×. Each is copied into a texture on the main thread inside
+/// How many bytes of new sleeves a frame takes into the GPU's atlas: about a
+/// dozen tiles at 2×. Each is copied into a texture on the main thread inside
 /// that frame's paint, so a flick that lands forty at once spreads them over
 /// frames, each tile showing its sleeve's colour until its turn. At least one
 /// is taken a frame, whatever its size.
-pub const UPLOAD_BYTES_PER_FRAME: usize = 2 * 1024 * 1024;
+pub const UPLOAD_BYTES_PER_FRAME: usize = 8 * 1024 * 1024;
 
 /// Bumped when what a cache file means changes; any other scheme's directory
 /// is deleted.
@@ -99,8 +103,9 @@ pub enum Priority {
 #[derive(Clone)]
 pub enum Sleeve {
     /// The bitmap at its size, or the nearest other size of the same record
-    /// while that decodes.
-    Ready(Arc<RenderImage>),
+    /// while that decodes, and when it entered memory: a tile that had
+    /// nothing to show fades it in from then.
+    Ready(Arc<RenderImage>, Instant),
     /// Decoded and waiting its turn for the atlas, or decoded once and since
     /// evicted: drawn as a flat field of the sleeve's colour.
     Colour(Hsla),
@@ -110,11 +115,22 @@ pub enum Sleeve {
     None,
 }
 
+impl From<Sleeve> for crate::components::CoverArt {
+    fn from(sleeve: Sleeve) -> Self {
+        use crate::components::CoverArt;
+        match sleeve {
+            Sleeve::Ready(image, _) => CoverArt::Image(image),
+            Sleeve::Colour(colour) => CoverArt::Colour(colour),
+            Sleeve::Waiting | Sleeve::None => CoverArt::Missing,
+        }
+    }
+}
+
 impl Sleeve {
     /// The same thing to draw: the same bitmap, colour or absence.
     pub fn same(&self, other: &Sleeve) -> bool {
         match (self, other) {
-            (Sleeve::Ready(a), Sleeve::Ready(b)) => Arc::ptr_eq(a, b),
+            (Sleeve::Ready(a, _), Sleeve::Ready(b, _)) => Arc::ptr_eq(a, b),
             (Sleeve::Colour(a), Sleeve::Colour(b)) => a == b,
             (Sleeve::Waiting, Sleeve::Waiting) | (Sleeve::None, Sleeve::None) => true,
             _ => false,
@@ -126,6 +142,8 @@ struct Held {
     image: Arc<RenderImage>,
     bytes: usize,
     used: Instant,
+    /// When it entered memory.
+    arrived: Instant,
 }
 
 /// What both lanes and the main thread share, behind one lock that is held
@@ -136,6 +154,12 @@ struct Queue {
     wanted: HashMap<Key, Priority>,
     on_disk: HashSet<Art>,
     fetching: HashSet<Art>,
+    /// Each running fetch's way to be called off: sent, or dropped, it ends
+    /// the fetch at once and cancels its request.
+    cancels: HashMap<Art, (u64, futures_channel::oneshot::Sender<()>)>,
+    /// Names each fetch started, so one called off and finishing anyway
+    /// does not end another started since for the same record.
+    tickets: u64,
     decoding: HashSet<Key>,
     /// Decoded, and handed to the main thread.
     decoded: HashSet<Key>,
@@ -151,6 +175,27 @@ struct Queue {
     evicting: HashMap<Art, u32>,
     /// The first eviction sweep has been tried, so fetches may start.
     fetches_allowed: bool,
+    /// How many fetches may run at once: twice the covers on screen, so
+    /// what is shown and where the scroll is heading are fetched together,
+    /// up to `MAX_FETCHES`. Falls as covers land and the screen fills.
+    limit: usize,
+    /// The congestion window: how many fetches the server is answering
+    /// promptly, grown and cut by `observe` as TCP's is. Zero until the first
+    /// answer, read as `WINDOW_START`.
+    window: f64,
+    /// The last `HISTORY` answers' times, newest last. A server's answers are
+    /// bimodal (a cover it keeps comes back in tens of milliseconds, one it
+    /// reads off a disk in hundreds), so it is judged by medians, never by
+    /// its quickest.
+    answers: std::collections::VecDeque<Duration>,
+    /// Answers since the window was last judged: one judgement per round
+    /// trip, a window's worth of answers.
+    since_judged: usize,
+    /// Round trips in a row whose recent median stood well above the
+    /// history's.
+    slow_rounds: u32,
+    /// When the window was last cut, so a burst of failures cuts it once.
+    last_cut: Option<Instant>,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
     /// afresh, over whatever file it had.
@@ -186,7 +231,146 @@ impl Queue {
             .map(|(k, _)| *k)
     }
 
+    /// Fetches running for records no longer asked for: scrolled away.
+    fn abandoned(&self) -> Vec<Art> {
+        let wanted: HashSet<Art> = self.wanted.keys().map(|k| k.art).collect();
+        self.fetching
+            .iter()
+            .filter(|art| !wanted.contains(art))
+            .copied()
+            .collect()
+    }
+
+    /// Calls off what must give way, and returns how many places that frees:
+    /// every fetch for a record no longer asked for, and, while covers on
+    /// screen wait for a place, fetches for covers off screen, the least
+    /// urgent first. Nothing in flight for a cover off screen holds back one
+    /// on it.
+    fn give_way(&mut self) -> usize {
+        let mut called_off = self.abandoned();
+        let visible_waiting = self
+            .wanted
+            .iter()
+            .filter(|(k, p)| **p == Priority::Visible && self.fetchable(k))
+            .count();
+        let free = self
+            .allowed()
+            .saturating_sub(self.fetching.len() - called_off.len());
+        if visible_waiting > free {
+            let urgency = |art: Art| {
+                self.wanted
+                    .iter()
+                    .filter(|(k, _)| k.art == art)
+                    .map(|(_, p)| *p)
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            };
+            let mut off_screen: Vec<(Art, Priority)> = self
+                .fetching
+                .iter()
+                .filter(|art| !called_off.contains(art))
+                .filter_map(|art| urgency(*art).map(|p| (*art, p)))
+                .filter(|(_, p)| *p != Priority::Visible)
+                .collect();
+            // Least urgent first.
+            off_screen.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            called_off.extend(
+                off_screen
+                    .into_iter()
+                    .take(visible_waiting - free)
+                    .map(|(art, _)| art),
+            );
+        }
+        for art in &called_off {
+            if let Some((_, cancel)) = self.cancels.remove(art) {
+                cancel.send(()).ok();
+            }
+            self.fetching.remove(art);
+        }
+        called_off.len()
+    }
+
+    /// How many fetches may run now: the window, under the limit.
+    fn allowed(&self) -> usize {
+        let window = if self.window == 0.0 {
+            WINDOW_START
+        } else {
+            self.window as usize
+        };
+        window.min(self.limit).max(1)
+    }
+
+    /// One fetch answered after `took`, or failed. Every answer grows the
+    /// window by 1/window, about one place per round trip. A failure halves
+    /// it at once (once per round trip). Otherwise it halves only when the
+    /// median of the recent answers has stood more than `SLOWER` times the
+    /// median of the longer history for `SLOW_ROUNDS` round trips running:
+    /// a server whose disk is seeking under load, not one answering a mix of
+    /// kept and unkept covers. Returns whether the window grew by a whole
+    /// place, which wakes one more fetcher.
+    fn observe(&mut self, took: Duration, ok: bool) -> bool {
+        let before = self.allowed();
+        if self.window == 0.0 {
+            self.window = WINDOW_START as f64;
+        }
+        if !ok {
+            let typical = median(self.answers.iter().copied()).unwrap_or(Duration::ZERO);
+            if self
+                .last_cut
+                .is_none_or(|at| at.elapsed() > typical.max(SETTLE))
+            {
+                self.cut(format_args!("a fetch failed after {} ms", took.as_millis()));
+            }
+            return false;
+        }
+        if self.answers.len() == HISTORY {
+            self.answers.pop_front();
+        }
+        self.answers.push_back(took);
+        self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
+        self.since_judged += 1;
+        if self.since_judged >= self.window as usize {
+            self.since_judged = 0;
+            let recent = median(self.answers.iter().rev().take(RECENT).copied());
+            let typical = median(self.answers.iter().copied());
+            match (recent, typical) {
+                (Some(recent), Some(typical))
+                    if self.answers.len() >= 2 * RECENT && recent > typical * SLOWER =>
+                {
+                    self.slow_rounds += 1;
+                    if self.slow_rounds >= SLOW_ROUNDS {
+                        self.slow_rounds = 0;
+                        self.cut(format_args!(
+                            "answers slowed: median {} ms lately against {} ms",
+                            recent.as_millis(),
+                            typical.as_millis()
+                        ));
+                    }
+                }
+                _ => self.slow_rounds = 0,
+            }
+        }
+        self.allowed() > before
+    }
+
+    fn cut(&mut self, why: std::fmt::Arguments) {
+        self.window = (self.window / 2.0).max(WINDOW_MIN as f64);
+        self.last_cut = Some(Instant::now());
+        log::debug!("covers: {why}; window now {}", self.window as usize);
+    }
+
+    /// A fetch done: its place is freed, unless it was called off and the
+    /// record has been started again since.
+    fn finish(&mut self, art: Art, ticket: u64) {
+        if self.cancels.get(&art).is_some_and(|(t, _)| *t == ticket) {
+            self.cancels.remove(&art);
+            self.fetching.remove(&art);
+        }
+    }
+
     fn next_fetch(&self) -> Option<Art> {
+        if self.fetching.len() >= self.allowed() {
+            return None;
+        }
         self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
     }
 
@@ -210,17 +394,44 @@ impl Shared {
     /// nothing has: a scroll re-aims every frame, and most frames add nothing
     /// a lane can start.
     fn wake(&self, fetches: usize, decodes: usize) {
-        for _ in 0..fetches.min(FETCHERS) {
+        for _ in 0..fetches.min(MAX_FETCHES) {
             self.fetch_ready.notify_one();
         }
-        for _ in 0..decodes.min(MAX_DECODERS) {
+        for _ in 0..decodes {
             self.decode_ready.notify_one();
         }
     }
 }
 
-const FETCHERS: usize = 6;
-const MAX_DECODERS: usize = 6;
+/// The most covers fetched at once, however many are on screen: a fast
+/// scroll through a large library cannot flood the uplink, sockets or disk.
+pub const MAX_FETCHES: usize = 512;
+
+/// Where the congestion window starts, and the least it is cut to. A server
+/// reading covers off a spinning disk answers 16 at once well and 512 badly;
+/// the window finds what this one takes.
+const WINDOW_START: usize = 16;
+const WINDOW_MIN: usize = 8;
+/// How many answers the history holds, and how many of the newest are
+/// "recent".
+const HISTORY: usize = 256;
+const RECENT: usize = 16;
+/// How many times the history's median the recent median must stand, and
+/// for how many round trips running, before the window is cut.
+const SLOWER: u32 = 3;
+const SLOW_ROUNDS: u32 = 3;
+/// The least time between two cuts for failures.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// The middle of `times`, or `None` when there are none.
+fn median(times: impl Iterator<Item = Duration>) -> Option<Duration> {
+    let mut times: Vec<Duration> = times.collect();
+    if times.is_empty() {
+        return None;
+    }
+    let mid = times.len() / 2;
+    Some(*times.select_nth_unstable(mid).1)
+}
 
 enum Done {
     Decoded {
@@ -259,11 +470,17 @@ pub struct Covers {
     /// Each list's and page's requests, replaced whole as it draws.
     requests: HashMap<EntityId, HashMap<Key, Priority>>,
     evictions_seq: i64,
+    /// Fetch threads started so far: grown to the limit as it rises, kept
+    /// once started, waiting on the queue while there is nothing to fetch.
+    fetchers: usize,
+    fetch_tx: mpsc::UnboundedSender<Done>,
     _results: Task<()>,
 }
 
 impl Covers {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
+        // The cache bounds its own fetches by what is on screen.
+        engine.set_cover_fetch_limit(MAX_FETCHES as u32);
         let dir = directory();
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
@@ -272,9 +489,12 @@ impl Covers {
             decode_ready: Condvar::new(),
         });
         let (tx, mut rx) = mpsc::unbounded();
+        // Half the cores: the engine reads and resizes local covers on the
+        // other half (`CoverCore`), and the two together fill the machine
+        // without either thrashing it.
         let decoders = std::thread::available_parallelism()
             .map_or(2, |n| n.get() / 2)
-            .clamp(2, MAX_DECODERS);
+            .max(2);
         for n in 0..decoders {
             let (shared, dir, tx) = (shared.clone(), dir.clone(), tx.clone());
             std::thread::Builder::new()
@@ -282,20 +502,24 @@ impl Covers {
                 .spawn(move || decode_lane(shared, dir, tx))
                 .expect("spawn art decoder");
         }
-        // Fetches mostly wait on a disk or a server, so there are more of
-        // them than there are cores to spare.
-        for n in 0..FETCHERS {
-            let (shared, dir, tx, engine) =
-                (shared.clone(), dir.clone(), tx.clone(), engine.clone());
-            std::thread::Builder::new()
-                .name(format!("koan-art-fetch-{n}"))
-                .spawn(move || fetch_lane(shared, dir, engine, tx))
-                .expect("spawn art fetcher");
-        }
+        let fetch_tx = tx.clone();
         drop(tx);
         let results = cx.spawn(async move |this, cx| {
-            while let Some(done) = rx.next().await {
-                if this.update(cx, |covers, cx| covers.land(done, cx)).is_err() {
+            // Everything that has landed since the last pass lands together,
+            // with one notify: covers ready in the same frame appear together
+            // rather than one at a time.
+            while let Some(first) = rx.next().await {
+                let mut batch = vec![first];
+                while let Ok(more) = rx.try_recv() {
+                    batch.push(more);
+                }
+                let landed = this.update(cx, |covers, cx| {
+                    for done in batch {
+                        covers.land(done);
+                    }
+                    cx.notify();
+                });
+                if landed.is_err() {
                     break;
                 }
             }
@@ -326,6 +550,8 @@ impl Covers {
             colours: HashMap::new(),
             requests: HashMap::new(),
             evictions_seq: 0,
+            fetchers: 0,
+            fetch_tx,
             _results: results,
         }
     }
@@ -346,7 +572,7 @@ impl Covers {
         });
         if let Some(held) = px.and_then(|px| self.memory.get_mut(&Key { art: key.art, px })) {
             held.used = now;
-            return Sleeve::Ready(held.image.clone());
+            return Sleeve::Ready(held.image.clone(), held.arrived);
         }
         if let Some(colour) = self.colours.get(&key.art) {
             return Sleeve::Colour(*colour);
@@ -426,6 +652,29 @@ impl Covers {
         self.shared.wake(fetches, 0);
     }
 
+    /// Starts fetch threads until there are as many as `limit`. A fetch
+    /// waits on a disk or a server, so each holds a thread while it does.
+    fn grow_fetchers(&mut self, limit: usize) {
+        while self.fetchers < limit {
+            let (shared, dir, tx, engine) = (
+                self.shared.clone(),
+                self.dir.clone(),
+                self.fetch_tx.clone(),
+                self.engine.clone(),
+            );
+            let n = self.fetchers;
+            let started = std::thread::Builder::new()
+                .name(format!("koan-art-fetch-{n}"))
+                // A fetch needs little stack: it waits on a socket.
+                .stack_size(256 * 1024)
+                .spawn(move || fetch_lane(shared, dir, engine, tx));
+            if started.is_err() {
+                break;
+            }
+            self.fetchers += 1;
+        }
+    }
+
     fn publish(&mut self) {
         let mut wanted: HashMap<Key, Priority> = HashMap::new();
         for request in self.requests.values() {
@@ -455,12 +704,32 @@ impl Covers {
             .keys()
             .filter(|k| !queue.wanted.contains_key(k) && queue.decodable(k))
             .count();
+        let shown = wanted
+            .iter()
+            .filter(|(k, p)| **p == Priority::Visible && !queue.on_disk.contains(&k.art))
+            .count();
+        queue.limit = (shown * 2).clamp(1, MAX_FETCHES);
         queue.wanted = wanted;
+        // The abandoned still hold threads while they finish: enough more
+        // that the limit's worth run beside them, under the ceiling.
+        let called_off = queue.give_way();
+        let threads = queue.limit;
+        let (live, limit) = (queue.fetching.len(), queue.allowed());
+        let waiting = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
         drop(queue);
-        self.shared.wake(fetches, decodes);
+        log::debug!(
+            "covers: {live} fetching, {called_off} called off, {waiting} waiting, {limit} allowed"
+        );
+        self.grow_fetchers(threads);
+        // Every free place, not only the new requests: what was waiting
+        // behind fetches called off can start now.
+        self.shared.wake(
+            fetches.max(waiting.min(limit.saturating_sub(live))),
+            decodes,
+        );
     }
 
-    fn land(&mut self, done: Done, cx: &mut Context<Self>) {
+    fn land(&mut self, done: Done) {
         match done {
             Done::Decoded {
                 key,
@@ -485,7 +754,6 @@ impl Covers {
             }
             Done::Absent => {}
         }
-        cx.notify();
     }
 
     /// Take staged sleeves into memory up to `budget` bytes, and so into the
@@ -532,10 +800,12 @@ impl Covers {
             let size = image.size(0);
             let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
             spent += bytes;
+            let now = Instant::now();
             let held = Held {
                 image,
                 bytes,
-                used: Instant::now(),
+                used: now,
+                arrived: now,
             };
             if let Some(old) = self.memory.insert(key, held) {
                 self.memory_bytes -= old.bytes;
@@ -631,6 +901,76 @@ impl Covers {
             .ok();
         })
         .detach();
+    }
+
+    /// What the artwork directory holds: how many covers and their bytes.
+    /// Reads the directory: call it off the main thread.
+    pub fn on_disk(dir: &Path) -> (usize, u64) {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| is_cover(&e.file_name().to_string_lossy()))
+            .filter_map(|e| e.metadata().ok())
+            .fold((0, 0), |(n, bytes), m| (n + 1, bytes + m.len()))
+    }
+
+    pub fn dir(&self) -> PathBuf {
+        self.dir.clone()
+    }
+
+    /// Forgets every cover: the files, the bitmaps and their GPU images,
+    /// the colours, what was found to have no art and what failed. Fetches
+    /// in flight land on a moved generation and are dropped. The disk is not
+    /// trusted until the files are gone, then what is on screen is fetched
+    /// again.
+    pub fn clear(&mut self, mut window: Option<&mut Window>, cx: &mut Context<Self>) {
+        {
+            let mut queue = self.shared.queue.lock();
+            let known: HashSet<Art> = queue
+                .on_disk
+                .iter()
+                .chain(&queue.fetching)
+                .chain(&queue.absent)
+                .chain(&queue.failed)
+                .copied()
+                .chain(queue.decoded.iter().map(|k| k.art))
+                .chain(self.memory.keys().map(|k| k.art))
+                .chain(self.colours.keys().copied())
+                .collect();
+            for art in known {
+                *queue.generation.entry(art).or_default() += 1;
+            }
+            queue.on_disk.clear();
+            queue.absent.clear();
+            queue.failed.clear();
+            queue.decoded.clear();
+            queue.disk_trusted = false;
+        }
+        self.staged.clear();
+        self.colours.clear();
+        let keys: Vec<Key> = self.memory.keys().copied().collect();
+        for key in keys {
+            self.forget(key, window.as_deref_mut(), cx);
+        }
+        let (dir, shared) = (self.dir.clone(), self.shared.clone());
+        cx.background_executor()
+            .spawn(async move {
+                let disk = shared.disk.lock();
+                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    if is_cover(&entry.file_name().to_string_lossy()) {
+                        std::fs::remove_file(entry.path()).ok();
+                    }
+                }
+                drop(disk);
+                let mut queue = shared.queue.lock();
+                queue.disk_trusted = true;
+                let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+                drop(queue);
+                shared.wake(fetches, 0);
+            })
+            .detach();
+        cx.notify();
     }
 
     fn allow_fetches(&mut self, trust_disk: bool) {
@@ -778,6 +1118,11 @@ fn prepare_directory(dir: &Path) -> i64 {
         .unwrap_or(0)
 }
 
+/// A record's cover file, as `Art::filename` names them.
+fn is_cover(name: &str) -> bool {
+    name.starts_with("album-") || name.starts_with("artist-")
+}
+
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     std::fs::write(&tmp, data)?;
@@ -793,7 +1138,7 @@ fn fetch_lane(
     tx: mpsc::UnboundedSender<Done>,
 ) {
     loop {
-        let (art, generation) = {
+        let (art, generation, called_off, ticket) = {
             let mut queue = shared.queue.lock();
             loop {
                 if queue.closed {
@@ -801,7 +1146,11 @@ fn fetch_lane(
                 }
                 if let Some(art) = queue.next_fetch() {
                     queue.fetching.insert(art);
-                    break (art, queue.generation(art));
+                    let (cancel, called_off) = futures_channel::oneshot::channel();
+                    queue.tickets += 1;
+                    let ticket = queue.tickets;
+                    queue.cancels.insert(art, (ticket, cancel));
+                    break (art, queue.generation(art), called_off, ticket);
                 }
                 shared.fetch_ready.wait(&mut queue);
             }
@@ -818,7 +1167,7 @@ fn fetch_lane(
             // while the file was looked for, though not yet unlinked it.
             let mut queue = shared.queue.lock();
             if usable(&queue) {
-                queue.fetching.remove(&art);
+                queue.finish(art, ticket);
                 queue.on_disk.insert(art);
                 let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
                 drop(queue);
@@ -828,17 +1177,30 @@ fn fetch_lane(
             }
         }
         drop(disk);
-        let fetched = futures::executor::block_on(async {
+        let started = Instant::now();
+        let fetch = async {
             match art {
                 Art::Album(id) => {
                     engine
                         .clone()
-                        .album_cover_art(id, Some(SOURCE_PIXELS))
+                        .album_cover_art_cancellable(id, Some(SOURCE_PIXELS))
                         .await
                 }
                 Art::Artist(id) => engine.clone().artist_image(id).await,
             }
-        });
+        };
+        // Called off (scrolled away, or giving way to a cover on screen):
+        // the request is dropped, which cancels it, and the place is free.
+        let fetched =
+            match futures::executor::block_on(futures::future::select(Box::pin(fetch), called_off))
+            {
+                futures::future::Either::Left((fetched, _)) => fetched,
+                futures::future::Either::Right(_) => {
+                    let fetches = usize::from(shared.queue.lock().next_fetch().is_some());
+                    shared.wake(fetches, 0);
+                    continue;
+                }
+            };
         // Written beside its final name and renamed only while the record
         // is still the one fetched. An eviction after the check unlinks the
         // file once the rename is done, and moves the generation, so the
@@ -861,7 +1223,8 @@ fn fetch_lane(
             renamed
         });
         let mut queue = shared.queue.lock();
-        queue.fetching.remove(&art);
+        queue.finish(art, ticket);
+        let grew = queue.observe(started.elapsed(), fetched.is_ok());
         let current = queue.generation(art) == generation;
         let mut absent = false;
         match fetched {
@@ -894,7 +1257,7 @@ fn fetch_lane(
                 .keys()
                 .any(|k| k.art == art && queue.fetchable(k));
         drop(queue);
-        shared.wake(usize::from(refetch), decodes);
+        shared.wake(usize::from(refetch) + usize::from(grew), decodes);
         if absent && tx.unbounded_send(Done::Absent).is_err() {
             return;
         }
@@ -1032,8 +1395,8 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
+    // Sizes for the keys the tests make.
+    use koan_kit::raw::px;
 
     #[test]
     fn keys_round_up_to_a_bucket() {
@@ -1064,6 +1427,121 @@ mod tests {
         assert_eq!((i32::from(size.width), i32::from(size.height)), (100, 100));
         assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);
         assert!(decode(b"junk", 100).is_none());
+    }
+
+    /// What clearing would delete: the covers, not the directory's own record
+    /// of where the evictions got to.
+    #[test]
+    fn the_cache_is_measured_by_its_covers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("album-1"), [0; 100]).unwrap();
+        std::fs::write(dir.path().join("artist-2"), [0; 50]).unwrap();
+        std::fs::write(dir.path().join("evictions-seq"), b"9").unwrap();
+        assert_eq!(Covers::on_disk(dir.path()), (2, 150));
+    }
+
+    /// Hits and misses together, as a server answers a mix of covers it
+    /// keeps and covers it reads off disk, only widen the window.
+    #[test]
+    fn a_mix_of_quick_and_slow_answers_never_narrows_the_window() {
+        let mut q = Queue {
+            limit: 512,
+            ..Queue::default()
+        };
+        assert_eq!(q.allowed(), WINDOW_START);
+        for i in 0..2000 {
+            let took = if i % 3 == 0 { 700 } else { 90 };
+            q.observe(Duration::from_millis(took), true);
+        }
+        assert!(q.allowed() > WINDOW_START * 2, "{}", q.allowed());
+    }
+
+    /// A server that slows and stays slow is given fewer requests, after a
+    /// few round trips; a failure halves the window at once; never below
+    /// the floor.
+    #[test]
+    fn sustained_slowness_and_failures_narrow_the_window_to_its_floor() {
+        let mut q = Queue {
+            limit: 512,
+            ..Queue::default()
+        };
+        for _ in 0..300 {
+            q.observe(Duration::from_millis(100), true);
+        }
+        let grown = q.allowed();
+        // One slow round trip is not enough.
+        for _ in 0..grown {
+            q.observe(Duration::from_secs(2), true);
+        }
+        assert!(q.allowed() >= grown, "{} < {grown}", q.allowed());
+        for _ in 0..grown * 4 {
+            q.observe(Duration::from_secs(2), true);
+        }
+        assert!(q.allowed() < grown, "{} not below {grown}", q.allowed());
+        for _ in 0..20 {
+            q.last_cut = None;
+            q.observe(Duration::from_secs(30), false);
+        }
+        assert_eq!(q.allowed(), WINDOW_MIN);
+        q.limit = 3;
+        assert_eq!(q.allowed(), 3);
+    }
+
+    /// After a fling every place is held by fetches for covers off screen,
+    /// some scrolled away, some ahead: every one of them is called off, and
+    /// every cover on screen starts before any cover off it.
+    #[test]
+    fn after_a_fling_every_visible_cover_starts_before_any_other() {
+        let mut q = Queue {
+            fetches_allowed: true,
+            limit: 512,
+            ..Queue::default()
+        };
+        let key = |id| Key {
+            art: Art::Album(id),
+            px: 64,
+        };
+        let mut told = Vec::new();
+        for id in 0..16 {
+            let (cancel, called_off) = futures_channel::oneshot::channel();
+            q.fetching.insert(Art::Album(id));
+            q.cancels.insert(Art::Album(id), (id as u64, cancel));
+            told.push(called_off);
+        }
+        // 0..10 scrolled away; 10..16 still wanted, ahead.
+        for id in 10..16 {
+            q.wanted.insert(key(id), Priority::Ahead(id as f32));
+        }
+        for id in 100..120 {
+            q.wanted.insert(key(id), Priority::Visible);
+        }
+        assert_eq!(q.give_way(), 16);
+        for mut called_off in told {
+            assert!(matches!(called_off.try_recv(), Ok(Some(()))));
+        }
+        let mut started = Vec::new();
+        while let Some(art) = q.next_fetch() {
+            q.fetching.insert(art);
+            started.push(art);
+        }
+        assert_eq!(started.len(), q.allowed());
+        let visible = started
+            .iter()
+            .take_while(|art| matches!(art, Art::Album(id) if *id >= 100))
+            .count();
+        assert_eq!(visible, 16, "{started:?}");
+        // With room, the rest of the screen, then what is ahead.
+        q.limit = 512;
+        q.window = 64.0;
+        while let Some(art) = q.next_fetch() {
+            q.fetching.insert(art);
+            started.push(art);
+        }
+        let first_off_screen = started
+            .iter()
+            .position(|art| matches!(art, Art::Album(id) if *id < 100))
+            .unwrap();
+        assert_eq!(first_off_screen, 20, "{started:?}");
     }
 
     #[test]

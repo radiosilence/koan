@@ -4,8 +4,7 @@
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::Look;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use super::keys::{Keys, Kind};
 use super::link::LinkDevice;

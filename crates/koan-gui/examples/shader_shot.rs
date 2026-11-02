@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use koan_gui::levels::BARS;
+use koan_kit::components::BARS;
 use koan_kit::raw::*;
 
 const SIDE: f32 = 120.0;

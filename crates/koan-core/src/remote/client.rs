@@ -245,6 +245,8 @@ impl PlaybackReportState {
 struct Connections {
     http: reqwest::blocking::Client,
     downloader: reqwest::blocking::Client,
+    /// For requests a caller may cancel by dropping them.
+    cancellable: reqwest::Client,
 }
 
 impl Connections {
@@ -258,14 +260,42 @@ impl Connections {
                 log::warn!("falling back to default download client: {}", e);
                 reqwest::blocking::Client::new()
             }),
+            cancellable: download::async_api_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default async HTTP client: {}", e);
+                reqwest::Client::new()
+            }),
         }
     }
 }
 
-/// How many `getCoverArt` requests run at once, across every server. A flick
-/// through a remote album grid asks for every tile it passes; past this the
-/// rest wait their turn rather than each opening a socket.
+/// The sizes covers are asked for and served at, square, in pixels. Every
+/// client rounds what it draws up to one of these (`cover_bucket`) and the
+/// server makes and keeps exactly these, so a cover read from a server's
+/// disk once serves every app, and the server can make them ahead.
+pub const COVER_SIZES: [u32; 4] = [150, 300, 600, 1200];
+
+/// The smallest of `COVER_SIZES` at least `size`, or the largest.
+pub fn cover_bucket(size: u32) -> u32 {
+    COVER_SIZES
+        .into_iter()
+        .find(|s| *s >= size)
+        .unwrap_or(COVER_SIZES[COVER_SIZES.len() - 1])
+}
+
+/// How many `getCoverArt` requests run at once, across every server, unless
+/// the app sets otherwise. A flick through a remote album grid asks for every
+/// tile it passes; past this the rest wait their turn. The phone apps keep
+/// the default; the desktop app bounds its own fetches by what is on screen
+/// and raises this to its ceiling (`set_cover_fetch_limit`).
 const COVER_FETCHES: usize = 8;
+
+static COVER_LIMIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(COVER_FETCHES);
+
+/// How many cover requests may run at once from now on, at least one.
+pub fn set_cover_fetch_limit(limit: usize) {
+    COVER_LIMIT.store(limit.max(1), std::sync::atomic::Ordering::Relaxed);
+}
 
 /// How long a cover fetch waits for a slot before giving up. A fast scroll
 /// queues fetches for tiles already gone, and a caller cancelling does not
@@ -283,8 +313,9 @@ impl CoverSlots {
     fn take() -> Result<Self, SubsonicError> {
         let deadline = std::time::Instant::now() + COVER_WAIT;
         let mut busy = COVERS_IN_FLIGHT.lock();
-        while *busy >= COVER_FETCHES {
-            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && *busy >= COVER_FETCHES {
+        let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        while *busy >= limit() {
+            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && *busy >= limit() {
                 return Err(SubsonicError::Busy);
             }
         }
@@ -424,7 +455,8 @@ impl SubsonicClient {
     ///
     /// Returns the raw image rather than a parsed response — `getCoverArt`
     /// answers with image data, not JSON, so it can't go through `get()`.
-    /// `size` requests a square thumbnail; omit it for the original. Empty
+    /// `size` requests a square thumbnail, rounded up to one of
+    /// `COVER_SIZES`; omit it for the original. Empty
     /// when the record has no art: the server's placeholder is not passed on
     /// (see `is_placeholder`), so the caller draws its own.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
@@ -432,7 +464,7 @@ impl SubsonicClient {
         let mut params = self.auth_params()?;
         params.insert("id".into(), id.to_string());
         if let Some(px) = size {
-            params.insert("size".into(), px.to_string());
+            params.insert("size".into(), cover_bucket(px).to_string());
         }
 
         let _slot = CoverSlots::take()?;
@@ -442,6 +474,45 @@ impl SubsonicClient {
         let body = resp.bytes()?;
         // This client's own server, as last probed: no config read, no
         // request.
+        let navidrome = || {
+            crate::remote::profile::probed(self.auth())
+                .and_then(|p| p.kind)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("navidrome"))
+        };
+        if is_placeholder(&headers, &body, navidrome) {
+            return Ok(Vec::new());
+        }
+        Ok(body.to_vec())
+    }
+
+    /// `get_cover_art`, awaited: dropping the future cancels the request on
+    /// its connection (over HTTP/2, the stream alone), so a cover scrolled out
+    /// of view stops costing the server anything more. Not counted against
+    /// `CoverSlots`: the caller bounds its own requests. Run it on a Tokio
+    /// runtime.
+    pub async fn get_cover_art_cancellable(
+        &self,
+        id: &str,
+        size: Option<u32>,
+    ) -> Result<Vec<u8>, SubsonicError> {
+        let url = format!("{}/rest/getCoverArt", self.base_url());
+        let mut params = self.auth_params()?;
+        params.insert("id".into(), id.to_string());
+        if let Some(px) = size {
+            params.insert("size".into(), cover_bucket(px).to_string());
+        }
+        let client = self.connections.read().cancellable.clone();
+        let resp = client.get(&url).query(&params).send().await?;
+        let is_document = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
+        if is_document || !resp.status().is_success() {
+            return Err(SubsonicError::BadResponse);
+        }
+        let headers = resp.headers().clone();
+        let body = resp.bytes().await?;
         let navidrome = || {
             crate::remote::profile::probed(self.auth())
                 .and_then(|p| p.kind)
@@ -2039,6 +2110,16 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cover_sizes_round_up_to_a_bucket() {
+        use super::cover_bucket;
+        assert_eq!(cover_bucket(1), 150);
+        assert_eq!(cover_bucket(300), 300);
+        assert_eq!(cover_bucket(301), 600);
+        assert_eq!(cover_bucket(1000), 1200);
+        assert_eq!(cover_bucket(5000), 1200);
+    }
+
     #[test]
     fn placeholders_are_told_by_header_or_by_navidromes_bytes() {
         use reqwest::header::{CACHE_CONTROL, HeaderMap, HeaderValue};

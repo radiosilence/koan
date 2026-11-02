@@ -14,6 +14,7 @@
 
 mod account;
 mod browse;
+mod caches;
 mod connect;
 mod favourite;
 mod history;
@@ -170,6 +171,9 @@ pub(crate) fn router(
         .route("/queue", get(pages::queue))
         .route("/library", get(pages::library))
         .route("/library/scan", get(scan::watch).post(scan::start))
+        .route("/library/caches", get(caches::watch))
+        .route("/library/caches/clear", post(caches::clear))
+        .route("/library/caches/warm", post(caches::warm))
         .route("/favourites", get(pages::favourites))
         .route("/recent", get(pages::recent))
         .route("/history", get(history::page))

@@ -12,8 +12,11 @@ use std::ops::Range;
 use std::time::Duration;
 
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px};
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -22,7 +25,6 @@ use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 const PAGE: u32 = 1000;
 const TYPING: Duration = Duration::from_millis(80);
@@ -93,7 +95,8 @@ impl TrackBrowser {
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Tracks, cx);
         let restore = lib.nav.read(cx).offset(Page::Tracks);
-        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let search =
+            cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter tracks", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), false, window, cx));
         let mut this = Self {
             lib,
@@ -306,7 +309,7 @@ impl TrackBrowser {
         let selected = self.selection.contains(item);
         let drag = match (selected, self.pick()) {
             (true, Some(pick)) => pick,
-            _ => PlayableDrag::new(&[item], title),
+            _ => PlayableDrag::new(&[item], title).with_sleeve(album),
         };
         let sleeve = album.map(|album| {
             let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
@@ -361,6 +364,10 @@ impl actions::Menus for TrackBrowser {
 }
 
 impl TrackList for TrackBrowser {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.tracks.iter().map(|t| t.id).collect()
+    }
+
     fn clicked(
         &mut self,
         index: usize,
@@ -400,6 +407,18 @@ impl TrackList for TrackBrowser {
     }
 }
 
+impl TrackBrowser {
+    /// The browser's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .spacer()
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::track_sort_button(&self.lib, cx))
+            .into_any_element()
+    }
+}
+
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -422,13 +441,7 @@ impl Render for TrackBrowser {
             p,
             "tracks",
             chrome::count(self.total, "track", "tracks"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx))
-                .child(chrome::track_sort_button(&self.lib, cx)),
+            div(),
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);
@@ -511,6 +524,7 @@ impl Render for TrackBrowser {
                     .pt(px(10.0))
                     .relative()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,

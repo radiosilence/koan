@@ -1,0 +1,1 @@
+- **The server image is tagged without waiting for the Mac app.** Its release tags follow the Linux builds it ships from.

@@ -3,27 +3,22 @@
 use std::collections::HashMap;
 
 use koan_ffi::Playlist;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::ScrollHandle;
 
+use crate::components::{
+    CoverArt, DropTarget, INSERTION, Mosaic, NavHeading, NavNote, NavRow, RowMetrics,
+};
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
-use crate::library::drag::PlayableDrag;
+use crate::library::drag::{PlayableDrag, PlaylistDrag};
 use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
-
-/// The sidebar's width as it opens, and what a double click on its edge
-/// restores; a drag keeps it between the least and greatest.
-pub const WIDTH: Pixels = px(220.);
-pub const MIN_WIDTH: Pixels = px(180.);
-pub const MAX_WIDTH: Pixels = px(360.);
-const ROW: Pixels = px(28.);
-const PLAYLIST_ROW: Pixels = px(40.);
-const PLAYLIST_SLEEVE: Pixels = px(24.);
+use crate::theme::{self, Icon, Space, Tone};
 
 const LIBRARY: [(Route, &str, Icon); 7] = [
     (Route::Albums, "albums", Icon::Album),
@@ -41,6 +36,8 @@ const LIBRARY: [(Route, &str, Icon); 7] = [
 
 pub struct Sidebar {
     nav: Entity<Navigator>,
+    /// What this device plays from and how much the library holds.
+    status: Entity<crate::sidebar_status::SidebarStatus>,
     playlists: Vec<Playlist>,
     /// Up to four records per playlist, whose sleeves make its own.
     faces: HashMap<i64, Vec<i64>>,
@@ -51,6 +48,9 @@ pub struct Sidebar {
     importing: usize,
     import_problem: Option<String>,
     scroll: ScrollHandle,
+    /// Where a playlist dragged among the playlists would land: before the
+    /// playlist at this index, or after the last at the count.
+    drop_playlist: Option<usize>,
     _subscriptions: [Subscription; 4],
 }
 
@@ -58,12 +58,14 @@ impl Sidebar {
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let library = cx.global::<Mirror>().library.clone();
         let mut sidebar = Self {
+            status: cx.new(crate::sidebar_status::SidebarStatus::new),
             nav: nav.clone(),
             playlists: Vec::new(),
             faces: HashMap::new(),
             loading: None,
             covers: None,
             importing: 0,
+            drop_playlist: None,
             import_problem: None,
             scroll: ScrollHandle::new(),
             _subscriptions: [
@@ -151,50 +153,19 @@ impl Sidebar {
     }
 }
 
-/// A place in the sidebar: its glyph when icons are on, then its label.
-fn nav_row(
-    id: impl Into<ElementId>,
-    label: SharedString,
-    icon: Icon,
-    selected: bool,
-    p: &Paint,
-) -> Stateful<Div> {
-    let ink = p.ink;
-    let colour = if selected { p.accent_text } else { p.muted };
-    div()
-        .id(id)
-        .h(ROW)
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .pl(p.space(Space::L))
-        .pr(p.space(Space::S))
-        .border_l_2()
-        .border_color(if selected {
-            p.accent
-        } else {
-            transparent_black()
-        })
-        .cursor_pointer()
-        .text_role(TypeRole::Body, &p.look)
-        .gap(p.space(Space::S))
-        .text_color(colour)
-        .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
-        .when(p.look.icons, |d| {
-            d.child(KoanIcon::new(icon).role(TypeRole::Body).color(colour))
-        })
-        .child(div().truncate().child(label))
-}
-
-fn heading(label: &'static str, p: &Paint) -> Div {
-    div()
-        .flex_shrink_0()
-        .pt(p.space(Space::L))
-        .pb(p.space(Space::Xs))
-        .pl(p.space(Space::L))
-        .text_role(TypeRole::Fine, &p.look)
-        .text_color(p.ink)
-        .child(label)
+impl Sidebar {
+    /// Moves playlist `id` to sit before the playlist now at `at`, or last.
+    fn move_playlist(&mut self, id: i64, at: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.playlists.iter().position(|p| p.id == id) else {
+            return;
+        };
+        let moved = self.playlists.remove(from);
+        let at = if from < at { at - 1 } else { at }.min(self.playlists.len());
+        self.playlists.insert(at, moved);
+        let ids: Vec<i64> = self.playlists.iter().map(|p| p.id).collect();
+        command(cx, "reorder playlists", move |e| e.reorder_playlists(ids));
+        cx.notify();
+    }
 }
 
 fn go(
@@ -215,10 +186,13 @@ impl Render for Sidebar {
         let current = Some(self.nav.read(cx).current());
         let row = |page: Route,
                    id: ElementId,
-                   label: SharedString,
+                   label: &'static str,
                    icon: Icon,
                    cx: &mut Context<Self>| {
-            nav_row(id, label, icon, current == Some(page), &p).on_click(go(page, cx))
+            NavRow::new(id, label)
+                .icon(icon)
+                .selected(current == Some(page))
+                .on_click(go(page, cx))
         };
         let queue = Route::Queue;
         let sleeves = self.sleeves(window, cx);
@@ -236,64 +210,140 @@ impl Render for Sidebar {
             // Files, and what is dragged from the library, dropped on the
             // queue's row are queued.
             .child(
-                row(
-                    queue,
-                    "nav-queue".into(),
-                    "queue".into(),
-                    Icon::QueueSection,
-                    cx,
-                )
-                .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                    drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
-                }))
-                .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
-                    let sets = dragged.sets.to_vec();
-                    command(cx, "queue from the library", move |e| {
-                        e.queue(sets, koan_ffi::Placement::Append)
-                    });
-                })),
+                row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
+                    .drop_highlight::<ExternalPaths>(&p.look)
+                    .drop_highlight::<PlayableDrag>(&p.look)
+                    .drop_highlight::<PlaylistDrag>(&p.look)
+                    .on_drop(cx.listener(|this, dragged: &PlaylistDrag, _, cx| {
+                        this.drop_playlist = None;
+                        let sets = dragged.as_library().sets.to_vec();
+                        command(cx, "queue a playlist", move |e| {
+                            e.queue(sets, koan_ffi::Placement::Append)
+                        });
+                    }))
+                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                        drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
+                    }))
+                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                        let sets = dragged.sets.to_vec();
+                        command(cx, "queue from the library", move |e| {
+                            e.queue(sets, koan_ffi::Placement::Append)
+                        });
+                    })),
             )
-            .child(heading("library", &p))
+            .child(NavHeading::new("library"))
             .children(LIBRARY.map(|(page, label, icon)| {
-                row(page, ElementId::Name(label.into()), label.into(), icon, cx)
+                row(page, ElementId::Name(label.into()), label, icon, cx)
             }))
             .when(!self.playlists.is_empty(), |d| {
-                d.child(heading("playlists", &p))
+                d.child(NavHeading::new("playlists"))
             })
-            .children(
+            .children({
+                let total = self.playlists.len();
+                let accent = p.accent;
                 self.playlists
                     .iter()
                     .zip(sleeves)
-                    .map(|(playlist, sleeve)| {
+                    .enumerate()
+                    .map(|(index, (playlist, sleeve))| {
                         let page = Route::Playlist(playlist.id);
-                        playlist_row(playlist, sleeve, current == Some(page), &p)
-                            .on_click(go(page, cx))
-                            // Files, and what is dragged from the library, dropped on a
-                            // playlist's row are added to it.
-                            .on_drop(cx.listener({
-                                let id = playlist.id;
-                                move |_, paths: &ExternalPaths, _, cx| {
-                                    drop::add_files_to_playlist(
-                                        &engine(cx),
-                                        id,
-                                        paths.paths().to_vec(),
-                                        cx,
-                                    )
-                                }
-                            }))
-                            .on_drop(cx.listener({
-                                let id = playlist.id;
-                                move |_, dragged: &PlayableDrag, _, cx| {
-                                    let sets = dragged.sets.to_vec();
-                                    command(cx, "add to playlist", move |e| {
-                                        e.add_to_playlist(id, sets)
-                                    });
-                                }
-                            }))
-                    }),
-            );
+                        let drag = PlaylistDrag {
+                            id: playlist.id,
+                            name: playlist.name.clone().into(),
+                            sleeve: self
+                                .faces
+                                .get(&playlist.id)
+                                .and_then(|f| f.first().copied()),
+                        };
+                        let line_above = self.drop_playlist == Some(index);
+                        let line_below = index + 1 == total && self.drop_playlist == Some(total);
+                        let face = NavRow::data(
+                            ("nav-playlist", playlist.id as u64),
+                            playlist.name.clone(),
+                        )
+                        .art(Mosaic::new(
+                            sleeve.into_iter().map(CoverArt::from).collect(),
+                            RowMetrics::nav_art(&p.look),
+                        ))
+                        .detail(count(playlist.track_count.into(), "track", "tracks"))
+                        .selected(current == Some(page))
+                        .on_click(go(page, cx))
+                        // Dragged among the playlists it moves; dropped on
+                        // the queue, its tracks are queued.
+                        .on_drag(drag, |drag: &PlaylistDrag, at, _, cx| drag.preview(at, cx))
+                        .drop_highlight::<ExternalPaths>(&p.look)
+                        .drop_highlight::<PlayableDrag>(&p.look)
+                        // Files, and what is dragged from the library, dropped on a
+                        // playlist's row are added to it.
+                        .on_drop(cx.listener({
+                            let id = playlist.id;
+                            move |_, paths: &ExternalPaths, _, cx| {
+                                drop::add_files_to_playlist(
+                                    &engine(cx),
+                                    id,
+                                    paths.paths().to_vec(),
+                                    cx,
+                                )
+                            }
+                        }))
+                        .on_drop(cx.listener({
+                            let id = playlist.id;
+                            move |_, dragged: &PlayableDrag, _, cx| {
+                                let sets = dragged.sets.to_vec();
+                                command(cx, "add to playlist", move |e| {
+                                    e.add_to_playlist(id, sets)
+                                });
+                            }
+                        }))
+                        .on_drop(cx.listener(
+                            move |this, dragged: &PlaylistDrag, _, cx| {
+                                let at = this.drop_playlist.take().unwrap_or(index);
+                                this.move_playlist(dragged.id, at, cx);
+                            },
+                        ));
+                        let line = |top: bool| {
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .h(INSERTION)
+                                .bg(accent)
+                                .map(|d| if top { d.top_0() } else { d.bottom_0() })
+                        };
+                        div()
+                            .relative()
+                            .on_drag_move::<PlaylistDrag>(cx.listener(
+                                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                                    if !event.bounds.contains(&event.event.position) {
+                                        return;
+                                    }
+                                    let lower = event.event.position.y > event.bounds.center().y;
+                                    let at = index + usize::from(lower);
+                                    if this.drop_playlist != Some(at) {
+                                        this.drop_playlist = Some(at);
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(face)
+                            .when(line_above, |d| d.child(line(true)))
+                            .when(line_below, |d| d.child(line(false)))
+                    })
+                    .collect::<Vec<_>>()
+            });
         div()
             .id("sidebar")
+            // A playlist drag that leaves the sidebar, or ends, takes its
+            // insertion line with it.
+            .on_drag_move::<PlaylistDrag>(cx.listener(
+                |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    if this.drop_playlist.is_some() && !event.bounds.contains(&event.event.position)
+                    {
+                        this.drop_playlist = None;
+                        cx.notify();
+                    }
+                },
+            ))
             .size_full()
             .flex()
             .flex_col()
@@ -301,10 +351,12 @@ impl Render for Sidebar {
                 div()
                     .relative()
                     .flex_1()
-                    .min_h(px(0.))
+                    .min_h_0()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
             )
+            .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.
             .child(
                 cx.global::<crate::library::activity::ActivityHandle>()
@@ -312,12 +364,12 @@ impl Render for Sidebar {
                     .clone(),
             )
             .when(self.importing > 0, |d| {
-                d.child(foot_line("adding dropped files", p.muted, &p))
+                d.child(NavNote::new("adding dropped files", Tone::Muted))
             })
             .children(
                 self.import_problem
                     .clone()
-                    .map(|problem| foot_line(problem, p.bad, &p)),
+                    .map(|problem| NavNote::new(problem, Tone::Bad)),
             )
     }
 }
@@ -337,6 +389,7 @@ impl Sidebar {
                 .collect();
         };
         let scale = window.scale_factor();
+        let side = RowMetrics::nav_art(&crate::theme::Look::of(window, cx));
         let owner = cx.entity_id();
         let keys: Vec<Vec<Key>> = self
             .playlists
@@ -346,7 +399,7 @@ impl Sidebar {
                     .get(&playlist.id)
                     .into_iter()
                     .flatten()
-                    .map(|album| Key::new(Art::Album(*album), PLAYLIST_SLEEVE, scale))
+                    .map(|album| Key::new(Art::Album(*album), side, scale))
                     .collect()
             })
             .collect();
@@ -367,124 +420,4 @@ impl Sidebar {
         }
         sleeves
     }
-}
-
-/// A playlist's row: its sleeve, its name and how many tracks it holds.
-fn playlist_row(
-    playlist: &Playlist,
-    sleeve: Vec<Sleeve>,
-    selected: bool,
-    p: &Paint,
-) -> Stateful<Div> {
-    let ink = p.ink;
-    div()
-        .id(("nav-playlist", playlist.id as u64))
-        .h(PLAYLIST_ROW)
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(p.space(Space::S))
-        .pl(p.space(Space::L))
-        .pr(p.space(Space::S))
-        .border_l_2()
-        .border_color(if selected {
-            p.accent
-        } else {
-            transparent_black()
-        })
-        .cursor_pointer()
-        .text_color(if selected { p.accent_text } else { p.muted })
-        .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
-        .child(face(sleeve, p))
-        .child(
-            div()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .truncate()
-                        .text_role(TypeRole::Body, &p.look)
-                        .child(playlist.name.clone()),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_role(TypeRole::Meta, &p.look)
-                        .text_color(p.muted)
-                        .child(count(playlist.track_count.into(), "track", "tracks")),
-                ),
-        )
-}
-
-/// A playlist's sleeve: its first four records, square and edge to edge.
-/// One fills the square, two split it down the middle, three put the third
-/// across the foot; an empty playlist is a plain square of `rule`.
-fn face(sleeves: Vec<Sleeve>, p: &Paint) -> Div {
-    let side = PLAYLIST_SLEEVE;
-    let half = side / 2.;
-    let surface = p.surface;
-    let tile = |sleeve: &Sleeve, w: Pixels, h: Pixels| {
-        let field = div()
-            .w(w)
-            .h(h)
-            .flex_shrink_0()
-            .bg(surface)
-            .overflow_hidden();
-        match sleeve {
-            Sleeve::Ready(image) => field.child(
-                img(ImageSource::Render(image.clone()))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover),
-            ),
-            Sleeve::Colour(colour) => field.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => {
-                field.child(crate::components::Placeholder::new(w.min(h)))
-            }
-        }
-    };
-    let square = div().size(side).flex_shrink_0().overflow_hidden();
-    match sleeves.as_slice() {
-        [] => square.bg(p.rule),
-        [one] => square.child(tile(one, side, side)),
-        [a, b] => square
-            .flex()
-            .child(tile(a, half, side))
-            .child(tile(b, half, side)),
-        [a, b, c] => square
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .child(tile(a, half, half))
-                    .child(tile(b, half, half)),
-            )
-            .child(tile(c, side, half)),
-        [a, b, c, d, ..] => square
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .child(tile(a, half, half))
-                    .child(tile(b, half, half)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .child(tile(c, half, half))
-                    .child(tile(d, half, half)),
-            ),
-    }
-}
-
-/// A line at the sidebar's foot: what koan is doing, or what went wrong.
-fn foot_line(text: impl Into<SharedString>, color: Hsla, p: &Paint) -> Div {
-    div()
-        .px(p.space(Space::L))
-        .py(p.space(Space::Xs))
-        .text_role(TypeRole::Fine, &p.look)
-        .text_color(color)
-        .child(text.into())
 }

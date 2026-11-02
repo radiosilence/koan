@@ -13,8 +13,12 @@ use std::time::{Duration, Instant};
 use koan_ffi::KoanEngine;
 use koan_gui::settings::{SettingsWindow, Tab};
 use koan_gui::{app, theme};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// A tool outside the app: GPUI's headless harness and input, driven directly.
+use koan_kit::raw::{
+    HeadlessAppContext, PlatformInput, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
+    px, size,
+};
 
 const TABS: [Tab; 5] = [
     Tab::Library,
@@ -47,13 +51,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
+    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         std::sync::Arc::new(theme::icons::Assets),
+        // geometry and colours computed at runtime, not chosen from the theme.
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
@@ -64,6 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let window = cx.open_window(size(px(900.), px(820.)), move |window, cx| {
         let view = cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx));
         held.set(Some(view.clone()));
+        // gpui-component's focus and click extensions, for the shell's own handling.
         cx.new(|cx| koan_kit::raw::base::Root::new(view, window, cx))
     })?;
     let view = made.take().expect("the window was made");

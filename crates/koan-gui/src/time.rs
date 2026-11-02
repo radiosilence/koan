@@ -9,6 +9,18 @@ pub fn clock(ms: u64) -> String {
     }
 }
 
+/// A size as people read one: "1.2 GB", in decimal units as the Mac shows
+/// them.
+pub fn bytes(n: u64) -> String {
+    let n = n as f64;
+    match n {
+        n if n >= 1e9 => format!("{:.1} GB", n / 1e9),
+        n if n >= 1e6 => format!("{:.0} MB", n / 1e6),
+        n if n >= 1e3 => format!("{:.0} KB", n / 1e3),
+        n => format!("{n:.0} bytes"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::clock;

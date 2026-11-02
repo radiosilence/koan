@@ -11,8 +11,9 @@ use std::sync::Arc;
 use crate::theme::wash::{Sleeve, Wash};
 use crate::theme::{self, Accent, KoanTheme};
 use koan_ffi::PlayState;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};
@@ -31,10 +32,18 @@ pub struct WindowRoot {
     wash_tint: u32,
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
     /// The playing bars moved: painted again over the cached content.
     _levels: Option<Subscription>,
 }
+
+/// The record a page is showing, whose colours the window takes over the
+/// playing record's while it shows: the accent and the wash ease to it and
+/// back, as they do when the record playing changes.
+#[derive(Default)]
+pub struct ShownRecord(pub Option<i64>);
+
+impl Global for ShownRecord {}
 
 impl WindowRoot {
     pub fn new(content: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -42,6 +51,7 @@ impl WindowRoot {
         let theme = cx.global::<KoanTheme>();
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
         let followed = playback.clone();
+        let shown = playback.clone();
         let mut root = Self {
             wash: cx.new(|_| Wash::new()),
             content: content.into(),
@@ -50,6 +60,7 @@ impl WindowRoot {
             wash_tint,
             fetching: None,
             _subscriptions: [
+                cx.observe_global::<ShownRecord>(move |this, cx| this.follow(&shown, false, cx)),
                 theme::follow_appearance(window, cx),
                 cx.observe(&playback, |this, playback, cx| {
                     this.follow(&playback, false, cx)
@@ -85,10 +96,9 @@ impl WindowRoot {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
         // Off, there is no wash and the accent is mint, as with no record.
-        let album = now
-            .entry
-            .as_ref()
-            .and_then(|entry| entry.album_id)
+        let shown = cx.try_global::<ShownRecord>().and_then(|s| s.0);
+        let album = shown
+            .or_else(|| now.entry.as_ref().and_then(|entry| entry.album_id))
             .filter(|_| self.record_colours);
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
         if album == self.album && !again {

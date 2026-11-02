@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 
 use crate::db::connection::DbError;
 
-/// Update the scan cache entry for a file.
+/// Update the scan cache entry for a file. A file that changed since its
+/// entry was written may carry other art, so its track and album are named
+/// in `art_evictions` for the covers cached by id; a file read again
+/// unchanged (a forced re-read) names nothing.
 pub fn update_scan_cache(
     conn: &Connection,
     path: &str,
@@ -13,6 +16,23 @@ pub fn update_scan_cache(
     size: i64,
     track_id: i64,
 ) -> Result<(), DbError> {
+    let changed = conn
+        .query_row(
+            "SELECT mtime, size FROM scan_cache WHERE path = ?1",
+            [path],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .is_some_and(|was| was != (mtime, size));
+    if changed {
+        conn.execute(
+            "INSERT INTO art_evictions (kind, id)
+             SELECT 'track', ?1
+             UNION ALL
+             SELECT 'album', album_id FROM tracks WHERE id = ?1 AND album_id IS NOT NULL",
+            [track_id],
+        )?;
+    }
     conn.execute(
         "INSERT OR REPLACE INTO scan_cache (path, mtime, size, track_id) VALUES (?1, ?2, ?3, ?4)",
         params![path, mtime, size, track_id],
@@ -97,5 +117,34 @@ mod tests {
             ]
         );
         assert_eq!(cache["/music/Al/T1.flac"], (1, 10));
+    }
+
+    /// A file stored again after it changed names its track and album for
+    /// the cover caches; the first entry, and one unchanged, name nothing.
+    #[test]
+    fn a_changed_file_evicts_its_art() {
+        let db = test_db();
+        let id = upsert_track(&db.conn, &sample_meta("T", "A", "Al")).unwrap();
+        let album: i64 = db
+            .conn
+            .query_row("SELECT album_id FROM tracks WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let named = || -> Vec<(String, i64)> {
+            let mut stmt = db
+                .conn
+                .prepare("SELECT kind, id FROM art_evictions ORDER BY seq")
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        update_scan_cache(&db.conn, "/m/Al/T.flac", 1, 10, id).unwrap();
+        update_scan_cache(&db.conn, "/m/Al/T.flac", 1, 10, id).unwrap();
+        assert!(named().is_empty(), "{:?}", named());
+        update_scan_cache(&db.conn, "/m/Al/T.flac", 2, 10, id).unwrap();
+        assert_eq!(named(), [("track".into(), id), ("album".into(), album)]);
     }
 }

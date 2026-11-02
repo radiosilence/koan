@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use koan_ffi::{AlbumSort, BrowseFilter, TrackBrowseSort};
-use koan_kit::raw::*;
+use koan_kit::app::*;
 use serde::{Deserialize, Serialize};
 
 pub struct Browse {
@@ -51,6 +51,20 @@ impl Browse {
                 .as_deref()
                 .and_then(track_sort)
                 .unwrap_or(TrackBrowseSort::Artist),
+            seed: seed(),
+        }
+    }
+
+    /// The defaults, reading nothing from disk: for tests, which must not
+    /// read the person's own configuration.
+    #[cfg(test)]
+    pub fn fresh() -> Self {
+        Self {
+            writer: Writer::spawn(),
+            filter: BrowseFilter::default(),
+            search: String::new(),
+            album_sort: AlbumSort::RecentlyAdded,
+            track_sort: TrackBrowseSort::Artist,
             seed: seed(),
         }
     }
@@ -296,8 +310,6 @@ fn track_sort(key: &str) -> Option<TrackBrowseSort> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
 
     #[test]
     fn every_sort_reads_back_from_its_stored_name() {

@@ -3317,16 +3317,45 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
     let (kind, id) = require_entity(&db, params.id.as_deref())?;
     // Snapped to the sizes `Covers` keeps; no size asks for the largest.
     let size = crate::covers::snap(Some(params.size.unwrap_or(u32::MAX)));
-    let groups = cover_tracks(&db, kind, id)?;
-    drop(db);
+    let art = if kind == Some(EntityKind::Album) {
+        // An album's cover from its own entry, touching no music file; the
+        // tracks are read only the first time, or after the record changed.
+        state.covers.forget_evicted(&db.conn);
+        let mut db = Some(db);
+        let mut missing = None;
+        let art = state.covers.album_cover(id, size, || {
+            let db = db.take()?;
+            match cover_tracks(&db, kind, id) {
+                Ok(groups) => {
+                    drop(db);
+                    Some(
+                        groups
+                            .iter()
+                            .find_map(|tracks| state.covers.cover(tracks, size)),
+                    )
+                }
+                Err(e) => {
+                    missing = Some(e);
+                    None
+                }
+            }
+        });
+        if let Some(e) = missing {
+            return Err(e);
+        }
+        art
+    } else {
+        let groups = cover_tracks(&db, kind, id)?;
+        drop(db);
+        groups
+            .iter()
+            .find_map(|tracks| state.covers.cover(tracks, size))
+    };
     // A record without art is answered with the ensō, as Navidrome answers
     // its own placeholder, so a client always has an image to draw. It is
     // marked so koan's own clients can draw theirs instead, and kept only
     // briefly so a cover added later is picked up.
-    match groups
-        .iter()
-        .find_map(|tracks| state.covers.cover(tracks, size))
-    {
+    match art {
         Some(bytes) => Ok((
             StatusCode::OK,
             [
@@ -7840,10 +7869,17 @@ mod tests {
         let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
         assert!(body.contains("code=\"10\""), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
-        assert!(
-            body.contains(
-                "\"device\":\"Den TV\",\"deviceId\":\"0192-den\",\"from\":\"198.51.100.7\",\"local\":false"
-            ),
+        // Compared as values: the order of a JSON object's keys is serde's to
+        // choose, and differs with the features a build unifies.
+        let pair: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            pair["subsonic-response"]["pair"],
+            serde_json::json!({
+                "device": "Den TV",
+                "deviceId": "0192-den",
+                "from": "198.51.100.7",
+                "local": false,
+            }),
             "{body}"
         );
 
@@ -8715,8 +8751,12 @@ mod tests {
         ))
         .await;
         let body = call(format!("/rest/koanUsers?{owner}")).await;
+        let users: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(
-            body.contains("{\"role\":\"user\",\"username\":\"sarita\"}"),
+            users["subsonic-response"]["users"]["user"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!({"role": "user", "username": "sarita"})),
             "{body}"
         );
 
@@ -10996,7 +11036,8 @@ mod tests {
             .await
             .unwrap();
         let img = image::load_from_memory(&body).unwrap();
-        assert_eq!((img.width(), img.height()), (200, 200));
+        // 200 asked, served at the next of the sizes clients share.
+        assert_eq!((img.width(), img.height()), (300, 300));
     }
 
     #[tokio::test]

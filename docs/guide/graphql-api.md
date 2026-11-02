@@ -226,6 +226,27 @@ to need reading so far; with the scan cache, that is only the files that changed
 again whenever a job starts, reports progress or ends, so a client can show the server's scan without
 polling. `job`, `jobs` and the subscription are for admins, as starting a job is.
 
+Each job has `startedAt` and `finishedAt`, in Unix milliseconds.
+
+### The server's caches
+
+`serverCaches` reports what the server keeps beside the library, for diagnosing slow covers without
+reading its logs or its config directory:
+
+```graphql
+{ serverCaches {
+    covers { bytes budget misses unwarmed sizes { size covers bytes misses }
+             warm { state sizes done total made finishedAt nextAt } lastSweep { at removed bytes } }
+    downloads { bytes limit tracks }
+    lastScan { kind state startedAt finishedAt message } } }
+```
+
+`warm.state` is `RUNNING`, `AT_BUDGET` (the cache is full, so covers are made only as asked for),
+`IDLE` or `OFF` (an app sharing its own library, which makes covers as asked). `unwarmed` counts the
+records still without a cover at one of `warm.sizes`. `clearCoverCache` removes every kept cover and
+`warmCovers` starts a pass now. All three are for admins. Transcodes are encoded as they stream and
+never kept, so there is nothing to report for them.
+
 ### Limits
 
 Requests are refused rather than queued when the server is saturated, so a slow client cannot make

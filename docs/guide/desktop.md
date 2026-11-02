@@ -30,7 +30,7 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. See [Keybindings](../
 
 ## Configuration and the log
 
-The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal.
+The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
 ## Running a build from source
 
@@ -42,7 +42,7 @@ A build from `main` can move the library database to a newer schema than the rel
 
 ## The window
 
-The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the sleep timer and output menus, and EQ. The window opens where it was left.
+The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the sleep timer and output menus, and EQ, in the accent while one is in force. Each browser narrows its listing from the filter field in the toolbar. The window opens where it was left.
 
 ## The queue
 
@@ -58,8 +58,11 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Remove | Delete or Backspace, or the context menu |
 | Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
 | Undo, redo | ⌘Z, ⇧⌘Z |
+| Follow what's playing | The crosshair in the toolbar; it stays on, keeping the playing track in view, until you scroll |
 
 The queue keeps its place and selection when you visit another page and come back.
+
+Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued.
 
 ## Settings
 

@@ -1,8 +1,9 @@
 //! The library's part of the shell's stage: the page the navigator is on,
 //! and a track's details over it.
 
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
 
 use super::Lib;
 use super::albums::AlbumGrid;
@@ -14,6 +15,8 @@ pub struct LibraryStage {
     /// rebuilt on each visit and put their scroll back from the navigator.
     page: Option<(Page, AnyView)>,
     info: Option<(i64, Entity<super::info::TrackInfo>)>,
+    /// The page's controls, for the window's toolbar.
+    controls: Entity<super::controls::ControlsSlot>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -25,6 +28,7 @@ impl LibraryStage {
         let subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
             if !Self::draws(nav.read(cx).current(cx)) {
                 this.page = None;
+                this.controls.update(cx, |c, cx| c.clear(cx));
             }
             cx.notify();
         })];
@@ -32,8 +36,14 @@ impl LibraryStage {
             lib,
             page: None,
             info: None,
+            controls: cx.new(|_| super::controls::ControlsSlot::default()),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// The library's artwork cache.
+    pub fn covers(&self) -> Entity<super::covers::Covers> {
+        self.lib.covers.clone()
     }
 
     /// Whether the library draws `route`.
@@ -48,7 +58,7 @@ impl LibraryStage {
     /// buttons, drawn in the toolbar's trailing items. None until the pages
     /// provide them.
     pub fn toolbar(&self) -> Option<AnyView> {
-        None
+        Some(self.controls.clone().into())
     }
 
     fn page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyView> {
@@ -59,23 +69,39 @@ impl LibraryStage {
             return Some(view.clone());
         }
         let lib = self.lib.clone();
+        let slot = self.controls.clone();
         let view: AnyView = match current {
-            Page::Albums => cx.new(|cx| AlbumGrid::new(lib, window, cx)).into(),
-            Page::Artists => cx
-                .new(|cx| super::artists::ArtistBrowser::new(lib, window, cx))
-                .into(),
+            Page::Albums => {
+                let page = cx.new(|cx| AlbumGrid::new(lib, window, cx));
+                slot.update(cx, |s, cx| s.show(&page, AlbumGrid::controls, cx));
+                page.into()
+            }
+            Page::Artists => {
+                let page = cx.new(|cx| super::artists::ArtistBrowser::new(lib, window, cx));
+                slot.update(cx, |s, cx| {
+                    s.show(&page, super::artists::ArtistBrowser::controls, cx)
+                });
+                page.into()
+            }
             Page::Album(id) => cx
                 .new(|cx| super::album_page::AlbumPage::new(lib, id, window, cx))
                 .into(),
             Page::Artist(id) => cx
                 .new(|cx| super::artist_page::ArtistPage::new(lib, id, window, cx))
                 .into(),
-            Page::Tracks => cx
-                .new(|cx| super::tracks::TrackBrowser::new(lib, window, cx))
-                .into(),
+            Page::Tracks => {
+                let page = cx.new(|cx| super::tracks::TrackBrowser::new(lib, window, cx));
+                slot.update(cx, |s, cx| {
+                    s.show(&page, super::tracks::TrackBrowser::controls, cx)
+                });
+                page.into()
+            }
             // The shell draws its own pages for every other route.
             _ => return None,
         };
+        if matches!(current, Page::Album(_) | Page::Artist(_)) {
+            slot.update(cx, |s, cx| s.clear(cx));
+        }
         self.page = Some((current, view.clone()));
         Some(view)
     }

@@ -1,14 +1,19 @@
-//! The window's place and size, kept across launches.
+//! The window's place and size, and how it was laid out, kept across
+//! launches.
 //!
 //! Platform state rather than configuration, as an `NSWindow` frame is to the
 //! Mac app, so it lives in a file of its own beside `config.toml`: one line,
-//! `x y width height maximized sidebar sidebar-width`. It is read and written off the main thread,
-//! but for the last write as the app quits.
+//! `x y width height maximized sidebar sidebar-width grouped`. It is read
+//! and written off the main thread, but for the last write as the app quits.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the platform window and its options.
+use koan_kit::raw::WindowBounds;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px, size};
 
 const FILE: &str = "desktop-window";
 
@@ -17,6 +22,10 @@ const FILE: &str = "desktop-window";
 pub static SIDEBAR: AtomicBool = AtomicBool::new(true);
 /// The sidebar's width in points, as an `f32`'s bits.
 pub static SIDEBAR_WIDTH: AtomicU32 = AtomicU32::new(f32::to_bits(220.0));
+
+/// Whether the queue is laid out under record headings ("group by album").
+/// Read where the queue is laid out, off the main thread.
+pub static GROUPED: AtomicBool = AtomicBool::new(true);
 
 fn path() -> PathBuf {
     koan_ffi::config_dir().join(FILE)
@@ -36,11 +45,12 @@ pub fn read() -> Option<Saved> {
     let mut next = || fields.next()?.parse::<f32>().ok();
     let (x, y, w, h) = (next()?, next()?, next()?, next()?);
     let maximized = next().is_some_and(|m| m != 0.0);
-    // Absent from a file an older build wrote: shown.
+    // Absent from a file an older build wrote: shown, and grouped.
     SIDEBAR.store(next().is_none_or(|on| on != 0.0), Ordering::Relaxed);
     if let Some(width) = next() {
         SIDEBAR_WIDTH.store(width.to_bits(), Ordering::Relaxed);
     }
+    GROUPED.store(next().is_none_or(|on| on != 0.0), Ordering::Relaxed);
     Some(Saved {
         bounds: Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
         maximized,
@@ -86,13 +96,14 @@ pub fn write(bounds: WindowBounds) {
         WindowBounds::Maximized(b) => (b, 1),
     };
     let line = format!(
-        "{} {} {} {} {maximized} {} {}\n",
+        "{} {} {} {} {maximized} {} {} {}\n",
         f32::from(b.origin.x),
         f32::from(b.origin.y),
         f32::from(b.size.width),
         f32::from(b.size.height),
         u8::from(SIDEBAR.load(Ordering::Relaxed)),
         f32::from_bits(SIDEBAR_WIDTH.load(Ordering::Relaxed)),
+        u8::from(GROUPED.load(Ordering::Relaxed)),
     );
     if let Err(e) = std::fs::write(path(), line) {
         log::info!("window state: not saved: {e}");

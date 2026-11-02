@@ -132,6 +132,12 @@ pub struct MetalRenderer {
     shader_pipelines: std::cell::RefCell<
         std::collections::HashMap<&'static str, Option<metal::RenderPipelineState>>,
     >,
+    // KOAN: the last frame drawn as the layers its shaders are drawn
+    // between, which each present composes with the shaders (#1641).
+    shader_layers: ShaderLayerTextures,
+    compose_pipelines: Option<ComposePipelines>,
+    /// What a shader with no image is given to sample.
+    blank_texture: Option<metal::Texture>,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -430,6 +436,9 @@ impl MetalRenderer {
             shadows_pipeline_state,
             quads_pipeline_state,
             shader_pipelines: Default::default(), // KOAN: #1641.
+            shader_layers: Default::default(), // KOAN: #1641.
+            compose_pipelines: None,           // KOAN: #1641.
+            blank_texture: None,               // KOAN: #1641.
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -549,7 +558,17 @@ impl MetalRenderer {
             return;
         };
 
-        let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size) {
+        // KOAN: a scene with shaders is drawn once as the layers they are
+        // drawn between, and each present composes the layers with the
+        // shaders, so re-presenting a moving shader costs the shaders and a
+        // few full-screen copies, not the scene (#1641).
+        let rendered = if scene.shader_layers.is_some() {
+            self.compose_frame(scene, drawable.texture(), viewport_size)
+        } else {
+            self.shader_layers.release();
+            self.render_frame(scene, drawable.texture(), viewport_size, false)
+        };
+        let command_buffer = match rendered {
             Ok(command_buffer) => command_buffer,
             Err(error) => {
                 log::error!("failed to render: {error:#}");
@@ -572,6 +591,7 @@ impl MetalRenderer {
         scene: &Scene,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
+        transparent: bool, // KOAN: a layer of a scene with shaders (#1641).
     ) -> Result<metal::CommandBuffer> {
         let mut writer = InstanceBufferWriter::new(
             &self.device,
@@ -596,6 +616,7 @@ impl MetalRenderer {
             &mut writer,
             texture,
             viewport_size,
+            transparent,
         )?;
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
@@ -634,7 +655,7 @@ impl MetalRenderer {
             .next_drawable()
             .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
 
-        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size)?;
+        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size, false)?;
 
         // Commit and wait for completion without presenting
         command_buffer.commit();
@@ -681,7 +702,7 @@ impl MetalRenderer {
             });
             let target_texture = self.device.new_texture(&texture_descriptor);
 
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(scene, &target_texture, size, false)?;
 
             // Managed textures require an explicit blit synchronize before the CPU
             // can read back the rendered data. Without this, get_bytes returns
@@ -696,6 +717,52 @@ impl MetalRenderer {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
+            read_texture_to_image(&target_texture)
+        })
+    }
+
+    // KOAN: (#1641) renders a scene as a window with shaders presents it,
+    // the base first and the shaders composed over it, `presents` times,
+    // for checking against `render_scene_to_image`.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    pub fn compose_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+        presents: usize,
+    ) -> Result<RgbaImage> {
+        objc2::rc::autoreleasepool(|_| {
+            self.update_path_intermediate_textures(size);
+            let texture_descriptor = metal::TextureDescriptor::new();
+            texture_descriptor.set_width(size.width.0 as u64);
+            texture_descriptor.set_height(size.height.0 as u64);
+            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            texture_descriptor.set_usage(
+                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+            );
+            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+            texture_descriptor.set_storage_mode(if uses_shared_storage {
+                metal::MTLStorageMode::Shared
+            } else {
+                metal::MTLStorageMode::Managed
+            });
+            let target_texture = self.device.new_texture(&texture_descriptor);
+            let mut last = None;
+            for _ in 0..presents.max(1) {
+                let command_buffer = self.compose_frame(scene, &target_texture, size)?;
+                command_buffer.commit();
+                last = Some(command_buffer);
+            }
+            let command_buffer = last.context("no present")?;
+            command_buffer.wait_until_completed();
+            if !uses_shared_storage {
+                let command_buffer = self.command_queue.new_command_buffer();
+                let blit = command_buffer.new_blit_command_encoder();
+                blit.synchronize_resource(&target_texture);
+                blit.end_encoding();
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            }
             read_texture_to_image(&target_texture)
         })
     }
@@ -735,7 +802,7 @@ impl MetalRenderer {
                 .clone()
                 .expect("just ensured the render target exists");
 
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(scene, &target_texture, size, false)?;
 
             // Commit without waiting, mirroring presentation to a real window where
             // the CPU doesn't block on the GPU.
@@ -751,10 +818,11 @@ impl MetalRenderer {
         writer: &mut InstanceBufferWriter,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
+        transparent: bool, // KOAN: #1641.
     ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
-        let alpha = if self.opaque { 1. } else { 0. };
+        let alpha = if self.opaque && !transparent { 1. } else { 0. };
 
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
@@ -821,8 +889,13 @@ impl MetalRenderer {
                         command_encoder,
                     ),
                 // KOAN: shader quads (#1641).
-                PrimitiveBatch::Shaders { program, range } => self.draw_shaders(
+                PrimitiveBatch::Shaders {
                     program,
+                    texture,
+                    range,
+                } => self.draw_shaders(
+                    program,
+                    texture,
                     range,
                     instance_bindings,
                     viewport_size,
@@ -956,6 +1029,157 @@ impl MetalRenderer {
         );
     }
 
+    // KOAN: shader quads (#1641). Composes the scene's layers and shaders
+    // into `texture`, drawing the layers first if this scene's are not drawn
+    // yet, with the shaders' uniforms as they are now.
+    fn compose_frame(
+        &mut self,
+        scene: &Scene,
+        texture: &metal::TextureRef,
+        viewport_size: Size<DevicePixels>,
+    ) -> Result<metal::CommandBuffer> {
+        let plan = scene.shader_layers.as_deref().context("no shader layers")?;
+        let width = i32::from(viewport_size.width) as u64;
+        let height = i32::from(viewport_size.height) as u64;
+        if self.blank_texture.is_none() {
+            let descriptor = metal::TextureDescriptor::new();
+            descriptor.set_width(1);
+            descriptor.set_height(1);
+            descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+            self.blank_texture = Some(self.device.new_texture(&descriptor));
+        }
+        if self.compose_pipelines.is_none() {
+            self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
+        }
+        if !self
+            .shader_layers
+            .holds(scene.generation, width, height)
+        {
+            let mut pool = self.shader_layers.take(width, height);
+            let mut drawn = Vec::with_capacity(plan.layers.len());
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.is_blank() {
+                    drawn.push(None);
+                    continue;
+                }
+                let target = pool.pop().unwrap_or_else(|| {
+                    let descriptor = metal::TextureDescriptor::new();
+                    descriptor.set_width(width);
+                    descriptor.set_height(height);
+                    descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                    descriptor.set_usage(
+                        metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                    );
+                    descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+                    self.device.new_texture(&descriptor)
+                });
+                // The same queue runs these before the compose that reads them.
+                self.render_frame(layer, &target, viewport_size, k > 0)?
+                    .commit();
+                drawn.push(Some(target));
+            }
+            self.shader_layers = ShaderLayerTextures {
+                generation: scene.generation,
+                width,
+                height,
+                layers: drawn,
+            };
+        }
+        let pipelines = self
+            .compose_pipelines
+            .clone()
+            .context("missing compose pipelines")?;
+
+        let mut writer = InstanceBufferWriter::new(
+            &self.device,
+            &self.instance_buffer_pool,
+            self.is_unified_memory,
+        );
+        let now = std::time::Instant::now();
+        let shaders = writer.write_iter(
+            scene
+                .shaders
+                .iter()
+                .map(|shader| gpui::ShaderInstance::of(shader, now)),
+        )?;
+        let command_buffer = self.command_queue.new_command_buffer().to_owned();
+        let render_pass_descriptor = metal::RenderPassDescriptor::new();
+        let color_attachment = render_pass_descriptor
+            .color_attachments()
+            .object_at(0)
+            .unwrap();
+        color_attachment.set_texture(Some(texture));
+        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+        let first = self.shader_layers.layers.first().cloned().flatten();
+        if first.is_some() {
+            color_attachment.set_load_action(metal::MTLLoadAction::DontCare);
+        } else {
+            let alpha = if self.opaque { 1. } else { 0. };
+            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+            color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
+        }
+        let encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+        encoder.set_viewport(metal::MTLViewport {
+            originX: 0.0,
+            originY: 0.0,
+            width: width as f64,
+            height: height as f64,
+            znear: 0.0,
+            zfar: 1.0,
+        });
+        let layer = |encoder: &metal::RenderCommandEncoderRef,
+                     pipeline: &metal::RenderPipelineState,
+                     texture: &metal::Texture| {
+            encoder.set_render_pipeline_state(pipeline);
+            encoder.set_fragment_texture(0, Some(texture));
+            encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 3);
+        };
+        if let Some(first) = &first {
+            layer(encoder, &pipelines.copy, first);
+        }
+        let bindings = ShaderBindings(shaders);
+        for (k, group) in plan.groups.iter().enumerate() {
+            let mut start = group.start;
+            while start < group.end {
+                let head = &scene.shaders[start];
+                let key = |s: &gpui::PaintShader| {
+                    (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                };
+                let end = scene.shaders[start..group.end]
+                    .iter()
+                    .position(|s| key(s) != key(head))
+                    .map_or(group.end, |n| start + n);
+                self.draw_shaders(
+                    head.program,
+                    head.image.as_ref().map(|t| t.texture_id),
+                    start..end,
+                    &bindings,
+                    viewport_size,
+                    encoder,
+                );
+                start = end;
+            }
+            if let Some(Some(over)) = self.shader_layers.layers.get(k + 1) {
+                layer(encoder, &pipelines.over, over);
+            }
+        }
+        encoder.end_encoding();
+
+        let instance_buffer_pool = self.instance_buffer_pool.clone();
+        let instance_buffer = Cell::new(Some(writer.finish()));
+        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
+            if let Some(instance_buffer) = instance_buffer.take() {
+                instance_buffer_pool.lock().release(instance_buffer);
+            }
+        });
+        // SAFETY: as in `render_frame`.
+        unsafe {
+            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
+        }
+        Ok(command_buffer)
+    }
+
     // KOAN: shader quads (#1641). A program's pipeline is compiled from its
     // source the first time it is drawn: the app's `shade` between a prelude
     // declaring the instance and a vertex and fragment function calling it.
@@ -993,11 +1217,13 @@ impl MetalRenderer {
     fn draw_shaders(
         &self,
         program: &'static gpui::ShaderProgram,
+        texture: Option<AtlasTextureId>,
         shaders: Range<usize>,
-        instance_bindings: &InstanceBindings,
+        instance_bindings: &impl HasShaders,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
+        let binding = instance_bindings.shaders();
         if shaders.is_empty() {
             return;
         }
@@ -1006,16 +1232,12 @@ impl MetalRenderer {
         };
         command_encoder.set_render_pipeline_state(&pipeline);
         command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
-        command_encoder.set_vertex_buffer(
-            1,
-            Some(&instance_bindings.shaders.buffer),
-            instance_bindings.shaders.offset as u64,
-        );
-        command_encoder.set_fragment_buffer(
-            1,
-            Some(&instance_bindings.shaders.buffer),
-            instance_bindings.shaders.offset as u64,
-        );
+        command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
+        command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
+        let image = texture
+            .and_then(|id| self.sprite_atlas.metal_texture(id))
+            .or_else(|| self.blank_texture.clone());
+        command_encoder.set_fragment_texture(0, image.as_deref());
         let viewport = [
             i32::from(viewport_size.width) as f32,
             i32::from(viewport_size.height) as f32,
@@ -1024,12 +1246,6 @@ impl MetalRenderer {
             2,
             mem::size_of_val(&viewport) as u64,
             viewport.as_ptr() as *const c_void,
-        );
-        let time = gpui::shader_time(std::time::Instant::now());
-        command_encoder.set_fragment_bytes(
-            3,
-            mem::size_of_val(&time) as u64,
-            &time as *const f32 as *const c_void,
         );
         command_encoder.draw_primitives_instanced_base_instance(
             metal::MTLPrimitiveType::Triangle,
@@ -1588,6 +1804,127 @@ struct InstanceBindings {
     shaders: InstanceBinding, // KOAN: #1641.
 }
 
+// KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
+// for a blank one, kept while presents compose them.
+#[derive(Default)]
+struct ShaderLayerTextures {
+    generation: u64,
+    width: u64,
+    height: u64,
+    layers: Vec<Option<metal::Texture>>,
+}
+
+impl ShaderLayerTextures {
+    fn holds(&self, generation: u64, width: u64, height: u64) -> bool {
+        self.generation == generation
+            && self.width == width
+            && self.height == height
+            && !self.layers.is_empty()
+    }
+
+    /// The textures, to be drawn again, where they are the size wanted.
+    fn take(&mut self, width: u64, height: u64) -> Vec<metal::Texture> {
+        let same = self.width == width && self.height == height;
+        let layers = std::mem::take(&mut self.layers);
+        if same {
+            layers.into_iter().flatten().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn release(&mut self) {
+        *self = Self::default();
+    }
+}
+
+// KOAN: where a frame's shader instances are, whether written with the whole
+// scene or alone for a compose (#1641).
+trait HasShaders {
+    fn shaders(&self) -> &InstanceBinding;
+}
+
+impl HasShaders for InstanceBindings {
+    fn shaders(&self) -> &InstanceBinding {
+        &self.shaders
+    }
+}
+
+struct ShaderBindings(InstanceBinding);
+
+impl HasShaders for ShaderBindings {
+    fn shaders(&self) -> &InstanceBinding {
+        &self.0
+    }
+}
+
+// KOAN: (#1641) draws a layer into the drawable as one triangle covering
+// it, read texel for texel: unblended for the first, and over what is there
+// for the rest, whose colours are premultiplied, as drawing over a clear
+// layer leaves them.
+const COMPOSE_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+vertex float4 koan_compose_vertex(uint id [[vertex_id]]) {
+    float2 p = float2((id << 1) & 2, id & 2);
+    return float4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+fragment float4 koan_compose_fragment(
+    float4 position [[position]],
+    texture2d<float, access::read> layer [[texture(0)]]
+) {
+    return layer.read(uint2(position.xy));
+}
+"#;
+
+#[derive(Clone)]
+struct ComposePipelines {
+    copy: metal::RenderPipelineState,
+    over: metal::RenderPipelineState,
+}
+
+impl ComposePipelines {
+    fn new(device: &metal::Device) -> Result<Self> {
+        let library = device
+            .new_library_with_source(COMPOSE_SOURCE, &metal::CompileOptions::new())
+            .map_err(|error| anyhow::anyhow!("compose shader: {error}"))?;
+        let vertex = library
+            .get_function("koan_compose_vertex", None)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let fragment = library
+            .get_function("koan_compose_fragment", None)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let pipeline = |over: bool| {
+            let descriptor = metal::RenderPipelineDescriptor::new();
+            descriptor.set_label(if over { "koan_compose_over" } else { "koan_compose_copy" });
+            descriptor.set_vertex_function(Some(&vertex));
+            descriptor.set_fragment_function(Some(&fragment));
+            let color = descriptor.color_attachments().object_at(0).unwrap();
+            color.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            color.set_blending_enabled(over);
+            if over {
+                color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+                color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+                color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
+                color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+                color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+                color.set_destination_alpha_blend_factor(
+                    metal::MTLBlendFactor::OneMinusSourceAlpha,
+                );
+            }
+            device
+                .new_render_pipeline_state(&descriptor)
+                .map_err(|error| anyhow::anyhow!("compose pipeline: {error}"))
+        };
+        Ok(Self {
+            copy: pipeline(false)?,
+            over: pipeline(true)?,
+        })
+    }
+}
+
 // KOAN: shader quads (#1641): what a program's `shade` is compiled between.
 const SHADER_PRELUDE: &str = r#"
 #include <metal_stdlib>
@@ -1597,7 +1934,22 @@ struct KoanShaderInstance {
     float4 bounds;
     float4 clip;
     float4 uniforms[4];
+    float4 time;
+    float4 tile;
 };
+
+// The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
+// texels around its tile in the atlas.
+float4 koan_sample(texture2d<float> image, float4 tile, float2 uv) {
+    constexpr sampler linear(filter::linear, address::clamp_to_edge);
+    float2 extent = float2(image.get_width(), image.get_height());
+    float2 at = clamp(
+        tile.xy + uv * tile.zw,
+        tile.xy + 0.5,
+        tile.xy + tile.zw - 0.5
+    );
+    return image.sample(linear, at / extent);
+}
 
 struct KoanShaderVarying {
     float4 position [[position]];
@@ -1628,14 +1980,14 @@ vertex KoanShaderVarying koan_shader_vertex(
 fragment float4 koan_shader_fragment(
     KoanShaderVarying in [[stage_in]],
     constant KoanShaderInstance *instances [[buffer(1)]],
-    constant float *time [[buffer(3)]]
+    texture2d<float> image [[texture(0)]]
 ) {
     constant KoanShaderInstance &s = instances[in.instance];
     float2 p = in.position.xy;
     if (any(p < s.clip.xy) || any(p > s.clip.xy + s.clip.zw)) {
         discard_fragment();
     }
-    return shade(in.local, s.bounds.zw, *time, (constant float *)s.uniforms);
+    return shade(in.local, s.bounds.zw, s.time.x, (constant float *)s.uniforms, image, s.tile);
 }
 "#;
 
@@ -1652,7 +2004,15 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
         }))?,
         // KOAN: the shaders' uniforms as they are now, when the frame is
         // presented (#1641).
-        shaders: writer.write_iter(scene.shaders.iter().map(gpui::ShaderInstance::of))?,
+        shaders: {
+            let now = std::time::Instant::now();
+            writer.write_iter(
+                scene
+                    .shaders
+                    .iter()
+                    .map(|shader| gpui::ShaderInstance::of(shader, now)),
+            )?
+        },
     })
 }
 
@@ -1951,6 +2311,87 @@ mod tests {
             assert!(green.abs_diff(128) <= 2);
             assert!(blue.abs_diff(128) <= 2);
             assert_eq!(*alpha, 255);
+        }
+    }
+
+    // KOAN: (#1641) a scene with a shader nothing covers, presented as a
+    // window presents it (the base kept, the shaders composed over it), is
+    // the same picture as the whole scene drawn at once, and a re-present
+    // reads the uniforms afresh.
+    #[test]
+    fn a_composed_present_matches_a_whole_render() {
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-half",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    return position.x < size.x * u[0] ? float4(1.0, 0.0, 0.0, 0.5) : float4(0.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
+            origin: Point::new(ScaledPixels(x), ScaledPixels(y)),
+            size: size(ScaledPixels(w), ScaledPixels(h)),
+        };
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 0.5);
+        let scene = |cover: bool| {
+            let mut scene = Scene::default();
+            let whole = rect(0.0, 0.0, 64.0, 32.0);
+            scene.insert_primitive(gpui::Quad {
+                bounds: whole,
+                content_mask: ContentMask { bounds: whole },
+                background: gpui::hsla(0.6, 0.5, 0.5, 1.0).into(),
+                ..Default::default()
+            });
+            let shader = rect(8.0, 8.0, 32.0, 16.0);
+            scene.insert_primitive(gpui::PaintShader {
+                order: 0,
+                bounds: shader,
+                content_mask: ContentMask { bounds: shader },
+                program: &PROGRAM,
+                uniforms: uniforms.clone(),
+            });
+            let over = if cover {
+                rect(30.0, 10.0, 20.0, 4.0)
+            } else {
+                rect(50.0, 10.0, 10.0, 4.0)
+            };
+            scene.insert_primitive(gpui::Quad {
+                bounds: over,
+                content_mask: ContentMask { bounds: over },
+                background: gpui::hsla(0.1, 0.8, 0.5, 1.0).into(),
+                ..Default::default()
+            });
+            scene.finish();
+            scene
+        };
+        let viewport = size(DevicePixels(64), DevicePixels(32));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        // Layers over a shader are composed premultiplied in 8 bits, so a
+        // translucent edge may round a level apart.
+        let close = |a: &RgbaImage, b: &RgbaImage| {
+            a.as_raw()
+                .iter()
+                .zip(b.as_raw())
+                .all(|(x, y)| x.abs_diff(*y) <= 1)
+        };
+        for covered in [false, true] {
+            let scene = scene(covered);
+            let plan = scene.shader_layers.as_deref().expect("a plan");
+            assert_eq!(plan.groups.len(), 1);
+            assert_eq!(plan.layers[1].is_blank(), !covered);
+            uniforms.set(0, 0.5);
+            let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
+            let composed = renderer.compose_scene_to_image(&scene, viewport, 2).unwrap();
+            assert!(close(&whole, &composed), "covered: {covered}");
+
+            uniforms.set(0, 1.0);
+            let moved = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
+            assert_ne!(moved.as_raw(), composed.as_raw());
+            let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
+            assert!(close(&whole, &moved), "covered: {covered}, moved");
         }
     }
 }

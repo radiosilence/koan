@@ -1036,6 +1036,10 @@ pub(super) struct GqlJob {
     /// Why a `watch` scan ran: `start-up`, `folder change`, `periodic` or
     /// `new folder`.
     pub reason: Option<String>,
+    /// Unix milliseconds.
+    pub started_at: i64,
+    /// Unix milliseconds; null while it runs.
+    pub finished_at: Option<i64>,
 }
 
 impl From<Job> for GqlJob {
@@ -1048,6 +1052,147 @@ impl From<Job> for GqlJob {
             done: job.done,
             total: job.total,
             reason: job.reason.map(str::to_owned),
+            started_at: unix_ms(job.started),
+            finished_at: job.finished.map(unix_ms),
+        }
+    }
+}
+
+pub(super) fn unix_ms(t: std::time::SystemTime) -> i64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// What the server keeps beside the library. Transcodes are encoded as they
+/// stream and never kept, so there is no cache of them to report.
+#[derive(SimpleObject)]
+#[graphql(name = "ServerCaches")]
+pub(super) struct GqlServerCaches {
+    /// Null where this server keeps no covers of its own.
+    pub covers: Option<GqlCoverCache>,
+    pub downloads: GqlDownloadCache,
+    /// The library scan that ended last since the server started, of any
+    /// kind; `startedAt` and `finishedAt` give how long it took.
+    pub last_scan: Option<GqlJob>,
+}
+
+/// Resized covers kept on disk for the web UI, share pages and Subsonic.
+#[derive(SimpleObject)]
+#[graphql(name = "CoverCache")]
+pub(super) struct GqlCoverCache {
+    pub bytes: u64,
+    /// What the cache may hold before the covers read least recently go.
+    pub budget: u64,
+    /// One entry per size served.
+    pub sizes: Vec<GqlCoverSize>,
+    /// Records or files remembered to have no art.
+    pub misses: u64,
+    /// Records with files lacking a cover at one of `warm.sizes`.
+    pub unwarmed: u64,
+    pub warm: GqlCoverWarm,
+    /// The last sweep that found the cache over its budget, since start.
+    pub last_sweep: Option<GqlCoverSweep>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(name = "CoverSize")]
+pub(super) struct GqlCoverSize {
+    /// Pixels on the longest side.
+    pub size: u32,
+    /// Covers kept, misses included.
+    pub covers: u64,
+    pub bytes: u64,
+    pub misses: u64,
+}
+
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "CoverWarmState")]
+pub(super) enum GqlCoverWarmState {
+    /// Not started: covers are made as they are asked for.
+    Off,
+    Running,
+    /// Stopped with the cache at its budget; requests still make covers.
+    AtBudget,
+    Idle,
+}
+
+/// The pass that keeps every record's grid covers ready.
+#[derive(SimpleObject)]
+#[graphql(name = "CoverWarm")]
+pub(super) struct GqlCoverWarm {
+    pub state: GqlCoverWarmState,
+    /// The sizes every record is given.
+    pub sizes: Vec<u32>,
+    /// Records looked at in the pass running or the last, of `total`.
+    pub done: u64,
+    pub total: u64,
+    /// Records the pass made covers for.
+    pub made: u64,
+    /// Unix milliseconds.
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    /// When the next pass runs unless the library changes first.
+    pub next_at: Option<i64>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(name = "CoverSweep")]
+pub(super) struct GqlCoverSweep {
+    /// Unix milliseconds.
+    pub at: i64,
+    pub removed: u64,
+    pub bytes: u64,
+}
+
+/// Tracks downloaded from the server this one syncs from.
+#[derive(SimpleObject)]
+#[graphql(name = "DownloadCache")]
+pub(super) struct GqlDownloadCache {
+    pub bytes: u64,
+    /// `remote.cache_limit`, when set.
+    pub limit: Option<u64>,
+    pub tracks: i64,
+}
+
+impl GqlCoverCache {
+    pub(super) fn of(u: &crate::covers::Usage, r: &crate::covers::Report) -> Self {
+        use crate::covers::WarmState;
+        let w = r.warm;
+        Self {
+            bytes: u.bytes,
+            budget: u.budget,
+            sizes: u
+                .sizes
+                .iter()
+                .map(|s| GqlCoverSize {
+                    size: s.size,
+                    covers: s.covers as u64,
+                    bytes: s.bytes,
+                    misses: s.misses as u64,
+                })
+                .collect(),
+            misses: u.misses() as u64,
+            unwarmed: u.unwarmed as u64,
+            warm: GqlCoverWarm {
+                state: match w.state {
+                    WarmState::Off => GqlCoverWarmState::Off,
+                    WarmState::Running => GqlCoverWarmState::Running,
+                    WarmState::AtBudget => GqlCoverWarmState::AtBudget,
+                    WarmState::Idle => GqlCoverWarmState::Idle,
+                },
+                sizes: crate::covers::WARMED.to_vec(),
+                done: w.done as u64,
+                total: w.total as u64,
+                made: w.made as u64,
+                started_at: w.started.map(unix_ms),
+                finished_at: w.finished.map(unix_ms),
+                next_at: w.next().map(unix_ms),
+            },
+            last_sweep: r.sweep.map(|sw| GqlCoverSweep {
+                at: unix_ms(sw.at),
+                removed: sw.removed as u64,
+                bytes: sw.bytes,
+            }),
         }
     }
 }

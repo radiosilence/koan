@@ -1,0 +1,24 @@
+{#- What the server keeps beside the library, patched as the warm, a sweep or a scan moves. Confirmations reach `confirm` as data, never inside the expression. -#}
+<div id="caches-status">
+{%- if let Some(c) = covers %}
+<h3>Covers</h3><p class="{{ crate::ui::pages::SUB }}">{{ c.used }} of {{ c.budget }}, in {{ c.count }} covers{% if c.misses > 0 %}, {{ c.misses }} of them remembered as having no art{% endif %}.</p>
+<dl class="m-0 mb-3 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control [&_dd]:m-0 [&_dd]:wrap-anywhere [&_dt]:text-muted">
+{%- for (size, count, used, misses) in c.sizes %}<dt>{{ size }} px</dt><dd>{{ count }} covers, {{ used }}{% if *misses > 0 %}, {{ misses }} without art{% endif %}</dd>{% endfor -%}
+<dt>Warm</dt><dd>{{ c.warm }}{% if c.unwarmed > 0 %}; {{ c.unwarmed }} records without them yet{% endif %}</dd>
+{%- if let Some(last) = c.last %}<dt>Last pass</dt><dd>{{ last }}</dd>{% endif -%}
+{%- if let Some(next) = c.next %}<dt>Next pass</dt><dd>{{ next }}, or when the library changes</dd>{% endif -%}
+<dt>Last sweep</dt><dd>{% if let Some(sweep) = c.sweep %}{{ sweep }}{% else %}none needed since the server started{% endif %}</dd>
+</dl>
+{%- if let Some((done, total)) = c.progress %}<progress class="meter mb-2" aria-label="Warm progress" value="{{ done }}" max="{{ total }}"></progress><p class="text-muted text-control" role="status">{{ done }} of {{ total }} records</p>{% endif %}
+<div class="mb-2 flex flex-wrap items-center gap-2">
+{%- if c.warms && c.unwarmed > 0 %}<button data-confirm="Make covers now for the {{ c.unwarmed }} records without them?" data-on:click="confirm(el.dataset.confirm) && @post('library/caches/warm')">Warm now</button>{% endif -%}
+{%- if c.count > 0 %}<button class="quiet bad" data-confirm="{{ c.clear }}" data-on:click="confirm(el.dataset.confirm) && @post('library/caches/clear')">Clear covers</button>{% endif -%}
+</div>
+{%- endif %}
+{%- if let Some(d) = downloads %}
+<h3>Downloads</h3><p class="{{ crate::ui::pages::SUB }}">{{ d.used }}{% if let Some(limit) = d.limit %} of {{ limit }}{% endif %}, {{ d.tracks }} tracks from the server this one syncs from.</p>
+{%- endif %}
+{%- if let Some(l) = library %}
+<h3>Library</h3><p class="{{ crate::ui::pages::SUB }}">{{ l.tracks }} tracks, {{ l.albums }} records, {{ l.artists }} artists.{% if let Some(scan) = l.scan %} Last scan {{ scan }}.{% endif %}</p>
+{%- endif %}
+</div>

@@ -363,8 +363,12 @@ pub(crate) fn build_schema_sharing(
     viz: Option<Arc<VizSnapshot>>,
     jobs: jobs::JobRegistry,
     session: Option<&'static str>,
+    covers: Option<Arc<crate::covers::Covers>>,
 ) -> KoanSchema {
-    let builder = builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs);
+    let mut builder = builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs);
+    if let Some(covers) = covers {
+        builder = builder.data(covers);
+    }
     match session {
         Some(device) => builder.data(Session(device)),
         None => builder,
@@ -1246,6 +1250,7 @@ mod tests {
                 None,
                 Default::default(),
                 session,
+                None,
             )
         };
         let save = "mutation { savePlaybackState { ok } }";

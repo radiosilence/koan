@@ -12,8 +12,13 @@
 //! the pointer is doing and the state of their transitions.
 
 mod badge;
+mod bars;
 mod button;
+mod cover;
+mod dense;
+mod drag;
 mod empty;
+mod fade;
 mod field;
 mod filter_field;
 mod form;
@@ -23,12 +28,16 @@ mod page;
 mod panel;
 mod picker;
 pub(crate) mod placeholder;
+mod progress;
+mod ring;
 mod rows;
 mod scroll;
 mod segmented;
+pub mod sheet;
 mod slider;
 mod spinner;
 mod split;
+mod status;
 mod stepper;
 mod table;
 mod toggle;
@@ -43,29 +52,40 @@ use gpui_kit::{
 };
 
 pub use badge::{Badge, Chip};
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, SHADED, bars_overlay};
 pub use button::{Button, ButtonKind};
+pub use cover::{Cover, CoverArt, Mosaic};
+pub use dense::{Align, Column, DenseRow, DenseTable};
+pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
+pub use fade::FadeIn;
 pub use field::TextField;
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
-pub use menu::{KoanContextMenu, Menu, MenuEntry};
-pub use metrics::{RowKind, RowMetrics};
-pub use page::{Page, PageHeader};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use metrics::{BarMetrics, RowKind, RowMetrics, TransportMetrics};
+pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
-pub use rows::{ListRow, NavRow};
+pub use progress::{ProgressBar, ProgressRow};
+pub use ring::ProgressRing;
+pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
-pub use slider::Slider;
+pub use slider::{Glide, Slider};
 pub use spinner::Spinner;
 pub use split::SplitView;
+pub use status::StatusBlock;
 pub use stepper::Stepper;
-pub use table::TableRow;
+pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
-pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
+pub use toolbar::{
+    Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
+    ToolbarSelection, WINDOW_BUTTONS,
+};
 
 use crate::theme::{Look, MARK, Motion};
 

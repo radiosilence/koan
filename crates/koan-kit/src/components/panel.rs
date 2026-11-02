@@ -67,6 +67,15 @@ pub struct MenuRow {
     disabled: bool,
     /// A row that opens a submenu: the chevron at its end.
     opens: bool,
+    /// The rich row's second line, and whether it warns.
+    detail: Option<(SharedString, bool)>,
+    /// The rich row: its glyph large in a column of its own, the chosen row
+    /// on `surface` with its glyph in the accent.
+    rich: bool,
+    /// A small glyph after the label: how a place is reached.
+    reach: Option<Icon>,
+    /// Buttons at the row's end, before the tick.
+    trailing: Vec<AnyElement>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -81,6 +90,10 @@ impl MenuRow {
             destructive: false,
             disabled: false,
             opens: false,
+            detail: None,
+            rich: false,
+            reach: None,
+            trailing: Vec::new(),
             on_click: None,
         }
     }
@@ -130,6 +143,31 @@ impl MenuRow {
         self
     }
 
+    /// A second line under the label, in `fine`, `muted`; in `bad` when it
+    /// warns.
+    pub fn detail(mut self, detail: impl Into<SharedString>, warns: bool) -> Self {
+        self.detail = Some((detail.into(), warns));
+        self
+    }
+
+    /// The rich row: a place to choose, with its glyph large beside a label
+    /// and its detail, the chosen one on `surface` and its glyph in the
+    /// accent.
+    pub fn rich(mut self, rich: bool) -> Self {
+        self.rich = rich;
+        self
+    }
+
+    pub fn reach(mut self, reach: Icon) -> Self {
+        self.reach = Some(reach);
+        self
+    }
+
+    pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
+        self.trailing.push(trailing.into_any_element());
+        self
+    }
+
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
@@ -157,25 +195,86 @@ impl RenderOnce for MenuRow {
         let surface = look.palette.surface.hsla();
         let tick = look.points(TypeRole::Control);
         let on_click = self.on_click;
+        let chosen = self.rich && self.checked == Some(true);
+        let muted = look.palette.muted.hsla();
+        let accent = look.color(Tone::Accent);
+        let (label, detail, reach) = (self.label, self.detail, self.reach);
+        let name = div()
+            .flex()
+            .items_center()
+            .gap(look.space(Space::Xs))
+            .child(label)
+            .children(reach.map(|icon| KoanIcon::new(icon).role(TypeRole::Fine).color(muted)));
+        let text = match detail {
+            Some((detail, warns)) => div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(name)
+                .child(
+                    div()
+                        .text_role(TypeRole::Fine, &look)
+                        .text_color(if warns {
+                            look.palette.bad.hsla()
+                        } else {
+                            muted
+                        })
+                        .child(detail),
+                ),
+            None => div().relative().flex_1().child(name),
+        };
+        let rich = self.rich;
         let row = div()
             .id(self.id)
             .relative()
             .flex()
             .items_center()
-            .gap(look.space(Space::S))
+            .gap(look.space(if rich { Space::M } else { Space::S }))
             .px(look.space(Space::M))
-            .py(look.space(Space::Xs))
-            .text_role(TypeRole::Control, &look)
+            .py(look.space(if rich { Space::S } else { Space::Xs }))
+            .text_role(
+                if rich {
+                    TypeRole::Body
+                } else {
+                    TypeRole::Control
+                },
+                &look,
+            )
             .text_color(color)
             .whitespace_nowrap()
-            .when(self.highlighted && !self.disabled, |row| row.bg(surface))
+            .when((self.highlighted || chosen) && !self.disabled, |row| {
+                row.bg(surface)
+            })
             .when(!self.disabled, |row| row.hover(move |row| row.bg(surface)))
-            .children(self.icon.filter(|_| look.icons).map(|icon| {
-                div()
-                    .relative()
-                    .child(KoanIcon::new(icon).role(TypeRole::Control).color(color))
+            .children(self.icon.filter(|_| look.icons || rich).map(|icon| {
+                if rich {
+                    // The place's glyph, at the size of a small title, in a
+                    // column so the names line up.
+                    div()
+                        .relative()
+                        .flex_none()
+                        .w(look.spaced(28.0))
+                        .flex()
+                        .justify_center()
+                        .child(
+                            KoanIcon::new(icon)
+                                .role(TypeRole::TitleSmall)
+                                .color(if chosen { accent } else { muted }),
+                        )
+                } else {
+                    div()
+                        .relative()
+                        .child(KoanIcon::new(icon).role(TypeRole::Control).color(color))
+                }
             }))
-            .child(div().relative().flex_1().child(self.label))
+            .child(text)
+            .children(
+                self.trailing
+                    .into_iter()
+                    .map(|t| div().relative().flex_none().child(t)),
+            )
             // The tick at the row's end, after `m`, as the Mac's menus put
             // it; its room is kept on every row of a set of choices.
             .children(self.checked.map(|checked| {

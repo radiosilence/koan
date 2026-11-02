@@ -4,10 +4,13 @@
 //! square, flat, lowercase, one hairline where a region needs one.
 
 use koan_ffi::BrowseChoices;
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
+// gpui-component's popover, the panel koan-kit's menus are built in.
 use koan_kit::raw::component::popover::Popover;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
@@ -15,9 +18,9 @@ use super::selection::Selection;
 use super::tokens::{self, Paint, Type, Typeset};
 use super::{Lib, actions};
 use crate::components::{
-    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle,
+    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle, ToolbarButton,
 };
-use crate::theme::{Icon, KoanIcon, Space};
+use crate::theme::{Icon, Space};
 
 /// "1 album", "5,123 albums".
 pub fn count(n: u64, one: &str, many: &str) -> String {
@@ -44,7 +47,7 @@ pub fn page_header(
         .flex()
         .items_start()
         .justify_between()
-        .px(px(super::tile::MARGIN))
+        .px(crate::components::RowMetrics::page_margin(&p.look))
         .pt(p.space(Space::L))
         .gap(p.space(Space::L))
         .child(
@@ -75,8 +78,18 @@ pub fn text_button(id: impl Into<ElementId>, label: &str) -> Button {
 pub fn select_toggle(
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Button {
-    text_button("select", if active { "done" } else { "select" }).on_click(on_click)
+) -> ToolbarButton {
+    ToolbarButton::new(
+        "select",
+        if active {
+            Icon::Selecting
+        } else {
+            Icon::Select
+        },
+        if active { "done" } else { "select" },
+    )
+    .selected(active)
+    .on_click(on_click)
 }
 
 /// The filter field: the sidebar's search field's look, no box, the glyph and
@@ -87,10 +100,16 @@ pub struct SearchField {
 }
 
 impl SearchField {
-    pub fn new(browse: Entity<Browse>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `prompt` says what it narrows: "filter albums".
+    pub fn new(
+        browse: Entity<Browse>,
+        prompt: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let initial = browse.read(cx).search.clone();
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("filter");
+            let mut state = InputState::new(window, cx).placeholder(prompt);
             state.set_value(initial, window, cx);
             state
         });
@@ -112,19 +131,8 @@ impl SearchField {
 }
 
 impl Render for SearchField {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
-        div()
-            .flex()
-            .items_center()
-            .gap(p.space(Space::Xs))
-            .w(p.sized(200.0))
-            .child(
-                KoanIcon::new(Icon::Search)
-                    .role(Type::Control)
-                    .tone(crate::theme::Tone::Muted),
-            )
-            .child(TextField::new(&self.input).bare())
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        crate::components::FilterField::new(&self.input)
     }
 }
 
@@ -146,6 +154,7 @@ impl Trigger {
     }
 }
 
+// gpui-component's focus and click extensions, for the shell's own handling.
 impl koan_kit::raw::base::Selectable for Trigger {
     fn selected(mut self, selected: bool) -> Self {
         self.open = selected;
@@ -207,8 +216,9 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     Popover::new("album-sort")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "album-sort-trigger",
+            Icon::Sort,
             format!("sort: {}", browse::album_sort_label(current)),
         ))
         .content(move |_, _, cx| {
@@ -237,13 +247,11 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 /// Shuffle again, under the random order: its own button beside the sort,
 /// since a new deal is something tried until one is liked, and a menu makes
 /// each try two clicks.
-pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<Button> {
+pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
     let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
-        Button::new("album-reshuffle", ButtonKind::Text)
-            .icon(crate::theme::Icon::Reshuffle)
-            .label("shuffle again")
+        ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again")
             .on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
     })
 }
@@ -254,8 +262,9 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     Popover::new("track-sort")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "track-sort-trigger",
+            Icon::Sort,
             format!("sort: {}", browse::track_sort_label(current)),
         ))
         .content(move |_, _, cx| {
@@ -281,8 +290,9 @@ pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl I
     Popover::new("filters")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "filters-trigger",
+            Icon::Filters,
             if active > 0 {
                 format!("filters ({active})")
             } else {
@@ -537,7 +547,7 @@ pub fn selection_bar<V: Picking>(
         .flex()
         .items_center()
         .justify_between()
-        .px(px(super::tile::MARGIN))
+        .px(crate::components::RowMetrics::page_margin(&p.look))
         .py(p.space(Space::M))
         .border_t_1()
         .border_color(p.rule)
@@ -605,7 +615,38 @@ pub fn selection_bar<V: Picking>(
 
 #[cfg(test)]
 mod tests {
-    use super::count;
+    use super::*;
+    use core::prelude::v1::test;
+
+    // GPUI's test harness: a window driven with simulated input.
+    use koan_kit::raw::TestAppContext;
+
+    /// Typing in the filter field narrows the browsers: what is typed
+    /// reaches the browse model they all listen to.
+    // GPUI's test harness: a window driven with simulated input.
+    #[koan_kit::raw::test]
+    fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+            koan_kit::raw::init(cx);
+            crate::theme::init(cx);
+        });
+        let browse = cx.new(|_| Browse::fresh());
+        let watched = browse.clone();
+        let (field, cx) = cx.add_window_view(move |window, cx| {
+            SearchField::new(watched.clone(), "filter albums", window, cx)
+        });
+        cx.update(|window, cx| {
+            let handle = field.read(cx).input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.simulate_input("lush");
+        cx.run_until_parked();
+        assert_eq!(
+            browse.read_with(cx, |b, _| b.search()),
+            Some("lush".to_string())
+        );
+    }
 
     #[test]
     fn counts_are_grouped_and_pluralised() {

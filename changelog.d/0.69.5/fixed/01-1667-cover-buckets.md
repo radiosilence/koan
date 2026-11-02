@@ -1,0 +1,1 @@
+- **Covers at a few shared sizes.** Every app asks for covers at one of 150, 300, 600 or 1200 pixels, and a koan server keeps exactly those, making the 300 and 600 every list and grid uses ahead of time, so the desktop app's covers no longer miss what the server has ready.

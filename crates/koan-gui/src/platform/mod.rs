@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
 use koan_ffi::KoanEngine;
-use koan_kit::raw::{App, AsyncApp, Global};
+use koan_kit::app::{App, AsyncApp, Global};
 
 use instance::Opened;
 

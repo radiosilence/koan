@@ -1,11 +1,14 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Bounds, DispatchPhase, ElementId, InteractiveElement, IntoElement, MouseButton,
+    App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
-    SharedString, Styled, Window, canvas, div, px,
+    ShaderProgram, ShaderUniforms, SharedString, Styled, Window, canvas, div, px,
 };
+
+use super::SHADED;
 
 use super::{Handler, child, focus, pointer, ring, track};
 use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole};
@@ -21,9 +24,108 @@ pub struct Slider {
     high: Option<SharedString>,
     step: f32,
     disabled: bool,
+    /// The desktop's density: a 20-point rail, as the Mac's seek bar has.
+    compact: bool,
     on_change: Option<Handler<f32>>,
     on_commit: Option<Handler<()>>,
+    glide: Option<Glide>,
 }
+
+/// A value that moves on its own between renders, as a seek bar's playhead
+/// does: the share of the track at a moment and how fast it moves from it.
+/// Where the renderer draws shaders, the fill and the thumb are a shader quad
+/// reckoning the value per present from these, so the slider glides with no
+/// frame drawn and no timer; elsewhere, and while dragged, the slider draws
+/// `value` as given. The owner writes it from any thread, keeps it across
+/// renders, and stops it (`set_moving(false)`) when the value rests or
+/// nothing shows it.
+#[derive(Clone, Default)]
+pub struct Glide(Arc<ShaderUniforms>);
+
+impl Glide {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `value` at `since`, moving `rate` of the track a second.
+    pub fn set(&self, value: f32, rate: f32, since: Instant) {
+        self.0.set(0, value);
+        self.0.set(1, rate);
+        self.0.set_origin(since);
+    }
+
+    /// Whether the value is moving: presented every refresh while it is.
+    /// Starting needs a frame to notice; notify the view showing it.
+    pub fn set_moving(&self, moving: bool) {
+        self.0.set_continuous(moving);
+        self.0.set_live(moving);
+    }
+
+    /// The fill, thumb and their colours, in device pixels.
+    fn style(&self, look: &Style) {
+        let u = &self.0;
+        u.set(2, look.fill);
+        u.set(3, look.thumb);
+        u.set(4, look.inset);
+        for (i, color) in [look.fill_color, look.thumb_color].into_iter().enumerate() {
+            let rgba = color.to_rgb();
+            for (j, v) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
+                u.set(8 + i * 4 + j, v);
+            }
+        }
+    }
+}
+
+struct Style {
+    fill: f32,
+    /// The thumb's side, or 0 while it is hidden.
+    thumb: f32,
+    /// How far the quad reaches past the rail either side, for the thumb.
+    inset: f32,
+    fill_color: Hsla,
+    thumb_color: Hsla,
+}
+
+/// The fill and thumb as a fragment program. Uniforms: 0 the value at the
+/// origin, 1 its rate a second, 2 the fill's height, 3 the thumb's side (0
+/// hidden), 4 the inset, in device pixels; 8..12 the fill's colour, 12..16
+/// the thumb's.
+static GLIDE: ShaderProgram = ShaderProgram {
+    name: "koan-slider-glide",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float width = size.x - 2.0 * u[4];
+    float x = position.x - u[4];
+    float end = clamp(u[0] + u[1] * time, 0.0, 1.0) * width;
+    float dy = abs(position.y - size.y * 0.5);
+    if (u[3] > 0.0 && abs(x - end) <= u[3] * 0.5 && dy <= u[3] * 0.5) {
+        return float4(u[12], u[13], u[14], u[15]);
+    }
+    if (x < 0.0 || dy > u[2] * 0.5) {
+        return float4(0.0);
+    }
+    float cover = clamp(end - x + 0.5, 0.0, 1.0);
+    return float4(u[8], u[9], u[10], u[11] * cover);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
+    let width = size.x - 2.0 * u[1].x;
+    let x = position.x - u[1].x;
+    let end = clamp(u[0].x + u[0].y * time, 0.0, 1.0) * width;
+    let dy = abs(position.y - size.y * 0.5);
+    if (u[0].w > 0.0 && abs(x - end) <= u[0].w * 0.5 && dy <= u[0].w * 0.5) {
+        return u[3];
+    }
+    if (x < 0.0 || dy > u[0].z * 0.5) {
+        return vec4<f32>(0.0);
+    }
+    let cover = clamp(end - x + 0.5, 0.0, 1.0);
+    return vec4<f32>(u[2].xyz, u[2].w * cover);
+}
+"#,
+    prepare: None,
+};
 
 impl Slider {
     /// `value` is a fraction of the track, 0 to 1.
@@ -35,9 +137,17 @@ impl Slider {
             high: None,
             step: 0.05,
             disabled: false,
+            compact: false,
             on_change: None,
             on_commit: None,
+            glide: None,
         }
+    }
+
+    /// The value moves on its own from `value` as `glide` says; see `Glide`.
+    pub fn glide(mut self, glide: &Glide) -> Self {
+        self.glide = Some(glide.clone());
+        self
     }
 
     /// What sits at either end, such as the time played and the time left.
@@ -58,6 +168,13 @@ impl Slider {
         self
     }
 
+    /// At the desktop's density, 20 points tall rather than the touch
+    /// target's 44: a transport's seek bar under its controls.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
     pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self
@@ -72,6 +189,8 @@ impl Slider {
 }
 
 const THUMB: f32 = 8.0;
+/// A compact slider's rail.
+const COMPACT: Pixels = px(20.0);
 const FILL: f32 = 3.0;
 
 fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
@@ -85,6 +204,7 @@ fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
 impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let height = if self.compact { COMPACT } else { HIT };
         let handle = focus(&self.id, window, cx);
         let state = pointer(&self.id, window, cx);
         let track_bounds = window.use_keyed_state(child(&self.id, "track"), cx, |_, _| {
@@ -97,6 +217,7 @@ impl RenderOnce for Slider {
         let focused = handle.is_focused(window);
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
+        let glide = self.glide.clone().filter(|_| SHADED);
 
         // Whether a drag that began on this slider is under way. Set and
         // cleared without a notify: nothing is drawn from it.
@@ -111,7 +232,7 @@ impl RenderOnce for Slider {
             .id(rail_id.clone())
             .relative()
             .flex_1()
-            .h(HIT)
+            .h(height)
             .child(
                 canvas(
                     move |bounds, _, cx| measure.update(cx, |b, _| *b = bounds),
@@ -177,28 +298,56 @@ impl RenderOnce for Slider {
                     .absolute()
                     .left_0()
                     .right_0()
-                    .top(px((f32::from(HIT) - f32::from(HAIRLINE)) / 2.0))
+                    .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                     .h(HAIRLINE)
                     .bg(look.palette.rule.hsla()),
             )
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .w(gpui_kit::relative(value))
-                    .top(px((f32::from(HIT) - FILL) / 2.0))
-                    .h(px(FILL))
-                    .bg(look.accent.hsla()),
-            )
-            .when(thumb, |rail| {
+            .when(glide.is_none(), |rail| {
+                rail.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .w(gpui_kit::relative(value))
+                        .top(px((f32::from(height) - FILL) / 2.0))
+                        .h(px(FILL))
+                        .bg(look.accent.hsla()),
+                )
+            })
+            .when(glide.is_none() && thumb, |rail| {
                 rail.child(
                     div()
                         .absolute()
                         .left(gpui_kit::relative(value))
                         .ml(px(-THUMB / 2.0))
-                        .top(px((f32::from(HIT) - THUMB) / 2.0))
+                        .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
                         .bg(look.palette.ink.hsla()),
+                )
+            })
+            .when_some(glide, |rail, glide| {
+                let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
+                rail.child(
+                    canvas(
+                        move |_, window, _| {
+                            let scale = window.scale_factor();
+                            glide.style(&Style {
+                                fill: FILL * scale,
+                                thumb: if thumb { THUMB * scale } else { 0.0 },
+                                inset: THUMB / 2.0 * scale,
+                                fill_color,
+                                thumb_color,
+                            });
+                            glide
+                        },
+                        |bounds, glide, window, _| {
+                            window.paint_shader(bounds, &GLIDE, glide.0.clone());
+                        },
+                    )
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-THUMB / 2.0))
+                    .right(px(-THUMB / 2.0)),
                 )
             });
 

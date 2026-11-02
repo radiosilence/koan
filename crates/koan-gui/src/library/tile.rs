@@ -8,17 +8,28 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use koan_ffi::{Album, AlbumOnDevice};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, hsla, px, relative};
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
+// text measured or shaped at runtime.
+use koan_kit::raw::{TextRun, font};
+// decoded images handed to the renderer.
+use koan_kit::raw::{ImageSource, img};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
 use super::tokens::{Paint, Type, Typeset};
+use crate::theme::tokens::Motion;
 use crate::theme::tokens::Scale;
-use crate::theme::{Icon, KoanIcon};
+use crate::theme::{Icon, KoanIcon, KoanTheme};
 
 /// Columns of at least 150 points sharing the width, up to 210 each, as the
 /// Mac's grid lays them out. Every tile is the same size, so nothing is
@@ -38,14 +49,16 @@ const MIN_SIDE: f32 = 150.0;
 const MAX_SIDE: f32 = 210.0;
 const MIN_GAP: f32 = 18.0;
 pub const LINE_GAP: f32 = 22.0;
-pub const MARGIN: f32 = 20.0;
 /// Between sleeve, title and credit.
 const CAPTION_GAP: f32 = 7.0;
 
 impl Grid {
     /// The grid for a list `width` wide, with captions on `scale`.
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        let usable = (f32::from(width) - 2.0 * MARGIN).max(MIN_SIDE);
+        // The page's margin, so the grid's edge is the header's and the
+        // rows'.
+        let margin = crate::theme::Space::Xxl.points() * scale.space;
+        let usable = (f32::from(width) - 2.0 * margin).max(MIN_SIDE);
         let columns = (((usable + MIN_GAP) / (MIN_SIDE + MIN_GAP)).floor() as usize).max(1);
         let side = ((usable - MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
             .floor()
@@ -59,7 +72,7 @@ impl Grid {
             columns,
             side: px(side),
             gap: px(gap),
-            margin: px(MARGIN),
+            margin: px(margin),
             row: px(side) + caption_height(scale) + px(LINE_GAP),
         }
     }
@@ -185,6 +198,11 @@ pub struct TileView<V: TileHost> {
     /// The credit's names' widths, shaped at the size they were drawn at
     /// when the pointer first needed them.
     credit_widths: Option<(Pixels, Vec<Pixels>)>,
+    /// When the sleeve being faded in arrived, while it fades.
+    fade: Option<Instant>,
+    /// The record's colour, last shown before its sleeve: what the sleeve
+    /// fades in over.
+    ground: Option<Hsla>,
     _accent: Subscription,
 }
 
@@ -202,6 +220,8 @@ impl<V: TileHost> TileView<V> {
             hovered: None,
             origin: Rc::new(Cell::new(Point::default())),
             credit_widths: None,
+            fade: None,
+            ground: None,
             _accent: crate::theme::observe_accent(cx),
         }
     }
@@ -281,6 +301,16 @@ impl<V: TileHost> TileView<V> {
             self.credit_widths = None;
         }
         let moved = !Rc::ptr_eq(&self.record, record) || !self.state.same(&state);
+        // A sleeve arriving where there was none fades in; one replacing a
+        // stand-in of another size, or already in memory, is just shown.
+        if let Sleeve::Colour(colour) = &state.sleeve {
+            self.ground = Some(*colour);
+        }
+        self.fade = match (&self.state.sleeve, &state.sleeve) {
+            (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade,
+            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::NORMAL => Some(*arrived),
+            _ => None,
+        };
         self.record = record.clone();
         self.state = state;
         if moved {
@@ -306,8 +336,31 @@ impl<V: TileHost> Render for TileView<V> {
         // it (see `origin`).
         let mut art = div().relative().size(side).flex_none().bg(p.surface);
         match &state.sleeve {
-            Sleeve::Ready(image) => {
-                art = art.child(img(ImageSource::Render(image.clone())).size_full())
+            Sleeve::Ready(image, _) => {
+                let shown = match self.fade.filter(|_| KoanTheme::motion_allowed(cx)) {
+                    Some(arrived) => {
+                        let t = arrived.elapsed().as_secs_f32() / Motion::NORMAL.as_secs_f32();
+                        if t < 1.0 {
+                            // This tile alone, frame by frame, until it lands.
+                            cx.on_next_frame(window, |_, _, cx| cx.notify());
+                            Motion::quick_out(t)
+                        } else {
+                            self.fade = None;
+                            1.0
+                        }
+                    }
+                    None => 1.0,
+                };
+                if shown < 1.0
+                    && let Some(ground) = self.ground
+                {
+                    art = art.bg(ground);
+                }
+                art = art.child(
+                    img(ImageSource::Render(image.clone()))
+                        .size_full()
+                        .opacity(shown),
+                )
             }
             Sleeve::Colour(colour) => art = art.bg(*colour),
             Sleeve::Waiting | Sleeve::None => {
@@ -595,8 +648,6 @@ fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
 
     #[test]
     fn columns_share_the_width_within_the_tile_bounds() {
@@ -607,7 +658,7 @@ mod tests {
         assert!(wide.side >= px(MIN_SIDE) && wide.side <= px(MAX_SIDE));
         assert!(wide.gap >= px(MIN_GAP));
         let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
-        assert!((f32::from(used) - (1920.0 - 2.0 * MARGIN)).abs() < 1.0);
+        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
         assert_eq!(wide.rows(0), 0);
         assert_eq!(wide.rows(wide.columns + 1), 2);
     }

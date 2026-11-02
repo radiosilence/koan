@@ -52,6 +52,24 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
     // KOAN: shader quads (#1641).
     pub shaders: Vec<crate::PaintShader>,
+    // KOAN: which drawn frame this scene holds, so a renderer can tell a
+    // re-present of the same frame from a new one (#1641).
+    pub generation: u64,
+    // KOAN: the scene as layers its shaders are drawn between, so a
+    // re-present composes them rather than drawing the whole scene; `None`
+    // where the shaders cannot be drawn apart from the rest (#1641).
+    pub shader_layers: Option<Box<ShaderLayers>>,
+}
+
+// KOAN: (#1641) a scene with shaders, split where they are drawn: `layers[0]`
+// first, then the shaders of `groups[0]` (a range of `Scene::shaders`), then
+// `layers[1]`, and so on, `layers` one longer than `groups`. Each layer holds
+// the scene's other primitives drawn between those shaders, with their
+// orders, ready for a renderer to draw into a texture of its own.
+#[derive(Default)]
+pub struct ShaderLayers {
+    pub layers: Vec<Scene>,
+    pub groups: Vec<Range<usize>>,
 }
 
 #[expect(missing_docs)]
@@ -183,9 +201,107 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
         self.surfaces.sort_by_key(|surface| surface.order);
-        // KOAN: shader quads (#1641), kept together by program within an order.
-        self.shaders
-            .sort_by_key(|shader| (shader.order, shader.program.name));
+        // KOAN: shader quads (#1641), kept together by program and image
+        // within an order.
+        self.shaders.sort_by_key(|shader| {
+            (
+                shader.order,
+                shader.program.name,
+                shader.image.as_ref().map(|tile| tile.texture_id.index),
+            )
+        });
+        // KOAN: (#1641).
+        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.shader_layers = self.plan_shader_layers().map(Box::new);
+    }
+
+    // KOAN: whether this scene holds no primitives (#1641).
+    pub fn is_blank(&self) -> bool {
+        self.shadows.is_empty()
+            && self.quads.is_empty()
+            && self.paths.is_empty()
+            && self.underlines.is_empty()
+            && self.monochrome_sprites.is_empty()
+            && self.subpixel_sprites.is_empty()
+            && self.polychrome_sprites.is_empty()
+            && self.surfaces.is_empty()
+            && self.shaders.is_empty()
+    }
+
+    // KOAN: (#1641) splits the scene where its shaders are drawn.
+    //
+    // Shaders in draw order are grouped, a new group starting at a shader
+    // that overlaps one already in the group, so a page's playing bars are
+    // one group over the wash's. Every other primitive must be drawn after
+    // each shader it overlaps with a lower order (an order is one more than
+    // the highest it overlaps, and at equal orders the shader is drawn last)
+    // and before each it overlaps with an equal or higher one: it goes in
+    // the layer after the last group it must follow, and if that is past a
+    // group it must precede, the scene cannot be split and is drawn whole.
+    fn plan_shader_layers(&self) -> Option<ShaderLayers> {
+        if self.shaders.is_empty() {
+            return None;
+        }
+        let visible = |bounds: &Bounds<ScaledPixels>, mask: &ContentMask<ScaledPixels>| {
+            bounds.intersect(&mask.bounds)
+        };
+        let shaders: Vec<_> = self
+            .shaders
+            .iter()
+            .map(|s| (s.order, visible(&s.bounds, &s.content_mask)))
+            .collect();
+        let mut groups = Vec::new();
+        let mut group_of = Vec::with_capacity(shaders.len());
+        let mut start = 0;
+        for (i, (_, bounds)) in shaders.iter().enumerate() {
+            if shaders[start..i].iter().any(|(_, b)| b.intersects(bounds)) {
+                groups.push(start..i);
+                start = i;
+            }
+            group_of.push(groups.len());
+        }
+        groups.push(start..shaders.len());
+
+        let place = |order: DrawOrder, bounds: Bounds<ScaledPixels>| -> Option<usize> {
+            let (mut after, mut before) = (0, usize::MAX);
+            for (k, (o, s)) in shaders.iter().enumerate() {
+                if s.intersects(&bounds) {
+                    if *o < order {
+                        after = after.max(group_of[k] + 1);
+                    } else {
+                        before = before.min(group_of[k]);
+                    }
+                }
+            }
+            (after <= before).then_some(after)
+        };
+        let mut layers: Vec<Scene> = (0..=groups.len()).map(|_| Scene::default()).collect();
+        macro_rules! split {
+            ($($list:ident),*) => {$(
+                for p in &self.$list {
+                    let layer = place(p.order, visible(&p.bounds, &p.content_mask))?;
+                    layers[layer].$list.push(p.clone());
+                }
+            )*};
+        }
+        split!(
+            shadows,
+            quads,
+            underlines,
+            monochrome_sprites,
+            subpixel_sprites,
+            polychrome_sprites,
+            surfaces
+        );
+        for path in &self.paths {
+            let layer = place(path.order, visible(&path.bounds, &path.content_mask))?;
+            let paths = &mut layers[layer].paths;
+            let mut path = path.clone();
+            path.id = PathId(paths.len());
+            paths.push(path);
+        }
+        Some(ShaderLayers { layers, groups })
     }
 
     #[cfg_attr(
@@ -503,7 +619,9 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             // KOAN: shader quads (#1641): one batch per run of one program.
             PrimitiveKind::Shader => {
-                let program = self.shaders_iter.peek().unwrap().program;
+                let first = self.shaders_iter.peek().unwrap();
+                let (program, texture) =
+                    (first.program, first.image.as_ref().map(|t| t.texture_id));
                 let shaders_start = self.shaders_start;
                 let mut shaders_end = shaders_start + 1;
                 self.shaders_iter.next();
@@ -512,6 +630,8 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|shader| {
                         (shader.order, batch_kind) < max_order_and_kind
                             && std::ptr::eq(shader.program, program)
+                            && shader.image.as_ref().map(|t| t.texture_id)
+                                == texture
                     })
                     .is_some()
                 {
@@ -520,6 +640,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.shaders_start = shaders_end;
                 Some(PrimitiveBatch::Shaders {
                     program,
+                    texture,
                     range: shaders_start..shaders_end,
                 })
             }
@@ -558,6 +679,7 @@ pub enum PrimitiveBatch {
     // KOAN: shader quads (#1641).
     Shaders {
         program: &'static crate::ShaderProgram,
+        texture: Option<AtlasTextureId>,
         range: Range<usize>,
     },
 }
@@ -593,7 +715,7 @@ impl PrimitiveBatch {
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
             // KOAN: shader quads (#1641).
-            Self::Shaders { program, range } => {
+            Self::Shaders { program, range, .. } => {
                 format!("shaders ({}) of {}", range.len(), program.name)
             }
         }

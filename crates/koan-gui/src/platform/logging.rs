@@ -17,11 +17,17 @@ enum Line {
     Flush(Sender<()>),
 }
 
-struct Logger(Sender<Line>);
+/// The lines, and whether koan's own debug lines are kept too
+/// (`KOAN_LOG=debug`): what the cover cache is fetching, for one. Other
+/// crates' debug lines are never kept; they would bury koan's.
+struct Logger(Sender<Line>, bool);
 
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Info
+            || (self.1
+                && metadata.level() == log::Level::Debug
+                && metadata.target().starts_with("koan"))
     }
 
     fn log(&self, record: &log::Record) {
@@ -79,9 +85,17 @@ pub fn init() {
         if let Err(e) = spawned {
             eprintln!("log: no writer thread: {e}");
         }
-        Logger(lines)
+        Logger(lines, debug())
     });
     if log::set_logger(logger).is_ok() {
-        log::set_max_level(log::LevelFilter::Info);
+        log::set_max_level(if debug() {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        });
     }
+}
+
+fn debug() -> bool {
+    std::env::var("KOAN_LOG").is_ok_and(|level| level.eq_ignore_ascii_case("debug"))
 }

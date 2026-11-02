@@ -1,0 +1,1 @@
+- **Following the queue, and dragging playlists, in the desktop app.** The queue's crosshair keeps the playing track in view until you scroll, as the Mac's does; playlists in the sidebar can be dragged to reorder them, or onto the queue to queue them; the queue's selection controls are spaced and drawn as text buttons.

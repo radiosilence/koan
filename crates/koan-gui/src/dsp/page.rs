@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, ExternalPaths, InteractiveElement, IntoElement,
-    ParentElement, PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, canvas, div, point, px,
-};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px};
 
 use super::graph::{Graph, Part, Stroke};
 use super::menu::{Item, Trigger, menu};
@@ -93,7 +93,8 @@ impl Render for EqPage {
                 dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, into, cx));
             })
             .child(
-                koan_kit::raw::AnyView::from(self.body.clone())
+                koan_kit::app::AnyView::from(self.body.clone())
+                    // the bounds a cached view keeps between frames.
                     .cached(koan_kit::raw::StyleRefinement::default().size_full()),
             )
             .children(sheets)
@@ -456,7 +457,8 @@ impl Render for EqBody {
                     .child(head)
                     .child(
                         div().h(px(290.0)).child(
-                            koan_kit::raw::AnyView::from(self.graph.clone())
+                            koan_kit::app::AnyView::from(self.graph.clone())
+                                // the bounds a cached view keeps between frames.
                                 .cached(koan_kit::raw::StyleRefinement::default().size_full()),
                         ),
                     )
@@ -630,20 +632,20 @@ impl EqBody {
             let this = cx.weak_entity();
             let save = {
                 let (this, preset) = (this.clone(), preset.clone());
-                move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
+                move |_: &koan_kit::app::ClickEvent, _: &mut Window, cx: &mut App| {
                     this.update(cx, |p, cx| p.save(preset.clone(), true, cx))
                         .ok();
                 }
             };
             let revert = {
                 let (this, preset) = (this.clone(), preset.clone());
-                move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
+                move |_: &koan_kit::app::ClickEvent, _: &mut Window, cx: &mut App| {
                     this.update(cx, |p, cx| p.choose_preset(preset.clone(), cx))
                         .ok();
                 }
             };
             let save_new =
-                move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
+                move |_: &koan_kit::app::ClickEvent, window: &mut Window, cx: &mut App| {
                     this.update(cx, |p, cx| {
                         p.ask_preset_name("Save as New Preset", window, cx)
                     })
@@ -868,7 +870,7 @@ impl EqBody {
         ];
         let pick = |stage: Stage, page: &Self| {
             let (dsp, sheets, device) = (page.dsp.clone(), page.sheets.clone(), device.to_owned());
-            move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
+            move |_: &koan_kit::app::ClickEvent, window: &mut Window, cx: &mut App| {
                 let view = cx.new(|cx| {
                     stage::StagePicker::new(
                         dsp.clone(),
@@ -995,7 +997,7 @@ impl EqBody {
     fn opener(
         &self,
         name: String,
-    ) -> impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static {
+    ) -> impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static {
         let (dsp, sheets, device) = (self.dsp.clone(), self.sheets.clone(), self.device());
         move |_, window, cx| {
             let view = cx.new(|cx| {
@@ -1020,6 +1022,7 @@ impl EqBody {
         o: &DspOverview,
         device: &str,
         detail: Option<String>,
+        // geometry and colours computed at runtime, not chosen from the theme.
         outline: koan_kit::raw::Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1043,7 +1046,7 @@ impl EqBody {
         };
         let mut items = vec![Item::action(label("Edit"), {
             let open = self.opener(entry.name.clone());
-            move |window, cx| open(&koan_kit::raw::ClickEvent::default(), window, cx)
+            move |window, cx| open(&koan_kit::app::ClickEvent::default(), window, cx)
         })];
         if i > 0 {
             let (set, chain) = (set.clone(), chain.clone());
@@ -1243,15 +1246,16 @@ impl Stroke {
 /// controls.
 #[allow(clippy::too_many_arguments)]
 fn block(
-    id: impl Into<koan_kit::raw::ElementId>,
+    id: impl Into<koan_kit::app::ElementId>,
     title: &str,
     name: String,
     detail: Option<String>,
     db: Option<Vec<f64>>,
     stroke: Stroke,
+    // geometry and colours computed at runtime, not chosen from the theme.
     outline: koan_kit::raw::Hsla,
     look: &Look,
-    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
     controls: Vec<AnyElement>,
 ) -> impl IntoElement {
     div()
@@ -1302,9 +1306,10 @@ fn placeholder(
     id: &'static str,
     title: Option<&str>,
     prompt: &str,
+    // geometry and colours computed at runtime, not chosen from the theme.
     outline: Option<koan_kit::raw::Hsla>,
     look: &Look,
-    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id)
@@ -1348,6 +1353,7 @@ pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> impl IntoEleme
             let look = Look::of(window, cx);
             let range = range.unwrap_or_else(|| db.iter().fold(6.0f64, |m, v| m.max(v.abs())));
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            // painted and hit-tested by hand: drawing koan-kit has no component for.
             let mut b = koan_kit::raw::PathBuilder::stroke(px(1.5));
             if !stroke.dash.is_empty() {
                 let dash: Vec<_> = stroke.dash.iter().map(|d| px(*d)).collect();

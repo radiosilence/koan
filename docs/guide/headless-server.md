@@ -153,7 +153,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory, which is held to 1 GiB by removing the covers read least recently; deleting it only costs regenerating them.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory, which is held to 4 GB by removing the covers read least recently; deleting it only costs regenerating them.
 
 - **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
 - **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.
@@ -177,6 +177,12 @@ Admin accounts find Rescan at the foot of the Library page, which the sidebar li
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 
 The section also shows the scans the server runs by itself, with what started each, how many of the files it has to read (new and changed ones, or every file on a re-read) it has read so far, and how it ended. A bar fills as it reads; while the scan is still finding out how many files that is, it shows a still band. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
+
+### Caches
+
+Below Rescan, admin accounts see what the server keeps beside the library, so slow covers can be diagnosed without reading its logs: the cover cache's size against its 4 GB budget, how many covers it holds at each size and how many records it remembers as having no art, what the background warm is doing (making covers, idle, or paused because the cache is full) with how far it has got and when it runs next, and what the last sweep removed. A server syncing from another also shows its download cache, and every server its track, record and artist counts and how long the last scan took. The section updates as the warm, a sweep or a scan moves.
+
+**Warm now** makes covers for the records still without them instead of waiting for the next pass, and **Clear covers** removes every kept cover, misses included, after saying how many and how much space that is. The same figures and actions are in GraphQL as `serverCaches`, `warmCovers` and `clearCoverCache`.
 
 ### Signing in
 
@@ -263,6 +269,7 @@ Besides playing, browsing and favourites, Subsonic clients get:
   kōan's own apps move their queues between devices over the link, and use it only when a device is set to keep its queue on the server (see [Remote servers](remote-servers.md#the-play-queue-on-the-server)).
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
 - **A cover for every record.** `getCoverArt` for a song, album or artist without art answers with the kōan ensō on a dark square, at the nearest size covers are served at, as Navidrome answers with its own placeholder, so a client always has an image to draw. It is marked with an `X-Koan-Placeholder` header, which kōan's own apps read as "no artwork" and draw their placeholder in their own appearance instead. An id the library does not hold is still an error.
+- **Covers that do not touch the music.** A record's cover is read from its files once, resized, and kept under the configuration directory (`covers/`, at most 4 GB, the least recently read going first; covers an older version kept at sizes no longer served are removed at start); every later `getCoverArt` for it reads that one small file, so a grid of covers does not send a disk seeking through the library. A record's removal drops what was kept, and so does a change to its files or to a cover image beside them, whether the folder watcher sees it or a later scan does: on a network share or in a container, where the watcher hears nothing, the start-up and periodic scans compare the cover images with the ones they saw last. While it runs, the server makes every record's cover at the sizes the desktop app, the web UI and the phones' lists ask for (600 and 300) in the background, one at a time in the order the files lie, so the first request is quick too.
 - **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
 - **File paths, for admin accounts.** Songs carry `path`, the file's place relative to the library folder holding it (whole, for a file imported from outside every folder), so a client can show where a wrong or duplicated track comes from. Other accounts and the shared secret are not sent it, since it describes the server's filesystem. kōan's apps show it in a track's info as the path on the server.
 

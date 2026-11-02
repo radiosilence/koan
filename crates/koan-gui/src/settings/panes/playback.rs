@@ -2,8 +2,7 @@
 
 use crate::components::{Picker, Stepper, Toggle};
 use crate::theme::Look;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use crate::mirror::{Mirror, Outputs};
 use crate::settings::Ctx;

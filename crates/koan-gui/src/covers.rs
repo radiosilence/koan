@@ -10,8 +10,11 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// decoded images handed to the renderer.
+use koan_kit::raw::{Image, ImageFormat, RenderImage, img};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::Hsla;
 
 use crate::engine::engine;
 

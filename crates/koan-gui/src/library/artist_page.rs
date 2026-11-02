@@ -13,8 +13,13 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{ListAlignment, ListOffset, ListState, list};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -24,6 +29,7 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::components::{Cover, CoverArt, FadeIn, RowMetrics, SectionHeading};
 use crate::theme::Space;
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -227,17 +233,15 @@ impl ArtistPage {
                 start = end;
             }
         };
-        let sections = sections(&record.albums);
-        let titled = sections.len() > 1;
-        for (section, start, len) in sections {
-            if titled {
-                items.push(Item::Heading(
-                    koan_ffi::release_section_title(section)
-                        .to_lowercase()
-                        .into(),
-                    Heading::Section(section),
-                ));
-            }
+        // Headed even when there is one section, so a discography of albums
+        // alone still says what it is.
+        for (section, start, len) in sections(&record.albums) {
+            items.push(Item::Heading(
+                koan_ffi::release_section_title(section)
+                    .to_lowercase()
+                    .into(),
+                Heading::Section(section),
+            ));
             rows(&mut items, false, start, len);
         }
         if !record.features.is_empty() {
@@ -253,7 +257,7 @@ impl ArtistPage {
 
     /// A heading's line, with the space above it and below.
     fn heading_height(p: &Paint) -> Pixels {
-        p.look.line_height(Type::Fine) + p.space(Space::L) + p.space(Space::S)
+        SectionHeading::height(&p.look)
     }
 
     fn height(&self, p: &Paint, item: &Item, grid: Grid) -> f32 {
@@ -376,7 +380,11 @@ impl ArtistPage {
             match item {
                 Item::Header if self.info.as_ref().is_some_and(|i| i.has_image) => {
                     ranked.push((
-                        Key::new(Art::Artist(self.artist_id), grid.side, scale),
+                        Key::new(
+                            Art::Artist(self.artist_id),
+                            RowMetrics::artist_photo(&p.look),
+                            scale,
+                        ),
                         priority,
                     ));
                 }
@@ -440,7 +448,7 @@ impl ArtistPage {
         let scale = window.scale_factor();
         match item {
             Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
-            Item::Heading(title, _) => Self::heading(p, title).into_any_element(),
+            Item::Heading(title, _) => SectionHeading::new(title).into_any_element(),
             Item::FeaturesHeading => {
                 let items: Vec<Playable> = record
                     .features
@@ -448,21 +456,17 @@ impl ArtistPage {
                     .map(|a| Playable::Album(a.id))
                     .collect();
                 let (lib, items2, lib2) = (self.lib.clone(), items.clone(), self.lib.clone());
-                div()
-                    .flex()
-                    .items_end()
-                    .gap(p.space(Space::L))
-                    .child(Self::heading(p, "features on"))
-                    .child(div().pb(p.space(Space::S)).child(
+                SectionHeading::new("features on")
+                    .trailing(
                         chrome::text_button("features-play", "play").on_click(move |_, _, cx| {
                             actions::play(&lib, &items, false, cx).detach()
                         }),
-                    ))
-                    .child(div().pb(p.space(Space::S)).child(
+                    )
+                    .trailing(
                         chrome::text_button("features-shuffle", "shuffle").on_click(
                             move |_, _, cx| actions::play(&lib2, &items2, true, cx).detach(),
                         ),
-                    ))
+                    )
                     .into_any_element()
             }
             Item::Tiles { features, range } => {
@@ -485,7 +489,9 @@ impl ArtistPage {
                 let selected = self.selection.contains(item);
                 let drag = match (selected, self.pick()) {
                     (true, Some(pick)) => pick,
-                    _ => PlayableDrag::new(&[item], track.title.clone()),
+                    _ => {
+                        PlayableDrag::new(&[item], track.title.clone()).with_sleeve(track.album_id)
+                    }
                 };
                 let sleeve = track.album_id.map(|album| {
                     let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
@@ -504,7 +510,19 @@ impl ArtistPage {
                     drag,
                     kind: crate::components::RowKind::Art,
                 };
-                rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
+                // A row insets itself by the page's margin, as the body does.
+                div()
+                    .mx(-RowMetrics::page_margin(&p.look))
+                    .child(rows::track_row(
+                        p,
+                        track,
+                        index,
+                        state,
+                        sleeve,
+                        Some(self.artist_id),
+                        cx,
+                    ))
+                    .into_any_element()
             }
         }
     }
@@ -565,21 +583,11 @@ impl ArtistPage {
         div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
 
-    fn heading(p: &Paint, title: impl Into<SharedString>) -> Div {
-        div()
-            .h(Self::heading_height(p))
-            .flex()
-            .items_end()
-            .pb(p.space(Space::S))
-            .typeset(p, Type::Fine, p.ink)
-            .child(title.into())
-    }
-
     fn header(
         &mut self,
         p: &Paint,
         record: &Record,
-        grid: Grid,
+        _grid: Grid,
         scale: f32,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -590,126 +598,90 @@ impl ArtistPage {
             .as_ref()
             .map(|a| a.name.clone())
             .unwrap_or_default();
-        let mut photo = div().size(grid.side).flex_none().bg(p.surface);
-        if self.info.as_ref().is_some_and(|i| i.has_image) {
-            let key = Key::new(Art::Artist(id), grid.side, scale);
-            match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
-                Sleeve::Ready(image) => {
-                    photo = photo.child(fade_in(
-                        ("artist-photo", id as u64),
-                        img(ImageSource::Render(image)).size_full(),
-                        cx,
-                    ))
-                }
-                Sleeve::Colour(colour) => photo = photo.bg(colour),
-                Sleeve::Waiting | Sleeve::None => {
-                    photo = photo.child(crate::components::Placeholder::new(grid.side))
-                }
-            }
+        // No box until the artist is known to have a photo: the header
+        // starts at the page's edge. Once known, the box holds its place with
+        // the placeholder in it, so the photo landing moves nothing.
+        let side = RowMetrics::artist_photo(&p.look);
+        let photo = self.info.as_ref().is_some_and(|i| i.has_image).then(|| {
+            let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
+            FadeIn::new(("artist-photo", id as u64), Cover::new(art, side))
+        });
+        let albums = record.albums.len() as u64;
+        let mut header = super::header::playable_header(&self.lib, item, name, cx)
+            .detail(chrome::count(albums, "album", "albums"));
+        if let Some(photo) = photo {
+            header = header.art(photo);
         }
-        let favourite = self.lib.feed.read(cx).is_favourite(item);
-        let (lib, lib2) = (self.lib.clone(), self.lib.clone());
-        let mut text = div()
-            .flex()
-            .flex_col()
-            .gap(p.space(Space::S))
-            .min_w_0()
-            .flex_1()
-            .child(
-                div()
-                    .typeset(p, Type::Title, p.strong)
-                    .line_clamp(2)
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(p.space(Space::L))
-                    .child(
-                        // The page's one prominent action.
-                        crate::components::Button::new(
-                            "artist-play",
-                            crate::components::ButtonKind::Prominent,
-                        )
-                        .label("play")
-                        .on_click(move |_, _, cx| actions::play(&lib, &[item], false, cx).detach()),
-                    )
-                    .child(
-                        chrome::text_button("artist-shuffle", "shuffle").on_click(
-                            move |_, _, cx| actions::play(&lib2, &[item], true, cx).detach(),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("artist-page-heart")
-                            .cursor_pointer()
-                            .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
-                            .child(super::tile::heart_glyph(p, favourite))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.lib
-                                    .feed
-                                    .update(cx, |f, cx| f.toggle_favourite(item, cx))
-                            })),
-                    ),
-            );
         if let Some(info) = &self.info
             && let Some(bio) = &info.bio
         {
             let long = bio.len() > BIO_CLAMP;
-            let mut body = div()
+            let mut text = div()
                 .typeset(p, Type::Control, p.ink)
                 .child(bio.replace('\n', "\n\n"));
             if long && !self.expanded {
-                body = body.line_clamp(4);
+                text = text.line_clamp(4);
             }
-            text = text
-                .child(fade_in(("artist-bio", id as u64), body, cx))
-                .child(
-                    div()
-                        .flex()
-                        .gap(p.space(Space::M))
-                        .typeset(p, Type::Fine, p.muted)
-                        .when(long && !self.expanded, |d| {
-                            d.child(
-                                div()
-                                    .id("bio-more")
-                                    .cursor_pointer()
-                                    .underline()
-                                    .child("more")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.expanded = true;
-                                        this.list.remeasure_items(0..1);
-                                        cx.notify();
-                                    })),
-                            )
-                        })
-                        .when_some(info.bio_url.clone(), |d, url| {
-                            d.child(
-                                div()
-                                    .id("bio-source")
-                                    .cursor_pointer()
-                                    .underline()
-                                    .child("wikipedia")
-                                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                            )
-                        })
-                        .when_some(info.image_credit.clone(), |d, credit| {
-                            d.child(format!("photo: {credit}"))
-                        }),
-                );
+            let links = div()
+                .flex()
+                .gap(p.space(Space::M))
+                .typeset(p, Type::Fine, p.muted)
+                .when(long && !self.expanded, |d| {
+                    d.child(
+                        div()
+                            .id("bio-more")
+                            .cursor_pointer()
+                            .underline()
+                            .child("more")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.expanded = true;
+                                this.list.remeasure_items(0..1);
+                                cx.notify();
+                            })),
+                    )
+                })
+                .when_some(info.bio_url.clone(), |d, url| {
+                    d.child(
+                        div()
+                            .id("bio-source")
+                            .cursor_pointer()
+                            .underline()
+                            .child("wikipedia")
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                    )
+                })
+                .when_some(info.image_credit.clone(), |d, credit| {
+                    d.child(format!("photo: {credit}"))
+                });
+            header = header.body(FadeIn::new(
+                ("artist-bio", id as u64),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(p.space(Space::S))
+                    .child(text)
+                    .child(links),
+            ));
         }
         div()
             .w_full()
-            .flex()
-            .items_start()
-            .gap(grid.gap)
-            .pt(p.space(Space::L))
-            .pb(p.space(Space::L))
-            .child(photo)
-            .child(text)
+            .pt(RowMetrics::page_top(&p.look))
+            .pb(RowMetrics::header_gap(&p.look))
+            .child(header)
     }
 
+    /// The artist's photo, once it has been found and decoded.
+    fn photo(&mut self, side: Pixels, scale: f32, cx: &mut Context<Self>) -> Option<CoverArt> {
+        if !self.info.as_ref().is_some_and(|i| i.has_image) {
+            return None;
+        }
+        let key = Key::new(Art::Artist(self.artist_id), side, scale);
+        match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
+            Sleeve::Ready(image, _) => Some(CoverArt::Image(image)),
+            Sleeve::Colour(colour) => Some(CoverArt::Colour(colour)),
+            Sleeve::Waiting | Sleeve::None => None,
+        }
+    }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         let order = self.order();
         self.selection.select_all(&order);
@@ -722,24 +694,6 @@ impl ArtistPage {
             cx.notify();
         }
     }
-}
-
-/// What arrives after the page, the photograph and the biography, fades in
-/// rather than appearing; with Reduce Motion or Low Power Mode it appears.
-fn fade_in(id: impl Into<ElementId>, element: impl IntoElement, cx: &App) -> AnyElement {
-    use crate::theme::{KoanTheme, tokens::Motion};
-    if !KoanTheme::motion_allowed(cx) {
-        return element.into_any_element();
-    }
-    div()
-        .size_full()
-        .child(element)
-        .with_animation(
-            id,
-            Animation::new(Motion::NORMAL).with_easing(Motion::quick_out),
-            |el, delta| el.opacity(delta),
-        )
-        .into_any_element()
 }
 
 /// The sections of an artist's records, in page order, as (section, start,
@@ -824,6 +778,13 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.record
+            .as_ref()
+            .map(|r| r.appearances.iter().map(|t| t.id).collect())
+            .unwrap_or_default()
+    }
+
     fn clicked(
         &mut self,
         index: usize,
@@ -926,13 +887,16 @@ impl Render for ArtistPage {
         let view = cx.weak_entity();
         // The page's margin is the list's parent's: a list lays its items out
         // across its own bounds and ignores padding of its own.
-        let body = div().size_full().px(px(tile::MARGIN)).child(
-            list(self.list.clone(), move |ix, window, cx| {
-                view.update(cx, |this, cx| this.item(ix, window, cx))
-                    .unwrap_or_else(|_| div().into_any_element())
-            })
-            .size_full(),
-        );
+        let body = div()
+            .size_full()
+            .px(RowMetrics::page_margin(&p.look))
+            .child(
+                list(self.list.clone(), move |ix, window, cx| {
+                    view.update(cx, |this, cx| this.item(ix, window, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
+                .size_full(),
+            );
 
         div()
             .key_context("Library")
@@ -952,6 +916,7 @@ impl Render for ArtistPage {
                     .flex_1()
                     .min_h_0()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
                 cx.weak_entity(),
                 window,
@@ -1053,5 +1018,14 @@ mod tests {
                 "0..1"
             ]
         );
+        // Albums alone are headed too.
+        let alone = Record {
+            artist: None,
+            albums: (0..2).map(|i| album(i, ReleaseSection::Albums)).collect(),
+            features: Vec::new(),
+            appearances: Vec::new(),
+        };
+        let items = ArtistPage::cut(&alone, grid);
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "albums"));
     }
 }

@@ -13,8 +13,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{AlbumSort, BrowseFilter};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{ScrollEvent, TouchPhase, UniformListScrollHandle, uniform_list};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -23,7 +28,6 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
@@ -152,7 +156,8 @@ impl AlbumGrid {
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Albums, cx);
         let restore = lib.nav.read(cx).offset(Page::Albums);
-        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let search =
+            cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter albums", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
         let mut this = Self {
             lib,
@@ -449,7 +454,7 @@ impl AlbumGrid {
                 .filter(|_| self.heading.borrow().visible.contains(&row))
             {
                 let image = match &sleeve {
-                    Sleeve::Ready(image) => Some(image.id),
+                    Sleeve::Ready(image, _) => Some(image.id),
                     _ => None,
                 };
                 let standin = image.is_some() && !self.lib.covers.read(cx).has(key);
@@ -621,6 +626,20 @@ impl AlbumGrid {
             })
     }
 
+    /// How many records the grid lists.
+    pub fn listed(&self) -> usize {
+        self.records.len()
+    }
+
+    /// How many tiles are on screen.
+    pub fn on_screen(&self) -> usize {
+        let Some(grid) = self.grid else { return 0 };
+        let visible = self.heading.borrow().visible.clone();
+        visible
+            .map(|row| ((row + 1) * grid.columns).min(self.records.len()) - row * grid.columns)
+            .sum()
+    }
+
     /// Jumps to the top, or to the end.
     pub fn jump(&mut self, to_end: bool, cx: &mut Context<Self>) {
         let handle = self.scroll.0.borrow().base_handle.clone();
@@ -720,6 +739,31 @@ impl TileHost for AlbumGrid {
     }
 }
 
+impl AlbumGrid {
+    /// The grid's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .spacer()
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::album_sort_button(&self.lib, cx))
+            .children(chrome::reshuffle_button(&self.lib, cx))
+            .spacer()
+            .child(chrome::select_toggle(
+                self.selection.is_active(),
+                cx.listener(|this, _, _, cx| {
+                    if this.selection.is_active() {
+                        this.selection.end();
+                    } else {
+                        this.selection.begin(None);
+                    }
+                    cx.notify();
+                }),
+            ))
+            .into_any_element()
+    }
+}
+
 impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -748,25 +792,7 @@ impl Render for AlbumGrid {
             p,
             "albums",
             chrome::count(count as u64, "album", "albums"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx))
-                .child(chrome::album_sort_button(&self.lib, cx))
-                .children(chrome::reshuffle_button(&self.lib, cx))
-                .child(chrome::select_toggle(
-                    self.selection.is_active(),
-                    cx.listener(|this, _, _, cx| {
-                        if this.selection.is_active() {
-                            this.selection.end();
-                        } else {
-                            this.selection.begin(None);
-                        }
-                        cx.notify();
-                    }),
-                )),
+            div(),
         );
 
         let width = self.width.clone();
@@ -835,6 +861,7 @@ impl Render for AlbumGrid {
                     .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                     .child(measure)
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,
@@ -855,7 +882,6 @@ impl Render for AlbumGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use crate::theme::tokens::Scale;
     use core::prelude::v1::test;
 

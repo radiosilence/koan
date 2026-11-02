@@ -5,9 +5,9 @@
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{Assistants, ScrobblingConnection};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
 
 use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};

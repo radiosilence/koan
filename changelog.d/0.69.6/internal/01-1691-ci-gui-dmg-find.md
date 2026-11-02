@@ -1,0 +1,1 @@
+- **The desktop app's DMG reaches the release whichever other packages built.** The attach job looked for it in one place only.

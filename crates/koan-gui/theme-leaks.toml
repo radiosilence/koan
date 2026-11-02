@@ -3,164 +3,200 @@
 # koan-kit's components drops its entry. See docs/design/koan-kit.md.
 
 ["app.rs"]
-number = 4
+number = 2
+raw = 6
+
+["covers.rs"]
+raw = 5
 
 ["dsp/bands.rs"]
-number = 14
+raw = 2
 
 ["dsp/flows.rs"]
-number = 4
+number = 1
+raw = 5
 
 ["dsp/graph.rs"]
-number = 43
-fixed = 3
+number = 39
+fixed = 1
+raw = 17
 
 ["dsp/manage.rs"]
-number = 3
-fixed = 1
+raw = 2
 
 ["dsp/menu.rs"]
-number = 7
-fixed = 1
+number = 1
+raw = 5
 
 ["dsp/page.rs"]
-number = 29
-fixed = 4
+number = 20
+raw = 11
 
 ["dsp/profile.rs"]
-number = 12
-fixed = 1
+number = 6
+raw = 5
 
 ["dsp/prompts.rs"]
-number = 3
-fixed = 1
+raw = 1
 
 ["dsp/sheet.rs"]
-number = 11
-fixed = 4
-container = 2
+container = 1
 
 ["dsp/stage.rs"]
-number = 2
+raw = 2
 
 ["dsp/window.rs"]
 number = 4
+raw = 5
 
 ["levels.rs"]
-number = 3
-
-["library/activity.rs"]
-number = 3
-fixed = 6
+number = 2
+raw = 8
 
 ["library/album_page.rs"]
-number = 3
-fixed = 2
-container = 1
+raw = 4
 
 ["library/albums.rs"]
-number = 11
-fixed = 1
+number = 10
+raw = 8
 
 ["library/artist_page.rs"]
-number = 11
-fixed = 3
-container = 1
+number = 9
+raw = 7
 
 ["library/artists.rs"]
-number = 4
-fixed = 3
+number = 2
+raw = 5
+
+["library/bench.rs"]
+raw = 1
 
 ["library/chrome.rs"]
-number = 7
+number = 2
 container = 1
+raw = 8
 
 ["library/covers.rs"]
 number = 3
-
-["library/drag.rs"]
-number = 1
+raw = 4
 
 ["library/info.rs"]
 number = 1
-fixed = 1
+raw = 2
 
 ["library/rows.rs"]
 number = 2
+raw = 2
+
+["library/stage.rs"]
+raw = 1
 
 ["library/tile.rs"]
-number = 31
-fixed = 8
+number = 30
+fixed = 3
+raw = 10
+
+["library/tokens.rs"]
+raw = 1
 
 ["library/tracks.rs"]
 number = 4
-fixed = 1
+raw = 5
+
+["links.rs"]
+raw = 1
+
+["main.rs"]
+raw = 2
 
 ["measure.rs"]
 number = 2
+raw = 8
 
 ["paint.rs"]
-number = 10
+number = 2
+raw = 3
 
 ["platform/about.rs"]
-number = 4
+number = 2
 container = 1
+raw = 5
+
+["platform/actions.rs"]
+raw = 5
+
+["platform/dock.rs"]
+raw = 3
+
+["platform/menus.rs"]
+raw = 4
+
+["platform/mod.rs"]
+raw = 1
 
 ["platform/shortcuts_sheet.rs"]
-number = 29
+number = 27
 fixed = 8
+raw = 7
 
 ["queue/mod.rs"]
-number = 21
-fixed = 1
+number = 1
+raw = 8
 
-["settings/form.rs"]
-number = 2
+["root.rs"]
+raw = 1
 
 ["settings/mod.rs"]
-number = 14
-fixed = 2
+number = 6
+fixed = 1
 container = 2
+raw = 9
 
 ["settings/panes/devices.rs"]
 number = 2
+raw = 3
+
+["settings/panes/integrations.rs"]
+raw = 2
 
 ["settings/panes/keys.rs"]
 number = 1
-
-["settings/panes/library.rs"]
-number = 1
-fixed = 1
+raw = 2
 
 ["settings/panes/link.rs"]
 number = 3
+raw = 2
 
 ["settings/panes/people.rs"]
 number = 3
+raw = 4
 
 ["settings/panes/server.rs"]
 number = 1
+raw = 3
 
 ["settings/panes/share.rs"]
 number = 1
+raw = 3
 
 ["settings/qr.rs"]
 number = 2
+raw = 5
 
 ["settings/sheet.rs"]
-number = 7
-fixed = 1
+number = 1
+raw = 5
 
 ["shell.rs"]
-number = 12
-fixed = 1
+raw = 5
 
 ["sidebar.rs"]
-number = 9
+raw = 2
 
 ["transport.rs"]
-number = 20
-fixed = 3
+number = 4
+raw = 5
 
 ["window_state.rs"]
 number = 4
+raw = 4

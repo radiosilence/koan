@@ -4,12 +4,9 @@
 use koan_ffi::{
     DspJoin, DspOverview, DspProfileSummary, DspRole, DspStarter, DspTargets, DspTuningEntry,
 };
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Subscription, Window, div,
-};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};
@@ -31,7 +28,7 @@ pub struct StagePicker {
     targets: Option<DspTargets>,
     loaded: Option<(u64, u64)>,
     /// The read under way; a newer one drops it.
-    _load: Option<koan_kit::raw::Task<()>>,
+    _load: Option<koan_kit::app::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -659,7 +656,7 @@ impl NewEq {
         &mut self,
         taken: bool,
         name: String,
-        window: koan_kit::raw::AnyWindowHandle,
+        window: koan_kit::app::AnyWindowHandle,
         cx: &mut Context<Self>,
     ) {
         self.saving = false;

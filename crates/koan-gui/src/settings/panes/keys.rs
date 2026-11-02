@@ -9,9 +9,11 @@ use std::sync::Arc;
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::InputState;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, day, item, section, text};

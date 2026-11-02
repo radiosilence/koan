@@ -1,0 +1,1 @@
+- **Covers from a koan server no longer read the music files.** A record's cover is read once, kept, and served from what was kept, so a grid of covers does not send the server's disk seeking; a rescan of the record's folder drops it. The server makes every record's grid cover in the background, in the order the files lie.

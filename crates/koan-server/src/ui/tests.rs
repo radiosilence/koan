@@ -636,8 +636,8 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         authed(&f.state, "/albums").body(Body::empty()).unwrap(),
     )
     .await;
-    let src = format!("src=\"ui/cover/{}?size=400&#38;v=", f.album_id);
-    let src_raw = format!("src=\"ui/cover/{}?size=400&v=", f.album_id);
+    let src = format!("src=\"ui/cover/{}?size=600&#38;v=", f.album_id);
+    let src_raw = format!("src=\"ui/cover/{}?size=600&v=", f.album_id);
     assert!(
         page.body.contains(&src) || page.body.contains(&src_raw),
         "{}",
@@ -645,7 +645,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
     );
     assert!(
         page.body
-            .contains("loading=\"lazy\" decoding=\"async\" width=\"400\" height=\"400\"")
+            .contains("loading=\"lazy\" decoding=\"async\" width=\"600\" height=\"600\"")
     );
 
     let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
@@ -676,7 +676,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         .collect();
     assert_eq!(kept.len(), 1, "one remembered miss");
     assert_eq!(kept[0].metadata().unwrap().len(), 0);
-    assert!(kept[0].file_name().to_string_lossy().ends_with("-400.jpg"));
+    assert!(kept[0].file_name().to_string_lossy().ends_with("-300.jpg"));
 }
 
 #[tokio::test]
@@ -3026,6 +3026,51 @@ async fn lastfm_connects_through_last_fm_and_disconnects_without_showing_the_key
         queries::scrobbling::service(&db.conn, alice, queries::scrobbling::LASTFM)
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn only_admins_see_and_clear_the_caches() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let admin =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let library = |access: &str| {
+        get("/library")
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let post = |path: &'static str, access: &str| {
+        Request::post(path)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .header("datastar-request", "true")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let follows = "data-init=\"@get('library/caches')\"";
+
+    let listener = access_token(&f.state);
+    let r = send(&f.app, library(&listener)).await;
+    assert!(!r.body.contains(follows), "{}", r.body);
+    for path in ["/library/caches/clear", "/library/caches/warm"] {
+        assert_eq!(
+            send(&f.app, post(path, &listener)).await.status,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    let r = send(&f.app, library(&admin)).await;
+    assert!(r.body.contains(follows), "{}", r.body);
+    let r = send(&f.app, post("/library/caches/clear", &admin)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("of 4.0 GB, in 0 covers"), "{}", r.body);
+    assert!(
+        !r.body.contains("Clear covers"),
+        "nothing left to clear: {}",
+        r.body
     );
 }
 

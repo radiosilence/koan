@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 use koan_gui::components::Slider;
 use koan_gui::sheet::ThemeSheet;
 use koan_gui::theme;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// A measuring tool outside the app: GPUI's headless harness and input, driven directly.
+use koan_kit::raw::{HeadlessAppContext, PlatformInput, StyleRefinement, point, px, size};
 
 const WIDTH: f32 = 1180.0;
 const HEIGHT: f32 = 1500.0;
@@ -92,13 +93,16 @@ impl Render for Bench {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
+        // geometry and colours computed at runtime, not chosen from the theme.
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
     });

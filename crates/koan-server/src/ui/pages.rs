@@ -1061,6 +1061,7 @@ struct LibraryPage {
     /// Whether the page has the rescan, which a wide screen shows alone.
     rescan: bool,
     scan: Html,
+    caches: Html,
 }
 
 /// The library's own lists, which the sidebar shows as links and a phone, with
@@ -1073,6 +1074,7 @@ pub(super) async fn library(
     let inner = LibraryPage {
         rescan: super::scan::allowed(&user),
         scan: super::scan::section(&s, &user),
+        caches: super::caches::section(&user),
     }
     .html();
     respond(&s, &headers, &user, "Library", &inner)

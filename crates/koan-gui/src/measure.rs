@@ -18,8 +18,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use koan_kit::app::*;
+// Scrolling the window by synthetic wheel events, as a person would: input
+// GPUI delivers, which only this measuring build makes.
+use koan_kit::raw::{PlatformInput, ScrollDelta, ScrollSource, TouchPhase, point, px};
+// the profiler's journal, read by the measuring build alone.
 use koan_kit::raw::profiler::journal::{ForegroundJournalEntry, IntervalBoundary};
-use koan_kit::raw::*;
 
 /// Wheel steps per direction, 16 ms apart: about five seconds each way.
 const STEPS: usize = 300;

@@ -5,15 +5,23 @@
 //! slider, a row of the queue) redraws itself and the views that hold it,
 //! and the others are reused as they were.
 
+use koan_kit::app::*;
+// gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::InteractiveElementExt as _;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
+// overlays placed against another element.
+use koan_kit::raw::deferred;
+// the platform window and its options.
+use koan_kit::raw::{Decorations, WindowControlArea};
 
-use crate::components::{SplitView, TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
+use crate::components::sheet as ask;
+use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
+    self, ActualSize, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward, ShowAlbums,
+    ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts,
+    ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -21,23 +29,10 @@ use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
-use crate::sidebar::{self, Sidebar};
+use crate::sidebar::Sidebar;
 use crate::theme::{self, Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
-
-const TOOLBAR: Pixels = px(TOOLBAR_HEIGHT);
-/// Room above the sidebar for the window's buttons, which sit on its ground.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS: Pixels = TOOLBAR;
-#[cfg(not(target_os = "macos"))]
-const TRAFFIC_LIGHTS: Pixels = px(0.);
-/// The window's buttons' width, which the toolbar leaves clear while the
-/// sidebar is hidden and they sit over it.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_WIDTH: Pixels = px(78.);
-#[cfg(not(target_os = "macos"))]
-const TRAFFIC_LIGHTS_WIDTH: Pixels = px(0.);
 
 pub struct Shell {
     nav: Entity<Navigator>,
@@ -46,6 +41,8 @@ pub struct Shell {
     /// Held for the life of the window, so the queue's selection and scroll
     /// position survive a visit to another page.
     queue: Entity<QueueView>,
+    /// The queue's controls, in the toolbar while the queue shows.
+    queue_controls: Entity<library::controls::ControlsSlot>,
     transport: Entity<Transport>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
@@ -65,12 +62,19 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
+    /// Watches the window's one question host, which draws over everything.
+    _asking: Subscription,
 }
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
+        let queue_controls = cx.new(|cx| {
+            let mut slot = library::controls::ControlsSlot::default();
+            slot.show(&queue, QueueView::controls, cx);
+            slot
+        });
         window.focus(&queue.focus_handle(cx), cx);
         // Whatever moved the navigator, the page it lands on takes the keys.
         let arrivals = cx.observe_in(&nav, window, |this, _, window, cx| this.arrived(window, cx));
@@ -88,6 +92,8 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let feed = lib.feed.clone();
+                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
                 let covers = lib.covers.clone();
                 this.sidebar
                     .update(cx, |sidebar, cx| sidebar.set_covers(covers, cx));
@@ -99,20 +105,26 @@ impl Shell {
         .detach();
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(|cx| Transport::new(window, cx)),
+            queue_controls,
             library: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
-            sidebar_width: px(f32::from_bits(
+            sidebar_width: f32::from_bits(
                 window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            )),
+            )
+            .into(),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
+            _asking: {
+                let asking = ask::asking(cx);
+                cx.observe(&asking, |_, _, cx| cx.notify())
+            },
         }
     }
 
@@ -185,6 +197,96 @@ impl Shell {
         cx.notify();
     }
 
+    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
+    /// and keeps the choice with the window's bounds.
+    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_shown = !self.sidebar_shown;
+        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
+        cx.notify();
+    }
+
+    /// Asks before forgetting every cover kept on this device, saying how
+    /// many and how much, then fetches what is on screen again.
+    fn clear_artwork(
+        &mut self,
+        _: &ClearArtworkCache,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(covers) = self.library.as_ref().map(|l| l.read(cx).covers()) else {
+            return;
+        };
+        let dir = covers.read(cx).dir();
+        let window = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            let (count, bytes) = cx
+                .background_executor()
+                .spawn(async move { crate::library::covers::Covers::on_disk(&dir) })
+                .await;
+            window
+                .update(cx, |_, window, cx| {
+                    ask::confirm(
+                        ask::Confirm {
+                            title: "clear artwork cache".into(),
+                            verb: "clear".into(),
+                            destructive: true,
+                            lines: vec![
+                                format!(
+                                    "{} kept on this device are deleted: {}.",
+                                    crate::library::chrome::count(count as u64, "cover", "covers"),
+                                    crate::time::bytes(bytes)
+                                )
+                                .into(),
+                            ],
+                            note: Some(
+                                "Covers are fetched again as they are shown, the ones on screen at once."
+                                    .into(),
+                            ),
+                        },
+                        window,
+                        cx,
+                        move |cx| covers.update(cx, |c, cx| c.clear(None, cx)),
+                    );
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Asks before throwing away every file downloaded from the server,
+    /// saying how much it frees and that the tracks stay.
+    fn clear_downloads(
+        &mut self,
+        _: &ClearDownloadedFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bytes = cx.global::<crate::mirror::Mirror>().cache.read(cx).0;
+        ask::confirm(
+            ask::Confirm {
+                title: "clear downloaded files".into(),
+                verb: "clear".into(),
+                destructive: true,
+                lines: vec![
+                    format!(
+                        "The copies of tracks downloaded from your server are deleted from this device: {}.",
+                        crate::time::bytes(bytes)
+                    )
+                    .into(),
+                ],
+                note: Some(
+                    "The tracks stay in the library and download again when played.".into(),
+                ),
+            },
+            window,
+            cx,
+            |cx| {
+                crate::engine::command(cx, "clear downloaded files", |e| e.clear_download_cache())
+            },
+        );
+    }
+
     /// Bare space that moves the window, as a title bar's does.
     fn moves_window(area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         area.window_control_area(WindowControlArea::Drag)
@@ -216,19 +318,18 @@ impl Shell {
         let (can_go_back, can_go_forward, route) =
             (nav.can_go_back(), nav.can_go_forward(), nav.current());
         // The page's own controls: a library page's filter field and buttons.
-        let page = self
-            .library
-            .as_ref()
-            .filter(|_| LibraryStage::draws(route))
-            .and_then(|library| library.read(cx).toolbar());
+        let page = if route == Route::Queue {
+            Some(self.queue_controls.clone().into())
+        } else {
+            self.library
+                .as_ref()
+                .filter(|_| LibraryStage::draws(route))
+                .and_then(|library| library.read(cx).toolbar())
+        };
         Toolbar::new()
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.
-            .inset(if self.sidebar_shown {
-                px(0.)
-            } else {
-                TRAFFIC_LIGHTS_WIDTH
-            })
+            .under_window_buttons(!self.sidebar_shown)
             .leading(
                 ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
                     |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
@@ -287,15 +388,6 @@ impl Shell {
                 },
             )
     }
-
-    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
-    /// and keeps the choice with the window's bounds.
-    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_shown = !self.sidebar_shown;
-        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
-        window_state::save(window.window_bounds(), cx);
-        cx.notify();
-    }
 }
 
 impl Render for Shell {
@@ -353,12 +445,15 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
+            .on_action(cx.listener(Self::clear_downloads))
+            .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
+            .on_action(cx.listener(Self::toggle_sidebar))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
@@ -379,13 +474,13 @@ impl Render for Shell {
             // transport spans the whole window; otherwise they are on `bg`
             // and the transport spans the page column only.
             .child(
-                div().flex_1().min_h(px(0.)).child(
+                div().flex_1().min_h_0().child(
                     SplitView::new(
                         "sidebar-split",
                         self.sidebar_width,
-                        sidebar::MIN_WIDTH,
-                        sidebar::MAX_WIDTH,
-                        sidebar::WIDTH,
+                        RowMetrics::SIDEBAR_MIN,
+                        RowMetrics::SIDEBAR_MAX,
+                        RowMetrics::SIDEBAR,
                     )
                     .when(self.sidebar_shown, |split| {
                         split.leading(
@@ -394,15 +489,15 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
-                                .when(TRAFFIC_LIGHTS > px(0.), |d| {
+                                .when(WINDOW_BUTTONS.height > Pixels::ZERO, |d| {
                                     d.child(
                                         Self::moves_window(div().id("sidebar-drag"), cx)
-                                            .h(TRAFFIC_LIGHTS)
+                                            .h(WINDOW_BUTTONS.height)
                                             .flex_shrink_0(),
                                     )
                                 })
                                 .child(self.sidebar.clone().cached(
-                                    StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
+                                    StyleRefinement::default().w_full().flex_1().min_h_0(),
                                 )),
                         )
                     })
@@ -412,7 +507,7 @@ impl Render for Shell {
                             .flex()
                             .flex_col()
                             .child(self.toolbar(window, cx))
-                            .child(div().flex_1().min_h(px(0.)).child(stage))
+                            .child(div().flex_1().min_h_0().child(stage))
                             .when(!washed, |d| d.child(transport())),
                     )
                     .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
@@ -429,13 +524,12 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(
+                ask::overlay(window, cx)
+                    .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
+            )
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
-                deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
+                deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
             }))
     }
 }
-
-pub const MIN_SIZE: Size<Pixels> = Size {
-    width: px(220. + 640.),
-    height: px(420.),
-};

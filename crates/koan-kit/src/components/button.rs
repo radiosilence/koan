@@ -75,6 +75,7 @@ pub struct Button {
     kind: ButtonKind,
     label: Option<SharedString>,
     icon: Option<Icon>,
+    tone: Option<Tone>,
     destructive: bool,
     disabled: bool,
     selected: bool,
@@ -88,6 +89,7 @@ impl Button {
             kind,
             label: None,
             icon: None,
+            tone: None,
             destructive: false,
             disabled: false,
             selected: false,
@@ -117,6 +119,13 @@ impl Button {
     }
 
     /// In `bad`, for a compact or bordered button that destroys something.
+    /// Its label and glyph in `tone` rather than the kind's: a favourite in
+    /// the accent while it is on.
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = Some(tone);
+        self
+    }
+
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
@@ -164,7 +173,7 @@ impl RenderOnce for Button {
         let tone = if self.destructive {
             Tone::Bad
         } else {
-            kind.tone()
+            self.tone.unwrap_or_else(|| kind.tone())
         };
         let rest = look.text_color(tone);
         let color = match kind {

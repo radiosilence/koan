@@ -22,9 +22,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use koan_ffi::KoanEngine;
-use koan_kit::raw::{
-    Action, App, KeyBinding, KeyBindingContextPredicate, OperatingSystem, actions,
-};
+use koan_kit::app::{Action, App, KeyBinding, actions};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::KeyBindingContextPredicate;
+// the platform's menu bar and Dock menu, which koan-kit does not draw.
+use koan_kit::raw::OperatingSystem;
 
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
@@ -107,7 +109,7 @@ actions!(
 /// the menu's Play / Pause and Delete are never given space and ⌫ as key
 /// equivalents. Each is handled as its menu twin is.
 mod bare {
-    koan_kit::raw::actions!(koan_bare, [TogglePlayPause, Delete]);
+    koan_kit::app::actions!(koan_bare, [TogglePlayPause, Delete]);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -460,7 +462,7 @@ mod tests {
         for shortcut in MENU.iter().chain(APPLICATION).chain(HOTKEYS) {
             for key in shortcut.keys {
                 for os in [OperatingSystem::Mac, OperatingSystem::Linux] {
-                    koan_kit::raw::Keystroke::parse_with_os(key, os)
+                    koan_kit::app::Keystroke::parse_with_os(key, os)
                         .unwrap_or_else(|_| panic!("{key} does not parse"));
                 }
             }
@@ -470,20 +472,23 @@ mod tests {
     /// The binding a keystroke dispatches with focus at `stack`, innermost
     /// last.
     fn winner(bindings: Vec<KeyBinding>, key: &'static str, stack: &[&str]) -> String {
+        // the keymap, read to check the bindings.
         let keymap = koan_kit::raw::Keymap::new(bindings);
+        // the keymap, read to check the bindings.
         let stack: Vec<koan_kit::raw::KeyContext> = stack
             .iter()
+            // the keymap, read to check the bindings.
             .map(|c| koan_kit::raw::KeyContext::parse(c).unwrap())
             .collect();
         let (found, _) =
-            keymap.bindings_for_input(&[koan_kit::raw::Keystroke::parse(key).unwrap()], &stack);
+            keymap.bindings_for_input(&[koan_kit::app::Keystroke::parse(key).unwrap()], &stack);
         found
             .first()
             .map(|b| b.action().name().to_string())
             .unwrap_or_default()
     }
 
-    koan_kit::raw::actions!(field, [FieldCopy, FieldDeleteBack]);
+    koan_kit::app::actions!(field, [FieldCopy, FieldDeleteBack]);
 
     #[test]
     fn a_text_field_keeps_its_own_keys() {
@@ -513,7 +518,7 @@ mod tests {
     fn no_hotkey_carries_a_modifier() {
         for shortcut in HOTKEYS {
             for key in shortcut.keys {
-                let k = koan_kit::raw::Keystroke::parse_with_os(key, OperatingSystem::Mac).unwrap();
+                let k = koan_kit::app::Keystroke::parse_with_os(key, OperatingSystem::Mac).unwrap();
                 let m = k.modifiers;
                 assert!(
                     !(m.platform || m.control || m.alt),

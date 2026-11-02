@@ -34,6 +34,8 @@ pub(crate) struct Job {
     pub total: Option<u64>,
     /// What started a scan the library watch ran: see [`WatchScan::Started`].
     pub reason: Option<&'static str>,
+    pub started: std::time::SystemTime,
+    pub finished: Option<std::time::SystemTime>,
 }
 
 /// Jobs started by this process, newest last. Bounded so a long-lived server
@@ -66,13 +68,13 @@ impl JobRegistry {
         &self,
         kind: &'static str,
         reason: Option<&'static str>,
-    ) -> Result<Job, Job> {
+    ) -> Result<Job, Box<Job>> {
         let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
             .find(|j| j.kind == kind && j.state == JobState::Running)
         {
-            return Err(running.clone());
+            return Err(Box::new(running.clone()));
         }
         if jobs.len() >= MAX_HISTORY {
             let finished: Vec<String> = jobs
@@ -92,6 +94,8 @@ impl JobRegistry {
             done: None,
             total: None,
             reason,
+            started: std::time::SystemTime::now(),
+            finished: None,
         };
         jobs.insert(job.id.clone(), job.clone());
         drop(jobs);
@@ -104,6 +108,7 @@ impl JobRegistry {
         if let Some(job) = jobs.get_mut(id) {
             job.state = state;
             job.message = message;
+            job.finished = Some(std::time::SystemTime::now());
         }
         drop(jobs);
         self.ring();
@@ -130,7 +135,7 @@ impl JobRegistry {
     {
         let job = match self.start(kind, None) {
             Ok(job) => job,
-            Err(running) => return Ok(running),
+            Err(running) => return Ok(*running),
         };
         let id = job.id.clone();
         let registry = self.clone();
@@ -196,6 +201,16 @@ impl JobRegistry {
             .filter(|j| j.state == JobState::Running)
             .min_by(|a, b| a.id.cmp(&b.id))
             .or_else(|| of_kind().max_by(|a, b| a.id.cmp(&b.id)))
+            .cloned()
+    }
+
+    /// The job of any of `kinds` that ended last.
+    pub(crate) fn last_finished(&self, kinds: &[&str]) -> Option<Job> {
+        self.inner
+            .lock()
+            .values()
+            .filter(|j| kinds.contains(&j.kind) && j.finished.is_some())
+            .max_by_key(|j| j.finished)
             .cloned()
     }
 
@@ -309,8 +324,11 @@ pub(crate) fn record_watch(registry: &JobRegistry) -> impl Fn(&WatchScan) + Send
                 .lock()
                 .retain(|_, j| j.kind != WATCH || j.state == JobState::Running);
             // The watch runs one scan at a time, so none of its kind is live.
-            let (Ok(job) | Err(job)) = registry.start(WATCH, Some(reason));
-            *running.lock() = Some(registry.handle(&job.id));
+            let id = match registry.start(WATCH, Some(reason)) {
+                Ok(job) => job.id,
+                Err(job) => job.id,
+            };
+            *running.lock() = Some(registry.handle(&id));
         }
         WatchScan::Read { done, total } => {
             if let Some(job) = running.lock().as_ref() {

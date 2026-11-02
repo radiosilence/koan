@@ -9,11 +9,15 @@
 //! Drawn from the theme's tokens directly (docs/design/koan-theme.md) until
 //! the theme module is in place.
 
-use koan_kit::raw::{
-    App, Context, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement, KeyBinding,
-    OperatingSystem, ParentElement, Render, Rgba, SharedString, Styled, Window, WindowAppearance,
-    actions, div, prelude::*, px,
+use koan_kit::app::Styled;
+use koan_kit::app::{
+    App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, KeyBinding, ParentElement,
+    Render, SharedString, Window, actions, div,
 };
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, Rgba, WindowAppearance, prelude::*, px};
+// the platform's menu bar and Dock menu, which koan-kit does not draw.
+use koan_kit::raw::OperatingSystem;
 
 use super::actions::{APPLICATION, Group, HOTKEYS, MENU, Shortcut, caption};
 
@@ -207,6 +211,7 @@ impl Render for ShortcutsSheet {
             .child(
                 div()
                     .text_size(size(22.0))
+                    // text measured or shaped at runtime.
                     .font_weight(koan_kit::raw::FontWeight(300.0))
                     .text_color(p.strong)
                     .child("keyboard shortcuts"),

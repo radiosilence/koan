@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use koan_ffi::{ImportSummary, KoanEngine, TrackSet};
-use koan_kit::raw::{App, AsyncApp, Global};
+use koan_kit::app::{App, AsyncApp, Global};
 
 /// What the Mac app says when a drop held nothing to play.
 pub const NOTHING_TO_PLAY: &str = "Nothing there kōan can play.";

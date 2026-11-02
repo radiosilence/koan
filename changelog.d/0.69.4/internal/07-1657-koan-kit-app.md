@@ -1,0 +1,1 @@
+- **koan-kit's app module.** The desktop app's pages are written in `koan_kit::app`; every other GPUI use is a named import with a comment saying why, and the theme-leak check counts and enforces them.

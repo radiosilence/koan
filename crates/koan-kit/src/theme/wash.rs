@@ -5,13 +5,22 @@
 //!
 //! Each record is baked once per appearance into a small opaque texture
 //! (`bake`): saturated, blurred, held to the tone's luminance limit and laid
-//! over `bg` at the wash's strength. A frame of the drift is then one textured
-//! quad, two while one record dissolves into the next, and nothing at all
-//! once playback stops and the drift has come to rest.
+//! over `bg` at the wash's strength.
+//!
+//! Where the renderer draws shaders (macOS), the drift is the GPU's: each
+//! texture is one shader quad (`WASH`) handed the drift's and the dissolve's
+//! ramps once per render, and its pose and opacity are worked out as each
+//! frame is presented (`prepare`), so a drifting wash costs no GPUI frame and
+//! the window re-presents its layers around it. The wash renders only when a
+//! record, the appearance or the drift's wanting changes, and once more when
+//! a ramp comes to rest. Elsewhere a frame of the drift is one textured quad,
+//! two while one record dissolves into the next, drawn by a GPUI frame.
+//! Either way nothing is drawn once playback stops and the drift has come to
+//! rest.
 //!
 //! The wash is its own view. A window's root holds it beside the content view,
-//! both `cached`, so a drift frame re-renders the wash and reuses the rest of
-//! the window as it was.
+//! both `cached`, so a render of the wash reuses the rest of the window as it
+//! was.
 //!
 //! The Apple apps also turn the texture through ±3°. GPUI's image sprites take
 //! no transform, so here the drift is the breath and the travel alone.
@@ -19,13 +28,15 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
-    Window, canvas, div, point, px, size,
+    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    ShaderProgram, ShaderUniforms, Styled, Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
 use super::{KoanTheme, Look, Motion, Palette};
+use crate::components::SHADED;
 
 /// The texture's side. Blurred to mush, so drawn small and magnified: the
 /// Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
@@ -49,6 +60,64 @@ const TRAVEL_PERIOD: f32 = 23.0;
 /// long enough that the room is seen to have changed without being caught
 /// changing.
 const EASE: Duration = Duration::from_secs(2);
+/// The drift's whole cycle: both swings back where they started. The shader's
+/// clock is counted from a multiple of it, so it stays small and exact.
+const CYCLE: f32 = 598.0;
+
+/// A texture of the wash as a fragment program. Uniforms: 0..3 the drift's
+/// amplitude ramp (from, to, start in seconds of shader time, NaN for one
+/// standing still), 3..6 the opacity's, 6 whether to lay it over `bg` (the
+/// layer drawn first), 7 the overscan, 8..11 `bg`, 11 the reach and 15 the
+/// rise; `prepare` writes the scale (12), travel (13) and opacity (14).
+pub static WASH: ShaderProgram = ShaderProgram {
+    name: "koan-wash",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float side = max(size.x, size.y) * u[7] * u[12];
+    float2 centre = size * 0.5 + float2(size.x * u[11], size.y * u[15]) * u[13];
+    float2 uv = (position - (centre - side * 0.5)) / side;
+    float3 colour = koan_sample(image, tile, uv).rgb;
+    if (u[6] > 0.5) {
+        return float4(mix(float3(u[8], u[9], u[10]), colour, u[14]), 1.0);
+    }
+    return float4(colour, u[14]);
+}
+"#,
+    wgsl: "",
+    prepare: Some(prepare),
+};
+
+/// The pose and opacity at `time`, for the quad's every pixel alike.
+fn prepare(u: &mut [f32; 16], time: f32) {
+    let ramp = |from: f32, to: f32, start: f32| {
+        if start.is_nan() {
+            to
+        } else {
+            from + (to - from) * Motion::ease_in_out((time - start) / EASE.as_secs_f32())
+        }
+    };
+    let amplitude = ramp(u[0], u[1], u[2]);
+    let (scale, travel) = pose_at(time, amplitude);
+    u[12] = scale;
+    u[13] = travel;
+    u[14] = ramp(u[3], u[4], u[5]);
+}
+
+/// Where the texture is `t` seconds into the drift at `amplitude`: its scale
+/// over the overscan, and its travel across the page from -1 to 1.
+fn pose_at(t: f32, amplitude: f32) -> (f32, f32) {
+    if amplitude <= 0.0 {
+        return (1.0, 0.0);
+    }
+    let swing = |t: f32, period: f32| {
+        let phase = (t / period).rem_euclid(2.0);
+        Motion::ease_in_out(if phase < 1.0 { phase } else { 2.0 - phase })
+    };
+    let scale = 1.0 + (FAR / NEAR - 1.0) * swing(t, SCALE_PERIOD);
+    // Half a swing in, so the travel starts from the middle of the page.
+    let travel = 2.0 * swing(t + TRAVEL_PERIOD / 2.0, TRAVEL_PERIOD) - 1.0;
+    (1.0 + (scale - 1.0) * amplitude, travel * amplitude)
+}
 
 /// The theme's hold on the wash: every sample kept on the side of a luminance
 /// limit where `muted` text over it still reads.
@@ -130,8 +199,12 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
     }
 
     let limit = tone.limit();
-    let mut out = image::RgbaImage::new(SIDE, SIDE);
-    for (i, pixel) in out.pixels_mut().enumerate() {
+    // The wash over the ground, per channel, in encoded values as a layer's
+    // opacity composites, still in floats: quantised only once, dithered,
+    // at the output's size.
+    let ground = [ground[0], ground[1], ground[2]].map(|v| v as f64);
+    let mut mixed = [vec![0.0; n], vec![0.0; n], vec![0.0; n]];
+    for i in 0..n {
         let (mut lr, mut lg, mut lb) = (r[i], g[i], b[i]);
         let y = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
         match tone {
@@ -149,23 +222,53 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
             }
             _ => {}
         }
-        // Over the ground in encoded values, as a layer's opacity composites.
-        let [wr, wg, wb] = [lr, lg, lb].map(encode);
-        let mix = |ground: u8, wash: u8| {
-            (ground as f32 + (wash as f32 - ground as f32) * STRENGTH + 0.5).clamp(0.0, 255.0) as u8
-        };
-        pixel.0 = [
-            mix(ground[2], wb),
-            mix(ground[1], wg),
-            mix(ground[0], wr),
-            255,
-        ];
+        for (c, v) in [lr, lg, lb].into_iter().enumerate() {
+            let wash = super::accent::oklch::gamma(v) * 255.0;
+            mixed[c][i] = ground[c] + (wash - ground[c]) * STRENGTH as f64;
+        }
+    }
+    dither_up(&mixed)
+}
+
+/// The baked texture's side: the wash at `SIDE`, magnified in floats and
+/// dithered as it is quantised. A gradient this soft spans a few levels of
+/// 8 bits across a whole window, and quantised at `SIDE` and magnified by
+/// the GPU it shows as bands; dithered at this size, the GPU's last few
+/// times of magnification leave the noise too fine to see and no bands.
+pub const OUT: u32 = 1024;
+
+/// `channels` (red, green, blue, 0–255 floats at `SIDE`) bilinearly
+/// magnified to `OUT` and quantised with triangular noise of a level either
+/// way, from interleaved gradient noise: no pattern the eye picks out, and
+/// the same every bake, so a sleeve's wash does not shimmer when baked again.
+/// BGRA out, as the renderer takes it.
+fn dither_up(channels: &[Vec<f64>; 3]) -> image::RgbaImage {
+    let side = SIDE as usize;
+    let scale = SIDE as f64 / OUT as f64;
+    let mut out = image::RgbaImage::new(OUT, OUT);
+    for (x, y, pixel) in out.enumerate_pixels_mut() {
+        // Texel centres line up with the source's, the edge clamped.
+        let sx = ((x as f64 + 0.5) * scale - 0.5).clamp(0.0, (side - 1) as f64);
+        let sy = ((y as f64 + 0.5) * scale - 0.5).clamp(0.0, (side - 1) as f64);
+        let (x0, y0) = (sx.floor() as usize, sy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(side - 1), (y0 + 1).min(side - 1));
+        let (fx, fy) = (sx - x0 as f64, sy - y0 as f64);
+        let noise = ign(x, y) + ign(x + 37, y + 91) - 1.0;
+        let [r, g, b] = [0, 1, 2].map(|c| {
+            let at = |xx: usize, yy: usize| channels[c][yy * side + xx];
+            let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+            let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+            let v = top + (bottom - top) * fy;
+            (v + noise + 0.5).floor().clamp(0.0, 255.0) as u8
+        });
+        pixel.0 = [b, g, r, 255];
     }
     out
 }
 
-fn encode(v: f64) -> u8 {
-    (super::accent::oklch::gamma(v) * 255.0 + 0.5) as u8
+/// Interleaved gradient noise (Jimenez), uniform in 0..1.
+fn ign(x: u32, y: u32) -> f64 {
+    (52.982_918_9 * (0.067_110_56 * x as f64 + 0.005_837_15 * y as f64).fract()).fract()
 }
 
 /// Three box passes, about a Gaussian of the radius, with the edge clamped:
@@ -222,6 +325,26 @@ impl Ramp {
             .is_some_and(|started| now.duration_since(started) < EASE)
     }
 
+    /// When it comes to rest, if it is still moving.
+    fn rests(self, now: Instant) -> Option<Instant> {
+        self.started
+            .map(|started| started + EASE)
+            .filter(|end| *end > now)
+    }
+
+    /// As the shader takes it: from, to, and the start in seconds after
+    /// `origin`, NaN for one standing still.
+    fn uniforms(self, origin: Instant) -> [f32; 3] {
+        let start = self.started.map_or(f32::NAN, |started| {
+            if started >= origin {
+                started.duration_since(origin).as_secs_f32()
+            } else {
+                -origin.duration_since(started).as_secs_f32()
+            }
+        });
+        [self.from, self.to, start]
+    }
+
     /// Standing at `value`, not moving.
     fn still(value: f32) -> Ramp {
         Ramp {
@@ -248,10 +371,12 @@ struct Texture {
     hold: u32,
 }
 
-/// A texture on screen and its opacity over time.
+/// A texture on screen and its opacity over time, and the uniforms its
+/// shader quad reads.
 struct Layer<T> {
     texture: T,
     opacity: Ramp,
+    shader: Arc<ShaderUniforms>,
 }
 
 pub struct Wash {
@@ -275,6 +400,8 @@ pub struct Wash {
     hold: u32,
     /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
+    /// A render when the last ramp comes to rest, where the shader drifts.
+    rest: Option<Task<()>>,
 }
 
 impl Wash {
@@ -291,6 +418,7 @@ impl Wash {
             epoch: now,
             hold: 100,
             released: Vec::new(),
+            rest: None,
         }
     }
 
@@ -348,6 +476,7 @@ impl Wash {
             self.current = texture.map(|texture| Layer {
                 texture,
                 opacity: Ramp::still(1.0),
+                shader: Arc::default(),
             });
             return;
         }
@@ -364,6 +493,7 @@ impl Wash {
             let held = Layer {
                 texture: outgoing.texture.image,
                 opacity,
+                shader: outgoing.shader,
             };
             self.released
                 .extend(self.previous.replace(held).map(|layer| layer.texture));
@@ -372,6 +502,7 @@ impl Wash {
         self.current = texture.map(|texture| Layer {
             texture,
             opacity: Ramp::still(0.0).toward(1.0, now),
+            shader: Arc::default(),
         });
     }
 
@@ -419,19 +550,15 @@ impl Wash {
     /// Where the texture is this frame: its scale over the overscan, and its
     /// travel across the page from -1 to 1.
     fn pose(&self, now: Instant) -> (f32, f32) {
-        let amplitude = self.amplitude.at(now);
-        if amplitude <= 0.0 {
-            return (1.0, 0.0);
-        }
         let t = now.duration_since(self.epoch).as_secs_f32();
-        let swing = |t: f32, period: f32| {
-            let phase = (t / period) % 2.0;
-            Motion::ease_in_out(if phase < 1.0 { phase } else { 2.0 - phase })
-        };
-        let scale = 1.0 + (FAR / NEAR - 1.0) * swing(t, SCALE_PERIOD);
-        // Half a swing in, so the travel starts from the middle of the page.
-        let travel = 2.0 * swing(t + TRAVEL_PERIOD / 2.0, TRAVEL_PERIOD) - 1.0;
-        (1.0 + (scale - 1.0) * amplitude, travel * amplitude)
+        pose_at(t, self.amplitude.at(now))
+    }
+
+    /// The drift's clock for the shader: the last whole cycle since the
+    /// epoch, so the phase the shader works out is the one `pose` would.
+    fn origin(&self, now: Instant) -> Instant {
+        let cycles = (now.duration_since(self.epoch).as_secs_f64() / CYCLE as f64).floor();
+        self.epoch + Duration::from_secs_f64(cycles * CYCLE as f64)
     }
 }
 
@@ -510,6 +637,11 @@ impl Render for Wash {
                 .previous
                 .as_ref()
                 .is_some_and(|l| l.opacity.moving(now));
+        if SHADED {
+            return self
+                .render_shaded(moving, now, &look, cx)
+                .into_any_element();
+        }
         if moving {
             window.request_animation_frame();
         }
@@ -547,6 +679,74 @@ impl Render for Wash {
             .bg(look.palette.bg.hsla())
             .children(previous.map(|(image, opacity)| layer(image, opacity)))
             .children(current.map(|(image, opacity)| layer(image, opacity)))
+            .into_any_element()
+    }
+}
+
+impl Wash {
+    /// The textures as shader quads, handed their ramps; a render again when
+    /// the last ramp rests, to drop what is no longer seen and let the
+    /// window sleep.
+    fn render_shaded(
+        &mut self,
+        moving: bool,
+        now: Instant,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let origin = self.origin(now);
+        let amplitude = self.amplitude.uniforms(origin);
+        let bg = look.palette.bg.hsla().to_rgb();
+        let mut quads: Vec<(Arc<RenderImage>, Arc<ShaderUniforms>)> = Vec::new();
+        let mut rests = self.amplitude.rests(now);
+        let previous = self
+            .previous
+            .as_ref()
+            .map(|l| (l.texture.clone(), l.opacity, l.shader.clone()));
+        let current = self
+            .current
+            .as_ref()
+            .map(|l| (l.texture.image.clone(), l.opacity, l.shader.clone()));
+        for (image, opacity, shader) in previous.into_iter().chain(current) {
+            let first = quads.is_empty();
+            let values = amplitude
+                .into_iter()
+                .chain(opacity.uniforms(origin))
+                .chain([if first { 1.0 } else { 0.0 }, NEAR, bg.r, bg.g, bg.b, REACH])
+                .enumerate();
+            for (i, v) in values {
+                shader.set(i, v);
+            }
+            shader.set(15, RISE);
+            shader.set_origin(origin);
+            shader.set_continuous(moving);
+            shader.set_live(moving);
+            rests = rests.max(opacity.rests(now));
+            quads.push((image, shader));
+        }
+        self.rest = rests.map(|at| {
+            let timer = cx.background_executor().timer(at - now);
+            cx.spawn(async move |wash, cx| {
+                timer.await;
+                wash.update(cx, |_, cx| cx.notify()).ok();
+            })
+        });
+        let blank = quads.is_empty();
+        div()
+            .size_full()
+            .overflow_hidden()
+            .when(blank, |d| d.bg(look.palette.bg.hsla()))
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        for (image, shader) in quads {
+                            window.paint_shader_image(bounds, &WASH, shader, image).ok();
+                        }
+                    },
+                )
+                .size_full(),
+            )
     }
 }
 
@@ -587,6 +787,23 @@ mod tests {
             y(light.get_pixel(10, 10).0) >= surface - 0.005,
             "light wash too dark"
         );
+    }
+
+    /// A level between two of 8 bits comes out as a mix of both that
+    /// averages to it, where rounding would give one level everywhere and,
+    /// across a slow gradient, a band at each step.
+    #[test]
+    fn a_level_between_two_is_dithered_to_its_mean() {
+        let n = (SIDE * SIDE) as usize;
+        let baked = dither_up(&[vec![100.4; n], vec![30.0; n], vec![200.75; n]]);
+        let mean =
+            |c: usize| baked.pixels().map(|p| p.0[c] as f64).sum::<f64>() / (OUT * OUT) as f64;
+        // BGRA.
+        assert!((mean(2) - 100.4).abs() < 0.02, "red {}", mean(2));
+        assert!((mean(0) - 200.75).abs() < 0.02, "blue {}", mean(0));
+        let levels: std::collections::BTreeSet<u8> = baked.pixels().map(|p| p.0[2]).collect();
+        assert!(levels.contains(&100) && levels.contains(&101), "{levels:?}");
+        assert!(levels.iter().all(|l| (99..=102).contains(l)), "{levels:?}");
     }
 
     #[test]

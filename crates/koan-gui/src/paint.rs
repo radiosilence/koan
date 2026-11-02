@@ -2,7 +2,9 @@
 //! colours flattened to the values the views paint with.
 
 use crate::theme::{Look, Space, Tone, tokens};
-use koan_kit::raw::{App, Hsla, Pixels, Window, hsla, px};
+use koan_kit::app::{App, Pixels, Window};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, hsla, px};
 
 #[derive(Clone, Copy)]
 pub struct Paint {
@@ -20,6 +22,8 @@ pub struct Paint {
     /// read as text on the ground.
     pub accent_text: Hsla,
     pub bad: Hsla,
+    pub selection: Hsla,
+    pub on_selection: Hsla,
 }
 
 impl Paint {
@@ -38,6 +42,26 @@ impl Paint {
             accent: look.color(Tone::Accent),
             accent_text: look.text_color(Tone::Accent),
             bad: p.bad.hsla(),
+            selection: p.selection.hsla(),
+            on_selection: p.on_selection.hsla(),
+        }
+    }
+
+    /// The paint a list row draws with: as it is, or picked, with every
+    /// colour text and marks take (`ink`, `strong`, `muted`, the accent) as
+    /// `on_selection`, as the Mac's selected rows are drawn.
+    pub fn picked(&self, selected: bool) -> Paint {
+        if !selected {
+            return *self;
+        }
+        let on = self.on_selection;
+        Paint {
+            ink: on,
+            strong: on,
+            muted: on,
+            accent: on,
+            accent_text: on,
+            ..*self
         }
     }
 
@@ -48,11 +72,6 @@ impl Paint {
     /// A width that holds text, in points at 100 %, grown with the text size.
     pub fn sized(&self, points: f32) -> Pixels {
         px(points * self.look.scale.size)
-    }
-
-    /// A row's hover fill: `hover` at the theme's row opacity.
-    pub fn row_hover(&self) -> Hsla {
-        self.hover.opacity(tokens::ROW_HOVER_OPACITY)
     }
 
     /// A faint hairline of `ink` between regions.

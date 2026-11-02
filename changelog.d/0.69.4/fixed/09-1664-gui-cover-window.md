@@ -1,0 +1,1 @@
+- **Covers no longer flood a slow server.** The desktop app fetches covers 16 at a time to start, more while the server answers promptly and half as many when it slows, rather than up to 512 at once, which made a server reading covers off a spinning disk thrash.
