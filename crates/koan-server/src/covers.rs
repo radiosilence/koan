@@ -330,38 +330,47 @@ impl Covers {
 
     /// Drops the entries of albums the library has named in `art_evictions`
     /// since the last look (deleted, or rescanned with perhaps another image
-    /// beside them), so their next request reads the files again. One indexed
-    /// read when nothing has changed.
+    /// beside them), so their next request reads the files again. A mark the
+    /// table has outlived (entries pruned past it, or a database made afresh)
+    /// drops every album's entry, since their ids may now be other records'.
+    /// A few indexed reads when nothing has changed.
     pub(crate) fn forget_evicted(&self, conn: &rusqlite::Connection) {
-        let Ok(newest) =
-            conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM art_evictions", [], |r| {
-                r.get::<_, i64>(0)
-            })
-        else {
-            return;
-        };
         let mut seen = self.evicted.lock();
         let Some(since) = *seen else {
             // No entries kept yet: nothing to forget.
-            *seen = Some(newest);
-            self.mark(newest);
+            if let Ok(now) = koan_core::db::queries::art_evictions_since(conn, i64::MAX) {
+                *seen = Some(now.seq);
+                self.mark(now.seq);
+            }
             return;
         };
-        if newest <= since {
+        let Ok(gone) = koan_core::db::queries::art_evictions_since(conn, since) else {
+            return;
+        };
+        if gone.seq == since && !gone.purge {
             return;
         }
-        if let Ok(mut stmt) =
-            conn.prepare("SELECT DISTINCT id FROM art_evictions WHERE kind = 'album' AND seq > ?1")
-            && let Ok(ids) = stmt.query_map([since], |r| r.get::<_, i64>(0))
-        {
-            for id in ids.flatten() {
-                for size in SIZES {
-                    let _ = std::fs::remove_file(self.dir.join(album_key(id, size)));
+        if gone.purge {
+            if let Ok(read) = std::fs::read_dir(&self.dir) {
+                for entry in read.flatten() {
+                    let name = entry.file_name();
+                    if matches!(parse(&name.to_string_lossy()), Some((Some(_), _))) {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            log::info!("covers: the library's evictions outran the cache; album covers dropped");
+        } else {
+            for (kind, id) in &gone.named {
+                if kind == "album" {
+                    for size in SIZES {
+                        let _ = std::fs::remove_file(self.dir.join(album_key(*id, size)));
+                    }
                 }
             }
         }
-        *seen = Some(newest);
-        self.mark(newest);
+        *seen = Some(gone.seq);
+        self.mark(gone.seq);
         drop(seen);
         self.poke();
     }
@@ -922,6 +931,29 @@ mod tests {
         assert_eq!(made.get(), 2);
         assert_eq!(covers.album_cover(3, GRID, || None), None);
         assert!(!dir.path().join(album_key(3, GRID)).exists());
+    }
+
+    /// A database made afresh numbers its evictions from the start again, and
+    /// gives old albums' ids to new ones: every album's entry goes.
+    #[test]
+    fn a_new_database_drops_every_album() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(EVICTED), "500").unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE art_evictions (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, id INTEGER);
+             INSERT INTO art_evictions (kind, id) VALUES ('track', 9);",
+        )
+        .unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        covers.album_cover(1, GRID, || Some(Some(Bytes::from_static(b"x"))));
+        covers.forget_evicted(&conn);
+        assert!(!dir.path().join(album_key(1, GRID)).exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(EVICTED)).unwrap(),
+            "1"
+        );
     }
 
     /// Albums the library names after the first look lose their entries;

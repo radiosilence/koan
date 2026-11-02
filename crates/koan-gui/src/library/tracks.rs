@@ -122,7 +122,7 @@ impl TrackBrowser {
                 this.lib
                     .nav
                     .update(cx, |nav, _| nav.remember_offset(Page::Tracks, offset));
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Tracks, cx);

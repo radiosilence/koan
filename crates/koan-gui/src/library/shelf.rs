@@ -499,7 +499,6 @@ impl ShelfPage {
                 lead: (index + 1).to_string().into(),
                 lead_width,
                 current: feed.playing_track == Some(track.id),
-                playing: feed.playing,
                 favourite: feed.is_favourite(item),
                 selected: self.selection.contains(item),
                 gathered: true,
