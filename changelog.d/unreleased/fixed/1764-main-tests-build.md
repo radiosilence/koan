@@ -1,0 +1,1 @@
+- **The tests build again.** Two test modules lost an import and a component kept one it no longer used.
