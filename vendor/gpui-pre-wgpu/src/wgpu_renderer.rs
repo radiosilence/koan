@@ -3216,7 +3216,7 @@ mod tests {
             name: "koan-test-half",
             msl: "",
             wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 32>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
     if (position.x < size.x * u[0].x) {
         return vec4<f32>(1.0, 0.0, 0.0, 1.0);
     }
