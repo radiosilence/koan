@@ -775,6 +775,17 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
     // Named when the menu opens, as the rows it acts on are: the queue can be
     // sent whole while the menu is open.
     let first = this.row_items(row, cx).next().cloned();
+    // The library's tracks under the rows, for the verbs on their files.
+    let tracks: Vec<i64> = {
+        let queue = this.queue.read(cx);
+        ids.iter()
+            .filter_map(|id| queue.at.get(id).and_then(|&ix| queue.items[ix].track_id))
+            .collect()
+    };
+    let title = match tracks.len() {
+        1 => "1 track".to_owned(),
+        n => format!("{n} tracks"),
+    };
     let remove = view.clone();
     menu.item(
         MenuEntry::new("play")
@@ -803,6 +814,37 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
         MenuEntry::new("redo")
             .icon(Icon::Redo)
             .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+    )
+    .separator()
+    .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
+        let (tracks, title) = (tracks.clone(), title.clone());
+        move |_, window, cx| crate::organize::open(title.clone(), tracks.clone(), window, cx)
+    }))
+    .item(
+        MenuEntry::new("download to cache")
+            .icon(Icon::Downloads)
+            .on_click({
+                let tracks = tracks.clone();
+                move |_, _, cx| {
+                    let tracks = tracks.clone();
+                    command(cx, "download to cache", move |e| {
+                        e.download_to_cache(tracks)
+                    })
+                }
+            }),
+    )
+    .item(
+        MenuEntry::new("remove downloaded files…")
+            .icon(Icon::Clear)
+            .on_click(move |_, window, cx| {
+                crate::library::actions::ask_remove_downloads(
+                    crate::engine::engine(cx),
+                    title.clone(),
+                    tracks.clone(),
+                    window,
+                    cx,
+                )
+            }),
     )
     .separator()
     .item(

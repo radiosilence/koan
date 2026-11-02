@@ -150,6 +150,13 @@ impl RenderOnce for ProgressRow {
                         .role(TypeRole::Fine)
                         .color(muted),
                 )
+                .tooltip(|window, cx| {
+                    super::Tooltip::view(
+                        "stop; what it has already done is kept".into(),
+                        window,
+                        cx,
+                    )
+                })
                 .on_click(move |e, window, cx| stop(e, window, cx))
         });
         div()
