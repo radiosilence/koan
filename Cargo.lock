@@ -5345,7 +5345,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "koan-cli"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "chrono",
  "clap",
@@ -5372,7 +5372,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -5440,7 +5440,7 @@ dependencies = [
 
 [[package]]
 name = "koan-ffi"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -5467,7 +5467,7 @@ dependencies = [
 
 [[package]]
 name = "koan-gui"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "block2 0.6.2",
  "chrono",
@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "koan-kit"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "block2 0.6.2",
  "futures",
@@ -5529,7 +5529,7 @@ dependencies = [
 
 [[package]]
 name = "koan-server"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "askama",
  "async-graphql",
@@ -5578,7 +5578,7 @@ dependencies = [
 
 [[package]]
 name = "koan-tui"
-version = "0.69.4"
+version = "0.69.5"
 dependencies = [
  "chrono",
  "core-foundation 0.10.1",
