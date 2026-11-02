@@ -110,7 +110,7 @@ impl RenderOnce for Toolbar {
             // ground and meets the page at a hairline; otherwise it is on
             // `bg`, flush with the page.
             .map(|d| {
-                if cx.global::<KoanTheme>().wash_window {
+                if KoanTheme::washes_window(cx) {
                     d.border_b(HAIRLINE).border_color(look.palette.rule.hsla())
                 } else {
                     d.bg(look.palette.bg.hsla())

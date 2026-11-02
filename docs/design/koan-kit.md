@@ -173,6 +173,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
 
+A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_outlined`), which takes its tooltip: what it does, with its keys where it has them (koan-gui's `platform::actions::help`, "back (⌘[)"). A glyph-only button made any other way without help or a label fails a debug assertion, so none goes without saying what it does.
+
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.
 
 `Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record. While what it stands for is still loading (`CoverArt::Loading`, `Placeholder::loading(true)`), the same ensō draws itself: the `Spinner`, placed so its stroke lies exactly on the mark (same diameter, brush and centre) in the mark's colour, so loading that ends in no picture leaves the mark where it was. A `Cover` given an `id` fades its picture in over the spinner when it arrives after loading.
@@ -302,7 +304,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 The spec wins, except where noted for the user's call.
 
-- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`), 16 for now by the user's call.
+- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`): 16, as the Swift lists use, and the tile grids take the same (`RowMetrics::page_margin_on`).
 - **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
 - **Form label column.** Swift's is 200; koan-gui had 210. 200.
 

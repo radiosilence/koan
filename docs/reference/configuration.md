@@ -224,7 +224,7 @@ theme = "koan"     # "koan": the site's look throughout (the default); "system":
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
 record_colours = true # the record playing colours the wash and the accent; false for neither
 wash_tint = 100       # kōan theme: how far the wash is held to the theme's contrast limit, 0–100; 0 keeps the sleeve's own colours
-wash_window = true    # provisional. Mac, kōan theme: the wash under the whole window; false gives panels their own grounds
+wash_window = true    # provisional. Mac and desktop app, kōan theme: the wash under the whole window; false gives panels their own grounds
 text_size = 100       # Mac, kōan theme: text size in percent, 80–130 in steps of 5; spacing follows at half the rate. In config.local.toml
 ```
 
@@ -241,7 +241,8 @@ colours come from the record, sets `wash_tint`: at 100 the wash is darkened in
 dark mode, or lightened in light, far enough that `muted` text over it keeps its
 contrast; lower lets more of the sleeve's own colour through, and 0 none of the
 hold at all. Text over a bright sleeve can then lose contrast, which is the
-trade. `wash_window` (the Mac, kōan theme only) is provisional,
+trade. `wash_window` (the Mac and the desktop app, kōan theme only, and only with
+the record's colours on) is provisional,
 there to live with both looks while one is chosen, and likely to go: on, the
 sidebar, toolbar and lyrics are drawn clear over one wash, and the transport
 keeps its ground beneath them all; off, they keep grounds of their own. The graphics level is separate, and governs what the

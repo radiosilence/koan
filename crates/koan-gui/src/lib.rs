@@ -21,6 +21,7 @@ pub mod organize;
 pub mod paint;
 pub mod platform;
 pub mod queue;
+pub mod rainbow;
 pub mod root;
 pub mod search;
 pub mod server_banner;

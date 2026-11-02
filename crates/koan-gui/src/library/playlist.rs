@@ -692,7 +692,7 @@ impl PlaylistPage {
                 }),
             )
             .lead(
-                ShuffleButton::new("playlist-shuffle")
+                ShuffleButton::new("playlist-shuffle", self.name())
                     .disabled(empty)
                     .on_click(move |_, _, cx| shuffle.read(cx).play_from(None, true, cx)),
             )

@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::{
-    App, AppContext, Context, Entity, Global, Hsla, Pixels, SharedString, Styled, Subscription,
-    Window, WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
+    WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, AccentState, Shade};
@@ -132,7 +132,12 @@ fn read_motion_settings(cx: &mut App) {
     {
         let reduce =
             objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
-        cx.set_reduce_motion(reduce);
+        if cx.reduce_motion() != reduce {
+            cx.set_reduce_motion(reduce);
+            // Touched, so what observes the theme to know whether it may
+            // move (a timer of its own) hears of it as of Low Power.
+            cx.global_mut::<KoanTheme>();
+        }
         let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
         if cx.global::<KoanTheme>().low_power != low_power {
             cx.global_mut::<KoanTheme>().low_power = low_power;
@@ -325,10 +330,23 @@ impl KoanTheme {
         cx.refresh_windows();
     }
 
-    /// Whoever draws the wash observes the global for these two; nothing
-    /// else reads them.
+    /// Whoever draws the wash observes the global for these two. The
+    /// record's colours also decide whether the wash runs under the whole
+    /// window (`washes_window`), whose layout every window then redraws.
     pub fn set_record_colours(on: bool, cx: &mut App) {
+        let before = Self::washes_window(cx);
         cx.global_mut::<KoanTheme>().record_colours = on;
+        if Self::washes_window(cx) != before {
+            cx.refresh_windows();
+        }
+    }
+
+    /// Whether the wash runs under the whole window: "wash the whole
+    /// window" on, and a wash to run, which "colours from the record" off
+    /// takes away.
+    pub fn washes_window(cx: &App) -> bool {
+        let theme = cx.global::<KoanTheme>();
+        theme.wash_window && theme.record_colours
     }
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {

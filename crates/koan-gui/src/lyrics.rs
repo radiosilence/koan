@@ -165,7 +165,7 @@ impl LyricsPanel {
 impl Render for LyricsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let washed = cx.global::<KoanTheme>().wash_window;
+        let washed = KoanTheme::washes_window(cx);
         let track = self.track(cx);
         let loading = self.fetching.is_some() && self.fetching == track;
         let lyrics = self.lyrics(cx).cloned();

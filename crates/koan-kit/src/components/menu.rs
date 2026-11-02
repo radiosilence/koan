@@ -155,8 +155,9 @@ pub struct Menu {
     /// Where it was drawn last, for the menu it opened from to tell a press
     /// in it from one outside them both.
     bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// The menu it opened from, as a submenu: a press there is not outside.
-    parent: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
+    /// The menus it opened from, as a submenu, nearest first: a press in
+    /// any of them is not outside.
+    ancestors: Vec<Rc<Cell<Option<Bounds<Pixels>>>>>,
     _submenu: Vec<Subscription>,
 }
 
@@ -186,7 +187,7 @@ impl Menu {
                 highlighted: None,
                 focus: cx.focus_handle(),
                 bounds: Rc::default(),
-                parent: None,
+                ancestors: Vec::new(),
                 _submenu: Vec::new(),
             };
             build(menu, window, cx)
@@ -231,7 +232,7 @@ impl Menu {
             highlighted: None,
             focus: self.focus.clone(),
             bounds: self.bounds.clone(),
-            parent: self.parent.clone(),
+            ancestors: self.ancestors.clone(),
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
@@ -350,8 +351,9 @@ impl Menu {
         if open.is_none() {
             let build = build.clone();
             let child = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
-            let parent = self.bounds.clone();
-            child.update(cx, |child, _| child.parent = Some(parent));
+            let mut ancestors = vec![self.bounds.clone()];
+            ancestors.extend(self.ancestors.iter().cloned());
+            child.update(cx, |child, _| child.ancestors = ancestors);
             self._submenu = vec![
                 // Choosing in the submenu closes this menu too.
                 cx.subscribe(&child, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent)),
@@ -383,6 +385,20 @@ impl Menu {
             window.focus(&child.focus_handle(cx), cx);
         }
         cx.notify();
+    }
+
+    /// Whether a submenu open from this one, or one open from that, was drawn
+    /// where `at` is.
+    fn submenus_hold(&self, at: Point<Pixels>, cx: &App) -> bool {
+        self.entries.iter().any(|entry| match entry {
+            Entry::Submenu {
+                open: Some(child), ..
+            } => {
+                let child = child.read(cx);
+                child.bounds.get().is_some_and(|b| b.contains(&at)) || child.submenus_hold(at, cx)
+            }
+            _ => false,
+        })
     }
 
     fn choose(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -420,7 +436,7 @@ impl Menu {
             }
             // A submenu steps back to the menu it opened from; the menu
             // itself closes.
-            "escape" | "left" if self.parent.is_some() => cx.emit(Back),
+            "escape" | "left" if !self.ancestors.is_empty() => cx.emit(Back),
             "escape" => cx.emit(DismissEvent),
             _ => return,
         }
@@ -544,14 +560,11 @@ impl Render for Menu {
             // menu this one opened from, is not a press outside.
             .on_mouse_down_out(cx.listener(|menu, event: &MouseDownEvent, _, cx| {
                 let at = event.position;
-                let inside = |cell: &Rc<Cell<Option<Bounds<Pixels>>>>| {
-                    cell.get().is_some_and(|b| b.contains(&at))
-                };
-                let in_submenu = menu.entries.iter().any(|entry| {
-                    matches!(entry, Entry::Submenu { open: Some(child), .. }
-                        if inside(&child.read(cx).bounds))
-                });
-                if in_submenu || menu.parent.as_ref().is_some_and(inside) {
+                let in_ancestor = menu
+                    .ancestors
+                    .iter()
+                    .any(|cell| cell.get().is_some_and(|b| b.contains(&at)));
+                if in_ancestor || menu.submenus_hold(at, cx) {
                     return;
                 }
                 cx.emit(DismissEvent)
@@ -600,13 +613,18 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             // Where the keyboard was, given back as the menu closes: a list's
             // keys work again after a choice or Escape.
             let before = window.focused(cx);
+            let own = menu.focus_handle(cx);
             opener.update(cx, |open, cx| {
                 let closing = cx.subscribe_in(
                     &menu,
                     window,
                     move |open: &mut Open, _, _: &DismissEvent, window, cx| {
                         open.0 = None;
-                        if let Some(before) = &before {
+                        // Only from the menu: a choice that put up a sheet
+                        // or opened a field keeps the keyboard where it went.
+                        let in_menu =
+                            window.focused(cx).is_none() || own.contains_focused(window, cx);
+                        if in_menu && let Some(before) = &before {
                             window.focus(before, cx);
                         }
                         cx.notify();
