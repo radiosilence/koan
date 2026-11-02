@@ -928,6 +928,55 @@ impl KoanEngine {
     }
 }
 
+/// Calls for front ends that link the engine as a Rust library, not reached
+/// through uniffi.
+impl KoanEngine {
+    /// `album_cover_art`, with a remote cover's request cancelled when the
+    /// returned future is dropped: the desktop app drops it as the cover
+    /// scrolls out of view, so the request stops on its connection and its
+    /// place goes to a cover on screen. Local covers are read as
+    /// `album_cover_art` reads them.
+    pub async fn album_cover_art_cancellable(
+        self: Arc<Self>,
+        album_id: i64,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        let engine = self.clone();
+        let row = offload::offload(move || {
+            queries::cover_track_for_album(&engine.db()?.conn, album_id).map_err(db_err)
+        })
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let remote = (row.path.is_none() && row.cached_path.is_none())
+            .then(|| row.remote_id.clone())
+            .flatten();
+        let Some(remote_id) = remote else {
+            let engine = self.clone();
+            return offload::offload(move || engine.cover_art_of(Some(row), size)).await;
+        };
+        let cfg = Config::cached();
+        if !cfg.remote.enabled {
+            return Ok(None);
+        }
+        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
+            return Err(KoanError::Remote {
+                message: koan_core::helpers::remote_unavailable(&cfg),
+            });
+        };
+        let track_id = row.id;
+        let answer = offload::cancellable(async move {
+            client.get_cover_art_cancellable(&remote_id, size).await
+        })
+        .await
+        .ok_or_else(|| KoanError::Remote {
+            message: "cover request cancelled".into(),
+        })?;
+        Self::remote_cover(track_id, answer)
+    }
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -5764,18 +5813,25 @@ impl KoanEngine {
                 message: koan_core::helpers::remote_unavailable(&cfg),
             });
         };
-        match client.get_cover_art(&remote_id, size) {
+        // The server answered and it has nothing: normal, and worth
+        // remembering. A timeout or a dropped connection says nothing about
+        // whether art exists, so it is reported, for the caller to ask again.
+        Self::remote_cover(track_id, client.get_cover_art(&remote_id, size))
+    }
+
+    /// Turns a server's answer for a cover into what `album_cover_art`
+    /// returns: no art when the server has none, an error when it could not
+    /// say.
+    fn remote_cover(
+        track_id: i64,
+        answer: Result<Vec<u8>, SubsonicError>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        match answer {
             Ok(data) if !data.is_empty() => {
                 let mime = sniff_mime(&data).to_string();
                 Ok(Some(CoverArt { data, mime }))
             }
-            // The server answered and it has nothing. Normal, and worth
-            // remembering: this record has no art and never will.
             Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => Ok(None),
-            // A timeout or a dropped connection says nothing about whether
-            // art exists. Reported rather than swallowed, so the caller can
-            // ask again instead of recording "this album has none" for the
-            // rest of the session — and so it appears in the log at all.
             Err(e) => {
                 log::warn!("cover art for track {track_id} failed: {e}");
                 Err(KoanError::Remote {

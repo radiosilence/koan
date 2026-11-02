@@ -39,6 +39,9 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
         // once is a runaway, and failing there beats failing at the OS thread
         // limit, where `spawn` starts erroring somewhere unrelated.
         .max_blocking_threads(512)
+        // Requests a caller may cancel run here as tasks (`cancellable`),
+        // which need the I/O and timer drivers.
+        .enable_all()
         .build()
         .expect("a runtime to start")
 });
@@ -57,6 +60,26 @@ where
         Ok(value) => value,
         Err(e) => std::panic::resume_unwind(e.into_panic()),
     }
+}
+
+/// Run `fut` on the runtime as a task that is aborted when the returned
+/// future is dropped: a request whose answer nobody wants any more stops at
+/// once, rather than running to the end on a thread nobody can take back.
+/// `None` when it was aborted or panicked.
+pub async fn cancellable<T, F>(fut: F) -> Option<T>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    struct AbortOnDrop(tokio::task::AbortHandle);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let task = RUNTIME.spawn(fut);
+    let _abort = AbortOnDrop(task.abort_handle());
+    task.await.ok()
 }
 
 /// Run `f` on the one lane every player command shares, in submission order.
