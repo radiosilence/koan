@@ -1,0 +1,1 @@
+- **The desktop app builds again.** Gathering the tracks to organise borrowed its list twice in one expression, which the compiler refuses.
