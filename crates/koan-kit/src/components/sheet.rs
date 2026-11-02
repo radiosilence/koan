@@ -167,6 +167,10 @@ struct Ask {
     /// The sheet's own keys, for a question without a field; with one, the
     /// field has them and answers Return itself.
     focus: Option<FocusHandle>,
+    /// What had the keyboard when the question was asked, which has it back
+    /// once the question is answered or put away: a sheet that asked (the
+    /// picker) goes on taking its keys.
+    before: Option<FocusHandle>,
     _enter: Option<Subscription>,
 }
 
@@ -203,6 +207,7 @@ pub struct Confirm {
 /// Asks before `run`: the lines are what it will change.
 pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut App) + 'static) {
     let lines = c.lines;
+    let before = window.focused(cx);
     let focus = cx.focus_handle();
     window.focus(&focus, cx);
     show(
@@ -215,6 +220,7 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
             name: None,
             run: Rc::new(move |_, cx| run(cx)),
             focus: Some(focus),
+            before,
             _enter: None,
         },
         cx,
@@ -233,6 +239,7 @@ pub fn name(
     run: impl Fn(String, &mut App) + 'static,
 ) {
     let initial = initial.to_owned();
+    let before = window.focused(cx);
     let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
     let focus = input.read(cx).focus_handle(cx);
     window.focus(&focus, cx);
@@ -240,11 +247,11 @@ pub fn name(
     let run: Run = Rc::new(run);
     let enter = {
         let run = run.clone();
-        window.subscribe(&input, cx, move |input, event: &InputEvent, _, cx| {
+        window.subscribe(&input, cx, move |input, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let typed = input.read(cx).value().trim().to_owned();
                 if !typed.is_empty() {
-                    dismiss(cx);
+                    dismiss(window, cx);
                     run(typed, cx);
                 }
             }
@@ -260,6 +267,7 @@ pub fn name(
             name: Some(input.clone()),
             run,
             focus,
+            before,
             _enter: Some(enter),
         },
         cx,
@@ -277,11 +285,14 @@ fn show(ask: Ask, cx: &mut App) {
     });
 }
 
-fn dismiss(cx: &mut App) {
-    asking(cx).update(cx, |a, cx| {
-        a.ask = None;
+fn dismiss(window: &mut Window, cx: &mut App) {
+    let before = asking(cx).update(cx, |a, cx| {
         cx.notify();
+        a.ask.take().and_then(|ask| ask.before)
     });
+    if let Some(before) = before {
+        window.focus(&before, cx);
+    }
 }
 
 /// The question being asked, over the window, for the shell to draw.
@@ -298,7 +309,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let blocked = typed.as_ref().is_some_and(String::is_empty);
     let go = {
         let (run, name) = (ask.run.clone(), ask.name.clone());
-        move |cx: &mut App| {
+        move |window: &mut Window, cx: &mut App| {
             let typed = name
                 .as_ref()
                 .map(|i| i.read(cx).value().trim().to_owned())
@@ -306,7 +317,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             if name.is_some() && typed.is_empty() {
                 return;
             }
-            dismiss(cx);
+            dismiss(window, cx);
             run(typed, cx);
         }
     };
@@ -314,14 +325,14 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let named = ask.name.is_some();
     let cancel = Button::new("ask-cancel", ButtonKind::Standard)
         .label("cancel")
-        .on_click(|_, _, cx| dismiss(cx));
+        .on_click(|_, window, cx| dismiss(window, cx));
     let verb = {
         let go = go.clone();
         Button::new("ask-go", ButtonKind::Standard)
             .label(ask.verb.as_ref())
             .destructive(ask.destructive)
             .disabled(blocked)
-            .on_click(move |_, _, cx| go(cx))
+            .on_click(move |_, window, cx| go(window, cx))
     };
     let rows: Vec<AnyElement> = lines
         .into_iter()
@@ -332,9 +343,9 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .key_context("Ask")
             .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
             .on_key_down(
-                move |e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
-                    "escape" => dismiss(cx),
-                    "enter" if !named => go(cx),
+                move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
+                    "escape" => dismiss(window, cx),
+                    "enter" if !named => go(window, cx),
                     _ => {}
                 },
             )
@@ -358,4 +369,63 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{TestAppContext, VisualTestContext};
+
+    use super::*;
+    use core::prelude::v1::test;
+
+    struct Asker {
+        focus: FocusHandle,
+    }
+
+    impl Render for Asker {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .children(overlay(window, cx))
+        }
+    }
+
+    /// A question put away with Escape gives the keyboard back to what
+    /// asked, so a sheet that asked goes on taking its keys.
+    #[gpui_kit::test]
+    fn the_keyboard_goes_back_to_what_asked(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (asker, cx) = cx.add_window_view(|_, cx| Asker {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let focus = asker.read_with(cx, |a, _| a.focus.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus, cx);
+            confirm(
+                Confirm {
+                    title: "replace the queue".into(),
+                    verb: "replace".into(),
+                    destructive: true,
+                    lines: vec!["3 tracks come off the queue.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                |_| {},
+            );
+        });
+        let host = cx.update(|_, cx| asking(cx));
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        assert!(!cx.update(|window, _| focus.is_focused(window)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
+        assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
 }
