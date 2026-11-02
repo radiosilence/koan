@@ -53,32 +53,6 @@ pub fn item(
     form_item(title, detail, controls, look)
 }
 
-/// A value a click copies, such as an address another device asks for:
-/// "copied" for a moment after.
-pub fn copyable(
-    id: &'static str,
-    value: String,
-    copied: bool,
-    on_click: impl Fn(&mut App) + 'static,
-    look: &Look,
-) -> Stateful<Div> {
-    let ink = look.palette.ink.hsla();
-    div()
-        .id(id)
-        .cursor_pointer()
-        .text_role(TypeRole::Control, look)
-        .text_color(look.palette.muted.hsla())
-        .hover(move |s| s.text_color(ink))
-        .truncate()
-        .child(if copied {
-            crate::theme::label("Copied")
-        } else {
-            value.into()
-        })
-        .tooltip(|window, cx| crate::components::Tooltip::view("copy".into(), window, cx))
-        .on_click(move |_, _, cx| on_click(cx))
-}
-
 /// A day, as "1 Nov 2026", in the local time zone.
 pub fn day(secs: i64) -> String {
     use chrono::{Local, TimeZone};
@@ -99,45 +73,5 @@ pub fn moment(secs: i64) -> String {
         at.format("%H:%M").to_string()
     } else {
         at.format("%-d %b %Y, %H:%M").to_string()
-    }
-}
-
-/// How long "Copied" stands in for what was copied.
-const COPIED: std::time::Duration = std::time::Duration::from_millis(1500);
-
-/// What a pane just copied, read as "copied" for a moment after.
-#[derive(Default)]
-pub struct Copied {
-    which: Option<&'static str>,
-    reset: Option<Task<()>>,
-}
-
-impl Copied {
-    pub fn is(&self, which: &'static str) -> bool {
-        self.which == Some(which)
-    }
-
-    /// Puts `value` on the clipboard and reads `which` as copied until
-    /// `COPIED` has passed. `of` finds this in the view.
-    pub fn copy<V: 'static>(
-        view: &mut V,
-        of: fn(&mut V) -> &mut Copied,
-        which: &'static str,
-        value: String,
-        cx: &mut Context<V>,
-    ) {
-        cx.write_to_clipboard(ClipboardItem::new_string(value));
-        let reset = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(COPIED).await;
-            this.update(cx, |view, cx| {
-                of(view).which = None;
-                cx.notify();
-            })
-            .ok();
-        });
-        let copied = of(view);
-        copied.which = Some(which);
-        copied.reset = Some(reset);
-        cx.notify();
     }
 }

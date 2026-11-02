@@ -1,7 +1,7 @@
 //! Server → Shares its library: the first account, sharing on and off, the
 //! port, and where invites send phones away from home.
 
-use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
+use crate::components::{Button, ButtonKind, CopyText, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{InviteTo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
@@ -12,7 +12,7 @@ use koan_kit::raw::px;
 use super::link::LinkDevice;
 use super::server::ServerPane;
 use crate::settings::Ctx;
-use crate::settings::form::{Row, buttons, copyable, note, section, text};
+use crate::settings::form::{Row, buttons, note, section, text};
 use crate::settings::model::SettingsModel;
 use crate::settings::sharing::Landed;
 use crate::settings::sheet::{self, Action, Sheet};
@@ -25,7 +25,6 @@ pub struct ShareForm {
     address: Entity<InputState>,
     account_error: Option<SharedString>,
     creating: bool,
-    copied: Copied,
     link: Option<(String, Entity<LinkDevice>)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -80,7 +79,6 @@ impl ShareForm {
             address,
             account_error: None,
             creating: false,
-            copied: Copied::default(),
             link: None,
             _subscriptions: subscriptions,
         }
@@ -341,7 +339,6 @@ impl ShareForm {
         look: &Look,
         cx: &mut Context<ServerPane>,
     ) -> AnyElement {
-        let pane = cx.entity();
         let sharing = ctx.sharing.read(cx);
         let mut rows = vec![{
             let ctx = ctx.clone();
@@ -371,22 +368,9 @@ impl ShareForm {
             .into_any_element()
         }];
         if let Some(url) = sharing.serving.as_ref().and_then(|s| s.lan_url.clone()) {
-            let pane = pane.clone();
-            let copy = url.clone();
             rows.push(
                 Row::new("On your network")
-                    .control(copyable(
-                        "copy-lan",
-                        url,
-                        self.copied.is("lan"),
-                        move |cx| {
-                            let copy = copy.clone();
-                            pane.update(cx, |pane, cx| {
-                                Copied::copy(pane, |pane| &mut pane.share.copied, "lan", copy, cx)
-                            })
-                        },
-                        look,
-                    ))
+                    .control(CopyText::new("copy-lan", url))
                     .into_any_element(),
             );
         }

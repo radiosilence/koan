@@ -45,6 +45,121 @@ const SUBPIXEL_SHADERS: &str = concat!(
     include_str!("shaders_subpixel.wgsl"),
 );
 
+// KOAN: shader quads (#1641): what a program's `shade` is compiled between.
+// Storage buffers only; the WebGL path draws no shaders.
+const KOAN_SHADER_PRELUDE: &str = r#"
+struct GlobalParams {
+    viewport_size: vec2<f32>,
+    premultiplied_alpha: u32,
+    pad: u32,
+}
+
+struct KoanShaderInstance {
+    bounds: vec4<f32>,
+    clip: vec4<f32>,
+    uniforms: array<vec4<f32>, KOAN_UNIFORM_BLOCKS>,
+    time: vec4<f32>,
+    tile: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> globals: GlobalParams;
+@group(1) @binding(0) var<storage, read> b_koan_shaders: array<KoanShaderInstance>;
+@group(2) @binding(0) var t_koan_image: texture_2d<f32>;
+@group(2) @binding(1) var s_koan_image: sampler;
+
+// The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
+// texels around its tile in the atlas.
+fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+    let extent = vec2<f32>(textureDimensions(t_koan_image, 0));
+    let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
+    return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
+}
+"#;
+
+const KOAN_SHADER_MAIN: &str = r#"
+struct KoanShaderVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) local: vec2<f32>,
+    @location(1) @interpolate(flat) instance: u32,
+}
+
+@vertex
+fn koan_shader_vertex(
+    @builtin(vertex_index) vertex_id: u32,
+    @builtin(instance_index) instance_id: u32,
+) -> KoanShaderVarying {
+    let unit = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let s = b_koan_shaders[instance_id];
+    let p = s.bounds.xy + unit * s.bounds.zw;
+    var out: KoanShaderVarying;
+    out.position = vec4<f32>(
+        p / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0),
+        0.0,
+        1.0,
+    );
+    out.local = unit * s.bounds.zw;
+    out.instance = instance_id;
+    return out;
+}
+
+@fragment
+fn koan_shader_fragment(input: KoanShaderVarying) -> @location(0) vec4<f32> {
+    let s = b_koan_shaders[input.instance];
+    let p = input.position.xy;
+    if (any(p < s.clip.xy) || any(p > s.clip.xy + s.clip.zw)) {
+        discard;
+    }
+    var color = shade(input.local, s.bounds.zw, s.time.x, s.uniforms, s.tile);
+    if (globals.premultiplied_alpha != 0u) {
+        color = vec4<f32>(color.rgb * color.a, color.a);
+    }
+    return color;
+}
+"#;
+
+// KOAN: (#1641) a layer read back texel for texel.
+const KOAN_COMPOSE: &str = r#"
+@group(0) @binding(0) var t_layer: texture_2d<f32>;
+@group(0) @binding(1) var s_layer: sampler;
+
+@vertex
+fn koan_compose_vertex(@builtin(vertex_index) id: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((id << 1u) & 2u), f32(id & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn koan_compose_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureLoad(t_layer, vec2<i32>(position.xy), 0);
+}
+"#;
+
+// KOAN: (#1641) a program's whole module.
+fn koan_shader_source(program: &gpui::ShaderProgram) -> String {
+    let prelude = KOAN_SHADER_PRELUDE.replace(
+        "KOAN_UNIFORM_BLOCKS",
+        &(gpui::SHADER_UNIFORMS / 4).to_string(),
+    );
+    format!("{prelude}\n{}\n{KOAN_SHADER_MAIN}", program.wgsl)
+}
+
+// KOAN: (#1641) blended as GPUI's own pipelines are for the surface.
+fn koan_shader_color_target(
+    format: wgpu::TextureFormat,
+    alpha_mode: wgpu::CompositeAlphaMode,
+) -> wgpu::ColorTargetState {
+    wgpu::ColorTargetState {
+        format,
+        blend: Some(match alpha_mode {
+            wgpu::CompositeAlphaMode::PreMultiplied => {
+                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
+            }
+            _ => wgpu::BlendState::ALPHA_BLENDING,
+        }),
+        write_mask: wgpu::ColorWrites::ALL,
+    }
+}
+
 fn least_common_multiple(left: u64, right: u64) -> u64 {
     let mut first = left;
     let mut second = right;
@@ -195,6 +310,25 @@ struct WgpuResources {
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
+    // KOAN: shader quads (#1641): each program's pipeline, compiled the
+    // first time it is drawn (`None` for one that failed, not tried again),
+    // the target they draw to, and what a quad with no image samples.
+    shader_pipelines: FxHashMap<&'static str, Option<wgpu::RenderPipeline>>,
+    shader_color_target: wgpu::ColorTargetState,
+    blank_texture_bind_group: wgpu::BindGroup,
+    // KOAN: the last frame drawn as the layers its shaders are drawn
+    // between, which each present composes with the shaders, and the
+    // pipelines that lay a layer down (#1641).
+    shader_layers: KoanLayers,
+    compose_pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+}
+
+// KOAN: (#1641) a frame's layers, `None` for a blank one.
+#[derive(Default)]
+struct KoanLayers {
+    generation: u64,
+    size: (u32, u32),
+    layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
 }
 
 struct CachedTextureBindGroup {
@@ -1077,6 +1211,10 @@ impl WgpuRenderer {
             core.dual_source_blending,
             core.uses_webgl_instance_data,
         );
+        // KOAN: (#1641) shaders compile again for the new blending.
+        resources.shader_color_target = koan_shader_color_target(format, new_alpha_mode);
+        resources.shader_pipelines.clear();
+        resources.shader_layers = KoanLayers::default();
 
         if let RendererState::Ready { surface, core } = &self.state {
             surface.configure(&core.resources.device, &self.surface_config);
@@ -1191,13 +1329,23 @@ impl WgpuRenderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let premultiplied_alpha =
             self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-        if let Err(error) = core.render_frame(
-            scene,
-            &frame_view,
-            size,
-            premultiplied_alpha,
-            wgpu::Color::TRANSPARENT,
-        ) {
+        // KOAN: a scene with shaders is drawn once as the layers they are
+        // drawn between, and each present composes them with the shaders
+        // (#1641).
+        let rendered = if scene.shader_layers.is_some() && !core.uses_webgl_instance_data {
+            core.compose_frame(scene, &frame_view, size, premultiplied_alpha)
+        } else {
+            core.resources.shader_layers = KoanLayers::default();
+            core.render_frame(
+                scene,
+                &frame_view,
+                size,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            )
+            .map(drop)
+        };
+        if let Err(error) = rendered {
             log::error!("{error:#}");
             return false;
         }
@@ -1331,6 +1479,39 @@ impl WgpuRendererCore {
             ],
         });
         let max_texture_size = device.limits().max_texture_dimension_2d;
+        // KOAN: (#1641).
+        let shader_color_target = koan_shader_color_target(target_format, alpha_mode);
+        let blank_texture_bind_group = {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("koan_blank_texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("koan_blank_texture_bind_group"),
+                layout: &bind_group_layouts.texture,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&atlas_sampler),
+                    },
+                ],
+            })
+        };
 
         Self {
             resources: WgpuResources {
@@ -1348,6 +1529,11 @@ impl WgpuRendererCore {
                 path_intermediate_view: None,
                 path_msaa_texture: None,
                 path_msaa_view: None,
+                shader_pipelines: FxHashMap::default(),
+                shader_color_target,
+                blank_texture_bind_group,
+                shader_layers: KoanLayers::default(),
+                compose_pipelines: None,
             },
             atlas,
             path_globals_offset,
@@ -1492,6 +1678,21 @@ impl WgpuRendererCore {
                 )
             })?;
         self.prepare_texture_bind_groups(scene);
+        // KOAN: shader quads (#1641), their uniforms as they are now.
+        let shader_instances = if self.uses_webgl_instance_data || scene.shaders.is_empty() {
+            None
+        } else {
+            for shader in &scene.shaders {
+                self.prepare_shader_pipeline(shader.program);
+            }
+            let now = std::time::Instant::now();
+            let instances: Vec<gpui::ShaderInstance> = scene
+                .shaders
+                .iter()
+                .map(|shader| gpui::ShaderInstance::of(shader, now))
+                .collect();
+            Some(self.write_instance_binding("koan_shaders_bind_group", &mut instance_offset, &instances)?)
+        };
 
         let mut encoder =
             self.resources()
@@ -1607,8 +1808,22 @@ impl WgpuRendererCore {
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
-                    // KOAN: shader quads (#1641) are not drawn here yet.
-                    PrimitiveBatch::Shaders { .. } => {}
+                    // KOAN: shader quads (#1641); none on the WebGL path.
+                    PrimitiveBatch::Shaders {
+                        program,
+                        texture,
+                        range,
+                    } => {
+                        if let Some(instances) = &shader_instances {
+                            self.draw_shaders(
+                                instances,
+                                program,
+                                texture,
+                                instance_range(range),
+                                &mut pass,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1690,6 +1905,11 @@ impl WgpuRendererCore {
                 PrimitiveBatch::MonochromeSprites { texture_id, .. }
                 | PrimitiveBatch::SubpixelSprites { texture_id, .. }
                 | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
+                // KOAN: a shader's image (#1641).
+                PrimitiveBatch::Shaders {
+                    texture: Some(texture_id),
+                    ..
+                } => texture_id,
                 _ => continue,
             };
             if !texture_ids.contains(&texture_id) {
@@ -1717,6 +1937,37 @@ impl WgpuRendererCore {
                 continue;
             }
 
+            let bind_group =
+                self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+            self.resources_mut().atlas_texture_bind_groups.insert(
+                texture_id,
+                CachedTextureBindGroup {
+                    texture_generation: texture_info.generation,
+                    bind_group,
+                },
+            );
+        }
+    }
+
+    // KOAN: (#1641) a bind group for each shader's image, current with its
+    // atlas texture; unlike `prepare_texture_bind_groups`, nothing else is
+    // looked at or dropped.
+    fn prepare_shader_textures(&mut self, scene: &Scene) {
+        for shader in &scene.shaders {
+            let Some(texture_id) = shader.image.as_ref().map(|t| t.texture_id) else {
+                continue;
+            };
+            let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
+                continue;
+            };
+            let current = self
+                .resources()
+                .atlas_texture_bind_groups
+                .get(&texture_id)
+                .is_some_and(|cached| cached.texture_generation == texture_info.generation);
+            if current {
+                continue;
+            }
             let bind_group =
                 self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
             self.resources_mut().atlas_texture_bind_groups.insert(
@@ -1775,6 +2026,318 @@ impl WgpuRendererCore {
                 ..sprite_instances.first_instance + range.end,
         );
         Ok(())
+    }
+
+    // KOAN: shader quads (#1641). Composes the scene's layers and shaders
+    // into `target`, drawing the layers first if this scene's are not drawn
+    // yet, with the shaders' uniforms as they are now.
+    fn compose_frame(
+        &mut self,
+        scene: &Scene,
+        target: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        premultiplied_alpha: bool,
+    ) -> Result<()> {
+        let plan = scene.shader_layers.as_deref().context("no shader layers")?;
+        let extent = (size.width.0 as u32, size.height.0 as u32);
+        let held = &self.resources.shader_layers;
+        if held.generation != scene.generation || held.size != extent || held.layers.is_empty() {
+            let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
+                if self.resources.shader_layers.size == extent {
+                    std::mem::take(&mut self.resources.shader_layers.layers)
+                        .into_iter()
+                        .flatten()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+            let mut drawn = Vec::with_capacity(plan.layers.len());
+            for layer in &plan.layers {
+                if layer.is_blank() {
+                    drawn.push(None);
+                    continue;
+                }
+                let (texture, bind_group) = match pool.pop() {
+                    Some(held) => held,
+                    None => {
+                        let resources = self.resources();
+                        let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("koan_shader_layer"),
+                            size: wgpu::Extent3d {
+                                width: extent.0,
+                                height: extent.1,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: self.target_format,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING,
+                            view_formats: &[],
+                        });
+                        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let bind_group = self.create_texture_bind_group("koan_shader_layer", &view);
+                        (texture, bind_group)
+                    }
+                };
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                // Every layer over a clear texture, which leaves its colours
+                // premultiplied; queued before the compose that reads them.
+                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+                drawn.push(Some((texture, bind_group)));
+            }
+            self.resources_mut().shader_layers = KoanLayers {
+                generation: scene.generation,
+                size: extent,
+                layers: drawn,
+            };
+        }
+        if self.resources().compose_pipelines.is_none() {
+            let pipelines = self.create_compose_pipelines();
+            self.resources_mut().compose_pipelines = Some(pipelines);
+        }
+
+        self.atlas.before_frame();
+        let globals = GlobalParams {
+            viewport_size: [size.width.0 as f32, size.height.0 as f32],
+            premultiplied_alpha: premultiplied_alpha as u32,
+            pad: 0,
+        };
+        self.resources
+            .queue
+            .write_buffer(&self.resources.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        // Only the shaders' own images: the layers' were prepared as they
+        // were drawn, and a present walks nothing but the quads.
+        self.prepare_shader_textures(scene);
+        for shader in &scene.shaders {
+            self.prepare_shader_pipeline(shader.program);
+        }
+        let now = std::time::Instant::now();
+        let instances: Vec<gpui::ShaderInstance> = scene
+            .shaders
+            .iter()
+            .map(|shader| gpui::ShaderInstance::of(shader, now))
+            .collect();
+        let mut instance_offset = 0;
+        let instances =
+            self.write_instance_binding("koan_shaders_bind_group", &mut instance_offset, &instances)?;
+
+        let resources = self.resources();
+        let (copy, over) = resources
+            .compose_pipelines
+            .as_ref()
+            .context("missing compose pipelines")?;
+        let layers = &resources.shader_layers.layers;
+        let mut encoder = resources
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("koan_compose"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("koan_compose"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            if let Some(Some((_, first))) = layers.first() {
+                pass.set_pipeline(copy);
+                pass.set_bind_group(0, first, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            for (k, group) in plan.groups.iter().enumerate() {
+                let mut start = group.start;
+                while start < group.end {
+                    let head = &scene.shaders[start];
+                    let key = |s: &gpui::PaintShader| {
+                        (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                    };
+                    let end = scene.shaders[start..group.end]
+                        .iter()
+                        .position(|s| key(s) != key(head))
+                        .map_or(group.end, |n| start + n);
+                    self.draw_shaders(
+                        &instances,
+                        head.program,
+                        head.image.as_ref().map(|t| t.texture_id),
+                        start as u32..end as u32,
+                        &mut pass,
+                    );
+                    start = end;
+                }
+                if let Some(Some((_, layer))) = layers.get(k + 1) {
+                    pass.set_pipeline(over);
+                    pass.set_bind_group(0, layer, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+        }
+        resources.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    // KOAN: (#1641) a layer laid down as one triangle covering the target,
+    // read texel for texel: replacing what is there for the first layer, over
+    // it for the rest, whose colours are premultiplied.
+    fn create_compose_pipelines(&self) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+        let resources = self.resources();
+        let device = &resources.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("koan_compose"),
+            source: wgpu::ShaderSource::Wgsl(KOAN_COMPOSE.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("koan_compose"),
+            bind_group_layouts: &[Some(&resources.bind_group_layouts.texture)],
+            immediate_size: 0,
+        });
+        let pipeline = |blend: Option<wgpu::BlendState>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("koan_compose"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("koan_compose_vertex"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("koan_compose_fragment"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.target_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        (
+            pipeline(None),
+            pipeline(Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)),
+        )
+    }
+
+    // KOAN: shader quads (#1641). A program's pipeline is compiled the first
+    // time it is drawn: its `shade` between the prelude and the entry points.
+    fn prepare_shader_pipeline(&mut self, program: &'static gpui::ShaderProgram) {
+        if self.resources().shader_pipelines.contains_key(program.name) {
+            return;
+        }
+        let resources = self.resources();
+        let device = &resources.device;
+        let source = koan_shader_source(program);
+        // A program that does not compile is caught here rather than left to
+        // the device's error handler, which would read it as the device's.
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let compiled = {
+            {
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(program.name),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+                let layouts = &resources.bind_group_layouts;
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some(program.name),
+                    bind_group_layouts: &[
+                        Some(&layouts.globals),
+                        Some(&layouts.instances),
+                        Some(&layouts.texture),
+                    ],
+                    immediate_size: 0,
+                });
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(program.name),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("koan_shader_vertex"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("koan_shader_fragment"),
+                        targets: &[Some(resources.shader_color_target.clone())],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            }
+        };
+        // Native backends report a scope's errors at once.
+        use std::future::Future as _;
+        let mut popped = std::pin::pin!(scope.pop());
+        let error = match popped
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+        {
+            std::task::Poll::Ready(error) => error,
+            std::task::Poll::Pending => None,
+        };
+        let pipeline = match error {
+            None => Some(compiled),
+            Some(error) => {
+                log::error!("shader {} did not compile: {error}", program.name);
+                None
+            }
+        };
+        self.resources_mut()
+            .shader_pipelines
+            .insert(program.name, pipeline);
+    }
+
+    // KOAN: shader quads (#1641).
+    fn draw_shaders(
+        &self,
+        instances: &InstanceBinding,
+        program: &'static gpui::ShaderProgram,
+        texture: Option<AtlasTextureId>,
+        range: Range<u32>,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        let resources = self.resources();
+        let Some(Some(pipeline)) = resources.shader_pipelines.get(program.name) else {
+            return;
+        };
+        let image = match texture {
+            Some(id) => match resources.atlas_texture_bind_groups.get(&id) {
+                Some(cached) => &cached.bind_group,
+                // Released by the atlas: a stale paint, replaced soon.
+                None => return,
+            },
+            None => &resources.blank_texture_bind_group,
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
+        pass.set_bind_group(1, &instances.bind_group, &[]);
+        pass.set_bind_group(2, image, &[]);
+        pass.draw(
+            0..4,
+            instances.first_instance + range.start..instances.first_instance + range.end,
+        );
     }
 
     unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
@@ -2407,6 +2970,26 @@ impl WgpuHeadlessRenderer {
         Ok(())
     }
 
+    // KOAN: (#1641) renders a scene as a window with shaders presents it,
+    // its layers composed with the shaders, for checking against
+    // `render_scene_to_image`.
+    pub fn compose_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> anyhow::Result<image::RgbaImage> {
+        self.check_gpu_errors()?;
+        self.ensure_render_target(size)?;
+        let view = self
+            .render_target
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
+            .view
+            .clone();
+        self.core.compose_frame(scene, &view, size, false)?;
+        self.read_image()
+    }
+
     /// Copies the current render target back to the CPU. Dimensions come from the
     /// target texture itself, so the copy can never disagree with what was rendered.
     fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
@@ -2922,5 +3505,145 @@ mod tests {
                 33.0_f32.to_bits(),
             ]
         );
+    }
+
+    // KOAN: (#1641) a shader quad is drawn where it was painted, by its
+    // program, from its uniforms, and clipped to its mask.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_draws_shader_quads() -> anyhow::Result<()> {
+        static HALF: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-half",
+            msl: "",
+            wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    if (position.x < size.x * u[0].x) {
+        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+"#,
+            prepare: None,
+        };
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 0.5);
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
+            origin: Point { x: ScaledPixels(x), y: ScaledPixels(y) },
+            size: Size { width: ScaledPixels(w), height: ScaledPixels(h) },
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds: rect(0.0, 0.0, 64.0, 32.0),
+            content_mask: ContentMask { bounds: rect(0.0, 0.0, 64.0, 16.0) },
+            program: &HALF,
+            uniforms: uniforms.clone(),
+            image: None,
+        });
+        scene.finish();
+        let size = Size { width: DevicePixels(64), height: DevicePixels(32) };
+        let image = renderer.render_scene_to_image(&scene, size)?;
+        let red = |x, y| image.get_pixel(x, y).0[0] > 200;
+        assert!(red(8, 8), "the left half, inside the mask, is drawn");
+        assert!(!red(48, 8), "the right half is the program's to leave clear");
+        assert!(!red(8, 24), "below the mask is clipped");
+
+        uniforms.set(0, 1.0);
+        let image = renderer.render_scene_to_image(&scene, size)?;
+        assert!(image.get_pixel(48, 8).0[0] > 200, "the uniforms are read afresh");
+        Ok(())
+    }
+
+    // KOAN: (#1641) a composed present gives the pixels a whole render does,
+    // with a quad over the shader and without, and follows the uniforms.
+    #[cfg(target_os = "linux")]
+    static SOLID: gpui::ShaderProgram = gpui::ShaderProgram {
+        name: "koan-test-solid",
+        msl: "",
+        wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    if (position.x < size.x * u[0].x) {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.5);
+    }
+    return vec4<f32>(0.0);
+}
+"#,
+        prepare: None,
+    };
+
+    #[cfg(target_os = "linux")]
+    fn close(a: &image::RgbaImage, b: &image::RgbaImage) -> bool {
+        a.as_raw().iter().zip(b.as_raw()).all(|(x, y)| x.abs_diff(*y) <= 1)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn shader_at(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uniforms: &Arc<gpui::ShaderUniforms>,
+    ) -> gpui::PaintShader {
+        let quad = solid_quad(x, y, w, h, gpui::red());
+        gpui::PaintShader {
+            order: 0,
+            bounds: quad.bounds,
+            content_mask: quad.content_mask,
+            program: &SOLID,
+            uniforms: uniforms.clone(),
+            image: None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_composed_present_matches_a_whole_render() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        for covered in [false, true] {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 64.0, 32.0, gpui::blue()));
+            scene.insert_primitive(shader_at(8.0, 8.0, 32.0, 16.0, &uniforms));
+            let over = if covered {
+                solid_quad(30.0, 10.0, 20.0, 4.0, gpui::green())
+            } else {
+                solid_quad(50.0, 10.0, 10.0, 4.0, gpui::green())
+            };
+            scene.insert_primitive(over);
+            scene.finish();
+            let plan = scene.shader_layers.as_deref().expect("a plan");
+            assert_eq!(plan.layers[1].is_blank(), !covered);
+            uniforms.set(0, 0.5);
+            let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+            let composed = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+            assert!(close(&whole, &composed), "covered: {covered}");
+            uniforms.set(0, 1.0);
+            let moved = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+            assert_ne!(moved.as_raw(), composed.as_raw());
+            let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+            assert!(close(&whole, &moved), "covered: {covered}, moved");
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_what_covers_a_shader_keeps_its_own_order() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 1.0);
+        let mut scene = Scene::default();
+        scene.insert_primitive(shader_at(4.0, 4.0, 16.0, 16.0, &uniforms));
+        // A menu over the shader, and its text over the menu, clear of it.
+        scene.insert_primitive(solid_quad(12.0, 8.0, 40.0, 16.0, gpui::green()));
+        scene.insert_primitive(solid_quad(32.0, 12.0, 12.0, 8.0, gpui::blue()));
+        scene.finish();
+        let plan = scene.shader_layers.as_deref().expect("a plan");
+        assert_eq!(plan.layers[1].quads.len(), 2, "the text follows the menu");
+        let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+        let composed = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+        assert!(close(&whole, &composed));
+        Ok(())
     }
 }

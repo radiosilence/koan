@@ -381,9 +381,9 @@ impl Render for DevicesPane {
                 let pane = entity.clone();
                 sections.push(section(
                     Some("Pair a device"),
-                    vec![buttons(
+                    vec![crate::components::form_entry(
+                        TextField::new(&self.code).into_any_element(),
                         vec![
-                            div().flex_1().child(TextField::new(&self.code)).into_any_element(),
                             Button::new("approve-code", ButtonKind::Prominent)
                                 .label("Approve")
                                 .disabled(!ready)

@@ -1,0 +1,1 @@
+- **The kōan GUI app makes the record wash on the GPU.** A new record is reduced to a small field rather than baked, switching between light and dark or changing the theme tint no longer bakes the wash again, and the wash is dithered at the screen's own resolution, so it shows no bands at any size.

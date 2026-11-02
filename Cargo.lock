@@ -5498,6 +5498,7 @@ dependencies = [
  "block2 0.6.2",
  "futures",
  "gpui-kit",
+ "gpui-pre-platform",
  "image",
  "log",
  "objc2 0.6.5",
