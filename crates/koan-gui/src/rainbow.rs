@@ -108,8 +108,8 @@ impl Rainbow {
                 let t = (x + y) as f32 / (2 * SIDE - 2) as f32 * (colours.len() - 1) as f32;
                 let (i, f) = (t.floor() as usize, t.fract());
                 let (a, b) = (
-                    rgb(colours[i]),
-                    rgb(colours[(i + 1).min(colours.len() - 1)]),
+                    channels(colours[i]),
+                    channels(colours[(i + 1).min(colours.len() - 1)]),
                 );
                 for c in 0..3 {
                     rgba.push((a[c] as f32 * (1.0 - f) + b[c] as f32 * f) as u8);
@@ -121,12 +121,12 @@ impl Rainbow {
     }
 }
 
-fn rgb(hex: u32) -> [u8; 3] {
+fn channels(hex: u32) -> [u8; 3] {
     [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
 }
 
 fn accent(hex: u32) -> Accent {
-    let [r, g, b] = rgb(hex);
+    let [r, g, b] = channels(hex);
     Accent::of(Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]))
 }
 
