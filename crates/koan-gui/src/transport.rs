@@ -929,7 +929,8 @@ impl Render for Seek {
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
         // The playhead the slider shows comes from the engine, which holds a
-        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // seek's target until it lands there (`SharedPlayerState::request_seek`,
+        // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
         let width = self.width.clone();
         let measure = canvas(

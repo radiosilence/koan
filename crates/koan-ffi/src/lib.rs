@@ -717,6 +717,9 @@ pub struct KoanEngine {
     /// prefix (`LinkIdentity::files`). Another device on the same config
     /// directory keeps a session of its own.
     session: &'static str,
+    /// A seek sent to the device being controlled, held as its playhead
+    /// until that device reports being near it (`remote_playhead`).
+    remote_seek: parking_lot::Mutex<Option<RemoteSeek>>,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -755,6 +758,20 @@ struct CursorReading {
 /// told again. Two frames of a 60Hz seek bar: below this there is nothing on
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
+
+/// How near the controlled device's report must come to where a seek sent
+/// to it lands to count as having landed, and how long a report far from it
+/// is taken as from before the seek.
+const REMOTE_SEEK_NEAR_MS: u64 = 750;
+const REMOTE_SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A seek sent to the device being controlled.
+#[derive(Clone, Copy)]
+struct RemoteSeek {
+    position_ms: u64,
+    at: Instant,
+    playing: bool,
+}
 
 /// How long a playhead may read the same while playing before it is called
 /// held, when this thread next looks. The player wakes it when output should
@@ -1142,15 +1159,20 @@ impl KoanEngine {
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         // Every client's bar lands where it was asked to now, not when the
-        // player thread gets there. Another device's playhead is its own.
-        let here = koan_core::remote::devices::target().is_none();
-        if here {
-            self.state.request_seek(position_ms);
+        // player thread, or the device being controlled, gets there.
+        let target = koan_core::remote::devices::target_device();
+        match &target {
+            None => self.state.request_seek(position_ms),
+            Some(device) => self.remote_seek_requested(device, position_ms),
         }
         let state = self.state.clone();
+        let engine = self.clone();
         let sent = offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await;
-        if here && sent.is_err() {
-            state.seek_taken();
+        if sent.is_err() {
+            match target {
+                None => state.seek_taken(position_ms),
+                Some(_) => *engine.remote_seek.lock() = None,
+            }
         }
         sent
     }
@@ -5907,6 +5929,52 @@ impl KoanEngine {
             .collect()
     }
 
+    /// A seek sent to `device`: its playhead reads as landed from now, held
+    /// until it reports being there, as this device's own is
+    /// (`SharedPlayerState::request_seek`).
+    fn remote_seek_requested(&self, device: &koan_core::remote::devices::Device, position_ms: u64) {
+        let st = device.state.as_ref();
+        let duration = st.map_or(0, |s| s.duration_ms);
+        let position_ms = if duration > 0 {
+            position_ms.min(duration)
+        } else {
+            position_ms
+        };
+        let playing = st.is_some_and(|s| s.playing);
+        *self.remote_seek.lock() = Some(RemoteSeek {
+            position_ms,
+            at: Instant::now(),
+            playing,
+        });
+        self.out.publish(StateSlice::Playhead {
+            position_ms,
+            seekable_ms: duration,
+            playing,
+        });
+    }
+
+    /// The controlled device's playhead, `reported`, or where a seek sent to
+    /// it lands while that report is still from before it: one far from the
+    /// target is the old position, until the seek's patience runs out.
+    fn remote_playhead(&self, reported: u64) -> u64 {
+        let mut held = self.remote_seek.lock();
+        let Some(seek) = *held else {
+            return reported;
+        };
+        let since = seek.at.elapsed();
+        let landing = seek.position_ms
+            + if seek.playing {
+                since.as_millis() as u64
+            } else {
+                0
+            };
+        if since >= REMOTE_SEEK_PATIENCE || landing.abs_diff(reported) <= REMOTE_SEEK_NEAR_MS {
+            *held = None;
+            return reported;
+        }
+        landing
+    }
+
     /// Publish another device's playback, playhead and queue as the app's.
     fn publish_remote(&self, device: Option<&koan_core::remote::devices::Device>) {
         let none = koan_core::remote::link::LinkState::default();
@@ -5955,7 +6023,7 @@ impl KoanEngine {
             },
         });
         out.publish(StateSlice::Playhead {
-            position_ms: device.map_or(0, |d| d.position_ms()),
+            position_ms: self.remote_playhead(device.map_or(0, |d| d.position_ms())),
             seekable_ms: st.duration_ms,
             playing: st.playing,
         });
@@ -6367,6 +6435,7 @@ impl KoanEngine {
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             session: identity.files,
+            remote_seek: Default::default(),
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),

@@ -1000,8 +1000,9 @@ impl Covers {
         // The mark is older than what the library keeps, or another
         // database's: any cover here may be another record's now.
         if gone.purge {
+            // `clear` trusts the disk again once its files are gone.
             self.clear(None, cx);
-            self.allow_fetches(true);
+            self.allow_fetches(false);
             self.keep_mark(gone.seq, cx);
             return;
         }

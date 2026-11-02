@@ -1443,7 +1443,7 @@ impl Player {
         self.seek_to(position_ms);
         // Taken: the playhead is the timeline's again, whether it landed or
         // the seek was declined.
-        self.shared_state.seek_taken();
+        self.shared_state.seek_taken(position_ms);
     }
 
     fn seek_to(&mut self, position_ms: u64) {
@@ -3589,6 +3589,13 @@ mod tests {
         player.process_command(PlayerCommand::Seek(4_000));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert!(player.shared_state.pending_seek().is_none(), "taken");
+        // Two seeks in quick succession: taking the first leaves the second.
+        player.shared_state.request_seek(5_000);
+        player.shared_state.request_seek(6_000);
+        player.shared_state.seek_taken(5_000);
+        assert_eq!(player.shared_state.position_ms(), 6_000);
+        player.process_command(PlayerCommand::Seek(6_000));
+        assert!(player.shared_state.pending_seek().is_none());
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
         player.process_command(PlayerCommand::Resume);

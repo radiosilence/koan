@@ -18,6 +18,8 @@ const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
 /// A seek on its way to the player.
 #[derive(Clone, Copy)]
 struct PendingSeek {
+    /// What the sender asked for, which names the command that takes it.
+    asked: u64,
     position_ms: u64,
     at: std::time::Instant,
     /// The playhead was moving when it was asked for.
@@ -1072,6 +1074,7 @@ impl SharedPlayerState {
         };
         let moving = self.playhead_moving();
         *self.pending_seek.lock() = Some(PendingSeek {
+            asked: position_ms,
             position_ms: target,
             at: std::time::Instant::now(),
             moving,
@@ -1079,10 +1082,14 @@ impl SharedPlayerState {
         crate::signal::engine_changed().bump();
     }
 
-    /// The player took the seek, or it never reached the player: the
-    /// playhead is read from the timeline again.
-    pub fn seek_taken(&self) {
-        if self.pending_seek.lock().take().is_some() {
+    /// The player took the seek to `asked`, or it never reached the player:
+    /// the playhead is read from the timeline again. A newer seek asked for
+    /// meanwhile stays pending until the player takes that one.
+    pub fn seek_taken(&self, asked: u64) {
+        let mut pending = self.pending_seek.lock();
+        if pending.is_some_and(|p| p.asked == asked) {
+            *pending = None;
+            drop(pending);
             crate::signal::engine_changed().bump();
         }
     }

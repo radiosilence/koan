@@ -318,7 +318,7 @@ pub fn apply(
         LinkCommand::Redo => send(PlayerCommand::Redo),
         LinkCommand::Seek { position_ms } => {
             state.request_seek(position_ms);
-            send(PlayerCommand::Seek(position_ms)).inspect_err(|_| state.seek_taken())
+            send(PlayerCommand::Seek(position_ms)).inspect_err(|_| state.seek_taken(position_ms))
         }
         LinkCommand::Pause => send(PlayerCommand::Pause),
         LinkCommand::Resume => send(PlayerCommand::Resume),
