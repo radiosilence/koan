@@ -829,9 +829,6 @@ impl MacWindowState {
     }
 
     fn start_display_link(&mut self) {
-        // KOAN: a parked link that cannot start yet stays parked, so the
-        // next wake tries again.
-        let parked = self.parked;
         self.stop_display_link();
         if !self
             .native_window()
@@ -843,7 +840,8 @@ impl MacWindowState {
         let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
         let Some(display_id) = display_id_for_screen(screen) else {
             // AppKit can temporarily report no screen while displays are being reconfigured.
-            self.parked = parked;
+            // KOAN: the window is visible, so the next wake tries again.
+            self.parked = true;
             return;
         };
         let data = self.native_view.as_ptr() as *mut c_void;
