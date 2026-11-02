@@ -102,6 +102,10 @@ Toolbar::new()
 
 `FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. The page owns the `InputState` and what typing does.
 
+With text in it the field shows a clear mark at its trailing edge, `muted` and `ink` under the pointer; a press on it empties the field and keeps the keyboard there, and Escape does the same, going on to whatever Escape means around the field once it is empty. Emptying is an `InputEvent::Change` like typing. `.fill()` makes it as wide as what holds it, as the sidebar's search is. The input's types are `koan_kit::app::input`.
+
+`SuggestionPanel` hangs under the nearest `relative` parent and paints over the window: `SuggestionHeading`s over groups of `SuggestionRow`s, each a sleeve (`art`) or a glyph (`icon`), a title and a line of `detail`, `lit` on `surface`. In a list things are picked from, `picked` puts the tick in the art's place and `figure` a length at the trailing edge.
+
 ### Table, TableRow and RowMetrics (Mac: `KoanTable`, `TableRow`, `TrackTableRow`, `RowMetrics`)
 
 ```rust
@@ -118,6 +122,19 @@ TableRow::new(id, RowKind::Art)
 ```
 
 `RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+
+### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
+
+```rust
+Collection::new("shelf", &width)               // width: the page's CollectionWidth
+    .header(PageHeader::new("favourites").detail(counts))
+    .section(CollectionSection::pills(heading, pills))
+    .section(CollectionSection::tiles(heading, grid, tiles))   // grid: width.grid(look)
+    .section(CollectionSection::rows(heading, rows))
+    .empty(EmptyState::new(icon, title))
+```
+
+Different kinds of thing answering one question, stacked in sections: pills wrapping, record tiles in as many columns as fit (`TileGrid`, the album grid's metrics), table rows the full width. The collection owns the margins, the section spacing, the pills' flow and the tiles' columns; it measures its width into the page's `CollectionWidth` and redraws the page when it changes, so the page builds tiles at the size they are laid out at. A section with nothing in it is left out. `SectionHeading::count` and `on_open` give a preview's heading its total and its "see all". `Pill::new(id, icon, name)` is a thing named as a chip, `ticking(picked)` while the page picks.
 
 ### Form, FormSection, FormRow (Mac: `KoanForm`, `KoanSectionHeader`, `KoanLabeledContentStyle`)
 
@@ -145,6 +162,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 `control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there.
 
 ### Controls
+
+`ScrollArea::items(id, items).reveal(ix)` is a scrolling column whose arrow-key position is kept in view.
 
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
 
@@ -200,7 +219,9 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
-`sheet::{panel, wide_panel, head, head_data, body, note}`: the square panel (`wide_panel` for a body ending in a table of paths), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+
+The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
 ### DenseTable (Mac: the EQ's band table)
 

@@ -55,6 +55,10 @@ impl LibraryStage {
                 | Page::Tracks
                 | Page::Album(_)
                 | Page::Artist(_)
+                | Page::Favourites
+                | Page::RecentlyPlayed
+                | Page::OnDevice
+                | Page::Search
                 | Page::Playlist(_)
         )
     }
@@ -108,10 +112,20 @@ impl LibraryStage {
                 });
                 page.into()
             }
-            // The shell draws its own pages for every other route.
-            _ => return None,
+            Page::Search => cx
+                .new(|cx| super::shelf::ShelfPage::results(lib, window, cx))
+                .into(),
+            page => match super::shelf::shelf_of(page) {
+                Some(shelf) => cx
+                    .new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx))
+                    .into(),
+                // The shell draws its own pages for every other route.
+                None => return None,
+            },
         };
-        if matches!(current, Page::Album(_) | Page::Artist(_)) {
+        if super::shelf::shelf_of(current).is_some()
+            || matches!(current, Page::Album(_) | Page::Artist(_) | Page::Search)
+        {
             slot.update(cx, |s, cx| s.clear(cx));
         }
         self.page = Some((current, view.clone()));
