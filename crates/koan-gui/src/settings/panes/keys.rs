@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::components::{Button, ButtonKind, TextField};
+use crate::components::{Button, ButtonKind, Spinner, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
@@ -292,7 +292,7 @@ impl Render for Keys {
                 ));
             }
             None if self.error.is_none() => {
-                rows.push(text("Loading…", TypeRole::Body, Tone::Muted, &look).into_any_element())
+                rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element())
             }
             None => {}
         }
