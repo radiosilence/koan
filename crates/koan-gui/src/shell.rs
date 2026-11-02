@@ -21,7 +21,7 @@ use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward,
     Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed,
-    ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
+    ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -435,17 +435,21 @@ impl Shell {
                 ))
             })
             .leading(
-                ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
-                    |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
-                )),
+                ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar")
+                    .help(help("show or hide the sidebar", &ToggleSidebar, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_sidebar(&ToggleSidebar, window, cx)
+                    })),
             )
             .leading(
                 ToolbarButton::new("back", Icon::Back, "back")
+                    .help(help("back", &Back, cx))
                     .disabled(!can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
             )
             .leading(
                 ToolbarButton::new("forward", Icon::Forward, "forward")
+                    .help(help("forward", &Forward, cx))
                     .disabled(!can_go_forward)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
@@ -458,6 +462,7 @@ impl Shell {
             .trailing(
                 ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
                     .selected(self.lyrics.is_some())
+                    .help(help("lyrics panel", &ToggleLyrics, cx))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
                     }),
