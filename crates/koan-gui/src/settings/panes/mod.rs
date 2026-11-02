@@ -5,7 +5,7 @@
 pub mod account;
 mod appearance;
 mod cache;
-mod devices;
+pub mod devices;
 mod eq;
 pub mod integrations;
 mod keys;
@@ -13,7 +13,7 @@ mod library;
 mod link;
 pub mod people;
 mod playback;
-mod server;
+pub mod server;
 mod share;
 
 use crate::theme::Icon;

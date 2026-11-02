@@ -11,6 +11,7 @@ pub mod instance;
 pub mod logging;
 pub mod media;
 pub mod menus;
+pub mod runtime_files;
 pub mod shortcuts_sheet;
 
 use std::sync::Arc;

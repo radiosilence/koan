@@ -1,0 +1,1 @@
+- **The desktop app builds on Linux again.** A duplicate import and a test macro's recursion limit had stopped its design system compiling there.

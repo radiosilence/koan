@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
+use koan_ffi::{KoanEngine, StateSlice, TransferState};
 use koan_kit::app::*;
 
 use super::drag::Playable;
@@ -18,8 +18,6 @@ pub struct Feed {
     pub library_version: Option<u64>,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
-    /// The track under the cursor is playing rather than paused or waiting.
-    pub playing: bool,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
     /// Each track with a transfer, and where it is: a row's availability.
@@ -56,7 +54,6 @@ impl Feed {
             library_version: None,
             playing_album: None,
             playing_track: None,
-            playing: false,
             arriving: HashMap::new(),
             transfers: HashMap::new(),
             connection_epoch: 0,
@@ -85,13 +82,9 @@ impl Feed {
                     let entry = now_playing.entry.as_ref();
                     let album = entry.and_then(|e| e.album_id);
                     let track = entry.and_then(|e| e.track_id);
-                    let playing = now_playing.state == PlayState::Playing && !now_playing.waiting;
-                    if (album, track, playing)
-                        != (self.playing_album, self.playing_track, self.playing)
-                    {
+                    if (album, track) != (self.playing_album, self.playing_track) {
                         self.playing_album = album;
                         self.playing_track = track;
-                        self.playing = playing;
                         changed = true;
                     }
                 }

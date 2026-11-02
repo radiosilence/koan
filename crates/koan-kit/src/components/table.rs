@@ -28,6 +28,17 @@ enum Width {
     Exact(Pixels),
 }
 
+/// A virtualised list of `TableRow`s: only the rows on screen are made, so a
+/// table of tens of thousands (a library's organise plan) costs a screenful.
+/// `rows` makes the rows of a range; with `cx.processor` it reads the view.
+pub fn table_list(
+    id: impl Into<ElementId>,
+    count: usize,
+    rows: impl 'static + Fn(std::ops::Range<usize>, &mut Window, &mut App) -> Vec<TableRow>,
+) -> UniformList {
+    uniform_list(id, count, rows)
+}
+
 #[derive(IntoElement)]
 pub struct TableRow {
     base: Stateful<Div>,
@@ -137,7 +148,8 @@ pub const ROW_GROUP: &str = "koan-row";
 type Play = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A row's number column: the number, the playing bars in its place while
-/// the row plays, and under the pointer the play button, as the Mac's
+/// the row is the current track (moving while it plays, flat while it is
+/// paused, so the paused track still reads as the current one), and under the pointer the play button, as the Mac's
 /// `RowPlayButton`: the play mark in the accent, which plays from the row.
 #[derive(IntoElement)]
 pub struct RowNumber {
@@ -176,7 +188,9 @@ impl RowNumber {
         self
     }
 
-    /// Drawn in the number's place while the row plays.
+    /// Drawn in the number's place while the row is current, playing or
+    /// paused: the bars fall flat on a pause rather than giving the number
+    /// back.
     pub fn bars(mut self, bars: impl IntoElement) -> Self {
         self.bars = Some(bars.into_any_element());
         self
