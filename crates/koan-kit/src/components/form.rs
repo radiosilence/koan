@@ -98,21 +98,19 @@ impl FormSection {
 impl RenderOnce for FormSection {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // On the Mac a section in the form's column lays its header, rows
+        // and footer out as the column's own children, `l` apart like the
+        // sections themselves.
         div()
             .flex()
             .flex_col()
-            .gap(look.space(Space::S))
+            .gap(look.space(Space::L))
             .children(self.header.map(SectionHeader::data))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::S))
-                    .children(self.rows),
+            .children(self.rows)
+            .children(
+                self.footer
+                    .map(|footer| form_text(footer, TypeRole::Fine, Tone::Muted, &look)),
             )
-            .children(self.footer.map(|footer| {
-                form_text(footer, TypeRole::Fine, Tone::Muted, &look).pt(look.space(Space::Xs))
-            }))
     }
 }
 
@@ -248,6 +246,19 @@ pub fn form_buttons(children: Vec<AnyElement>, look: &Look) -> AnyElement {
         .items_center()
         .gap(look.space(Space::M))
         .children(children)
+        .into_any_element()
+}
+
+/// A field the width of the form with its verbs after it, on one line: the
+/// Mac's pair-a-device code and Approve. The field takes what the verbs leave.
+pub fn form_entry(field: AnyElement, actions: Vec<AnyElement>, look: &Look) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(look.space(Space::M))
+        .child(div().flex_1().min_w_0().child(field))
+        .children(actions.into_iter().map(|a| div().flex_none().child(a)))
         .into_any_element()
 }
 

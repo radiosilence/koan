@@ -2,13 +2,13 @@
 //! assistants over MCP, and scrobbling to ListenBrainz. Each where the
 //! server has it.
 
-use crate::components::{Button, ButtonKind, Spinner, TextField};
+use crate::components::{Button, ButtonKind, CopyButton, CopyText, Spinner, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{Assistants, ScrobblingConnection};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
 
-use crate::settings::form::{Copied, Row, buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{count, describe};
 use crate::settings::sheet::{Action, Sheet};
 use crate::settings::{Ctx, offers};
@@ -25,7 +25,6 @@ pub struct IntegrationsPane {
     scrobbling_error: Option<String>,
     token: Entity<InputState>,
     busy: bool,
-    copied: Copied,
     assistants_task: Option<Task<()>>,
     status_task: Option<Task<()>>,
     connecting: Option<Task<()>>,
@@ -57,7 +56,6 @@ impl IntegrationsPane {
             scrobbling_error: None,
             token,
             busy: false,
-            copied: Copied::default(),
             assistants_task: None,
             status_task: None,
             connecting: None,
@@ -172,48 +170,16 @@ impl IntegrationsPane {
         let mut tone = Tone::Muted;
         match &self.assistants {
             Some(Ok(assistants)) => {
-                let entity = cx.entity();
                 let url = assistants.mcp_url.clone();
                 let connect = assistants.connect_url.clone();
                 rows.push(
                     Row::new("Address")
-                        .control(copyable(
-                            "copy-mcp",
-                            url.clone(),
-                            self.copied.is("mcp"),
-                            move |cx| {
-                                let url = url.clone();
-                                entity.update(cx, |pane, cx| {
-                                    Copied::copy(pane, |pane| &mut pane.copied, "mcp", url, cx)
-                                })
-                            },
-                            look,
-                        ))
+                        .control(CopyText::new("copy-mcp", url.clone()))
                         .into_any_element(),
                 );
-                let (copy_url, copier) = (assistants.mcp_url.clone(), cx.entity());
                 rows.push(buttons(
                     vec![
-                        Button::new("copy-mcp-address", ButtonKind::Bordered)
-                            .label(if self.copied.is("mcp-address") {
-                                "Copied"
-                            } else {
-                                "Copy Address"
-                            })
-                            .icon(Icon::Copy)
-                            .on_click(move |_, _, cx| {
-                                let url = copy_url.clone();
-                                copier.update(cx, |pane, cx| {
-                                    Copied::copy(
-                                        pane,
-                                        |pane| &mut pane.copied,
-                                        "mcp-address",
-                                        url,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .into_any_element(),
+                        CopyButton::new("copy-mcp-address", "Copy Address", url).into_any_element(),
                     ],
                     look,
                 ));
