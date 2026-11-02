@@ -1475,8 +1475,10 @@ jobs:
       - name: Notarise, staple and attach the DMG
         run: |
           set -euo pipefail
-          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
-          if [ ! -f "$src" ]; then
+          # One matching artifact unpacks into artifacts/ itself, several each
+          # into a folder of their own: find the DMG either way.
+          src=$(find artifacts -type f -name 'koan-gui-*.dmg' | head -1)
+          if [ -z "$src" ]; then
             echo "::warning::no GUI DMG built"
             exit 0
           fi
