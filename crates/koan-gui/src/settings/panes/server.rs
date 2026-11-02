@@ -366,7 +366,7 @@ impl ServerPane {
             let server = settings.remote_url.clone();
             let mut rows = vec![
                 Row::new("Server")
-                    .control(CopyText::new("copy-server", server))
+                    .control(CopyText::new("copy-server", server).help("Copy the server's address"))
                     .into_any_element(),
                 Row::new("User")
                     .value(settings.remote_username.clone())

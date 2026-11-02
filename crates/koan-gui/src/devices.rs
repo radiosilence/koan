@@ -30,6 +30,8 @@ pub struct ControlView {
     pub has_queue: bool,
     /// The server passes commands between the account's devices.
     pub through_server: bool,
+    /// The system keeps this app off the local network until it is allowed.
+    pub network_blocked: bool,
     /// Unix seconds now, for "seen 5 min ago".
     pub now: i64,
 }
@@ -49,6 +51,12 @@ impl ControlView {
                 .0
                 .as_ref()
                 .is_some_and(|c| c.devices),
+            network_blocked: mirror
+                .connection
+                .read(cx)
+                .0
+                .as_ref()
+                .is_some_and(|c| c.local_network_blocked),
             now: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64),
@@ -111,9 +119,26 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
         .checked(here)
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
-        this = this.trailing(move_button("move-here", None));
+        this = this.trailing(move_button(
+            "move-here",
+            None,
+            "Bring what the other device is playing back here".into(),
+        ));
     }
-    let mut menu = menu.section("control").item(this);
+    let mut menu = menu.section("control");
+    // The system keeps the app off the local network until the person allows
+    // it, and says nothing otherwise: without this the list would just be
+    // short.
+    if view.network_blocked {
+        menu = menu.item(
+            MenuEntry::new("kōan can't see this network")
+                .icon(Icon::NetworkBlocked)
+                .rich("Allow Local Network for kōan in System Settings → Privacy & Security to find devices here.")
+                .warns(true)
+                .disabled(true),
+        );
+    }
+    let mut menu = menu.item(this);
     for device in &view.devices {
         let selected = view.target.as_deref() == Some(device.id.as_str());
         let unreachable = device.problem.is_some() || (!device.awake && !device.wakeable);
@@ -139,7 +164,42 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             entry = entry.trailing(move_button(
                 ("move-to", crate::transport::id_hash(&device.id)),
                 Some(device.id.clone()),
+                format!(
+                    "Send what is playing to {}, and control it there",
+                    device.name
+                ),
             ));
+        }
+        // An Apple TV can be paired to be turned on from here, once, for
+        // all the account's devices.
+        if device.tv_pairable {
+            let (id, name, paired) = (device.id.clone(), device.name.clone(), device.tv_paired);
+            entry = entry.trailing(move |_, _| {
+                let (id, name) = (id.clone(), name.clone());
+                Button::new(
+                    ("tv-wake", crate::transport::id_hash(&id)),
+                    ButtonKind::Icon,
+                )
+                .icon(if paired {
+                    Icon::Close
+                } else {
+                    Icon::Television
+                })
+                .label(if paired {
+                    "stop waking"
+                } else {
+                    "set up waking…"
+                })
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    if paired {
+                        crate::tv_wake::stop(id.clone(), cx);
+                    } else {
+                        crate::tv_wake::open(id.clone(), name.clone(), window, cx);
+                    }
+                })
+                .into_any_element()
+            });
         }
         // A device out of reach can be dropped from the list until it is
         // heard from again.
@@ -179,12 +239,14 @@ fn control(id: Option<String>, cx: &mut App) {
 fn move_button(
     id: impl Into<ElementId>,
     to: Option<String>,
+    help: String,
 ) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
     let id = id.into();
     move |_, _| {
         let to = to.clone();
         Button::new(id.clone(), ButtonKind::Bordered)
             .label("move here")
+            .help(crate::theme::label(&help))
             .on_click(move |_, _, cx| {
                 cx.stop_propagation();
                 move_music(to.clone(), cx);

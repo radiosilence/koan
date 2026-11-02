@@ -137,6 +137,17 @@ pub struct SyncResult {
     pub tracks_failed: usize,
     /// Tracks removed because the server no longer has them.
     pub tracks_removed: usize,
+    /// How long the finishing steps took, for the log and for measuring.
+    pub finishing: Finishing,
+}
+
+/// The steps after the walk: asking about albums the listing left out,
+/// removing what the server deleted, and the planner's statistics.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Finishing {
+    pub confirm: std::time::Duration,
+    pub vanished: std::time::Duration,
+    pub optimize: std::time::Duration,
 }
 
 impl SyncResult {
@@ -341,9 +352,11 @@ pub fn sync_library(
     // fetched, so nothing can be concluded about its tracks this time.
     let mut live_albums: std::collections::HashSet<String> =
         albums.iter().map(|a| a.id.clone()).collect();
+    let step = std::time::Instant::now();
     if result.is_complete() && !live_albums.is_empty() {
         confirm_missing_albums(db, client, &mut live_albums, cancel);
     }
+    result.finishing.confirm = step.elapsed();
     check(cancel)?;
     let albums_short = live_albums.len() > albums.len();
 
@@ -355,6 +368,7 @@ pub fn sync_library(
     let listed_everything = !albums_short && total.is_none_or(|n| song_ids.len() as u64 >= n);
     let live_tracks =
         (result.is_complete() && !song_ids.is_empty() && listed_everything).then_some(&song_ids);
+    let step = std::time::Instant::now();
     if result.is_complete() && !live_albums.is_empty() {
         match queries::remove_vanished_remote(&db.conn, live_tracks, Some(&live_albums)) {
             Ok(0) => {}
@@ -365,6 +379,8 @@ pub fn sync_library(
             Err(e) => log::warn!("failed to remove tracks the server deleted: {e}"),
         }
     }
+
+    result.finishing.vanished = step.elapsed();
 
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
@@ -386,7 +402,15 @@ pub fn sync_library(
         result.tracks_failed,
     );
 
+    let step = std::time::Instant::now();
     db.optimize();
+    result.finishing.optimize = step.elapsed();
+    log::info!(
+        "sync finishing: missing albums confirmed in {:?}, deletions in {:?}, statistics in {:?}",
+        result.finishing.confirm,
+        result.finishing.vanished,
+        result.finishing.optimize,
+    );
 
     Ok(result)
 }
@@ -414,23 +438,44 @@ fn confirm_missing_albums(
         })
         .unwrap_or_default();
     let missing: Vec<String> = held.into_iter().filter(|id| !live.contains(id)).collect();
-    for id in missing {
-        if cancel.load(Ordering::Relaxed) {
-            return;
-        }
-        match client.get_album(&id) {
-            Err(SubsonicError::Api { code: 70, .. }) => {}
-            Ok(_) => {
-                log::info!("album {id} was missing from the listing but still exists");
-                live.insert(id);
-            }
-            Err(e) => {
-                log::warn!("could not confirm album {id} was deleted ({e}); keeping it");
-                live.insert(id);
-            }
-        }
+    if missing.is_empty() {
+        return;
     }
+    // Each answer is a round trip, so several are asked at once: a server
+    // that deleted a few hundred records answers in a few seconds rather
+    // than a few hundred round trips.
+    let next = parking_lot::Mutex::new(missing.into_iter());
+    let kept = parking_lot::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..CONFIRMING {
+            scope.spawn(|| {
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let Some(id) = next.lock().next() else { return };
+                    match client.get_album(&id) {
+                        Err(SubsonicError::Api { code: 70, .. }) => {}
+                        Ok(_) => {
+                            log::info!("album {id} was missing from the listing but still exists");
+                            kept.lock().push(id);
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "could not confirm album {id} was deleted ({e}); keeping it"
+                            );
+                            kept.lock().push(id);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    live.extend(kept.into_inner());
 }
+
+/// How many albums the listing left out are asked about at once.
+const CONFIRMING: usize = 8;
 
 /// Every album on the server, once each.
 fn list_albums(
@@ -839,6 +884,7 @@ fn positive(value: Option<i32>) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     // --- Sync → DB integration tests ---
 
@@ -1107,6 +1153,8 @@ mod tests {
         failing_song_pages: Mutex<HashSet<usize>>,
         /// `getIndexes`'s `lastModified`; `None` answers without one.
         library_modified: Mutex<Option<i64>>,
+        /// Added to every answer, as a server across the internet.
+        latency: Duration,
     }
 
     impl StubServer {
@@ -1178,6 +1226,9 @@ mod tests {
                 .collect();
 
             let (status, body) = respond(&state, path, &params);
+            if !state.latency.is_zero() {
+                std::thread::sleep(state.latency);
+            }
 
             let write = write!(
                 stream,
@@ -1325,6 +1376,50 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// How long the finishing steps take on a library the size of the one
+    /// that showed them slow: a first sync, an unchanged one, and one after the
+    /// server deleted a thousand records, each answer 20 ms away. Prints the
+    /// figures; run by hand with
+    /// `cargo test -p koan-core --release --lib finishing_on_a_large_library -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn finishing_on_a_large_library() {
+        let (db, _dir) = test_db();
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(52_000)),
+            lists_songs: true,
+            // A phone reaching its server over the internet.
+            latency: Duration::from_millis(20),
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        let run = |label: &str| {
+            let started = std::time::Instant::now();
+            let r = sync_library(
+                &db,
+                &client,
+                &server.url(),
+                "u",
+                &|_| {},
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            println!(
+                "{label}: {:?} in all; finishing: confirm {:?}, vanished {:?}, optimize {:?}; {} removed",
+                started.elapsed(),
+                r.finishing.confirm,
+                r.finishing.vanished,
+                r.finishing.optimize,
+                r.tracks_removed,
+            );
+        };
+        run("first sync");
+        run("unchanged");
+        state.albums.lock().unwrap().truncate(51_000);
+        run("1000 records deleted");
     }
 
     #[test]

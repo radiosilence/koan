@@ -69,13 +69,20 @@ impl SidebarStatus {
 impl Render for SidebarStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Settings' words for what the device is doing, a failed share
-        // included.
+        // included, and a way to Settings wherever it is about the server.
         let mode = crate::settings::panes::server::mode_label(
             cx.global::<crate::settings::Settings>().sharing.read(cx),
             &cx.global::<Mirror>().connection.read(cx).0,
         );
         let (icon, text, tone) = mode.line();
-        let mut block = StatusBlock::new().line(icon, text, tone);
+        let mut block = match mode {
+            crate::settings::panes::server::ModeLabel::Own => {
+                StatusBlock::new().line(icon, text, tone)
+            }
+            _ => StatusBlock::new().link(icon, text, tone, "Server settings", |_, cx| {
+                crate::settings::open_server(cx)
+            }),
+        };
         if let Some(s) = &self.stats {
             let n = |v: i64| v.max(0) as u64;
             block = block

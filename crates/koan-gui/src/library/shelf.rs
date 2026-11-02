@@ -156,7 +156,7 @@ impl ShelfPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
         let mut this = Self {
