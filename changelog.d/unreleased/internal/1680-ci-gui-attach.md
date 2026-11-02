@@ -1,0 +1,1 @@
+- **The GUI DMG attaches to releases again.** The attach job ran a bash feature macOS's bash lacks and stopped before the DMG.
