@@ -243,7 +243,7 @@ impl Transport {
         let summary: SharedString = eq.summary().into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
-                .role(TypeRole::Body)
+                .points(TransportMetrics::trailing_icon(&p.look))
                 .color(if eq.flat { p.ink } else { p.accent })
                 .into_any_element()
         } else {
@@ -491,7 +491,7 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
     let child = if p.look.icons {
         KoanIcon::new(icon)
-            .role(TypeRole::Body)
+            .points(TransportMetrics::trailing_icon(&p.look))
             .color(p.muted)
             .hover_color(TEXT_BUTTON, ink)
             .into_any_element()
@@ -669,16 +669,12 @@ impl Render for Transport {
             .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
-        // The controls and the seek bar placed as the Mac's: the play
-        // button's outline `controls_top` under the rule and
-        // `outline_to_track` above the seek line, at any text size. The rows'
-        // hit areas, taller than what they draw, may overlap.
-        let outline = TransportMetrics::play_outline(&p.look);
-        // Measured from below the bar's rule, which the column's top includes.
-        let below_rule = theme::HAIRLINE + TransportMetrics::controls_top(&p.look);
-        let controls_top = below_rule - (theme::HIT - outline) / 2.;
-        let seek_top = below_rule + outline + TransportMetrics::outline_to_track(&p.look)
-            - TransportMetrics::SEEK / 2.;
+        // The controls and the seek bar centred in the bar as the Mac's:
+        // as much space above the play button's outline as below the seek
+        // row. The rows' hit areas, taller than what they draw, may overlap.
+        let rows = TransportMetrics::centre_rows(&p.look);
+        let controls_top = rows.outline_top - (theme::HIT - rows.outline) / 2.;
+        let seek_top = rows.track_centre - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
             .h_full()
@@ -797,10 +793,7 @@ impl Render for Transport {
             .items_center()
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
-            // With the wash under the whole window the bar has no ground of
-            // its own, as the toolbar and sidebar: the wash runs under it and
-            // its rule is the edge. Otherwise it is on `bg`.
-            .when(!cx.global::<theme::KoanTheme>().wash_window, |d| d.bg(p.bg))
+            .bg(p.bg)
             .border_t(theme::HAIRLINE)
             .border_color(p.rule)
             .child(left)
