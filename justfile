@@ -1993,7 +1993,7 @@ _gui-linux:
     debarch=$(dpkg --print-architecture)
     shlibs="$out/shlibs"
     rm -rf "$shlibs" && mkdir -p "$shlibs/debian"
-    printf 'Source: koan-gui\n\nPackage: koan-gui\n' > "$shlibs/debian/control"
+    printf 'Source: koan-gui\n\nPackage: koan-gui\nArchitecture: any\n' > "$shlibs/debian/control"
     bin="$PWD/$deb/usr/bin/koan-gui"
     linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$bin" | sed -n 's/^shlibs:Depends=//p')
     {
