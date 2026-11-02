@@ -222,6 +222,19 @@ impl AlbumGrid {
         if this.loaded.is_some() {
             this.restore_scroll();
         }
+        // A listing kept from a visit under another query (a shelf's "see
+        // all" changed the filter) is not drawn: the page waits for its own,
+        // as a first visit does, rather than drawing the old rows and
+        // swapping them.
+        if this
+            .loaded
+            .as_ref()
+            .is_some_and(|(q, _)| *q != this.query(cx))
+        {
+            this.records = Rc::new(Vec::new());
+            this.order.clear();
+            this.loaded = None;
+        }
         this.reload(cx);
         this
     }

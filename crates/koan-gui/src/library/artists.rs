@@ -142,22 +142,36 @@ impl ArtistBrowser {
         if this.loaded.is_some() {
             this.restore_scroll();
         }
+        // A listing kept from a visit under another query (a shelf's "see
+        // all" changed the filter) is not drawn: the page waits for its own,
+        // as a first visit does, rather than drawing the old rows and
+        // swapping them.
+        if this
+            .loaded
+            .as_ref()
+            .is_some_and(|(q, _)| *q != this.query(cx))
+        {
+            this.artists = Default::default();
+            this.order.clear();
+            this.loaded = None;
+        }
         this.reload(cx);
         this
+    }
+
+    fn query(&self, cx: &App) -> Query {
+        let browse = self.lib.browse.read(cx);
+        Query {
+            search: browse.search(),
+            filter: browse.filter.clone(),
+        }
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(version) = self.lib.feed.read(cx).library_version else {
             return;
         };
-        let browse = self.lib.browse.read(cx);
-        let wanted = (
-            Query {
-                search: browse.search(),
-                filter: browse.filter.clone(),
-            },
-            version,
-        );
+        let wanted = (self.query(cx), version);
         if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
             return;
         }
