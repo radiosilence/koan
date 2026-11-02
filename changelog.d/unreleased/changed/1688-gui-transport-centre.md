@@ -1,0 +1,1 @@
+- **The desktop app's transport, as the Mac app's.** The play button sits as far below the bar's top as the Mac's, with the seek bar close beneath it, and with the wash under the whole window the wash runs under the transport too.

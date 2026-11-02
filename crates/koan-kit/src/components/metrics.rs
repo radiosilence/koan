@@ -60,9 +60,24 @@ impl TransportMetrics {
         look.spaced(12.0)
     }
 
-    /// Between the controls and the seek bar.
-    pub fn row_gap(look: &Look) -> Pixels {
-        look.spaced(2.0)
+    /// From the bar's top rule to the play button's outline, the Mac's
+    /// measured at 2x.
+    pub fn controls_top(look: &Look) -> Pixels {
+        look.spaced(6.5)
+    }
+
+    /// The play button's outline: an outlined icon button around a `body`
+    /// glyph, its padding (the hairline drawn inside it) included.
+    pub fn play_outline(look: &Look) -> Pixels {
+        px(crate::theme::icons::side(
+            look.points(crate::theme::TypeRole::Body),
+        )) + look.spaced(7.0) * 2.0
+    }
+
+    /// From the play button's outline to the seek line's centre, the Mac's:
+    /// its stack puts 5 points between the controls and a 14-point seek row.
+    pub fn outline_to_track(look: &Look) -> Pixels {
+        look.spaced(12.0)
     }
 }
 
