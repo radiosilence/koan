@@ -1,5 +1,5 @@
-//! The library: the album, artist and track browsers, and the pages of a
-//! record and an artist.
+//! The library: the album, artist and track browsers, the pages of a record
+//! and an artist, and the shelves.
 
 pub mod actions;
 pub mod activity;
@@ -20,6 +20,7 @@ pub mod info;
 pub mod nav;
 pub mod rows;
 pub mod selection;
+pub mod shelf;
 pub mod stage;
 pub mod tile;
 pub mod tokens;

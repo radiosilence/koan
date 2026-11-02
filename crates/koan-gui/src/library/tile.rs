@@ -31,61 +31,8 @@ use crate::theme::tokens::Motion;
 use crate::theme::tokens::Scale;
 use crate::theme::{Icon, KoanIcon, KoanTheme};
 
-/// Columns of at least 150 points sharing the width, up to 210 each, as the
-/// Mac's grid lays them out. Every tile is the same size, so nothing is
-/// measured.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Grid {
-    pub columns: usize,
-    pub side: Pixels,
-    /// Between tiles in a row: the spare width shared out, at least 18.
-    pub gap: Pixels,
-    pub margin: Pixels,
-    /// A row's height, its spacing below included.
-    pub row: Pixels,
-}
-
-const MIN_SIDE: f32 = 150.0;
-const MAX_SIDE: f32 = 210.0;
-const MIN_GAP: f32 = 18.0;
-pub const LINE_GAP: f32 = 22.0;
-/// Between sleeve, title and credit.
-const CAPTION_GAP: f32 = 7.0;
-
-impl Grid {
-    /// The grid for a list `width` wide, with captions on `scale`.
-    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        // The page's margin, so the grid's edge is the header's and the
-        // rows'.
-        let margin = crate::theme::Space::Xxl.points() * scale.space;
-        let usable = (f32::from(width) - 2.0 * margin).max(MIN_SIDE);
-        let columns = (((usable + MIN_GAP) / (MIN_SIDE + MIN_GAP)).floor() as usize).max(1);
-        let side = ((usable - MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
-            .floor()
-            .min(MAX_SIDE);
-        let gap = if columns > 1 {
-            (usable - side * columns as f32) / (columns as f32 - 1.0)
-        } else {
-            0.0
-        };
-        Self {
-            columns,
-            side: px(side),
-            gap: px(gap),
-            margin: px(margin),
-            row: px(side) + caption_height(scale) + px(LINE_GAP),
-        }
-    }
-
-    pub fn rows(&self, items: usize) -> usize {
-        items.div_ceil(self.columns)
-    }
-}
-
-pub fn caption_height(scale: &Scale) -> Pixels {
-    let line = |role: Type| role.points() * scale.text * role.line_height();
-    px(CAPTION_GAP + line(Type::Meta) + CAPTION_GAP + line(Type::Fine))
-}
+pub use crate::components::TileGrid as Grid;
+pub const LINE_GAP: f32 = Grid::LINE_GAP;
 
 /// Which part of a tile was clicked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -643,23 +590,4 @@ fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> 
             .bg(p.rule)
             .child(div().h_full().w(relative(fraction)).bg(p.accent)),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn columns_share_the_width_within_the_tile_bounds() {
-        let narrow = Grid::for_width(px(300.0), &Scale::of(100));
-        assert_eq!(narrow.columns, 1);
-        assert!(narrow.side <= px(MAX_SIDE));
-        let wide = Grid::for_width(px(1920.0), &Scale::of(100));
-        assert!(wide.side >= px(MIN_SIDE) && wide.side <= px(MAX_SIDE));
-        assert!(wide.gap >= px(MIN_GAP));
-        let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
-        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
-        assert_eq!(wide.rows(0), 0);
-        assert_eq!(wide.rows(wide.columns + 1), 2);
-    }
 }

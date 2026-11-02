@@ -20,6 +20,8 @@ pub enum Route {
     Tracks,
     Favourites,
     RecentlyPlayed,
+    /// What can play on this device: the downloaded shelf.
+    OnDevice,
     History,
     Downloads,
     Playlist(i64),

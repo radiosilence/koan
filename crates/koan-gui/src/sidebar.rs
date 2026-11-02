@@ -20,7 +20,7 @@ use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
 use crate::theme::{self, Icon, Space, Tone};
 
-const LIBRARY: [(Route, &str, Icon); 7] = [
+const LIBRARY: [(Route, &str, Icon); 8] = [
     (Route::Albums, "albums", Icon::Album),
     (Route::Artists, "artists", Icon::Artist),
     (Route::Tracks, "tracks", Icon::Track),
@@ -30,6 +30,7 @@ const LIBRARY: [(Route, &str, Icon); 7] = [
         "recently played",
         Icon::RecentlyPlayed,
     ),
+    (Route::OnDevice, "downloaded", Icon::OnDevice),
     (Route::History, "history", Icon::History),
     (Route::Downloads, "downloads", Icon::Downloads),
 ];

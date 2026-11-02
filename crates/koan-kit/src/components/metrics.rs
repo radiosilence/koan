@@ -5,7 +5,7 @@
 
 use gpui_kit::{Pixels, px};
 
-use crate::theme::{Look, Space};
+use crate::theme::{Look, Scale, Space, TypeRole};
 
 /// A row's height, by what it carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,5 +188,94 @@ impl RowMetrics {
     /// Between columns of a row.
     pub fn column_gap(look: &Look) -> Pixels {
         look.space(Space::M)
+    }
+}
+
+/// A grid of record tiles: columns of at least 150 points sharing the width,
+/// up to 210 each, as the Mac's grid lays them out. Every tile is the same
+/// size, so nothing is measured.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileGrid {
+    pub columns: usize,
+    pub side: Pixels,
+    /// Between tiles in a row: the spare width shared out, at least 18.
+    pub gap: Pixels,
+    pub margin: Pixels,
+    /// A row's height, its spacing below included.
+    pub row: Pixels,
+}
+
+impl TileGrid {
+    const MIN_SIDE: f32 = 150.0;
+    const MAX_SIDE: f32 = 210.0;
+    const MIN_GAP: f32 = 18.0;
+    /// Below a row of tiles, before the next.
+    pub const LINE_GAP: f32 = 22.0;
+    /// Between sleeve, title and credit.
+    const CAPTION_GAP: f32 = 7.0;
+
+    /// The grid for a list `width` wide, with captions on `scale`.
+    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
+        // The page's margin, so the grid's edge is the header's and the
+        // rows'.
+        Self::inside(width, px(Space::Xxl.points() * scale.space), scale)
+    }
+
+    /// The grid for a list `width` wide that keeps `margin` clear at each
+    /// side: a collection's, on the page's margin.
+    pub fn inside(width: Pixels, margin: Pixels, scale: &Scale) -> Self {
+        let margin = f32::from(margin);
+        let usable = (f32::from(width) - 2.0 * margin).max(Self::MIN_SIDE);
+        let columns =
+            (((usable + Self::MIN_GAP) / (Self::MIN_SIDE + Self::MIN_GAP)).floor() as usize).max(1);
+        let side = ((usable - Self::MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
+            .floor()
+            .min(Self::MAX_SIDE);
+        let gap = if columns > 1 {
+            (usable - side * columns as f32) / (columns as f32 - 1.0)
+        } else {
+            0.0
+        };
+        Self {
+            columns,
+            side: px(side),
+            gap: px(gap),
+            margin: px(margin),
+            row: px(side) + Self::caption_height(scale) + px(Self::LINE_GAP),
+        }
+    }
+
+    pub fn rows(&self, items: usize) -> usize {
+        items.div_ceil(self.columns)
+    }
+
+    /// A tile's own height: its sleeve and caption, without the gap below.
+    pub fn tile_height(&self) -> Pixels {
+        self.row - px(Self::LINE_GAP)
+    }
+
+    /// The title and credit under a sleeve.
+    pub fn caption_height(scale: &Scale) -> Pixels {
+        let line = |role: TypeRole| role.points() * scale.text * role.line_height();
+        px(Self::CAPTION_GAP + line(TypeRole::Meta) + Self::CAPTION_GAP + line(TypeRole::Fine))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_share_the_width_within_the_tile_bounds() {
+        let narrow = TileGrid::for_width(px(300.0), &Scale::of(100));
+        assert_eq!(narrow.columns, 1);
+        assert!(narrow.side <= px(TileGrid::MAX_SIDE));
+        let wide = TileGrid::for_width(px(1920.0), &Scale::of(100));
+        assert!(wide.side >= px(TileGrid::MIN_SIDE) && wide.side <= px(TileGrid::MAX_SIDE));
+        assert!(wide.gap >= px(TileGrid::MIN_GAP));
+        let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
+        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
+        assert_eq!(wide.rows(0), 0);
+        assert_eq!(wide.rows(wide.columns + 1), 2);
     }
 }

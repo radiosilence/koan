@@ -13,6 +13,7 @@
 
 mod badge;
 mod button;
+mod collection;
 mod cover;
 mod dense;
 mod drag;
@@ -26,6 +27,7 @@ mod metrics;
 mod page;
 mod panel;
 mod picker;
+mod pill;
 pub(crate) mod placeholder;
 mod progress;
 mod ring;
@@ -52,6 +54,7 @@ use gpui_kit::{
 
 pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
+pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use drag::{DragChip, DropTarget, INSERTION};
@@ -63,10 +66,11 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
-pub use metrics::{BarMetrics, RowKind, RowMetrics, TransportMetrics};
+pub use metrics::{BarMetrics, RowKind, RowMetrics, TileGrid, TransportMetrics};
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
+pub use pill::Pill;
 pub use placeholder::Placeholder;
 pub use progress::{ProgressBar, ProgressRow};
 pub use ring::ProgressRing;

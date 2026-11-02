@@ -16,6 +16,11 @@ pub struct Feed {
     /// Moves whenever the library's rows do. Pages showing a listing ask for
     /// it again. `None` until the engine's first report.
     pub library_version: Option<u64>,
+    /// Moves whenever the play history does: what Recently played follows.
+    pub history_version: Option<u64>,
+    /// Moves whenever the favourites the engine holds may have changed (a
+    /// heart's answer, a read of every id): what Favourites follows.
+    pub favourites_revision: u64,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
     /// The track under the cursor is playing rather than paused or waiting.
@@ -54,6 +59,8 @@ impl Feed {
         Self {
             engine,
             library_version: None,
+            history_version: None,
+            favourites_revision: 0,
             playing_album: None,
             playing_track: None,
             playing: false,
@@ -78,6 +85,12 @@ impl Feed {
                         self.library_version = Some(version);
                         self.reload_favourites(cx);
                         self.reload_playlists(cx);
+                        changed = true;
+                    }
+                }
+                StateSlice::History { version } => {
+                    if Some(version) != self.history_version {
+                        self.history_version = Some(version);
                         changed = true;
                     }
                 }
@@ -156,6 +169,7 @@ impl Feed {
                     .inspect_err(|e| log::warn!("favourite {item:?}: {e}"))
                     .unwrap_or(!on);
                 feed.favourites.answered(item, now);
+                feed.favourites_revision += 1;
                 feed.reload_favourites(cx);
                 cx.notify();
             })
@@ -233,6 +247,7 @@ impl Feed {
                     feed.reload_favourites(cx);
                     return;
                 }
+                feed.favourites_revision += 1;
                 cx.notify();
             })
             .ok();
