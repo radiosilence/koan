@@ -21,21 +21,7 @@ use koan_kit::app::AppContext;
 use koan_kit::raw::{HeadlessAppContext, px, size};
 
 fn route() -> Option<Route> {
-    let value = std::env::var("KOAN_SHOT_ROUTE").ok()?;
-    let id = |s: &str| s.parse::<i64>().ok();
-    match value.split_once(':') {
-        Some(("album", n)) => id(n).map(Route::Album),
-        Some(("artist", n)) => id(n).map(Route::Artist),
-        _ => match value.as_str() {
-            "albums" => Some(Route::Albums),
-            "artists" => Some(Route::Artists),
-            "tracks" => Some(Route::Tracks),
-            "favourites" => Some(Route::Favourites),
-            "recent" => Some(Route::RecentlyPlayed),
-            "downloaded" => Some(Route::OnDevice),
-            _ => None,
-        },
-    }
+    Route::named(&std::env::var("KOAN_SHOT_ROUTE").ok()?)
 }
 
 const WIDTH: f32 = 1180.0;
