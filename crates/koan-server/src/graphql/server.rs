@@ -443,6 +443,7 @@ impl ApiServer {
                 auth_state.clone(),
                 cfg.server_url(),
                 profile == Profile::Headless,
+                session,
                 stop.clone(),
             )
         });
@@ -774,7 +775,9 @@ impl Drop for ApiServer {
 }
 
 /// Start the API server beside the TUI, blocking until it stops.
-/// Called from a background thread when TUI mode has API enabled.
+/// Called from a background thread when TUI mode has API enabled. `session`
+/// is whose saved session `savePlaybackState` writes: the caller's, or none.
+#[allow(clippy::too_many_arguments)]
 pub fn start_api_background(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
@@ -783,6 +786,7 @@ pub fn start_api_background(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
+    session: Option<&'static str>,
 ) {
     let started = ApiServer::start(ApiServerOpts {
         state,
@@ -795,7 +799,7 @@ pub fn start_api_background(
         viz: None,
         profile: Profile::Tui,
         hosts: Vec::new(),
-        session: Some(koan_core::remote::link::LinkIdentity::TERMINAL_FILES),
+        session,
     });
     match started {
         Ok(server) => server.wait(),

@@ -205,6 +205,17 @@ pub fn load_playback_state(
 
 /// Clear `device`'s saved queue and where it was up to. The play mode stays:
 /// it is the player's, not the queue's.
+/// Whether `device` has a queue saved. Something other than its own saves
+/// can clear it (`clearPlaybackState` through the API), and a writer that
+/// skips the queue while it is unchanged must know to write it again.
+pub fn has_saved_queue(conn: &Connection, device: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM playback_state WHERE device = ?1)",
+        [device],
+        |row| row.get(0),
+    )
+}
+
 pub fn clear_playback_state(conn: &Connection, device: &str) -> rusqlite::Result<()> {
     super::atomically(conn, || {
         conn.execute("DELETE FROM playback_state WHERE device = ?1", [device])?;
@@ -278,6 +289,8 @@ impl PersistedQueueItem {
 mod tests {
     use super::*;
 
+    const APP: &str = crate::remote::link::LinkIdentity::APP_FILES;
+
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
@@ -332,7 +345,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_playback_state(&conn, "").unwrap().unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 2);
         assert_eq!(loaded.items[0].title, "Track 1");
         assert_eq!(loaded.items[1].path, "/music/track2.flac");
@@ -359,8 +372,13 @@ mod tests {
             db_id: None,
             played: None,
         }];
-        save_playback_state(&conn, "", &items, PlayMode::default(), None, 0, false).unwrap();
-        assert!(!load_playback_state(&conn, "").unwrap().unwrap().was_playing);
+        save_playback_state(&conn, APP, &items, PlayMode::default(), None, 0, false).unwrap();
+        assert!(
+            !load_playback_state(&conn, APP)
+                .unwrap()
+                .unwrap()
+                .was_playing
+        );
     }
 
     #[test]
@@ -414,7 +432,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(queue_row(&conn), before);
-        let loaded = load_playback_state(&conn, "").unwrap().unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(loaded.position_ms, 61_000);
         assert!(!loaded.was_playing);
     }
@@ -422,7 +440,7 @@ mod tests {
     #[test]
     fn test_load_returns_none_when_empty() {
         let conn = test_conn();
-        let loaded = load_playback_state(&conn, "").unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap();
         assert!(loaded.is_none());
     }
 
@@ -444,11 +462,21 @@ mod tests {
             db_id: None,
             played: None,
         }];
-        save_playback_state(&conn, "", &items, PlayMode::default(), None, 0, false).unwrap();
-        assert!(load_playback_state(&conn, "").unwrap().is_some());
+        let app = APP;
+        save_playback_state(&conn, app, &items, PlayMode::default(), None, 0, false).unwrap();
+        assert!(load_playback_state(&conn, app).unwrap().is_some());
+        assert!(has_saved_queue(&conn, app).unwrap());
+        assert!(
+            !has_saved_queue(&conn, "terminal-").unwrap(),
+            "each device its own"
+        );
 
-        clear_playback_state(&conn, "").unwrap();
-        assert!(load_playback_state(&conn, "").unwrap().is_none());
+        clear_playback_state(&conn, app).unwrap();
+        assert!(load_playback_state(&conn, app).unwrap().is_none());
+        assert!(
+            !has_saved_queue(&conn, app).unwrap(),
+            "a writer knows to save it again"
+        );
     }
 
     #[test]
@@ -458,16 +486,16 @@ mod tests {
             shuffle: true,
             repeat: Repeat::One,
         };
-        save_playback_state(&conn, "", &[], mode, None, 0, false).unwrap();
+        save_playback_state(&conn, APP, &[], mode, None, 0, false).unwrap();
         assert!(
-            load_playback_state(&conn, "").unwrap().is_none(),
+            load_playback_state(&conn, APP).unwrap().is_none(),
             "no queue"
         );
-        assert_eq!(load_play_mode(&conn, "").unwrap(), mode);
+        assert_eq!(load_play_mode(&conn, APP).unwrap(), mode);
 
-        clear_playback_state(&conn, "").unwrap();
+        clear_playback_state(&conn, APP).unwrap();
         assert_eq!(
-            load_play_mode(&conn, "").unwrap(),
+            load_play_mode(&conn, APP).unwrap(),
             mode,
             "clearing the queue keeps it"
         );
@@ -517,10 +545,10 @@ mod tests {
         .unwrap();
         save_playback_position(&conn, "desktop-", shuffled, Some("/b.flac"), 3_000, true).unwrap();
 
-        let app = load_playback_state(&conn, "").unwrap().unwrap();
+        let app = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(app.items[0].path, "/a.flac");
         assert_eq!((app.position_ms, app.was_playing), (1_000, true));
-        assert_eq!(load_play_mode(&conn, "").unwrap(), PlayMode::default());
+        assert_eq!(load_play_mode(&conn, APP).unwrap(), PlayMode::default());
         let desktop = load_playback_state(&conn, "desktop-").unwrap().unwrap();
         assert_eq!(desktop.items[0].path, "/b.flac");
         assert_eq!(desktop.position_ms, 3_000);
@@ -530,7 +558,10 @@ mod tests {
         clear_playback_state(&conn, "desktop-").unwrap();
         assert!(load_playback_state(&conn, "desktop-").unwrap().is_none());
         assert_eq!(
-            load_playback_state(&conn, "").unwrap().unwrap().position_ms,
+            load_playback_state(&conn, APP)
+                .unwrap()
+                .unwrap()
+                .position_ms,
             1_000
         );
     }
@@ -610,7 +641,7 @@ mod tests {
             db_id: None,
             played: None,
         }];
-        save_playback_state(&conn, "", &items1, PlayMode::default(), None, 100, false).unwrap();
+        save_playback_state(&conn, APP, &items1, PlayMode::default(), None, 100, false).unwrap();
 
         let items2 = vec![PersistedQueueItem {
             uid: None,
@@ -638,7 +669,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_playback_state(&conn, "").unwrap().unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 1);
         assert_eq!(loaded.items[0].title, "New");
         assert_eq!(loaded.position_ms, 999);
@@ -679,9 +710,9 @@ mod tests {
                 played: None,
             },
         ];
-        save_playback_state(&conn, "", &items, PlayMode::default(), None, 0, false).unwrap();
+        save_playback_state(&conn, APP, &items, PlayMode::default(), None, 0, false).unwrap();
 
-        let loaded = load_playback_state(&conn, "").unwrap().unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(
             loaded.items[0].db_id, None,
             "local track should have no db_id"
@@ -704,7 +735,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_playback_state(&conn, "").unwrap().unwrap();
+        let loaded = load_playback_state(&conn, APP).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 1);
         assert_eq!(
             loaded.items[0].db_id, None,
@@ -781,7 +812,7 @@ mod tests {
         .unwrap();
 
         // Simulate "clear in-memory state" by just loading fresh from DB.
-        let restored = load_playback_state(&conn, "")
+        let restored = load_playback_state(&conn, APP)
             .unwrap()
             .expect("should have persisted state");
 

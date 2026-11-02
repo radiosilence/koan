@@ -10,7 +10,6 @@ use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
 use koan_tui::enqueue::enqueue_playlist;
-use koan_tui::play::SESSION;
 use koan_tui::play::TuiCallbacks;
 
 use super::{install_terminal_panic_hook, open_db, parse_dropped_paths, playlist_items_from_paths};
@@ -82,18 +81,22 @@ pub fn cmd_play(
                     opts.bind,
                     opts.subsonic,
                     opts.playground,
+                    koan_tui::play::session(),
                 );
             })
             .expect("failed to spawn API server thread");
     }
 
-    if let Ok(db) = koan_core::db::pool::shared().get() {
+    // This terminal's saved session, while it is the terminal device; a
+    // second terminal UI on the machine keeps none.
+    let session = koan_tui::play::session();
+    if let (Some(session), Ok(db)) = (session, koan_core::db::pool::shared().get()) {
         if clear_queue {
-            let _ = queries::clear_playback_state(&db.conn, SESSION);
+            let _ = queries::clear_playback_state(&db.conn, session);
         }
         // Before any queue: the mode is the player's, kept with or without
         // one, and a queue arriving under shuffle is shuffled.
-        if let Ok(mode) = queries::load_play_mode(&db.conn, SESSION) {
+        if let Ok(mode) = queries::load_play_mode(&db.conn, session) {
             tx.send(PlayerCommand::RestorePlayMode(mode))
                 .expect("player thread died");
         }
@@ -160,8 +163,9 @@ pub fn cmd_play(
                 .expect("failed to spawn resolve thread"),
         );
     } else if !clear_queue
+        && let Some(session) = session
         && let Ok(db) = koan_core::db::pool::shared().get()
-        && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn, SESSION)
+        && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn, session)
     {
         let items: Vec<_> = persisted
             .items

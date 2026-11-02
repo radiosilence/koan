@@ -1153,21 +1153,34 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
 
 /// Key the saved session by device. The one session kept before was whichever
 /// of the app and the terminal UI saved last, so each starts with a copy of
-/// it: someone who used only one of them keeps their queue. Keyed on the
+/// it: someone who used only one of them keeps their queue. Only the app's
+/// copy resumes playing, since the session may have been the app's; and where
+/// there is no terminal UI (iOS, tvOS, Android) it gets no copy. Keyed on the
 /// columns rather than the version alone: a database from before the position
 /// had a table of its own gets that table in the new shape from
 /// `SESSION_TABLES`.
 fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
-    // The app's and the terminal UI's files prefixes, as they were when
-    // sessions were first kept per device.
-    let devices = "(SELECT '' AS device UNION ALL SELECT 'terminal-')";
+    use crate::remote::link::LinkIdentity;
+    // Each device's files prefix, and whether its copy may resume playing.
+    let app = LinkIdentity::APP_FILES;
+    let devices = if cfg!(any(
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "android"
+    )) {
+        format!("(SELECT '{app}' AS device, 1 AS live)")
+    } else {
+        let terminal = LinkIdentity::TERMINAL_FILES;
+        format!("(SELECT '{app}' AS device, 1 AS live UNION ALL SELECT '{terminal}', 0)")
+    };
     if !column_exists(conn, "playback_position", "device")? {
         conn.execute_batch("ALTER TABLE playback_position RENAME TO playback_position_by_id;")?;
         conn.execute_batch(SESSION_TABLES)?;
         conn.execute_batch(&format!(
             "INSERT INTO playback_position
                  (device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
-             SELECT d.device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at
+             SELECT d.device, cursor_id, position_ms, was_playing * d.live, shuffle, repeat,
+                    updated_at
                FROM playback_position_by_id, {devices} d WHERE id = 1;
              DROP TABLE playback_position_by_id;"
         ))?;
@@ -1184,7 +1197,7 @@ fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
                 &format!(
                     "INSERT OR IGNORE INTO playback_position
                          (device, cursor_id, position_ms, was_playing)
-                     SELECT d.device, cursor_id, position_ms, {playing}
+                     SELECT d.device, cursor_id, position_ms, {playing} * d.live
                        FROM playback_state, {devices} d WHERE id = 1"
                 ),
                 [],
@@ -2391,10 +2404,21 @@ mod tests {
     ";
 
     /// The session the app and the terminal UI each start with after the
-    /// upgrade, which is the same one.
+    /// upgrade: the same one, except that only the app's resumes playing,
+    /// since it may have been the app's.
     fn the_session_both_keep(conn: &Connection) -> (String, String, i64, bool, bool, String) {
-        let app = session_of(conn, "");
-        assert_eq!(app, session_of(conn, "terminal-"));
+        use crate::remote::link::LinkIdentity;
+        let app = session_of(conn, LinkIdentity::APP_FILES);
+        let terminal = session_of(conn, LinkIdentity::TERMINAL_FILES);
+        assert!(
+            !terminal.3,
+            "the terminal UI's copy does not resume playing"
+        );
+        let (queue, cursor, position, _, shuffle, repeat) = terminal;
+        assert_eq!(
+            (queue, cursor, position, shuffle, repeat),
+            (app.0.clone(), app.1.clone(), app.2, app.4, app.5.clone())
+        );
         app
     }
 
