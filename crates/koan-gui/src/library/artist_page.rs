@@ -1047,6 +1047,21 @@ impl super::keys::KeyedList for ArtistPage {
             }
         }
     }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let item = self.order()[ix];
+            let album = match (item, &self.record) {
+                (Playable::Track(id), Some(r)) => r
+                    .appearances
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.album_id),
+                _ => None,
+            };
+            actions::keyed_target(&self.selection, item, album)
+        });
+    }
 }
 
 impl chrome::Picking for ArtistPage {
@@ -1109,8 +1124,13 @@ impl Render for ArtistPage {
         self.keyed = self.focus.is_focused(window);
         let len = super::keys::KeyedList::len(self);
         self.cursor.clamp(len);
-        super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         )
         .on_action(cx.listener(Self::select_all))
@@ -1121,7 +1141,7 @@ impl Render for ArtistPage {
         .flex_col()
         .typeset(p, Type::Body, p.ink)
         .child(measure)
-        .child(actions::list_menu(
+        .child(
             div()
                 .id("artist-page-list")
                 .relative()
@@ -1130,10 +1150,7 @@ impl Render for ArtistPage {
                 .child(body)
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                 .child(crate::components::list_scrollbar(&self.list)),
-            cx.weak_entity(),
-            window,
-            cx,
-        ))
+        )
         .when(self.selection.is_active(), |d| {
             d.child(chrome::selection_bar(
                 p,

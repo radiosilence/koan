@@ -34,6 +34,9 @@ pub trait KeyedList: Sized + 'static {
     fn page(&self) -> usize {
         PAGE
     }
+    /// The menu key: the page's context menu will act on item `ix`, and on
+    /// nothing when the cursor is not placed.
+    fn menu_at(&mut self, _ix: Option<usize>, _cx: &mut Context<Self>) {}
     /// The item `rows` rows below item `at` (above, negative): the same
     /// column of a grid, held at the ends. A page whose rows are not all the
     /// same length (an artist's sections) says where each one starts.
@@ -113,6 +116,11 @@ pub fn keyed<V: KeyedList, E: InteractiveElement>(element: E, cx: &mut Context<V
             if let Some(at) = this.cursor().at.filter(|at| *at < this.len()) {
                 this.activate(at, window, cx);
             }
+        }))
+        // Before the context menu, on the same element, opens over it.
+        .capture_action(cx.listener(|this: &mut V, _: &keys::ShowMenu, _, cx| {
+            let at = this.cursor().at.filter(|at| *at < this.len());
+            this.menu_at(at, cx);
         }))
         .on_action(cx.listener(|this: &mut V, _: &keys::Pick, _, cx| {
             if let Some(at) = this.cursor().at.filter(|at| *at < this.len()) {

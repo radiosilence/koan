@@ -74,6 +74,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", SelectNext, ctx),
         KeyBinding::new("shift-up", ExtendPrevious, ctx),
         KeyBinding::new("shift-down", ExtendNext, ctx),
+        KeyBinding::new("menu", crate::components::list_actions::ShowMenu, ctx),
+        KeyBinding::new("shift-f10", crate::components::list_actions::ShowMenu, ctx),
     ]
 }
 
@@ -1527,6 +1529,13 @@ impl Render for QueueView {
                     cx.notify();
                 }
             }))
+            // The menu key: the row under the cursor, before the list's menu
+            // on this element opens over it.
+            .capture_action(cx.listener(
+                |this, _: &crate::components::list_actions::ShowMenu, _, cx| {
+                    this.menu_row = this.cursor.as_ref().and_then(|r| this.row_of(r, cx));
+                },
+            ))
             .on_action(cx.listener(Self::play_selected))
             .on_action(cx.listener(Self::remove_selected))
             .on_action(cx.listener(Self::select_previous))

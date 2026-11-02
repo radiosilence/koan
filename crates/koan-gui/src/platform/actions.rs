@@ -307,6 +307,12 @@ pub const LISTS: &[Shortcut] = &[
         Lists,
         list::Pick
     ),
+    shortcut!(
+        "The row's menu",
+        ["menu", "shift-f10"],
+        Lists,
+        list::ShowMenu
+    ),
 ];
 
 /// What each list key binds to: a line of `LISTS` can name two keys, one
@@ -326,6 +332,7 @@ fn list_binding(key: &str) -> Box<dyn Action> {
         "pagedown" => Box::new(list::PageDown),
         "enter" => Box::new(list::Activate),
         "ctrl-space" => Box::new(list::Pick),
+        "menu" | "shift-f10" => Box::new(list::ShowMenu),
         _ => Box::new(list::Down),
     }
 }

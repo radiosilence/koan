@@ -415,8 +415,13 @@ impl Render for ArtistBrowser {
         };
         self.keyed = self.focus.is_focused(window);
         self.cursor.clamp(self.artists.len());
-        super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         )
         .on_action(cx.listener(Self::select_all))
@@ -426,7 +431,7 @@ impl Render for ArtistBrowser {
         .flex_col()
         .typeset(p, Type::Body, p.ink)
         .when(!held, |d| d.child(header))
-        .child(actions::list_menu(
+        .child(
             div()
                 .id("artist-list")
                 .flex_1()
@@ -436,10 +441,7 @@ impl Render for ArtistBrowser {
                 .child(body)
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                 .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
-            cx.weak_entity(),
-            window,
-            cx,
-        ))
+        )
     }
 }
 
@@ -474,6 +476,10 @@ impl super::keys::KeyedList for ArtistBrowser {
         self.lib
             .nav
             .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None));
     }
 }
 

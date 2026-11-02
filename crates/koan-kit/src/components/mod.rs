@@ -69,8 +69,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Global, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Window, canvas, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
@@ -90,7 +91,7 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 pub mod list_actions {
     pub use super::list_keys::{
         Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
-        PageUp, Pick, Right, Up,
+        PageUp, Pick, Right, ShowMenu, Up,
     };
 }
 pub use empty::EmptyState;
@@ -302,7 +303,21 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
+        .child(
+            canvas(
+                |bounds, _, cx| cx.default_global::<CursorAt>().0 = Some(bounds),
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
 }
+
+/// Where the keyboard's cursor ring was last drawn: what the menu key opens
+/// a context menu under.
+#[derive(Default)]
+pub(crate) struct CursorAt(pub Option<Bounds<Pixels>>);
+
+impl Global for CursorAt {}
 
 /// Two colours mixed, `t` of the way from `a` to `b`.
 pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {

@@ -562,8 +562,13 @@ impl Render for TrackBrowser {
             .into_any_element()
         };
         self.keyed = self.focus.is_focused(window);
-        let page = super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        let page = actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         );
         page.on_action(cx.listener(Self::select_all))
@@ -573,7 +578,7 @@ impl Render for TrackBrowser {
             .flex_col()
             .typeset(p, Type::Body, p.ink)
             .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
+            .child(
                 div()
                     .id("track-list")
                     .flex_1()
@@ -583,10 +588,7 @@ impl Render for TrackBrowser {
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(crate::components::list_scrollbar(&self.scroll)),
-                cx.weak_entity(),
-                window,
-                cx,
-            ))
+            )
     }
 }
 
@@ -626,5 +628,12 @@ impl super::keys::KeyedList for TrackBrowser {
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let ids = self.tracks.iter().map(|t| t.id).collect();
         actions::play_list(&self.lib, ids, ix, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let track = &self.tracks[ix];
+            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+        });
     }
 }

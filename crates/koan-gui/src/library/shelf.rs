@@ -849,6 +849,21 @@ impl super::keys::KeyedList for ShelfPage {
             }
         }
     }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let item = self.order()[ix];
+            let album = match (item, &self.summary) {
+                (Playable::Track(id), Some(s)) => s
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.album_id),
+                _ => None,
+            };
+            actions::keyed_target(&self.selection, item, album)
+        });
+    }
 }
 
 impl chrome::Picking for ShelfPage {
@@ -900,8 +915,13 @@ impl Render for ShelfPage {
         }
         let collection = collection.header(header);
 
-        super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         )
         .on_action(cx.listener(Self::select_all))
@@ -910,17 +930,14 @@ impl Render for ShelfPage {
         .size_full()
         .flex()
         .flex_col()
-        .child(actions::list_menu(
+        .child(
             div()
                 .id("shelf-page")
                 .relative()
                 .flex_1()
                 .min_h_0()
                 .child(collection),
-            cx.weak_entity(),
-            window,
-            cx,
-        ))
+        )
         .when(self.selection.is_active(), |d| {
             d.child(chrome::selection_bar(
                 p,

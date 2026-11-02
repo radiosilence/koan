@@ -1226,6 +1226,10 @@ impl super::keys::KeyedList for PlaylistPage {
             .and_then(|i| i.queue_item_id.parse().ok());
         self.play_from(entry, false, cx);
     }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu_row = ix;
+    }
 }
 
 impl Focusable for PlaylistPage {

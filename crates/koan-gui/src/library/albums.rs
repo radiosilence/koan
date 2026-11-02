@@ -889,8 +889,13 @@ impl Render for AlbumGrid {
 
         self.keyed = self.focus.is_focused(window);
         self.cursor.clamp(count);
-        super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         )
         .on_action(cx.listener(Self::select_all))
@@ -900,7 +905,7 @@ impl Render for AlbumGrid {
         .flex_col()
         .typeset(p, Type::Body, p.ink)
         .when(!held, |d| d.child(header))
-        .child(actions::list_menu(
+        .child(
             div()
                 .id("album-grid")
                 .relative()
@@ -911,10 +916,7 @@ impl Render for AlbumGrid {
                 .child(body)
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                 .child(crate::components::list_scrollbar(&self.scroll)),
-            cx.weak_entity(),
-            window,
-            cx,
-        ))
+        )
         .when(self.selection.is_active(), |d| {
             d.child(chrome::selection_bar(
                 p,
@@ -977,6 +979,12 @@ impl super::keys::KeyedList for AlbumGrid {
         self.lib
             .nav
             .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+        });
     }
 }
 

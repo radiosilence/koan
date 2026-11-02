@@ -602,39 +602,54 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .map(|(at, menu, _)| (*at, menu.clone()));
         let build = Rc::new(build);
         let opener = state.clone();
-        let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-            let build = build.clone();
-            let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
-            // Nothing to act on, nothing to open.
-            if menu.read(cx).entries.is_empty() {
-                return;
-            }
-            let at = event.position;
-            // Where the keyboard was, given back as the menu closes: a list's
-            // keys work again after a choice or Escape.
-            let before = window.focused(cx);
-            let own = menu.focus_handle(cx);
-            opener.update(cx, |open, cx| {
-                let closing = cx.subscribe_in(
-                    &menu,
-                    window,
-                    move |open: &mut Open, _, _: &DismissEvent, window, cx| {
-                        open.0 = None;
-                        // Only from the menu: a choice that put up a sheet
-                        // or opened a field keeps the keyboard where it went.
-                        let in_menu =
-                            window.focused(cx).is_none() || own.contains_focused(window, cx);
-                        if in_menu && let Some(before) = &before {
-                            window.focus(before, cx);
-                        }
-                        cx.notify();
-                    },
-                );
-                open.0 = Some((at, menu.clone(), closing));
-                cx.notify();
+        let open = Rc::new(
+            move |at: Point<Pixels>, window: &mut Window, cx: &mut App| {
+                let build = build.clone();
+                let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
+                // Nothing to act on, nothing to open.
+                if menu.read(cx).entries.is_empty() {
+                    return;
+                }
+                // Where the keyboard was, given back as the menu closes: a list's
+                // keys work again after a choice or Escape.
+                let before = window.focused(cx);
+                let own = menu.focus_handle(cx);
+                opener.update(cx, |open, cx| {
+                    let closing = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |open: &mut Open, _, _: &DismissEvent, window, cx| {
+                            open.0 = None;
+                            // Only from the menu: a choice that put up a sheet
+                            // or opened a field keeps the keyboard where it went.
+                            let in_menu =
+                                window.focused(cx).is_none() || own.contains_focused(window, cx);
+                            if in_menu && let Some(before) = &before {
+                                window.focus(before, cx);
+                            }
+                            cx.notify();
+                        },
+                    );
+                    open.0 = Some((at, menu.clone(), closing));
+                    cx.notify();
+                });
+                window.focus(&menu.focus_handle(cx), cx);
+            },
+        );
+        let by_key = open.clone();
+        let mut this = self
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                open(event.position, window, cx)
+            })
+            // The menu key: under the keyboard's cursor, or at the pointer
+            // where none has been drawn.
+            .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
+                let at = cx
+                    .try_global::<super::CursorAt>()
+                    .and_then(|c| c.0)
+                    .map_or_else(|| window.mouse_position(), |b| b.bottom_left());
+                by_key(at, window, cx)
             });
-            window.focus(&menu.focus_handle(cx), cx);
-        });
         if let Some((at, menu)) = shown {
             this = this.child(
                 deferred(
