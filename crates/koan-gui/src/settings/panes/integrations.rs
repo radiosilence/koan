@@ -9,7 +9,7 @@ use koan_kit::app::*;
 // gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
 
-use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
+use crate::settings::form::{Copied, Row, buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};
 use crate::settings::sheet::{Action, Sheet};
 use crate::settings::{Ctx, offers};
@@ -26,7 +26,7 @@ pub struct IntegrationsPane {
     scrobbling_error: Option<String>,
     token: Entity<InputState>,
     busy: bool,
-    copied: bool,
+    copied: Copied,
     assistants_task: Option<Task<()>>,
     status_task: Option<Task<()>>,
     connecting: Option<Task<()>>,
@@ -58,7 +58,7 @@ impl IntegrationsPane {
             scrobbling_error: None,
             token,
             busy: false,
-            copied: false,
+            copied: Copied::default(),
             assistants_task: None,
             status_task: None,
             connecting: None,
@@ -181,12 +181,11 @@ impl IntegrationsPane {
                         .control(copyable(
                             "copy-mcp",
                             url.clone(),
-                            self.copied,
+                            self.copied.is("mcp"),
                             move |cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                                let url = url.clone();
                                 entity.update(cx, |pane, cx| {
-                                    pane.copied = true;
-                                    cx.notify();
+                                    Copied::copy(pane, |pane| &mut pane.copied, "mcp", url, cx)
                                 })
                             },
                             look,
@@ -197,17 +196,22 @@ impl IntegrationsPane {
                 rows.push(buttons(
                     vec![
                         Button::new("copy-mcp-address", ButtonKind::Bordered)
-                            .label(if self.copied {
+                            .label(if self.copied.is("mcp-address") {
                                 "Copied"
                             } else {
                                 "Copy Address"
                             })
                             .icon(Icon::Copy)
                             .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy_url.clone()));
+                                let url = copy_url.clone();
                                 copier.update(cx, |pane, cx| {
-                                    pane.copied = true;
-                                    cx.notify();
+                                    Copied::copy(
+                                        pane,
+                                        |pane| &mut pane.copied,
+                                        "mcp-address",
+                                        url,
+                                        cx,
+                                    )
                                 })
                             })
                             .into_any_element(),

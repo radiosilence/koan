@@ -4440,67 +4440,19 @@ impl KoanEngine {
     /// ReplayGain to `config.toml`. The password is not here; it goes through
     /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let before = Config::cached();
-            let window_before = (
-                before.remote.cache_limit.clone(),
-                before.remote.download_ahead,
-            );
-            Config::persist(|cfg| {
-                cfg.library.folders = s
-                    .library_folders
-                    .iter()
-                    .map(|f| PathBuf::from(&f.path))
-                    .collect();
+        offload::offload(move || write_settings(None, &s)).await
+    }
 
-                cfg.remote.enabled = s.remote_enabled;
-                cfg.remote.url = s.remote_url.clone();
-                cfg.remote.username = s.remote_username.clone();
-                cfg.remote.download_workers = s.download_workers.max(1) as usize;
-                cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
-                cfg.remote.download_ahead = s.download_ahead;
-                cfg.remote.auto_sync = s.auto_sync;
-                cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
-
-                cfg.playback.replaygain = match s.replaygain.as_str() {
-                    "track" => config::ReplayGainMode::Track,
-                    "album" => config::ReplayGainMode::Album,
-                    _ => config::ReplayGainMode::Off,
-                };
-                cfg.playback.pre_amp_db = s.pre_amp_db;
-                cfg.playback.fade_on_pause = s.fade_on_pause;
-
-                cfg.devices.discoverable = s.devices_discoverable;
-                cfg.devices.nearby_control = match s.devices_nearby_control.as_str() {
-                    "playback" => config::NearbyControl::Playback,
-                    _ => config::NearbyControl::Full,
-                };
-                cfg.devices.keep_running = s.devices_keep_running;
-                cfg.share.enabled = s.share_enabled;
-                cfg.share.port = s.share_port;
-                cfg.devices.refused = s.devices_refused.clone();
-                cfg.devices.addresses = s
-                    .devices_addresses
-                    .iter()
-                    .map(|a| a.trim().to_string())
-                    .filter(|a| !a.is_empty())
-                    .collect();
-            })
-            .map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })?;
-            koan_core::remote::nearby::reconfigure();
-            let after = Config::cached();
-            if (
-                after.remote.cache_limit.clone(),
-                after.remote.download_ahead,
-            ) != window_before
-            {
-                koan_core::remote::queue::cache_limit_changed();
-            }
-            Ok(())
-        })
-        .await
+    /// Write back what differs between `read`, the settings as the caller
+    /// read them, and `s`, the same with its edits made: a field nobody here
+    /// edited keeps whatever the file holds now, though a sign-in, another
+    /// window or the terminal UI wrote it after `read` was taken.
+    pub async fn update_settings_since(
+        self: Arc<Self>,
+        read: Settings,
+        s: Settings,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || write_settings(Some(&read), &s)).await
     }
 
     /// Ask the running library task to stop.
@@ -7455,6 +7407,112 @@ fn scrobbling_connection(
         pending: s.pending,
         error: s.error,
     }
+}
+
+/// `update_settings`' write: every field of `s`, or with `read`, only those
+/// `s` changes from it.
+fn write_settings(read: Option<&Settings>, s: &Settings) -> Result<(), KoanError> {
+    macro_rules! edited {
+        ($field:ident) => {
+            read.is_none_or(|r| r.$field != s.$field)
+        };
+    }
+    let before = Config::cached();
+    let window_before = (
+        before.remote.cache_limit.clone(),
+        before.remote.download_ahead,
+    );
+    Config::persist(|cfg| {
+        let paths = |s: &Settings| -> Vec<String> {
+            s.library_folders.iter().map(|f| f.path.clone()).collect()
+        };
+        if read.is_none_or(|r| paths(r) != paths(s)) {
+            cfg.library.folders = s
+                .library_folders
+                .iter()
+                .map(|f| PathBuf::from(&f.path))
+                .collect();
+        }
+        if edited!(remote_enabled) {
+            cfg.remote.enabled = s.remote_enabled;
+        }
+        if edited!(remote_url) {
+            cfg.remote.url = s.remote_url.clone();
+        }
+        if edited!(remote_username) {
+            cfg.remote.username = s.remote_username.clone();
+        }
+        if edited!(download_workers) {
+            cfg.remote.download_workers = s.download_workers.max(1) as usize;
+        }
+        if edited!(cache_limit) {
+            cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
+        }
+        if edited!(download_ahead) {
+            cfg.remote.download_ahead = s.download_ahead;
+        }
+        if edited!(auto_sync) {
+            cfg.remote.auto_sync = s.auto_sync;
+        }
+        if edited!(auto_sync_interval_mins) {
+            cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
+        }
+        if edited!(replaygain) {
+            cfg.playback.replaygain = match s.replaygain.as_str() {
+                "track" => config::ReplayGainMode::Track,
+                "album" => config::ReplayGainMode::Album,
+                _ => config::ReplayGainMode::Off,
+            };
+        }
+        if edited!(pre_amp_db) {
+            cfg.playback.pre_amp_db = s.pre_amp_db;
+        }
+        if edited!(fade_on_pause) {
+            cfg.playback.fade_on_pause = s.fade_on_pause;
+        }
+        if edited!(devices_discoverable) {
+            cfg.devices.discoverable = s.devices_discoverable;
+        }
+        if edited!(devices_nearby_control) {
+            cfg.devices.nearby_control = match s.devices_nearby_control.as_str() {
+                "playback" => config::NearbyControl::Playback,
+                _ => config::NearbyControl::Full,
+            };
+        }
+        if edited!(devices_keep_running) {
+            cfg.devices.keep_running = s.devices_keep_running;
+        }
+        if edited!(share_enabled) {
+            cfg.share.enabled = s.share_enabled;
+        }
+        if edited!(share_port) {
+            cfg.share.port = s.share_port;
+        }
+        if edited!(devices_refused) {
+            cfg.devices.refused = s.devices_refused.clone();
+        }
+        if edited!(devices_addresses) {
+            cfg.devices.addresses = s
+                .devices_addresses
+                .iter()
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
+    })
+    .map_err(|e| KoanError::BadArgument {
+        message: e.to_string(),
+    })?;
+    koan_core::remote::nearby::reconfigure();
+    let after = Config::cached();
+    if (
+        after.remote.cache_limit.clone(),
+        after.remote.download_ahead,
+    ) != window_before
+    {
+        koan_core::remote::queue::cache_limit_changed();
+    }
+    Ok(())
 }
 
 fn scrobbling_error(e: koan_core::remote::scrobbling::ScrobblingError) -> KoanError {

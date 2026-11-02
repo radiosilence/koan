@@ -100,7 +100,13 @@ pub fn organise(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App
                     Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
                 };
                 match found {
-                    Ok(found) => ids.extend(found.into_iter().filter(|id| !ids.contains(id))),
+                    Ok(found) => {
+                        for id in found {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                        }
+                    }
                     Err(e) => log::warn!("organise: {e}"),
                 }
             }
