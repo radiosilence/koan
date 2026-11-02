@@ -53,7 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
-    let engine = futures::executor::block_on(KoanEngine::open(None))?;
+    // The desktop app's own device, so a queue saved here is the one the
+    // app restores (`KOAN_SHOT_TRACKS`).
+    let engine = futures::executor::block_on(KoanEngine::open_desktop())?;
     if let Some(count) = std::env::var("KOAN_SHOT_TRACKS")
         .ok()
         .and_then(|n| n.parse::<usize>().ok())

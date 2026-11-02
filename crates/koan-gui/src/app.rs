@@ -182,8 +182,10 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
-        window.on_window_should_close(cx, |window, cx| {
-            window_state::save(window.window_bounds(), cx);
+        // Closing the last window quits, which waits for nothing spawned:
+        // a file of a few bytes, written now.
+        window.on_window_should_close(cx, |window, _| {
+            window_state::write(window.window_bounds());
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));

@@ -328,10 +328,18 @@ impl FilterPanel {
         let year_to = year(filter.year_to, "to", window, cx);
         let watch = |input: &Entity<InputState>, from: bool, cx: &mut Context<Self>| {
             cx.subscribe(input, move |this, input, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) {
+                // A year half typed is not a filter: one is applied as it is
+                // completed or cleared, or when the field is left.
+                let text = input.read(cx).value().trim().to_owned();
+                let settled = match event {
+                    InputEvent::Change => text.is_empty() || text.len() == 4,
+                    InputEvent::Blur | InputEvent::PressEnter { .. } => true,
+                    _ => false,
+                };
+                if !settled {
                     return;
                 }
-                let value = input.read(cx).value().trim().parse::<i32>().ok();
+                let value = text.parse::<i32>().ok();
                 this.lib.browse.update(cx, |b, cx| {
                     let slot = if from {
                         b.filter.year_from
@@ -597,7 +605,17 @@ pub fn selection_bar<V: Picking>(
                         .into_any_element()
                 }),
         )
-        .verb("sel-fav", "favourite", verb(actions::favourite))
+        // As the context menu says it: a pick of favourites only is
+        // unfavourited.
+        .verb(
+            "sel-fav",
+            if !picked.is_empty() && picked.iter().all(|i| lib.feed.read(cx).is_favourite(*i)) {
+                "unfavourite"
+            } else {
+                "favourite"
+            },
+            verb(actions::favourite),
+        )
         .verb("sel-organise", "organise…", organise)
         .on_done(move |_, _, cx| end(cx))
 }

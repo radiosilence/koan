@@ -56,7 +56,11 @@ pub struct Nav {
 impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
-        let watch = cx.observe(&navigator, |_, _, cx| cx.notify());
+        // A track's details belong to the page they were opened on.
+        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+            nav.info = None;
+            cx.notify()
+        });
         Self {
             navigator,
             offsets: HashMap::new(),

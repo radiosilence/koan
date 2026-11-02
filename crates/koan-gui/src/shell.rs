@@ -408,9 +408,10 @@ impl Shell {
                             div().window_control_area(WindowControlArea::Close).child(
                                 ToolbarButton::new("close", Icon::Close, "close")
                                     // Removing the window skips the close
-                                    // request, so its bounds are saved here.
-                                    .on_click(|_, window, cx| {
-                                        window_state::save(window.window_bounds(), cx);
+                                    // request, so its bounds are saved here,
+                                    // now: the app quits with it.
+                                    .on_click(|_, window, _| {
+                                        window_state::write(window.window_bounds());
                                         window.remove_window();
                                     }),
                             ),
