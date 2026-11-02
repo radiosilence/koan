@@ -57,12 +57,13 @@ pub struct Transport {
     /// The profile the playing stream named when `eq` was read.
     eq_profile: Option<String>,
     _eq_load: Option<Task<()>>,
-    _subscriptions: [Subscription; 7],
+    _subscriptions: [Subscription; 8],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Menu {
     Sleep,
+    Devices,
     Output,
     Eq,
 }
@@ -153,6 +154,17 @@ impl Transport {
                     cx.notify();
                 }),
                 cx.observe(&mirror.renderers, |this, _, cx| this.refill_output(cx)),
+                // The control button names the device controlled, and its
+                // menu follows the devices while it is open.
+                cx.observe(&mirror.devices, |this, _, cx| {
+                    if let Some(menu) = this.menus.menu(Menu::Devices).cloned() {
+                        let view = crate::devices::ControlView::read(cx);
+                        menu.update(cx, |menu, cx| {
+                            menu.refill(cx, |menu, _| crate::devices::control_menu(menu, &view))
+                        });
+                    }
+                    cx.notify();
+                }),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
@@ -218,6 +230,12 @@ impl Transport {
             Menu::Sleep => {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
                 ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
+            }
+            Menu::Devices => {
+                let view = crate::devices::ControlView::read(cx);
+                ThemeMenu::build(window, cx, |menu, _, _| {
+                    crate::devices::control_menu(menu, &view)
+                })
             }
             Menu::Output => {
                 self.ask_outputs(cx);
@@ -309,6 +327,47 @@ impl Transport {
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
             move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
+            cx,
+        )
+    }
+
+    /// The control button: the devices glyph, and while another device is
+    /// controlled its name beside it in an accent badge, since everything the
+    /// window shows is then that device's. A device out of reach turns the
+    /// glyph into a warning in `bad`.
+    fn control_button(&self, p: &Paint, cx: &mut Context<Self>) -> Div {
+        let view = &self.devices.read(cx).0;
+        let away = matches!(
+            view.target_reach,
+            Some(koan_ffi::DeviceReach::OutOfReach { .. })
+        );
+        let name = view.target.as_ref().map(|t| {
+            view.devices
+                .iter()
+                .find(|d| &d.id == t)
+                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
+        });
+        let Some(name) = name else {
+            return self.menu_button(Menu::Devices, Icon::Devices, "devices", true, p, cx);
+        };
+        let glyph = if away {
+            KoanIcon::new(Icon::Warning)
+                .role(TypeRole::Body)
+                .tone(Tone::Bad)
+        } else {
+            KoanIcon::new(Icon::Devices)
+                .role(TypeRole::Body)
+                .color(p.accent)
+        };
+        self.menus.trigger(
+            Menu::Devices,
+            trailing_item(p)
+                .id("devices")
+                .gap(p.space(Space::Xs))
+                .child(glyph)
+                .child(Badge::new(name).accent(!away)),
+            |this: &mut Self| &mut this.menus,
+            |this, window, cx| this.build(Menu::Devices, window, cx),
             cx,
         )
     }
@@ -511,7 +570,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
 }
 
 /// A stable small number for an id string, for an element id.
-fn id_hash(id: &str) -> u64 {
+pub(crate) fn id_hash(id: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     id.hash(&mut h);
@@ -881,6 +940,7 @@ impl Render for Transport {
                 &p,
                 cx,
             ))
+            .child(self.control_button(&p, cx))
             .child(self.menu_button(Menu::Output, Icon::Speaker, "output", true, &p, cx))
             // This device's own output's EQ; another device's is chosen there.
             .children(

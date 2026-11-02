@@ -488,6 +488,38 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
     config::parse_size_bytes(&text)
 }
 
+/// Whether the music of the device in view can be moved to `to` (this
+/// device with `None`): `controlled` is the device controlled, `None` while
+/// this one is in view. Both ends must play from the same library, and there
+/// must be music to move: a queue here, or another device playing or paused
+/// and in reach. Moving to the device already in view moves nothing.
+#[uniffi::export]
+pub fn can_move_music(
+    to: Option<DeviceInfo>,
+    controlled: Option<DeviceInfo>,
+    has_queue: bool,
+) -> bool {
+    if to.as_ref().map(|d| d.id.as_str()) == controlled.as_ref().map(|d| d.id.as_str()) {
+        return false;
+    }
+    if to.as_ref().is_some_and(|d| d.problem.is_some()) {
+        return false;
+    }
+    match &controlled {
+        Some(source) => {
+            if !source.same_library
+                || source.state == PlayState::Stopped
+                || source.problem.is_some()
+            {
+                return false;
+            }
+        }
+        None if !has_queue => return false,
+        None => {}
+    }
+    to.is_none_or(|d| d.same_library)
+}
+
 /// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
 /// in capitals. Applied to the field on every change, so typing and pasting
 /// read the same on every platform.

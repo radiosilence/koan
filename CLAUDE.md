@@ -280,7 +280,9 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `sidebar_status.rs` | The sidebar's foot: what the device plays from and the library's counts, from `library_stats` on the Library and Cache slices |
 | `queue/` | The queue page, kept mounted: rows from `QueueItem.run` grouped or flat (`rows.rs`, disc numbering there too), linked credits, the heart, the availability mark with a transfer's ring, selection by queue item, keys, drag reorder, context menu |
 | `links.rs` | Names that lead to their pages: a record's title, each credited artist. The queue and the transport draw with it |
-| `transport.rs` | The transport bar, its names linked to their pages, and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing |
+| `transport.rs` | The transport bar, its names linked to their pages, and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing; the control, output, sleep and EQ menus. The output menu searches for renderers as it opens and refills as they answer |
+| `devices.rs` | Play on: the control menu (this device, the account's and the network's), move here, and what became of a move; `can_move_music` in koan-ffi decides where music can go |
+| `notice.rs` | The one line at the sidebar's foot the app says something in: a move's outcome, a command another device did not take (the Connection slice's `command_notice`) |
 | `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
 | `levels.rs` | The playing bars: one analyser subscription while any bar is on screen; rows draw a slot and each window's root paints the bars over its cached content, so a frame redraws the root alone |
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
