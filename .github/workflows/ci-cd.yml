@@ -398,13 +398,14 @@ jobs:
           shared-key: linux
           # A failing check would otherwise leave the cache unsaved.
           cache-on-failure: true
-      # The desktop app has a job of its own: GPUI and the libraries it links
-      # are the bulk of its build, and nothing else here needs them.
-      - run: cargo clippy --workspace --exclude koan-gui --all-targets -- -D warnings
+      # The desktop app and its design system (koan-kit) have jobs of their
+      # own: GPUI and the libraries it links are the bulk of their build, and
+      # nothing else here needs them.
+      - run: cargo clippy --workspace --exclude koan-gui --exclude koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --workspace --exclude koan-gui --all-targets
+        run: cargo test --workspace --exclude koan-gui --exclude koan-kit --all-targets
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --workspace --exclude koan-gui --doc
+        run: cargo test --workspace --exclude koan-gui --exclude koan-kit --doc
 
   # koan-gui on Linux, beside the job above: it links koan-ffi and so
   # koan-core and koan-server, which any Rust change can break for it.
