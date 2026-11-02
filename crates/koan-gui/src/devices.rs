@@ -204,15 +204,17 @@ fn move_music(to: Option<String>, cx: &mut App) {
     // Moved here, the answer is the controlled device's, which was asked to
     // send the music on. Read before the move makes this device the one
     // controlled.
-    let source = view
-        .controlled()
-        .map_or_else(|| "The other device".to_owned(), |d| d.name.clone());
+    // `None` while this device is in view: the music leaves from here.
+    let from = view.target.as_ref().map(|_| {
+        view.controlled()
+            .map_or_else(|| "The other device".to_owned(), |d| d.name.clone())
+    });
     let here = to.is_none();
     let moving = engine(cx).move_music(to);
     cx.spawn(async move |cx| {
         let said = match moving.await {
             Err(e) => Some((e.to_string(), Tone::Bad)),
-            Ok(moved) => moved_notice(&moved, here, &name, &source),
+            Ok(moved) => moved_notice(&moved, here, &name, from.as_deref()),
         };
         if let Some((text, tone)) = said {
             cx.update(|cx| notice::show(text, tone, cx));
@@ -225,8 +227,9 @@ fn moved_notice(
     moved: &koan_ffi::MoveResult,
     here: bool,
     name: &str,
-    source: &str,
+    from: Option<&str>,
 ) -> Option<(String, Tone)> {
+    let source = from.unwrap_or("This device");
     if let Some(error) = &moved.error {
         return Some((
             if here {
@@ -257,14 +260,17 @@ fn moved_notice(
             Tone::Muted,
         ));
     }
+    // Left behind where the music came from: the device controlled, or this
+    // one while it was in view.
+    let behind = from.unwrap_or("this device");
     match moved.left_out {
         0 => None,
         1 => Some((
-            "1 track only on this device stayed behind".into(),
+            format!("1 track only on {behind} stayed behind"),
             Tone::Muted,
         )),
         n => Some((
-            format!("{n} tracks only on this device stayed behind"),
+            format!("{n} tracks only on {behind} stayed behind"),
             Tone::Muted,
         )),
     }
@@ -354,17 +360,22 @@ mod tests {
     #[test]
     fn a_move_says_only_what_the_state_cannot() {
         assert_eq!(
-            moved_notice(&moved(true, false, 0), false, "TV", "Mac"),
+            moved_notice(&moved(true, false, 0), false, "TV", None),
             None
         );
-        let (text, tone) = moved_notice(&moved(true, false, 2), false, "TV", "Mac").unwrap();
+        let (text, tone) = moved_notice(&moved(true, false, 2), false, "TV", None).unwrap();
         assert_eq!(text, "2 tracks only on this device stayed behind");
         assert_eq!(tone, Tone::Muted);
-        let (text, _) = moved_notice(&moved(false, true, 0), true, "This device", "Phone").unwrap();
+        // Brought here, what stays behind is the other device's.
+        let (text, _) =
+            moved_notice(&moved(true, false, 1), true, "This device", Some("Phone")).unwrap();
+        assert_eq!(text, "1 track only on Phone stayed behind");
+        let (text, _) =
+            moved_notice(&moved(false, true, 0), true, "This device", Some("Phone")).unwrap();
         assert!(text.starts_with("Phone is asleep"), "{text}");
         let mut refused = moved(false, false, 0);
         refused.error = Some("different library".into());
-        let (text, tone) = moved_notice(&refused, false, "TV", "Mac").unwrap();
+        let (text, tone) = moved_notice(&refused, false, "TV", Some("Mac")).unwrap();
         assert_eq!(text, "TV did not take the music: different library");
         assert_eq!(tone, Tone::Bad);
     }

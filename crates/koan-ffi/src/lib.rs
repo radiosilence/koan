@@ -7764,3 +7764,64 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
         ImportError::Failed(message) => KoanError::BadArgument { message },
     }
 }
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn device(id: &str, same_library: bool, state: PlayState) -> DeviceInfo {
+        DeviceInfo {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            account: true,
+            owner: None,
+            nearby: false,
+            awake: true,
+            asleep: false,
+            wakeable: false,
+            tv_paired: false,
+            tv_pairable: false,
+            last_seen: None,
+            waking: None,
+            wake_failed: None,
+            same_library,
+            state,
+            title: None,
+            artist: None,
+            artist_credit: Vec::new(),
+            album: None,
+            track_id: None,
+            album_id: None,
+            position_ms: 0,
+            duration_ms: 0,
+            problem: None,
+        }
+    }
+
+    #[test]
+    fn music_moves_only_where_it_can_play() {
+        let tv = device("tv", true, PlayState::Stopped);
+        let phone = device("phone", true, PlayState::Playing);
+        let stranger = device("stranger", false, PlayState::Playing);
+        // From here: needs a queue, and a device on the same library.
+        assert!(can_move_music(Some(tv.clone()), None, true));
+        assert!(!can_move_music(Some(tv.clone()), None, false));
+        assert!(!can_move_music(Some(stranger.clone()), None, true));
+        // Nowhere to move to while this device is in view.
+        assert!(!can_move_music(None, None, true));
+        // From a device controlled: it must have music and share the library.
+        assert!(can_move_music(None, Some(phone.clone()), false));
+        assert!(can_move_music(Some(tv.clone()), Some(phone.clone()), false));
+        assert!(!can_move_music(None, Some(tv.clone()), true));
+        assert!(!can_move_music(None, Some(stranger), true));
+        assert!(!can_move_music(
+            Some(phone.clone()),
+            Some(phone.clone()),
+            true
+        ));
+        let mut away = tv;
+        away.problem = Some("out of reach".into());
+        assert!(!can_move_music(Some(away), Some(phone), true));
+    }
+}

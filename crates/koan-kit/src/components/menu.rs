@@ -647,3 +647,41 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+
+    use super::*;
+
+    fn rows(menu: Menu, names: &[&'static str]) -> Menu {
+        names.iter().fold(menu, |menu, name| {
+            menu.item(MenuEntry::data(*name).on_click(|_, _, _| {}))
+        })
+    }
+
+    /// Refilled as renderers arrive, the menu keeps the row highlighted
+    /// while it is still there, and drops the highlight when it is gone.
+    #[gpui_kit::test]
+    fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let window = cx.add_empty_window();
+        let menu = window
+            .update(|window, cx| Menu::build(window, cx, |menu, _, _| rows(menu, &["mac", "tv"])));
+        window.update(|_, cx| {
+            menu.update(cx, |menu, cx| {
+                menu.highlight(Some(1), cx);
+                menu.refill(cx, |menu, _| {
+                    rows(menu, &["mac", "tv", "amp"]).note("plays the originals")
+                });
+                assert_eq!(menu.highlighted, Some(1));
+                assert_eq!(menu.entries.len(), 4);
+                menu.refill(cx, |menu, _| rows(menu, &["mac"]));
+                assert_eq!(menu.highlighted, None);
+            })
+        });
+    }
+}

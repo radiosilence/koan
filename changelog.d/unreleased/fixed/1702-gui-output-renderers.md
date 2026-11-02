@@ -1,0 +1,1 @@
+- **The GUI app's output menu lists UPnP renderers.** Opening it searches the network and the menu fills in as renderers answer; the renderer in use shows its volume on a slider and says what it is sent, as the Mac app does.
