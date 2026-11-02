@@ -36,6 +36,7 @@ pub const APP_ID: &str = "koan-gui";
 pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(engine, cx);
     cx.set_global(mirror);
+    crate::transfers::install(cx);
     crate::notice::install(cx);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);

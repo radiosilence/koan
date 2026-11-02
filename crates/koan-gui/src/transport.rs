@@ -1036,25 +1036,31 @@ pub struct Seek {
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
     glide: Glide,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Seek {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
+        let mut subscriptions = vec![
+            cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
+            cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            // The fill is the accent.
+            theme::observe_accent(cx),
+            // Nothing draws the slider while the window is hidden, so
+            // nothing keeps it moving; showing again puts it where it is.
+            cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                this.visible = visibility == WindowVisibility::Visible;
+                this.moved(cx);
+            }),
+        ];
+        // The playing track's download starting or ending shows or takes
+        // away how far its bytes reach.
+        if let Some(transfers) = crate::transfers::entity(cx) {
+            subscriptions.push(cx.observe(&transfers, |_, _, cx| cx.notify()));
+        }
         let mut seek = Self {
-            _subscriptions: [
-                cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
-                cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
-                // The fill is the accent.
-                theme::observe_accent(cx),
-                // Nothing draws the slider while the window is hidden, so
-                // nothing keeps it moving; showing again puts it where it is.
-                cx.observe_window_visibility(window, |this, visibility, _, cx| {
-                    this.visible = visibility == WindowVisibility::Visible;
-                    this.moved(cx);
-                }),
-            ],
+            _subscriptions: subscriptions,
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
@@ -1164,6 +1170,16 @@ impl Render for Seek {
         )
         .absolute()
         .size_full();
+        // How far a track still downloading can be played, moving as its
+        // bytes arrive; nothing once the file is all here.
+        let reach = self
+            .playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .and_then(|e| e.track_id)
+            .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
             .compact()
             // An arrow key moves five seconds, not a twentieth of the track.
@@ -1171,6 +1187,7 @@ impl Render for Seek {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {

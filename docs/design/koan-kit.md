@@ -216,7 +216,7 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 ### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)
 
-`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed a `ProgressReader` and reads it each frame it is drawn, asking for the next; one off screen reads nothing. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
+`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed the transfer's `Glide` (its share at the last report and its rate) and draws `ProgressRing::glide`, a shader quad reckoning the share per present, so the ring fills with no frame drawn and nothing is read while it does; where the renderer draws no shaders it draws the glide's last value each frame it shows. `Slider::reach(&Glide)` is the seek bar's counterpart: the rule dimmed past what has arrived, the arrived part drawn by the glide's own shader. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
 
 ### SelectionBar (Mac: iOS's `SelectionBar`, the Mac's menu on a multi-selection)
 

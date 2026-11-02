@@ -67,7 +67,7 @@ use gpui_kit::{
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
-pub use availability::{Availability, AvailabilityMark, ProgressReader};
+pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
