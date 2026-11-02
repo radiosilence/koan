@@ -40,6 +40,7 @@ mod spinner;
 mod split;
 mod status;
 mod stepper;
+mod suggestions;
 mod table;
 mod toggle;
 mod toolbar;
@@ -82,6 +83,7 @@ pub use spinner::Spinner;
 pub use split::SplitView;
 pub use status::StatusBlock;
 pub use stepper::Stepper;
+pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{

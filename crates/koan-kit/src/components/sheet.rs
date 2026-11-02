@@ -25,6 +25,13 @@ pub fn panel(look: &Look) -> Div {
         .border_color(look.palette.rule.hsla())
 }
 
+/// A sheet that holds a list to pick from (the picker): wider than a
+/// question's, and tall from the start, so the list growing as it is
+/// typed into moves nothing.
+pub fn list_panel(look: &Look) -> Div {
+    panel(look).w(px(680.0)).h(relative(0.8)).max_h(px(640.0))
+}
+
 /// A sheet's head: its title in the app's words, and its actions trailing.
 pub fn head(title: impl AsRef<str>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
     head_data(label(title), actions, look)
@@ -67,6 +74,68 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         // Shrinks below its content inside the panel's height, and scrolls.
         .min_h_0()
         .overflow_y_scroll()
+}
+
+/// What a sheet sits on: the whole window dimmed, taking every click, the
+/// panel hung near the top. The owner listens to it for a click outside the
+/// panel, which the panel stops.
+pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .absolute()
+        .inset_0()
+        .flex()
+        .justify_center()
+        .items_start()
+        .pt(look.space(Space::Xxl))
+        .bg(look.palette.bg.hsla().opacity(0.6))
+        .occlude()
+}
+
+/// A sheet whose head is a search: the field across the top, with a hairline
+/// under it.
+pub fn search_head(input: &Entity<InputState>, look: &Look) -> impl IntoElement {
+    div()
+        .px(look.space(Space::L))
+        .py(look.space(Space::M))
+        .border_b(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(super::FilterField::new(input).fill())
+}
+
+/// A band under the head or over the foot: a sheet's segmented choice.
+pub fn band(content: impl IntoElement, look: &Look) -> impl IntoElement {
+    div()
+        .px(look.space(Space::L))
+        .py(look.space(Space::S))
+        .border_b(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(content)
+}
+
+/// A sheet's foot: what it says of its state leading, in `fine`, `muted`,
+/// and its verbs trailing.
+pub fn foot(leading: Vec<AnyElement>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(look.space(Space::S))
+        .px(look.space(Space::L))
+        .py(look.space(Space::S))
+        .border_t(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(look.space(Space::S))
+                .text_role(TypeRole::Fine, look)
+                .text_color(look.palette.muted.hsla())
+                .children(leading),
+        )
+        .children(actions)
 }
 
 /// A line of `fine` text in a tone, for footers and notes.
@@ -259,8 +328,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
     Some(
-        div()
-            .id("ask")
+        scrim("ask", &look)
             .key_context("Ask")
             .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
             .on_key_down(
@@ -270,14 +338,6 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                     _ => {}
                 },
             )
-            .absolute()
-            .inset_0()
-            .flex()
-            .justify_center()
-            .items_start()
-            .pt(look.space(Space::Xxl))
-            .bg(look.palette.bg.hsla().opacity(0.6))
-            .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 panel(&look)

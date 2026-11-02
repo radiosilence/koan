@@ -15,6 +15,8 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Route {
     Queue,
+    /// The search's results, for the query the sidebar's field holds.
+    Search,
     Albums,
     Artists,
     Tracks,

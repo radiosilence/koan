@@ -104,6 +104,11 @@ impl Stamp {
 pub struct ShelfPage {
     lib: Lib,
     shelf: ShelfKind,
+    /// The search's results page: the summary is the sidebar search's
+    /// answer, read as it is typed, rather than read here.
+    follows_search: bool,
+    /// The search's answer the page shows.
+    adopted: Option<Rc<crate::search::Results>>,
     summary: Option<Rc<ShelfSummary>>,
     loaded: Option<Stamp>,
     /// The read in flight and what it was asked at; a newer one replaces it,
@@ -127,6 +132,10 @@ pub struct ShelfPage {
 
 impl ShelfPage {
     pub fn new(lib: Lib, shelf: ShelfKind, _: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(lib, shelf, false, cx)
+    }
+
+    fn build(lib: Lib, shelf: ShelfKind, follows_search: bool, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
@@ -153,6 +162,8 @@ impl ShelfPage {
         let mut this = Self {
             lib,
             shelf,
+            follows_search,
+            adopted: None,
             summary: None,
             loaded: None,
             loading: None,
@@ -172,9 +183,50 @@ impl ShelfPage {
         this
     }
 
+    /// The search's results: whatever the sidebar's search last answered.
+    pub fn results(lib: Lib, _: &mut Window, cx: &mut Context<Self>) -> Self {
+        let search = lib.search.clone();
+        let query = search.read(cx).query().to_string();
+        let mut this = Self::build(lib, ShelfKind::Search { query }, true, cx);
+        this._subscriptions
+            .push(cx.observe(&search, |this, search, cx| {
+                this.adopt(&search, cx);
+                cx.notify();
+            }));
+        this.adopt(&search, cx);
+        this
+    }
+
+    fn adopt(&mut self, search: &Entity<crate::search::Search>, cx: &mut Context<Self>) {
+        let Some(results) = search.read(cx).results().cloned() else {
+            return;
+        };
+        if self
+            .adopted
+            .as_ref()
+            .is_some_and(|a| Rc::ptr_eq(a, &results))
+        {
+            return;
+        }
+        self.shelf = ShelfKind::Search {
+            query: results.query.clone(),
+        };
+        self.records = results
+            .summary
+            .albums
+            .iter()
+            .map(|a| (a.id, Rc::new(TileRecord::of(a))))
+            .collect();
+        self.summary = Some(Rc::new(results.summary.clone()));
+        self.adopted = Some(results);
+    }
+
     /// Reads the shelf again when what it depends on has moved since the
     /// last read, or the one in flight.
     fn load(&mut self, cx: &mut Context<Self>) {
+        if self.follows_search {
+            return;
+        }
         let feed = self.lib.feed.read(cx);
         if feed.library_version.is_none() {
             return;

@@ -1,8 +1,12 @@
 //! The toolbar's filter field, the sidebar's search field's look: no box,
-//! the glyph and a lowercase prompt in `muted`, on the page's ground. The
-//! caller owns the `InputState` and listens to it.
+//! the glyph and a lowercase prompt in `muted`, on the page's ground. With
+//! text in it, a clear mark at its trailing edge (the Mac's), `muted` and
+//! `ink` under the pointer, empties it and keeps the keyboard there; Escape
+//! does the same, and with the field empty goes on to whatever Escape means
+//! around it. The caller owns the `InputState` and listens to it: emptying
+//! the field is a change like any other.
 
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{Escape, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -12,25 +16,50 @@ use crate::theme::{Icon, KoanIcon, Look, Tone, TypeRole};
 #[derive(IntoElement)]
 pub struct FilterField {
     input: Entity<InputState>,
+    fill: bool,
 }
 
 impl FilterField {
     pub fn new(input: &Entity<InputState>) -> Self {
         Self {
             input: input.clone(),
+            fill: false,
         }
+    }
+
+    /// As wide as what holds it, as the sidebar's search field is, rather
+    /// than the toolbar's measure.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
     }
 }
 
 impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let empty = self.input.read(cx).value().is_empty();
+        let (escape, clear) = (self.input.clone(), self.input.clone());
+        let hover = look.palette.ink.hsla();
         div()
             .flex()
             .items_center()
             .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
-            .w(super::ToolbarMetrics::FIELD * look.scale.size)
-            .flex_none()
+            .map(|d| {
+                if self.fill {
+                    d.w_full()
+                } else {
+                    d.w(super::ToolbarMetrics::FIELD * look.scale.size)
+                        .flex_none()
+                }
+            })
+            .on_action(move |_: &Escape, window, cx| {
+                if escape.read(cx).value().is_empty() {
+                    cx.propagate();
+                } else {
+                    escape.update(cx, |input, cx| input.clean(window, cx));
+                }
+            })
             .child(
                 KoanIcon::new(Icon::Search)
                     .role(TypeRole::Control)
@@ -44,6 +73,31 @@ impl RenderOnce for FilterField {
                     .min_w_0()
                     .child(TextField::new(&self.input).bare()),
             )
+            .when(!empty, |d| {
+                d.child(
+                    div()
+                        .id("filter-clear")
+                        .flex_none()
+                        .cursor_pointer()
+                        .group("filter-clear")
+                        .child(
+                            KoanIcon::new(Icon::ClearField)
+                                .role(TypeRole::Control)
+                                .tone(Tone::Muted)
+                                .hover_color("filter-clear", hover),
+                        )
+                        // Down rather than click, so the field never loses
+                        // the keyboard to the mark.
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            clear.update(cx, |input, cx| {
+                                input.clean(window, cx);
+                                input.focus(window, cx);
+                            });
+                        }),
+                )
+            })
     }
 }
 

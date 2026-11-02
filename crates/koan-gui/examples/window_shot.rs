@@ -6,7 +6,7 @@
 //! `KOAN_CONFIG_DIR`. `KOAN_SHOT_TRACKS=n` fills the queue with n of the
 //! library's tracks, scanned from that configuration's folders, first, and
 //! saves that session. `KOAN_SHOT_ROUTE` (`albums`, `artists`, `tracks`,
-//! `album:<id>`, `artist:<id>`) draws that page instead of the queue.
+//! `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`) draws that page instead of the queue.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -30,6 +30,9 @@ fn route() -> Option<Route> {
             "albums" => Some(Route::Albums),
             "artists" => Some(Route::Artists),
             "tracks" => Some(Route::Tracks),
+            "favourites" => Some(Route::Favourites),
+            "recent" => Some(Route::RecentlyPlayed),
+            "downloaded" => Some(Route::OnDevice),
             _ => None,
         },
     }

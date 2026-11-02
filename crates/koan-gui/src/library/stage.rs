@@ -58,6 +58,7 @@ impl LibraryStage {
                 | Page::Favourites
                 | Page::RecentlyPlayed
                 | Page::OnDevice
+                | Page::Search
         )
     }
 
@@ -103,6 +104,9 @@ impl LibraryStage {
                 });
                 page.into()
             }
+            Page::Search => cx
+                .new(|cx| super::shelf::ShelfPage::results(lib, window, cx))
+                .into(),
             page => match super::shelf::shelf_of(page) {
                 Some(shelf) => cx
                     .new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx))
@@ -112,7 +116,7 @@ impl LibraryStage {
             },
         };
         if super::shelf::shelf_of(current).is_some()
-            || matches!(current, Page::Album(_) | Page::Artist(_))
+            || matches!(current, Page::Album(_) | Page::Artist(_) | Page::Search)
         {
             slot.update(cx, |s, cx| s.clear(cx));
         }

@@ -119,6 +119,19 @@ TableRow::new(id, RowKind::Art)
 
 `RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
 
+### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
+
+```rust
+Collection::new("shelf", &width)               // width: the page's CollectionWidth
+    .header(PageHeader::new("favourites").detail(counts))
+    .section(CollectionSection::pills(heading, pills))
+    .section(CollectionSection::tiles(heading, grid, tiles))   // grid: width.grid(look)
+    .section(CollectionSection::rows(heading, rows))
+    .empty(EmptyState::new(icon, title))
+```
+
+Different kinds of thing answering one question, stacked in sections: pills wrapping, record tiles in as many columns as fit (`TileGrid`, the album grid's metrics), table rows the full width. The collection owns the margins, the section spacing, the pills' flow and the tiles' columns; it measures its width into the page's `CollectionWidth` and redraws the page when it changes, so the page builds tiles at the size they are laid out at. A section with nothing in it is left out. `SectionHeading::count` and `on_open` give a preview's heading its total and its "see all". `Pill::new(id, icon, name)` is a thing named as a chip, `ticking(picked)` while the page picks.
+
 ### Form, FormSection, FormRow (Mac: `KoanForm`, `KoanSectionHeader`, `KoanLabeledContentStyle`)
 
 ```rust
