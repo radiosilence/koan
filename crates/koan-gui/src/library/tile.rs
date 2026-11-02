@@ -152,6 +152,11 @@ impl<V: TileHost> TileView<V> {
         state: TileState,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Made on its colour, the sleeve then fades in over that.
+        let ground = match &state.sleeve {
+            Sleeve::Colour(colour) => Some(*colour),
+            _ => None,
+        };
         Self {
             host,
             record,
@@ -160,11 +165,7 @@ impl<V: TileHost> TileView<V> {
             origin: Rc::new(Cell::new(Point::default())),
             credit_widths: None,
             fade: None,
-            // Made on its colour, the sleeve then fades in over that.
-            ground: match &state.sleeve {
-                Sleeve::Colour(colour) => Some(*colour),
-                _ => None,
-            },
+            ground,
             _accent: crate::theme::observe_accent(cx),
         }
     }
