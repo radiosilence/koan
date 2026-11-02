@@ -979,6 +979,18 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// The account's playlists in this order (`koanPlaylistOrder`). The whole
+    /// list each time, so two devices reordering at once settle on one of
+    /// their lists rather than a mix of both.
+    pub fn set_playlist_order(&self, ids: &[String]) -> Result<(), SubsonicError> {
+        let url = format!("{}/rest/koanPlaylistOrder", self.auth.base_url);
+        let mut form: Vec<(String, String)> = self.auth_params()?.into_iter().collect();
+        form.extend(ids.iter().map(|id| ("id".to_string(), id.clone())));
+        let resp: SubsonicResponseWrapper = self.http().post(&url).form(&form).send()?.json()?;
+        resp.subsonic_response.ok()?;
+        Ok(())
+    }
+
     // -- Accounts: koan servers only, and only for an admin --
 
     pub fn koan_users(&self) -> Result<Vec<KoanUser>, SubsonicError> {

@@ -132,6 +132,14 @@ The account's forwarding to ListenBrainz and Last.fm, set up from an app. Refuse
 
 The token is never sent back. Last.fm is connected through the web UI, which needs a browser round trip. See [Scrobbling](../../guide/headless-server.md#scrobbling).
 
+### `koanPlaylistOrder`
+
+The order of the account's playlists, which Subsonic has no call for, kept on the server so every device lists them alike.
+
+`getPlaylists` lists the account's playlists in that order. `/rest/koanPlaylistOrder` (role `user`) sets it from repeated `id`, the playlist ids in the order wanted, and answers empty. The client sends the whole list on every reorder, so two devices reordering at once settle on one list rather than a mix of both. The account's own playlists are ordered; another account's public playlist named in the list keeps the place its owner gave it. Ids the server does not know are skipped, and the account's playlists the list leaves out keep their places between those it names. Each change sends the account's links `sync`.
+
+A client adopts the listing's order when it syncs playlists, leaving its playlists the server does not hold (local ones, ones not yet pushed) where they sit among the rest. A reorder made on the client before its last send succeeded is sent at the next sync instead of being replaced by the server's order. A server without the extension lists playlists in its own order, which clients do not adopt.
+
 ### `koanDspProfiles`
 
 The account's EQ profiles kept on every device. Signed with the account's own password or an API key only.
