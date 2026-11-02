@@ -6,7 +6,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, child, fade, focus, ring};
+use super::{Answer, Answerer, Handler, child, fade, focus, ring};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
     label,
@@ -52,6 +52,7 @@ impl RenderOnce for Toggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
+        let answers = Answerer::of(&self.id, window, cx);
         let on = fade(
             child(&self.id, "on"),
             self.checked,
@@ -97,16 +98,23 @@ impl RenderOnce for Toggle {
                                         .color(look.palette.bg.hsla()),
                                 )
                             }),
-                    ),
+                    )
+                    .children(answers.layer(window, cx)),
             );
         if self.disabled {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
+            let answers = answers.clone();
             row = row
                 .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
+                .on_click(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                });
         }
         row.children(ring(&handle, &look, window))
     }
@@ -145,6 +153,7 @@ impl RenderOnce for IconToggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
+        let answers = Answerer::of(&self.id, window, cx);
         let on = fade(
             child(&self.id, "on"),
             self.checked,
@@ -168,18 +177,25 @@ impl RenderOnce for IconToggle {
                     .pb(px(5.0))
                     .border_b(HAIRLINE)
                     .border_color(look.accent.hsla().opacity(on))
+                    .relative()
                     .child(
                         KoanIcon::new(self.icon)
                             .role(TypeRole::Control)
                             .color(color),
-                    ),
+                    )
+                    .children(answers.layer(window, cx)),
             );
         if let Some(on_change) = self.on_change {
-            let checked = self.checked;
+            let (checked, accent, answers) = (self.checked, look.accent.hsla(), answers.clone());
             toggle = toggle
                 .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
+                .on_click(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                });
         }
         toggle.children(ring(&handle, &look, window))
     }

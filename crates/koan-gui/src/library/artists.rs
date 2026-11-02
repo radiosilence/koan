@@ -247,20 +247,15 @@ impl ArtistBrowser {
             after: None,
         };
         let view = cx.weak_entity();
-        let heart = div()
-            .id(("artist-heart", id as u64))
-            .cursor_pointer()
-            .text_color(if favourite { p.accent } else { p.muted })
+        let heart = crate::components::Heart::new(("artist-heart", id as u64), favourite)
             .when(!favourite, |d| {
                 d.invisible().group_hover(ROW_GROUP, |s| s.visible())
             })
             .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
                 this.lib
                     .feed
                     .update(cx, |f, cx| f.toggle_favourite(item, cx));
-            }))
-            .child(super::tile::heart_glyph(p, favourite));
+            }));
         let name = div()
             .id(("artist-name", id as u64))
             .cursor_pointer()

@@ -54,6 +54,16 @@ impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let line = look.line_height(TypeRole::Control);
+        let id = gpui_kit::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
+        let answers = super::Answerer::of(&id, window, cx);
+        let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
+        let was = window.use_keyed_state(super::child(&id, "focused"), cx, |_, _| focused);
+        if *was.read(cx) != focused {
+            was.update(cx, |was, _| *was = focused);
+            if focused {
+                answers.start(super::Answer::Sweep, look.accent.hsla(), cx);
+            }
+        }
         div()
             .relative()
             .flex()
@@ -77,5 +87,6 @@ impl RenderOnce for TextField {
                     .text_role(TypeRole::Control, &look)
                     .text_color(look.palette.ink.hsla()),
             )
+            .children(answers.layer(window, cx))
     }
 }

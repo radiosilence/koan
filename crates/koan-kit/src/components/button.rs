@@ -60,6 +60,20 @@ impl ButtonKind {
         }
     }
 
+    /// How a press is answered: a ring off a glyph, the ground lifting in
+    /// an outlined button, nothing for the kinds that read as words.
+    fn answer(self) -> Option<super::Answer> {
+        match self {
+            ButtonKind::Icon | ButtonKind::IconOutlined | ButtonKind::Toolbar => {
+                Some(super::Answer::Ring)
+            }
+            ButtonKind::Prominent | ButtonKind::Bordered => Some(super::Answer::Lift),
+            ButtonKind::Standard | ButtonKind::Compact | ButtonKind::Link | ButtonKind::Text => {
+                None
+            }
+        }
+    }
+
     fn tone(self) -> Tone {
         match self {
             ButtonKind::Prominent => Tone::Accent,
@@ -172,6 +186,7 @@ impl RenderOnce for Button {
             (p.hovered && !self.disabled, p.pressed && !self.disabled)
         };
         let handle = focus(&self.id, window, cx);
+        let answers = super::Answerer::of(&self.id, window, cx);
         let hover = fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx);
         let press = fade(
             child(&self.id, "press"),
@@ -232,7 +247,14 @@ impl RenderOnce for Button {
             // GPUI turns Enter and Space on the focused button into a click.
             button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
-                button = button.on_click(move |event, window, cx| on_click(event, window, cx));
+                let (answers, accent) = (answers.clone(), look.accent.hsla());
+                let answer = kind.answer();
+                button = button.on_click(move |event, window, cx| {
+                    if let Some(answer) = answer {
+                        answers.start(answer, accent, cx);
+                    }
+                    on_click(event, window, cx)
+                });
             }
         }
 
@@ -256,12 +278,22 @@ impl RenderOnce for Button {
             .map(|icon| KoanIcon::new(icon).role(role).color(color));
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
+        // A ring leaves the glyph and its word, not the hit area around them;
+        // a lift fills the button.
+        let ring_answer = kind.answer() == Some(super::Answer::Ring);
+        let answered = answers.layer(window, cx);
+        let (inner_answer, outer_answer) = if ring_answer {
+            (answered, None)
+        } else {
+            (None, answered)
+        };
         button = button.child(
             div()
                 .relative()
                 .flex()
                 .items_center()
                 .gap(look.space(Space::Xs))
+                .children(inner_answer)
                 .children(glyph)
                 .children(text.map(|text| {
                     let line = div().whitespace_nowrap().child(text);
@@ -277,6 +309,8 @@ impl RenderOnce for Button {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));
         }
-        button.children(ring(&handle, &look, window))
+        button
+            .children(outer_answer)
+            .children(ring(&handle, &look, window))
     }
 }

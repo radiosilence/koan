@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod answer;
 mod availability;
 mod badge;
 mod banner;
@@ -29,6 +30,7 @@ mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod heart;
 mod inspector;
 mod level;
 mod menu;
@@ -47,6 +49,7 @@ mod scroll;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
+mod slide;
 mod slider;
 mod spinner;
 mod split;
@@ -56,6 +59,7 @@ mod suggestions;
 mod table;
 mod toggle;
 mod toolbar;
+mod transport_control;
 mod viewer;
 mod window;
 
@@ -68,6 +72,7 @@ use gpui_kit::{
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
+pub use answer::{ANSWER, Answer, Answerer};
 pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
@@ -87,6 +92,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
     form_text,
 };
+pub use heart::Heart;
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
@@ -118,6 +124,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::SecondaryWindow;
 

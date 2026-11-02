@@ -21,7 +21,7 @@ use koan_kit::raw::canvas;
 
 use crate::components::{
     Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider, TransportMetrics,
+    Slider, TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -694,50 +694,6 @@ fn trailing_item(p: &Paint) -> Div {
 /// The group a text button's glyph follows the pointer by.
 const TEXT_BUTTON: &str = "transport-text-button";
 
-/// A transport control's tooltip.
-fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    let text = SharedString::from(text);
-    move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
-}
-
-/// A transport control: `on` for the two that toggle, underlined in the
-/// accent while on and `muted` while off, as an icon toggle is.
-fn control(
-    id: &'static str,
-    icon: Icon,
-    label: &'static str,
-    on: Option<bool>,
-    p: &Paint,
-) -> Stateful<Div> {
-    let (color, underline) = match on {
-        Some(true) => (p.ink, Some(p.accent)),
-        Some(false) => (p.muted, None),
-        None => (p.ink, None),
-    };
-    // 44 points to hit, as the spec asks, but only the glyph's width in the
-    // layout: the rest of the hit area reaches into the gaps beside it, so
-    // the glyphs sit as far apart as the Mac's.
-    let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
-    let reach = (theme::HIT - glyph) / 2.;
-    div()
-        .id(id)
-        .w(theme::HIT)
-        .mx(-reach)
-        .h(theme::HIT)
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_role(TypeRole::Control, &p.look)
-        .text_color(color)
-        .hover(|s| s.opacity(0.8))
-        .child(
-            div()
-                .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
-        )
-}
-
 fn format_badge(format: &StreamFormat) -> String {
     let rate = format.sample_rate as f32 / 1000.0;
     let rate = if rate.fract() == 0.0 {
@@ -888,34 +844,29 @@ impl Render for Transport {
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
-                            move |_, _, cx| {
+                        TransportControl::new("shuffle", Icon::Shuffle, "shuffle")
+                            .on(shuffle)
+                            .on_click(move |_, _, cx| {
                                 command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                            },
-                        ),
+                            }),
                     )
                     .child(
-                        control("previous", Icon::Previous, "prev", None, &p)
-                            .tooltip(tip(help("previous track", &Previous, cx)))
+                        TransportControl::new("previous", Icon::Previous, "prev")
+                            .help(help("previous track", &Previous, cx))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", Icon::Next, "next", None, &p)
-                            .tooltip(tip(help("next track", &Next, cx)))
+                        TransportControl::new("next", Icon::Next, "next")
+                            .help(help("next track", &Next, cx))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
-                        control(
-                            "repeat",
-                            repeat_icon,
-                            repeat_label,
-                            Some(now.repeat_mode != RepeatMode::Off),
-                            &p,
-                        )
-                        .on_click(move |_, _, cx| {
-                            command(cx, "repeat", move |e| e.set_repeat(next_repeat))
-                        }),
+                        TransportControl::new("repeat", repeat_icon, repeat_label)
+                            .on(now.repeat_mode != RepeatMode::Off)
+                            .on_click(move |_, _, cx| {
+                                command(cx, "repeat", move |e| e.set_repeat(next_repeat))
+                            }),
                     ),
             )
             // Its own cached view. A tick re-renders the slider and the views

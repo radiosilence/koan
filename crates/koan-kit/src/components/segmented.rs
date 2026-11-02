@@ -55,6 +55,7 @@ impl RenderOnce for Segmented {
         for (index, option) in self.options.into_iter().enumerate() {
             let key =
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
+            let answers = super::Answerer::of(&key, window, cx);
             let chosen = fade(key, index == selected, Motion::FAST, window, cx);
             let mut option = div()
                 .id(index)
@@ -68,11 +69,17 @@ impl RenderOnce for Segmented {
                     chosen,
                 ))
                 .whitespace_nowrap()
-                .child(option);
+                .relative()
+                .child(option)
+                .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
-                option = option
-                    .cursor_pointer()
-                    .on_click(move |_, window, cx| on_change(&index, window, cx));
+                // The chosen option's mark draws in from its leading edge.
+                option = option.cursor_pointer().on_click(move |_, window, cx| {
+                    if index != selected {
+                        answers.start(super::Answer::Sweep, accent, cx);
+                    }
+                    on_change(&index, window, cx)
+                });
             }
             row = row.child(option);
         }

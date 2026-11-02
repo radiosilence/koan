@@ -27,7 +27,11 @@ pub struct NavRow {
     detail: Option<SharedString>,
     selected: bool,
     on_click: Option<Handler<ClickEvent>>,
+    accepts: Vec<Accept>,
 }
+
+/// A drop a row takes, attached as the row draws so the drop answers.
+type Accept = Box<dyn FnOnce(Stateful<Div>, super::Answerer, gpui_kit::Hsla) -> Stateful<Div>>;
 
 impl InteractiveElement for NavRow {
     fn interactivity(&mut self) -> &mut Interactivity {
@@ -54,7 +58,24 @@ impl NavRow {
             detail: None,
             selected: false,
             on_click: None,
+            accepts: Vec::new(),
         }
+    }
+
+    /// Something dropped on the row (tracks on the queue, a record on a
+    /// playlist): the row answers with a line drawn under it, so the person
+    /// sees where it went, then `handler` takes it.
+    pub fn accept<T: 'static>(
+        mut self,
+        handler: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.accepts.push(Box::new(move |base, answers, accent| {
+            base.on_drop(move |dropped: &T, window, cx| {
+                answers.start(super::Answer::Sweep, accent, cx);
+                handler(dropped, window, cx)
+            })
+        }));
+        self
     }
 
     /// The place's own face, square, before the label: a playlist's sleeve.
@@ -105,6 +126,12 @@ impl RenderOnce for NavRow {
             on,
         );
         let on_click = self.on_click;
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let accent = look.accent.hsla();
+        let mut base = self.base;
+        for accept in self.accepts {
+            base = accept(base, answers.clone(), accent);
+        }
         let ink = look.palette.ink.hsla();
         let label = div()
             .min_w_0()
@@ -112,8 +139,7 @@ impl RenderOnce for NavRow {
             .whitespace_nowrap()
             .text_ellipsis()
             .child(self.label);
-        self.base
-            .relative()
+        base.relative()
             .flex()
             .flex_none()
             .items_center()
@@ -155,6 +181,7 @@ impl RenderOnce for NavRow {
                     ),
                 ),
             })
+            .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
                 row.cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
