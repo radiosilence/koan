@@ -153,7 +153,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory, which is held to 1 GiB by removing the covers read least recently; deleting it only costs regenerating them.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory, which is held to 4 GB by removing the covers read least recently; deleting it only costs regenerating them.
 
 - **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
 - **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.
@@ -177,6 +177,12 @@ Admin accounts find Rescan at the foot of the Library page, which the sidebar li
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 
 The section also shows the scans the server runs by itself, with what started each, how many of the files it has to read (new and changed ones, or every file on a re-read) it has read so far, and how it ended. A bar fills as it reads; while the scan is still finding out how many files that is, it shows a still band. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
+
+### Caches
+
+Below Rescan, admin accounts see what the server keeps beside the library, so slow covers can be diagnosed without reading its logs: the cover cache's size against its 4 GB budget, how many covers it holds at each size and how many records it remembers as having no art, what the background warm is doing (making covers, idle, or paused because the cache is full) with how far it has got and when it runs next, and what the last sweep removed. A server syncing from another also shows its download cache, and every server its track, record and artist counts and how long the last scan took. The section updates as the warm, a sweep or a scan moves.
+
+**Warm now** makes covers for the records still without them instead of waiting for the next pass, and **Clear covers** removes every kept cover, misses included, after saying how many and how much space that is. The same figures and actions are in GraphQL as `serverCaches`, `warmCovers` and `clearCoverCache`.
 
 ### Signing in
 

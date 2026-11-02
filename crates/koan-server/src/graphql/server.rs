@@ -446,8 +446,16 @@ impl ApiServer {
                 stop.clone(),
             )
         });
-        let schema =
-            super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone(), session);
+        let covers = Arc::new(crate::covers::Covers::in_config_dir());
+        let schema = super::build_schema_sharing(
+            state,
+            cmd_tx,
+            pool.clone(),
+            viz,
+            jobs.clone(),
+            session,
+            Some(covers.clone()),
+        );
 
         if auth_enabled {
             log::info!(
@@ -529,7 +537,6 @@ impl ApiServer {
                     // The web UI checks its own session (a page load without one is sent
                     // to sign in rather than refused), so it sits outside the GraphQL auth
                     // layer. Built before the auth routes take their state.
-                    let covers = Arc::new(crate::covers::Covers::in_config_dir());
                     // A standing server keeps every album's grid cover ready; an
                     // app sharing its own library makes them as asked.
                     if !embedded {

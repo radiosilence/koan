@@ -310,6 +310,37 @@ impl QueryRoot {
         .await
     }
 
+    /// What the server keeps beside the library: its covers, with the warm
+    /// and the last sweep, the download cache, and the last scan. Lists the
+    /// cover directory. Admins only.
+    async fn server_caches(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlServerCaches> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
+        let covers = ctx.data_opt::<Arc<crate::covers::Covers>>().cloned();
+        let last_scan = ctx
+            .data::<JobRegistry>()?
+            .last_finished(&[super::jobs::SCAN, super::jobs::REREAD, super::jobs::WATCH])
+            .map(GqlJob::from);
+        with_db(ctx, move |db| {
+            let stats =
+                queries::library_stats(&db.conn).map_err(|e| super::internal_error("db", e))?;
+            let cfg = Config::cached();
+            Ok(GqlServerCaches {
+                covers: covers.map(|c| GqlCoverCache::of(&c.usage(&db.conn), &c.report())),
+                downloads: GqlDownloadCache {
+                    bytes: if stats.cached_tracks > 0 {
+                        koan_core::helpers::cache_size_bytes(&cfg)
+                    } else {
+                        0
+                    },
+                    limit: cfg.cache_limit_bytes(),
+                    tracks: stats.cached_tracks,
+                },
+                last_scan,
+            })
+        })
+        .await
+    }
+
     /// koan apps linked to this server (a phone, a Mac), newest first. Any
     /// of them can be told what to play with `playOnClient`.
     async fn clients(&self, ctx: &Context<'_>) -> Vec<GqlClient> {

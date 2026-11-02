@@ -1259,6 +1259,40 @@ impl MutationRoot {
             .map_err(async_graphql::Error::new)
     }
 
+    /// Remove every cover the server keeps, remembered misses included; the
+    /// warm makes the grid sizes again. Admins only.
+    async fn clear_cover_cache(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        let covers = ctx
+            .data_opt::<Arc<crate::covers::Covers>>()
+            .cloned()
+            .ok_or_else(|| async_graphql::Error::new("this server keeps no covers"))?;
+        super::blocking(move || {
+            let (files, bytes) = covers.clear();
+            Ok(GqlStatus::success(format!(
+                "removed {files} covers ({} MB)",
+                bytes >> 20
+            )))
+        })
+        .await
+    }
+
+    /// Start a cover warm pass now rather than at the next library change or
+    /// interval; `serverCaches { covers { warm } }` follows it. Admins only.
+    async fn warm_covers(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        let covers = ctx
+            .data_opt::<Arc<crate::covers::Covers>>()
+            .ok_or_else(|| async_graphql::Error::new("this server keeps no covers"))?;
+        if covers.warm_now() {
+            Ok(GqlStatus::success("warm started"))
+        } else {
+            Err(async_graphql::Error::new(
+                "this server makes covers as they are asked for",
+            ))
+        }
+    }
+
     /// Start a remote library sync and return immediately.
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
