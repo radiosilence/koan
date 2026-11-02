@@ -1,0 +1,1 @@
+- **The desktop app's Rebuild Index asks first and says what it keeps.** The queue's playing bars stop when the music does and leave with their row, and Clear Artwork Cache brings back the covers on screen at once.

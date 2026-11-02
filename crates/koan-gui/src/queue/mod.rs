@@ -146,7 +146,10 @@ pub struct QueueView {
     following: bool,
     /// The queue item last brought into view while following.
     followed: Option<String>,
-    _subscriptions: [Subscription; 5],
+    /// The transport is playing: the cursor's row moves its bars only then,
+    /// and shows the play mark while paused or stopped.
+    playing: bool,
+    _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {
@@ -154,7 +157,16 @@ impl QueueView {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         let lock = cx.global::<Mirror>().lock.clone();
+        let playhead = cx.global::<Mirror>().playhead.clone();
         let subscriptions = [
+            // Redrawn only when playing starts or stops, not for every anchor.
+            cx.observe(&playhead, |this, playhead, cx| {
+                let playing = playhead.read(cx).playing;
+                if playing != this.playing {
+                    this.playing = playing;
+                    cx.notify();
+                }
+            }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
             cx.observe(&queue, |this, queue, cx| {
@@ -203,6 +215,7 @@ impl QueueView {
             feed: None,
             following: false,
             followed: None,
+            playing: cx.global::<Mirror>().playhead.read(cx).playing,
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
@@ -648,7 +661,11 @@ impl QueueView {
                     grouped,
                     sleeve,
                     numbering,
-                    Extras { favourite, feed },
+                    Extras {
+                        favourite,
+                        feed,
+                        playing: self.playing,
+                    },
                     &look,
                 );
                 (frame, id)
@@ -942,6 +959,8 @@ pub(crate) struct Extras {
     /// `None` for a track the library does not hold, or before it loads.
     pub favourite: Option<bool>,
     pub feed: Option<Entity<Feed>>,
+    /// The transport is playing.
+    pub playing: bool,
 }
 
 fn link(
@@ -1048,7 +1067,18 @@ pub(crate) fn track(
     let mark = div()
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
-            EntryStatus::Playing => d.child(crate::levels::bars(p.accent_text)),
+            // Bars only while the music moves them, and in the look that
+            // draws glyphs; the play mark, or its word, otherwise.
+            EntryStatus::Playing if extras.playing && p.look.icons => {
+                d.child(crate::levels::bars(p.accent_text))
+            }
+            EntryStatus::Playing => d.child(glyph(
+                Icon::PlayMark,
+                "playing",
+                TypeRole::Fine,
+                p.accent_text,
+                p,
+            )),
             EntryStatus::Played => {
                 d.child(glyph(Icon::Check, "played", TypeRole::Fine, p.muted, p))
             }

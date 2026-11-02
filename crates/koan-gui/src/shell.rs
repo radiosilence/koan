@@ -330,7 +330,12 @@ impl Shell {
                         },
                         window,
                         cx,
-                        move |cx| covers.update(cx, |c, cx| c.clear(None, cx)),
+                        // Run once the window is handed back, so the
+                        // sleeves' textures leave its atlas with them.
+                        move |cx| {
+                            let covers = covers.clone();
+                            cx.defer(move |cx| covers.update(cx, |c, cx| c.clear(None, cx)))
+                        },
                     );
                 })
                 .ok();
