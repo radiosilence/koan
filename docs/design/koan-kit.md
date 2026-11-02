@@ -165,6 +165,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `ScrollArea::items(id, items).reveal(ix)` is a scrolling column whose arrow-key position is kept in view.
 
+`Button::help` and `ToolbarButton::help` give the tooltip as the Mac's buttons do, what it does and its keys ("back (⌘[)"), in place of a glyph-only button's label.
+
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
 
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.
