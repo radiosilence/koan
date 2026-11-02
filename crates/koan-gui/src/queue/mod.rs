@@ -1366,9 +1366,8 @@ impl QueueView {
     }
 }
 
-/// The queue's ⋯: saving it as a playlist, and clearing it.
-/// The queue's ⋯: its tracks are read as "save" is chosen, not each time
-/// the toolbar draws.
+/// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
+/// read as "save" is chosen, not each time the toolbar draws.
 fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",

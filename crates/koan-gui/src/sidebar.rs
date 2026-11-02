@@ -370,7 +370,27 @@ impl Render for Sidebar {
                         .on_drag(drag, |drag: &PlaylistDrag, at, _, cx| drag.preview(at, cx))
                         // Files, and what is dragged from the library, dropped on a
                         // playlist's row are added to it; a smart or file-backed
-                        // playlist takes nothing, and does not light for it.
+                        // playlist takes nothing, does not light for it, and says
+                        // why when something is dropped on it anyway.
+                        .when(playlist.readonly, |row| {
+                            let why: SharedString = if playlist.smart {
+                                "A smart playlist is filled by its rules, and can't be added to"
+                                    .into()
+                            } else if playlist.from_file {
+                                "A playlist read from a file can't be added to here".into()
+                            } else {
+                                "This playlist is read-only, and can't be added to".into()
+                            };
+                            let refused = why.clone();
+                            row.on_drop(move |_: &PlayableDrag, _, cx| {
+                                crate::notice::show(refused.clone(), Tone::Muted, cx)
+                            })
+                            .on_drop(
+                                move |_: &ExternalPaths, _, cx| {
+                                    crate::notice::show(why.clone(), Tone::Muted, cx)
+                                },
+                            )
+                        })
                         .when(!playlist.readonly, |row| {
                             row.drop_highlight::<ExternalPaths>(&p.look)
                                 .drop_highlight::<PlayableDrag>(&p.look)
