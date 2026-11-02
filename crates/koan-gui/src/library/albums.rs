@@ -774,6 +774,11 @@ impl TileHost for AlbumGrid {
 }
 
 impl AlbumGrid {
+    /// Whether records are being picked: what the toolbar's select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
     /// The grid's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()

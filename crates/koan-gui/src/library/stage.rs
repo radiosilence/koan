@@ -24,12 +24,14 @@ impl LibraryStage {
         // hidden grid neither reloads nor keeps its sleeves ranked on screen;
         // its place comes back from the navigator's offsets.
         let subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
+            show_record(nav.read(cx).current(cx), cx);
             if !Self::draws(nav.read(cx).current(cx)) {
                 this.page = None;
                 this.controls.update(cx, |c, cx| c.clear(cx));
             }
             cx.notify();
         })];
+        show_record(lib.nav.read(cx).current(cx), cx);
         Self {
             lib,
             page: None,
@@ -76,11 +78,15 @@ impl LibraryStage {
             return Some(view.clone());
         }
         let lib = self.lib.clone();
+        let lib_browse = self.lib.browse.clone();
         let slot = self.controls.clone();
         let view: AnyView = match current {
             Page::Albums => {
                 let page = cx.new(|cx| AlbumGrid::new(lib, window, cx));
-                slot.update(cx, |s, cx| s.show(&page, AlbumGrid::controls, cx));
+                let browse = lib_browse.clone();
+                slot.update(cx, |s, cx| {
+                    s.show_keyed(&page, AlbumGrid::controls, AlbumGrid::picking, &browse, cx)
+                });
                 page.into()
             }
             Page::Artists => {
@@ -98,8 +104,15 @@ impl LibraryStage {
                 .into(),
             Page::Tracks => {
                 let page = cx.new(|cx| super::tracks::TrackBrowser::new(lib, window, cx));
+                let browse = lib_browse.clone();
                 slot.update(cx, |s, cx| {
-                    s.show(&page, super::tracks::TrackBrowser::controls, cx)
+                    s.show_keyed(
+                        &page,
+                        super::tracks::TrackBrowser::controls,
+                        super::tracks::TrackBrowser::picking,
+                        &browse,
+                        cx,
+                    )
                 });
                 page.into()
             }
@@ -151,5 +164,22 @@ impl Render for LibraryStage {
             // overlay above it never redraws a 5,000-record grid.
             .children(page.map(|page| page.cached(StyleRefinement::default().size_full())))
             .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
+    }
+}
+
+/// The window takes a record's colours while its page is the one showing,
+/// and the playing record's otherwise: decided by the route, so it follows
+/// back, forward and every other way the page changes.
+fn show_record(route: Page, cx: &mut App) {
+    let shown = match route {
+        Page::Album(id) => Some(id),
+        _ => None,
+    };
+    if cx
+        .try_global::<crate::root::ShownRecord>()
+        .and_then(|s| s.0)
+        != shown
+    {
+        cx.set_global(crate::root::ShownRecord(shown));
     }
 }

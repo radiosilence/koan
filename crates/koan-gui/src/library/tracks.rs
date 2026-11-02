@@ -443,6 +443,11 @@ impl TrackList for TrackBrowser {
 
 impl TrackBrowser {
     /// The browser's controls, in the window's toolbar.
+    /// Whether tracks are being picked: what the toolbar's select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
             .child(self.search.clone())

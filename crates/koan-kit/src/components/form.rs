@@ -15,6 +15,9 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, labe
 /// Where a form's controls start, before spacing's scale: the Mac's label
 /// column.
 const LABELS: f32 = 200.0;
+/// A compact row's label column: a popover's or a panel's, 300 points or
+/// so wide, where 200 would leave the control no room.
+const COMPACT_LABELS: f32 = 80.0;
 /// A row's least height on the Mac, the Mac toggle's hit height. The whole
 /// row takes a toggle's click, so its target is the row's width.
 const ROW: f32 = 24.0;
@@ -122,12 +125,20 @@ pub struct FormRow {
     label: SharedString,
     value: Option<SharedString>,
     control: Option<AnyElement>,
+    compact: bool,
 }
 
 impl FormRow {
     /// A label in the app's words, drawn lowercase.
     pub fn new(text: impl AsRef<str>) -> Self {
         Self::data(label(text))
+    }
+
+    /// The narrow label column, for a row in a popover or a small panel,
+    /// whose rows line up with each other rather than with a window's form.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
     }
 
     /// A label that is data rather than the app's words (an AutoEQ maker, a
@@ -137,6 +148,7 @@ impl FormRow {
             label: text.into(),
             value: None,
             control: None,
+            compact: false,
         }
     }
 
@@ -161,7 +173,7 @@ impl RenderOnce for FormRow {
             .child(
                 div()
                     .flex_none()
-                    .w(look.spaced(LABELS))
+                    .w(look.spaced(if self.compact { COMPACT_LABELS } else { LABELS }))
                     .pr(look.space(Space::M))
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.palette.ink.hsla())

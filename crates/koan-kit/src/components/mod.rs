@@ -31,6 +31,7 @@ mod filter_field;
 mod form;
 mod inspector;
 mod level;
+mod link_text;
 mod lists;
 mod menu;
 mod metrics;
@@ -93,6 +94,7 @@ pub use form::{
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
+pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
     UniformListScrollHandle, list, list_scrollbar, offset_down, uniform_list, width_probe,

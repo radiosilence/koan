@@ -95,8 +95,6 @@ pub struct AlbumPage {
 impl AlbumPage {
     pub fn new(lib: Lib, album_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
-        // The window takes this record's colours while its page shows.
-        cx.set_global(crate::root::ShownRecord(Some(album_id)));
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
@@ -113,15 +111,6 @@ impl AlbumPage {
             }),
             cx.on_release(move |this, cx| {
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
-                // The window takes the playing record's colours back, unless
-                // another record's page has taken them meanwhile.
-                if cx
-                    .try_global::<crate::root::ShownRecord>()
-                    .and_then(|s| s.0)
-                    == Some(this.album_id)
-                {
-                    cx.set_global(crate::root::ShownRecord(None));
-                }
             }),
         ];
         let mut this = Self {
