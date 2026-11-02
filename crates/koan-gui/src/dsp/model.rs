@@ -119,9 +119,10 @@ pub struct Dsp {
     /// The library's version, which moves when profiles sync from another
     /// device.
     library: u64,
-    /// The output this device plays through, as the mirror last said: the
-    /// overview is of that device's chain.
-    output: Option<koan_ffi::OutputChoice>,
+    /// The output this device plays through and the outputs it has, as the
+    /// mirror last said: the overview is of the device that resolves to, and
+    /// with the system's default chosen, plugging in a DAC moves it.
+    output: Option<(koan_ffi::OutputChoice, Vec<String>)>,
     /// The extensions the signed-in server lists, and whether it is out
     /// of reach.
     extensions: Vec<String>,
@@ -189,7 +190,10 @@ impl Dsp {
                     .0
                     .as_ref()
                     .filter(|o| o.owner.is_none())
-                    .map(|o| o.current.clone());
+                    .map(|o| {
+                        let ids = o.devices.iter().chain(&o.renderers).map(|d| d.id.clone());
+                        (o.current.clone(), ids.collect())
+                    });
                 if output.is_some() && output != dsp.output {
                     let first = dsp.output.is_none();
                     dsp.output = output;
