@@ -16,10 +16,13 @@ use crate::app;
 /// config directory: this process's while it is the terminal device (it holds
 /// that device's lock, for as long as it runs). `None` for a second terminal
 /// UI on the machine, which restores and saves nothing, rather than each one
-/// overwriting the other's queue as it quits.
+/// overwriting the other's queue as it quits. Decided once per process: the
+/// first terminal quitting later does not hand this one its session halfway
+/// through, after a restore that loaded nothing.
 pub fn session() -> Option<&'static str> {
     use koan_core::remote::link::LinkIdentity;
-    LinkIdentity::terminal().map(|_| LinkIdentity::TERMINAL_FILES)
+    static DECIDED: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *DECIDED.get_or_init(|| LinkIdentity::terminal().map(|_| LinkIdentity::TERMINAL_FILES))
 }
 
 /// Callbacks for CLI integration. The TUI library crate doesn't own

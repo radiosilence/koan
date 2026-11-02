@@ -203,8 +203,6 @@ pub fn load_playback_state(
     }
 }
 
-/// Clear `device`'s saved queue and where it was up to. The play mode stays:
-/// it is the player's, not the queue's.
 /// Whether `device` has a queue saved. Something other than its own saves
 /// can clear it (`clearPlaybackState` through the API), and a writer that
 /// skips the queue while it is unchanged must know to write it again.
@@ -216,6 +214,8 @@ pub fn has_saved_queue(conn: &Connection, device: &str) -> rusqlite::Result<bool
     )
 }
 
+/// Clear `device`'s saved queue and where it was up to. The play mode stays:
+/// it is the player's, not the queue's.
 pub fn clear_playback_state(conn: &Connection, device: &str) -> rusqlite::Result<()> {
     super::atomically(conn, || {
         conn.execute("DELETE FROM playback_state WHERE device = ?1", [device])?;

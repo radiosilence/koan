@@ -217,7 +217,11 @@ pub fn cmd_play(
                 if tx.send(PlayerCommand::Barrier(applied)).is_ok() {
                     let _ = done.recv_timeout(Duration::from_secs(5));
                 }
-                let Some(identity) = koan_core::remote::link::LinkIdentity::terminal() else {
+                // The terminal device only if this process decided it was at
+                // launch, with the session that goes with it.
+                let Some(identity) = koan_tui::play::session()
+                    .and_then(|_| koan_core::remote::link::LinkIdentity::terminal())
+                else {
                     log::info!(
                         "another terminal on this machine is the terminal device; this one plays here only"
                     );
