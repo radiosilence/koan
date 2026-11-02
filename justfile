@@ -20,6 +20,38 @@ gui-library dir albums="5000" tracks="10":
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
     KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
 
+# Walk every page of the kōan GUI app headlessly: a PNG of each, dark and
+# light, and its frame times while scrolled, failing over the 144 Hz budget.
+# Against a generated library, copied fresh for each run.
+gui-walk out="target/gui-walk" albums="300" tracks="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -d "$lib/config" ] || just gui-library "$lib" {{albums}} {{tracks}}
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --example walk -- "{{out}}"
+
+# The SwiftUI app's evidence renders beside the GUI walk's, page by page,
+# with the edges that disagree marked: {{out}}/sheets. Both apps draw
+# offscreen against copies of the same library; nothing reads the screen.
+gui-compare out="target/gui-compare":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just gui-walk "{{out}}/gui"
+    just macos-bundle
+    cfg="$PWD/{{out}}/mac-config"
+    rm -rf "$cfg" "{{out}}/mac" && cp -R "{{out}}/gui/config" "$cfg"
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
+    KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
+        KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
+        -ApplePersistenceIgnoreState YES
+    cargo run --release -p koan-gui --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
+
+# The parity inventory: what the SwiftUI app has, as a checklist for #1625.
+# `--summary` for the counts alone.
+gui-parity *args:
+    python3 scripts/gui-parity.py {{args}}
+
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the
