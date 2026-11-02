@@ -64,8 +64,9 @@ struct Registry {
     ceiling: [f32; 3],
     stamp: Option<Instant>,
     following: bool,
-    /// The analyser's rate: the fastest display a bar has been drawn on
-    /// since the follow started, so the bars move once per refresh.
+    /// The analyser's rate: the fastest display a bar has been drawn on or
+    /// a window with bars has shown on, so the bars move once per refresh.
+    /// Kept while the analyser parks.
     fps: u8,
 }
 
@@ -107,9 +108,19 @@ pub fn feed(window: WindowId, cx: &mut App) -> Option<Entity<Feed>> {
     Some(levels.feeds.entry(window).or_insert(made).clone())
 }
 
-/// `window` was hidden or shown: a hidden window's bars keep nothing
-/// running, and one showing again starts them.
-pub fn visibility(window: WindowId, shows: bool, cx: &mut App) {
+/// The analyser's rate for the display `window` is on: once per refresh.
+pub fn display_fps(window: &Window, cx: &App) -> u8 {
+    window
+        .refresh_interval(cx)
+        .map(|interval| (1.0 / interval.as_secs_f32()).round().clamp(24.0, 240.0) as u8)
+        .unwrap_or(FPS)
+}
+
+/// `window`, on a display refreshing `fps` times a second, was hidden or
+/// shown: a hidden window's bars keep nothing running, and one showing
+/// again starts them at its display's rate, since it replays its rows
+/// rather than drawing them.
+pub fn visibility(window: WindowId, shows: bool, fps: u8, cx: &mut App) {
     let Some(levels) = cx.try_global::<Levels>().cloned() else {
         return;
     };
@@ -117,6 +128,7 @@ pub fn visibility(window: WindowId, shows: bool, cx: &mut App) {
         let mut registry = levels.registry.lock();
         if shows {
             registry.hidden.remove(&window);
+            registry.fps = registry.fps.max(fps);
         } else {
             registry.hidden.insert(window);
         }
@@ -186,10 +198,7 @@ pub fn bars(color: Hsla) -> impl IntoElement {
             let state = state.read(cx);
             (state.id, state.levels.clone())
         };
-        let fps = window
-            .refresh_interval(cx)
-            .map(|interval| (1.0 / interval.as_secs_f32()).round().clamp(24.0, 240.0) as u8)
-            .unwrap_or(FPS);
+        let fps = display_fps(window, cx);
         let faster = {
             let mut registry = levels.registry.lock();
             let faster = fps > registry.fps;
@@ -245,9 +254,18 @@ fn follow(levels: &Levels, cx: &mut App) {
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<Vec<WindowId>>();
     cx.background_spawn(async move {
-        while let Some(heard) = stream.next().await {
+        // Whether to stop is decided and recorded under one lock, so a
+        // window showing in between starts a new follow rather than
+        // finding this one still marked as running. Dropping the stream
+        // lets the analyser park.
+        loop {
+            let Some(heard) = stream.next().await else {
+                registry.lock().following = false;
+                break;
+            };
             let mut registry = registry.lock();
             if !registry.live() {
+                registry.following = false;
                 break;
             }
             // Shaders are presented by their own windows as the bands are
@@ -266,10 +284,6 @@ fn follow(levels: &Levels, cx: &mut App) {
                 }
             }
         }
-        // Dropping the stream lets the analyser park.
-        let mut registry = registry.lock();
-        registry.following = false;
-        registry.fps = 0;
     })
     .detach();
     cx.spawn(async move |cx| {
