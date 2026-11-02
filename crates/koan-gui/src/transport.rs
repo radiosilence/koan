@@ -33,6 +33,9 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
+    /// Where F6 brings the keyboard: the bar, from which Tab reaches its
+    /// controls.
+    focus: FocusHandle,
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     /// The renderer played to, for why its last track was skipped.
@@ -185,6 +188,7 @@ impl Transport {
                 cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
                 cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
             ],
+            focus: cx.focus_handle(),
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
@@ -721,7 +725,12 @@ fn control(
     label: &'static str,
     on: Option<bool>,
     p: &Paint,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Stateful<Div> {
+    // A stop in the window's Tab order, which Return and Space click.
+    let focus = crate::components::tab_stop(&id.into(), window, cx);
+    let ring = crate::components::focus_ring(&focus, window, cx);
     let (color, underline) = match on {
         Some(true) => (p.ink, Some(p.accent)),
         Some(false) => (p.muted, None),
@@ -735,6 +744,8 @@ fn control(
     let reach = (theme::HIT - glyph) / 2.;
     div()
         .id(id)
+        .relative()
+        .track_focus(&focus)
         .w(theme::HIT)
         .mx(-reach)
         .h_full()
@@ -750,6 +761,7 @@ fn control(
                 .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
                 .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
         )
+        .children(ring)
 }
 
 fn format_badge(format: &StreamFormat) -> String {
@@ -902,20 +914,27 @@ impl Render for Transport {
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
-                            move |_, _, cx| {
-                                command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                            },
-                        ),
+                        control(
+                            "shuffle",
+                            Icon::Shuffle,
+                            "shuffle",
+                            Some(shuffle),
+                            &p,
+                            window,
+                            cx,
+                        )
+                        .on_click(move |_, _, cx| {
+                            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
+                        }),
                     )
                     .child(
-                        control("previous", Icon::Previous, "prev", None, &p)
+                        control("previous", Icon::Previous, "prev", None, &p, window, cx)
                             .tooltip(tip(help("previous track", &Previous, cx)))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", Icon::Next, "next", None, &p)
+                        control("next", Icon::Next, "next", None, &p, window, cx)
                             .tooltip(tip(help("next track", &Next, cx)))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
@@ -926,6 +945,8 @@ impl Render for Transport {
                             repeat_label,
                             Some(now.repeat_mode != RepeatMode::Off),
                             &p,
+                            window,
+                            cx,
                         )
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
@@ -995,7 +1016,11 @@ impl Render for Transport {
                     .map(|eq| self.eq_button(&eq, &p, cx)),
             );
 
+        let ring = crate::components::focus_ring(&self.focus, window, cx);
         div()
+            .id("transport")
+            .relative()
+            .track_focus(&self.focus)
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()
@@ -1009,6 +1034,13 @@ impl Render for Transport {
             .child(left)
             .child(centre)
             .child(right)
+            .children(ring)
+    }
+}
+
+impl Focusable for Transport {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

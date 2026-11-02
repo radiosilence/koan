@@ -15,7 +15,7 @@ use koan_kit::raw::OperatingSystem;
 use crate::components::{Badge, Button, ButtonKind, sheet};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
 
-use super::actions::{APPLICATION, Group, HOTKEYS, MENU, Shortcut, caption};
+use super::actions::{APPLICATION, Group, HOTKEYS, LISTS, MENU, Shortcut, caption};
 
 actions!(shortcuts_sheet, [Dismiss]);
 
@@ -150,7 +150,7 @@ impl Render for ShortcutsSheet {
                 sheet::body("shortcuts-sheet-scroll", &look)
                     .pt(look.space(Space::L))
                     .gap(look.space(Space::L))
-                    .child(columns(&HOTKEYS.iter().collect::<Vec<_>>()))
+                    .child(columns(&HOTKEYS.iter().chain(LISTS).collect::<Vec<_>>()))
                     .child(div().h(HAIRLINE).bg(look.palette.rule.hsla()))
                     .child(sheet::note(modifier, Tone::Muted, &look))
                     .child(columns(&with_modifier(os)))
@@ -174,6 +174,16 @@ mod tests {
             .map(|g| lines(&HOTKEYS.iter().collect::<Vec<_>>(), g, OperatingSystem::Mac).len())
             .sum();
         assert_eq!(total, HOTKEYS.len());
+    }
+
+    #[test]
+    fn the_list_keys_are_listed_under_their_own_heading() {
+        let rows = lines(
+            &LISTS.iter().collect::<Vec<_>>(),
+            Group::Lists,
+            OperatingSystem::Mac,
+        );
+        assert_eq!(rows.len(), LISTS.len());
     }
 
     #[test]

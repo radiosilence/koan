@@ -29,6 +29,8 @@ pub struct NavRow {
     art: Option<AnyElement>,
     detail: Option<SharedString>,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -56,8 +58,17 @@ impl NavRow {
             art: None,
             detail: None,
             selected: false,
+            cursor: false,
             on_click: None,
         }
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
+        self
     }
 
     /// The place's own face, square, before the label: a playlist's sleeve.
@@ -173,6 +184,10 @@ impl RenderOnce for NavRow {
                 row.cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }
 

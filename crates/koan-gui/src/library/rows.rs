@@ -87,6 +87,8 @@ pub struct RowState {
     /// A glyph before the figures, with what it means under the pointer: a
     /// play another client scrobbled in, in the history.
     pub note: Option<(crate::theme::Icon, &'static str)>,
+    /// Under the list's keyboard cursor.
+    pub cursor: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -189,6 +191,7 @@ pub fn track_row<V: TrackList>(
 
     TableRow::new(("row", id as u64), state.kind)
         .selected(state.selected)
+        .cursor(state.cursor)
         .lead_exact(state.lead_width, lead)
         .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))
         .title(

@@ -411,3 +411,18 @@ Keys the TUI spends on its own panels — the visualizer, the help overlay — h
 ## Desktop app
 
 The desktop app (macOS and Linux) takes the macOS app's keys, both tables, from one list that also builds its menus and its shortcuts sheet (`?` or `⌘/`). On Linux `Ctrl` stands where the Mac has `⌘`, and there is no menu bar, so the sheet is where the commands are listed. `⌫` deletes the selection outside a text field and is a single key there, as `space` is.
+
+Moving around without the pointer:
+
+| Key | |
+|-----|---|
+| `Tab`, `⇧Tab` | The next or previous control: the sidebar, the toolbar's buttons, the page, the transport's controls and slider |
+| `F6`, `⇧F6` | The sidebar, the page and the transport in turn |
+| `↑` `↓` | In the sidebar, the place above or below; `Return` opens it |
+| `↑` `↓` | In a list of tracks (the track browser, a record, history), the row above or below, picked; with `⇧` the pick extends |
+| `Home`, `End` | The first or last row |
+| `Page Up`, `Page Down` | A screenful up or down |
+| `Return` | Plays the list from the row |
+| `Ctrl-Space` | Adds the row to the pick, or takes it out; `space` stays play and pause |
+
+The control or row the keyboard is on is outlined in the accent while the keyboard was used last.

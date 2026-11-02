@@ -77,6 +77,10 @@ pub struct HistoryPage {
     menu: Option<actions::MenuTarget>,
     /// The plays the last right-click acts on.
     menu_plays: Vec<i64>,
+    /// The keyboard's place among the plays.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     focus: FocusHandle,
     search: Entity<chrome::SearchField>,
     _loading: Option<Task<()>>,
@@ -108,6 +112,8 @@ impl HistoryPage {
             anchor: None,
             menu: None,
             menu_plays: Vec::new(),
+            cursor: Default::default(),
+            keyed: false,
             focus: cx.focus_handle(),
             search,
             _loading: None,
@@ -319,6 +325,7 @@ impl HistoryPage {
                     drag,
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
+                    cursor: self.keyed && self.cursor.at == Some(ix),
                 };
                 let row = rows::track_row(p, &track, ix, state, sleeve, None, cx);
                 let plays: Vec<i64> = self.acting_on(ix).iter().map(|e| e.id).collect();
@@ -332,6 +339,43 @@ impl HistoryPage {
             }
             None => div().into_any_element(),
         }
+    }
+}
+
+impl super::keys::KeyedList for HistoryPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        self.selected = self.entries[from..=to].iter().map(|e| e.id).collect();
+        self.anchor = Some(from);
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let id = self.entries[ix].id;
+        if !self.selected.remove(&id) {
+            self.selected.insert(id);
+        }
+    }
+
+    /// The play's line, past the day headings above it.
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        let line = self
+            .lines
+            .iter()
+            .position(|l| matches!(l, Line::Play { ix: at, .. } if *at == ix));
+        if let Some(line) = line {
+            self.list.reveal(line);
+        }
+    }
+
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        actions::play_list(&self.lib, self.row_tracks(), ix, cx);
     }
 }
 
@@ -384,6 +428,9 @@ impl TrackList for HistoryPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                // The keyboard carries on from the row clicked.
+                self.cursor.at = Some(index);
+                self.cursor.anchor = Some(index);
                 let id = self.entries[index].id;
                 let m = event.modifiers();
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
@@ -517,34 +564,38 @@ impl Render for HistoryPage {
             .into_any_element()
         };
         let view = cx.entity();
-        div()
-            .id("history")
-            .key_context("Library History")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-                this.selected = this.entries.iter().map(|e| e.id).collect();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                this.selected.clear();
-                cx.notify();
-            }))
-            .on_action(cx.listener(Self::forget_picked))
-            .size_full()
-            .flex()
-            .flex_col()
-            // One menu for the list, over the row the right-click landed on:
-            // cleared as the press arrives, set by the row it reaches.
-            .capture_any_mouse_down(cx.listener(|this, e: &MouseDownEvent, _, _| {
-                if e.button == MouseButton::Right {
-                    this.menu = None;
-                    this.menu_plays.clear();
-                }
-            }))
-            .child(PageFrame::new(header).body(body))
-            .koan_context_menu("history-menu", window, cx, move |menu, window, cx| {
-                row_menu(menu, &view, window, cx)
-            })
+        self.keyed = self.focus.is_focused(window);
+        super::keys::keyed(
+            div()
+                .id("history")
+                .key_context("Library History List")
+                .track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
+            this.selected = this.entries.iter().map(|e| e.id).collect();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
+            this.selected.clear();
+            cx.notify();
+        }))
+        .on_action(cx.listener(Self::forget_picked))
+        .size_full()
+        .flex()
+        .flex_col()
+        // One menu for the list, over the row the right-click landed on:
+        // cleared as the press arrives, set by the row it reaches.
+        .capture_any_mouse_down(cx.listener(|this, e: &MouseDownEvent, _, _| {
+            if e.button == MouseButton::Right {
+                this.menu = None;
+                this.menu_plays.clear();
+            }
+        }))
+        .child(PageFrame::new(header).body(body))
+        .koan_context_menu("history-menu", window, cx, move |menu, window, cx| {
+            row_menu(menu, &view, window, cx)
+        })
     }
 }
 
@@ -588,6 +639,12 @@ fn row_menu(
             view.update(cx, |this, cx| this.ask_forget(plays.clone(), window, cx))
         }),
     )
+}
+
+impl Focusable for HistoryPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
 }
 
 #[cfg(test)]
