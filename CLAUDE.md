@@ -152,6 +152,9 @@ just android-run [ABIS] # build, install and open the Android app on the device 
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
 just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set
+just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
+just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
+just gui-parity # the parity inventory: the Mac app's views, actions, settings, tooltips as a checklist
 just gui-build  # release build of the GUI app
 just gui-library DIR [ALBUMS] [TRACKS] # generate and scan a large throwaway library for the GUI benches
 just gui-theme-leaks # koan-gui's reach past koan-kit, against the ratchet in crates/koan-gui/theme-leaks.toml
@@ -302,6 +305,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `desktop-window` in the configuration's state directory (`places::state`) |
 | `time.rs` | A duration as a clock: `m:ss`, or `h:mm:ss` from an hour |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `fling` flings the album grid to its end and back and prints the process's footprint at each stage; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
+| `examples/walk.rs`, `examples/compare.rs` | `just gui-walk`: every page offscreen against a throwaway library, a PNG of each named as the Mac's evidence renders are, and each page's frame times (layout and paint) while scrolled by wheel events; `just gui-compare` sets those beside the SwiftUI app's `KOAN_RENDER_EVIDENCE` renders with the edges either draws alone marked |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `examples/` (others) | `settings_shot.rs` (each Settings pane to a PNG), `cold_covers.rs` (a screen of sleeves from a cold cache), `settings_frames.rs` and `slider_frames.rs` (offscreen frame times), `filter_check.rs`, and `gen_library.rs`, which `just gui-library` runs |
 | `koan-kit: app.rs` | The app model pages are written in: entities, contexts, views, events, actions, focus, tasks, `div` and its layout traits, and the platform services the app uses. What a page sizes, colours or draws by hand is not here |
