@@ -236,7 +236,7 @@ mod tests {
                 ))
                 .section(CollectionSection::pills(
                     SectionHeading::new("artists"),
-                    (0..3).map(|i| Pill::new(("pill", i), crate::theme::Icon::Artist, "a")),
+                    (0..3usize).map(|i| Pill::new(("pill", i), crate::theme::Icon::Artist, "a")),
                 ));
             if let Some(grid) = self.width.grid(&look) {
                 let tiles = (0..grid.columns + 1).map(|i| {
