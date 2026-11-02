@@ -193,7 +193,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     if paired {
-                        crate::tv_wake::stop(id.clone(), cx);
+                        crate::tv_wake::stop(id.clone(), name.clone(), window, cx);
                     } else {
                         crate::tv_wake::open(id.clone(), name.clone(), window, cx);
                     }
