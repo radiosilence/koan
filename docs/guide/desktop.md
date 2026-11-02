@@ -86,6 +86,12 @@ The field at the top of the sidebar searches the library as you type, ⌘K or `/
 
 ⇧⌘K (Ctrl+Shift+K on Linux), File → Add Music…, opens the picker: tracks, records or artists by name, several picked with a click, then Add (Return), Add & Play (⌘Return) or Replace Queue (⇧⌘Return), which says how much comes off the queue before it does. A double-click plays the one thing at once.
 
+## Lyrics, track info and artwork
+
+The toolbar's lyrics button, ⌥⌘L or `L` shows the playing track's lyrics beside the page. Synced lyrics follow the song with the line being sung larger and kept in view, and a click on a line seeks to it; lyrics without timings are shown whole. They come from the file, a sidecar or LRCLIB, which the panel's head names.
+
+A track's context menu has Track Info, which lists what each of its sources says (the file's tags, the server's entry), its ReplayGain and the library's ids for it. A click on a record page's sleeve, or on the transport's cover, shows the cover as large as the window allows; a click anywhere or Escape closes it.
+
 ## Settings
 
 ⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ has a window of its own, below.

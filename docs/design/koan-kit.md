@@ -136,6 +136,10 @@ Collection::new("shelf", &width)               // width: the page's CollectionWi
 
 Different kinds of thing answering one question, stacked in sections: pills wrapping, record tiles in as many columns as fit (`TileGrid`, the album grid's metrics), table rows the full width. The collection owns the margins, the section spacing, the pills' flow and the tiles' columns; it measures its width into the page's `CollectionWidth` and redraws the page when it changes, so the page builds tiles at the size they are laid out at. A section with nothing in it is left out. `SectionHeading::count` and `on_open` give a preview's heading its total and its "see all". `Pill::new(id, icon, name)` is a thing named as a chip, `ticking(picked)` while the page picks.
 
+### Inspector, SyncedLines, Viewer, DetailGroup (Mac: the inspector, `LyricsPanel`, `ArtworkViewer`, `TrackInfoView`)
+
+`Inspector::new("lyrics").trailing(source).body(…)` is a panel beside the page, `RowMetrics::inspector` wide, with a hairline down its leading edge and under its head; `clear(true)` leaves its ground to the wash. `SyncedLines::new(id, lines, active).on_line(…)` is timed text with the line at `active` larger and kept in view; `plain_text` is text that does not follow the song. `Viewer::new(id, art, title).detail(…)` is a picture as large as the window allows over everything, caption under it, closed by its owner on a click or Escape; `Viewer::side` is the size to decode it at. `DetailGroup::new(title).row(name, value)` lists named values densely under a section header, names in a column of their own.
+
 ### Form, FormSection, FormRow (Mac: `KoanForm`, `KoanSectionHeader`, `KoanLabeledContentStyle`)
 
 ```rust
