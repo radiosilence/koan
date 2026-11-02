@@ -127,6 +127,15 @@ pub struct ShelfPage {
     /// ones asks nothing.
     aimed: Vec<Key>,
     focus: FocusHandle,
+    /// The keyboard's place on the page, in `order`: the artists, the
+    /// records, then the tracks.
+    cursor: crate::components::ListCursor,
+    /// The page holds the keyboard, as of the last frame.
+    keyed: bool,
+    /// What the keys last moved to, for the collection to scroll to.
+    revealed: Option<usize>,
+    /// The tile grid as of the last frame, for the keys.
+    grid: Option<TileGrid>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -177,6 +186,10 @@ impl ShelfPage {
             starting: HashSet::new(),
             aimed: Vec::new(),
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
+            revealed: None,
+            grid: None,
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -273,6 +286,48 @@ impl ShelfPage {
             .chain(s.albums.iter().map(|a| Playable::Album(a.id)))
             .chain(s.tracks.iter().map(|t| Playable::Track(t.id)))
             .collect()
+    }
+
+    /// Whether the keyboard's cursor is on item `at` of `order`.
+    fn on(&self, at: usize) -> bool {
+        self.keyed && self.cursor.at == Some(at)
+    }
+
+    /// The page's lines as the keys walk them, as parts of `order`: the
+    /// artists' pills as one, each row of tiles, each track.
+    fn lines(&self) -> Vec<std::ops::Range<usize>> {
+        let (Some(s), Some(grid)) = (&self.summary, self.grid) else {
+            return Vec::new();
+        };
+        let (artists, albums) = (s.artists.len(), s.artists.len() + s.albums.len());
+        let columns = grid.columns.max(1);
+        let mut lines = Vec::new();
+        if artists > 0 {
+            lines.push(0..artists);
+        }
+        let mut start = artists;
+        while start < albums {
+            lines.push(start..(start + columns).min(albums));
+            start += columns;
+        }
+        lines.extend((albums..albums + s.tracks.len()).map(|t| t..t + 1));
+        lines
+    }
+
+    /// Where the collection should scroll for the keys: the section, and
+    /// the item within it.
+    fn reveal_in(&self, section: usize) -> Option<usize> {
+        let s = self.summary.as_ref()?;
+        let at = self.revealed?;
+        let bounds = [
+            0,
+            s.artists.len(),
+            s.artists.len() + s.albums.len(),
+            usize::MAX,
+        ];
+        (bounds[section]..bounds[section + 1])
+            .contains(&at)
+            .then(|| at - bounds[section])
     }
 
     fn pick(&mut self) -> Option<PlayableDrag> {
@@ -377,7 +432,8 @@ impl ShelfPage {
         let selecting = self.selection.is_active();
         s.artists
             .iter()
-            .map(|artist| {
+            .enumerate()
+            .map(|(index, artist)| {
                 let item = Playable::Artist(artist.id);
                 let drag = self.drag(item, artist.name.clone().into(), None);
                 let target = actions::MenuTarget {
@@ -394,6 +450,7 @@ impl ShelfPage {
                 if selecting {
                     pill = pill.ticking(self.selection.contains(item));
                 }
+                pill = pill.cursor(self.on(index));
                 pill.on_click(super::listen(
                     view.clone(),
                     move |this: &mut Self, e: &ClickEvent, window, cx| {
@@ -417,6 +474,7 @@ impl ShelfPage {
         let item = Playable::Artist(id);
         let m = e.modifiers();
         let order = self.order();
+        self.place(item, &order);
         if !self.selection.take(item, m.shift, m.secondary(cx), &order) {
             self.lib
                 .nav
@@ -442,7 +500,7 @@ impl ShelfPage {
             })
         }));
         let mut tiles = Vec::with_capacity(s.albums.len());
-        for album in &s.albums {
+        for (index, album) in (s.artists.len()..).zip(&s.albums) {
             let Some(record) = self.records.get(&album.id).cloned() else {
                 continue;
             };
@@ -465,7 +523,7 @@ impl ShelfPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
-                cursor: false,
+                cursor: self.on(index),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -506,7 +564,7 @@ impl ShelfPage {
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
                 note: None,
-                cursor: false,
+                cursor: self.on(s.artists.len() + s.albums.len() + index),
                 kind: RowKind::Art,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));
@@ -589,6 +647,7 @@ impl TileHost for ShelfPage {
         window.focus(&self.focus, cx);
         let item = Playable::Album(album);
         let order = self.order();
+        self.place(item, &order);
         if self
             .selection
             .take(item, modifiers.shift, modifiers.secondary(cx), &order)
@@ -675,6 +734,8 @@ impl TrackList for ShelfPage {
             RowPart::Row => {
                 let ids = self.row_tracks();
                 let item = Playable::Track(track);
+                let order = self.order();
+                self.place(item, &order);
                 let m = event.modifiers();
                 // Outside the mode a plain click marks the row alone: the
                 // mode would turn every tile's and pill's click into a tick.
@@ -706,6 +767,90 @@ impl TrackList for ShelfPage {
     }
 }
 
+impl ShelfPage {
+    /// The keyboard carries on from the item clicked.
+    fn place(&mut self, item: Playable, order: &[Playable]) {
+        if let Some(at) = order.iter().position(|p| *p == item) {
+            self.cursor.at = Some(at);
+            self.cursor.anchor = Some(at);
+        }
+    }
+}
+
+impl super::keys::KeyedList for ShelfPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.summary
+            .as_ref()
+            .map_or(0, |s| s.artists.len() + s.albums.len() + s.tracks.len())
+    }
+
+    /// ← → walk the pills and the tiles; the grid's columns say how.
+    fn columns(&self) -> usize {
+        self.grid.map_or(2, |grid| grid.columns.max(2))
+    }
+
+    /// From the pills down to the first record; within the records, the
+    /// same column; a track row is one.
+    fn below(&self, at: usize, rows: isize) -> usize {
+        let lines = self.lines();
+        let Some(line) = lines.iter().position(|range| range.contains(&at)) else {
+            return at;
+        };
+        let column = at - lines[line].start;
+        let to = line
+            .saturating_add_signed(rows)
+            .min(lines.len().saturating_sub(1));
+        let range = &lines[to];
+        (range.start + column).min(range.end.saturating_sub(1))
+    }
+
+    /// One thing is marked without starting a pick, so the tiles and pills
+    /// still act on a click. A range starts one.
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        if from == to {
+            self.selection.mark(order[from]);
+        } else {
+            self.selection.only(order[from]);
+            self.selection.click(order[to], true, &order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        self.selection.click(order[ix], false, &order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.revealed = Some(ix);
+    }
+
+    /// Return opens an artist or a record, and plays the tracks from a
+    /// track, as a double click does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let order = self.order();
+        match order[ix] {
+            Playable::Artist(id) => self
+                .lib
+                .nav
+                .update(cx, |n, cx| n.open(Page::Artist(id), cx)),
+            Playable::Album(id) => self.lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
+            Playable::Track(_) => {
+                let skip = order
+                    .iter()
+                    .take_while(|p| !matches!(p, Playable::Track(_)))
+                    .count();
+                let ids = self.row_tracks();
+                actions::play_list(&self.lib, ids, ix - skip, cx);
+            }
+        }
+    }
+}
+
 impl chrome::Picking for ShelfPage {
     fn selection_mut(&mut self) -> &mut Selection {
         &mut self.selection
@@ -718,6 +863,10 @@ impl Render for ShelfPage {
         let words = words(&self.shelf);
         let scale = window.scale_factor();
         let grid = self.width.grid(&p.look);
+        self.grid = grid;
+        self.keyed = self.focus.is_focused(window);
+        let len = super::keys::KeyedList::len(self);
+        self.cursor.clamp(len);
 
         // Tiles not drawn last frame go; a few new sleeves into the atlas.
         self.tiles.begin();
@@ -733,48 +882,54 @@ impl Render for ShelfPage {
         if let Some(s) = self.summary.clone() {
             header = header.detail(counts(&s));
             let artists = self.heading("artists", s.artist_total, Page::Artists, cx);
-            collection = collection.section(CollectionSection::pills(artists, self.pills(&s, cx)));
+            collection = collection.section(
+                CollectionSection::pills(artists, self.pills(&s, cx)).reveal(self.reveal_in(0)),
+            );
             if let Some(grid) = grid {
                 self.aim(p, grid, scale, cx);
                 let albums = self.heading("albums", s.album_total, Page::Albums, cx);
                 let tiles = self.tiles(&s, grid, scale, cx);
-                collection = collection.section(CollectionSection::tiles(albums, grid, tiles));
+                collection = collection.section(
+                    CollectionSection::tiles(albums, grid, tiles).reveal(self.reveal_in(1)),
+                );
             }
             let tracks = self.heading("tracks", s.track_total, Page::Tracks, cx);
             let rows = self.rows(p, &s, window, cx);
-            collection = collection.section(CollectionSection::rows(tracks, rows));
+            collection =
+                collection.section(CollectionSection::rows(tracks, rows).reveal(self.reveal_in(2)));
         }
         let collection = collection.header(header);
 
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(actions::list_menu(
-                div()
-                    .id("shelf-page")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(collection),
-                cx.weak_entity(),
-                window,
+        super::keys::keyed(
+            div().key_context("Library List").track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .relative()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(actions::list_menu(
+            div()
+                .id("shelf-page")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(collection),
+            cx.weak_entity(),
+            window,
+            cx,
+        ))
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
                 cx,
             ))
-            .when(self.selection.is_active(), |d| {
-                d.child(chrome::selection_bar(
-                    p,
-                    &self.lib,
-                    &self.selection,
-                    cx.entity(),
-                    cx,
-                ))
-            })
+        })
     }
 }
 
