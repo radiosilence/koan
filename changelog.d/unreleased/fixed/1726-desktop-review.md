@@ -1,0 +1,1 @@
+- **In the desktop app, ⌫ removes the selected queue rows and Minimize and Zoom work.** Media keys no longer wait on each other, dropped files keep the order they were opened in, a track's details close when you move to another page, and the window remembers its size when closed.

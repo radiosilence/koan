@@ -31,23 +31,24 @@ use crate::theme::tokens::Motion;
 use crate::theme::tokens::Scale;
 use crate::theme::{Icon, KoanIcon, KoanTheme};
 
-/// Columns of at least 150 points sharing the width, up to 210 each, as the
-/// Mac's grid lays them out. Every tile is the same size, so nothing is
-/// measured.
+/// The record grid: koan-kit's `TileColumns` across the width, and each
+/// row's height. Every tile is the same size, so nothing is measured.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grid {
     pub columns: usize,
     pub side: Pixels,
-    /// Between tiles in a row: the spare width shared out, at least 18.
+    /// Between tiles in a row: at least `TileColumns::MIN_GAP`, with a share
+    /// of the spare width.
     pub gap: Pixels,
+    /// Above the first row and below the last: the page's margin.
     pub margin: Pixels,
+    /// Either side of a row: the page's margin and a share of the spare
+    /// width.
+    pub inset: Pixels,
     /// A row's height, its spacing below included.
     pub row: Pixels,
 }
 
-const MIN_SIDE: f32 = 150.0;
-const MAX_SIDE: f32 = 210.0;
-const MIN_GAP: f32 = 18.0;
 pub const LINE_GAP: f32 = 22.0;
 /// Between sleeve, title and credit.
 const CAPTION_GAP: f32 = 7.0;
@@ -57,24 +58,23 @@ impl Grid {
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
         // The page's margin, so the grid's edge is the header's and the
         // rows'.
-        let margin = crate::theme::Space::Xxl.points() * scale.space;
-        let usable = (f32::from(width) - 2.0 * margin).max(MIN_SIDE);
-        let columns = (((usable + MIN_GAP) / (MIN_SIDE + MIN_GAP)).floor() as usize).max(1);
-        let side = ((usable - MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
-            .floor()
-            .min(MAX_SIDE);
-        let gap = if columns > 1 {
-            (usable - side * columns as f32) / (columns as f32 - 1.0)
-        } else {
-            0.0
-        };
+        let margin = px(crate::theme::Space::Xxl.points() * scale.space);
+        let columns = crate::components::TileColumns::for_width(width, margin);
         Self {
-            columns,
-            side: px(side),
-            gap: px(gap),
-            margin: px(margin),
-            row: px(side) + caption_height(scale) + px(LINE_GAP),
+            columns: columns.columns,
+            side: columns.side,
+            gap: columns.gap,
+            margin,
+            inset: columns.inset,
+            row: columns.side + caption_height(scale) + px(LINE_GAP),
         }
+    }
+
+    /// Whether `other` places the rows as this does: the same columns and
+    /// row height, so a row is where it was and only the room between tiles
+    /// moved.
+    pub fn same_rows(&self, other: &Grid) -> bool {
+        self.columns == other.columns && self.row == other.row
     }
 
     pub fn rows(&self, items: usize) -> usize {
@@ -650,16 +650,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn columns_share_the_width_within_the_tile_bounds() {
-        let narrow = Grid::for_width(px(300.0), &Scale::of(100));
+    fn tiles_keep_their_size_and_the_room_around_them_takes_the_width() {
+        let scale = Scale::of(100);
+        let narrow = Grid::for_width(px(300.0), &scale);
         assert_eq!(narrow.columns, 1);
-        assert!(narrow.side <= px(MAX_SIDE));
-        let wide = Grid::for_width(px(1920.0), &Scale::of(100));
-        assert!(wide.side >= px(MIN_SIDE) && wide.side <= px(MAX_SIDE));
-        assert!(wide.gap >= px(MIN_GAP));
-        let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
-        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
-        assert_eq!(wide.rows(0), 0);
-        assert_eq!(wide.rows(wide.columns + 1), 2);
+        let a = Grid::for_width(px(1200.0), &scale);
+        let b = Grid::for_width(px(1240.0), &scale);
+        assert_eq!(
+            a.side, b.side,
+            "a resize moves tiles apart, never grows them"
+        );
+        assert_eq!(a.columns, b.columns);
+        assert!(b.gap > a.gap && b.inset > a.inset);
+        assert!(a.gap >= px(crate::components::TileColumns::MIN_GAP));
+        for (grid, width) in [(a, 1200.0), (b, 1240.0)] {
+            let used = grid.side * grid.columns as f32
+                + grid.gap * (grid.columns as f32 - 1.0)
+                + grid.inset * 2.0;
+            assert!((f32::from(used) - width).abs() < 1.0);
+        }
+        // Wide enough for one more tile at the least gap: a column more.
+        let more = Grid::for_width(a.side * 2.0 + a.gap * 3.0 + px(2000.0), &scale);
+        assert!(more.columns > a.columns);
+        assert_eq!(a.rows(0), 0);
+        assert_eq!(a.rows(a.columns + 1), 2);
     }
 }

@@ -927,15 +927,32 @@ pub struct LinkIdentity {
     /// Stable across restarts, so a reconnect replaces its own entry on the
     /// server rather than listing the device twice.
     pub device_id: String,
-    /// Put before the names of the files this device keeps in the config
-    /// directory: its id and the devices it knows. Empty for the apps; the
-    /// terminal UI shares their directory and is a device of its own.
+    /// Put before the names of the files this device keeps: its id and the
+    /// devices it knows. Empty for the apps; the terminal UI shares their
+    /// directory and is a device of its own. The desktop app keeps its files
+    /// outside the config directory (`home`).
     pub files: &'static str,
 }
 
 impl LinkIdentity {
+    /// The apps' `files`: the native app on each platform, whose files and
+    /// saved session carry no prefix.
+    pub const APP_FILES: &'static str = "";
     /// The terminal UI's `files`.
     pub const TERMINAL_FILES: &'static str = "terminal-";
+    /// The desktop app's `files`.
+    pub const DESKTOP_FILES: &'static str = "desktop-";
+
+    /// Where this device's files live: the desktop app's in its state
+    /// directory (`places::state`), which is runtime state rather than
+    /// configuration; everyone else's in the config directory.
+    pub fn home(&self) -> std::path::PathBuf {
+        if self.files == Self::DESKTOP_FILES {
+            crate::places::state()
+        } else {
+            config::config_dir()
+        }
+    }
 
     /// This machine, named `name` or else by its hostname.
     pub fn this_device(name: Option<String>) -> Self {
@@ -957,7 +974,7 @@ impl LinkIdentity {
                 .unwrap_or_else(|| label.to_string()),
             platform: platform.to_string(),
             device_id: this_device_id(),
-            files: "",
+            files: Self::APP_FILES,
         }
     }
 
@@ -979,7 +996,8 @@ impl LinkIdentity {
     /// server and the network.
     pub fn terminal() -> Option<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD).ok()
+        let dir = config::config_dir();
+        Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD, &dir, &dir).ok()
     }
 
     /// The desktop app on this machine, kept apart from the native app and
@@ -988,26 +1006,34 @@ impl LinkIdentity {
     /// when its lock cannot be made at all.
     pub fn desktop() -> std::io::Result<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app("desktop-", "desktop", &HELD)
+        Self::beside_app(
+            Self::DESKTOP_FILES,
+            "desktop",
+            &HELD,
+            &crate::places::state(),
+            &crate::places::runtime(),
+        )
     }
 
     /// A device of its own on this config directory: its files carry
-    /// `files` as a prefix and its name says `kind`. The lock is held for as
-    /// long as the process runs; the system lets go of it however the
-    /// process ends.
+    /// `files` as a prefix and live in `dir`, its lock in `locks`, and its
+    /// name says `kind`. The lock is held for as long as the process runs;
+    /// the system lets go of it however the process ends.
     fn beside_app(
         files: &'static str,
         kind: &str,
         held: &'static std::sync::OnceLock<std::fs::File>,
+        dir: &std::path::Path,
+        locks: &std::path::Path,
     ) -> std::io::Result<Self> {
-        let dir = config::config_dir();
         if held.get().is_none() {
-            std::fs::create_dir_all(&dir)?;
+            std::fs::create_dir_all(dir)?;
+            std::fs::create_dir_all(locks)?;
             let lock = std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(dir.join(format!("{files}device.lock")))?;
+                .open(locks.join(format!("{files}device.lock")))?;
             lock.try_lock().map_err(std::io::Error::from)?;
             let _ = held.set(lock);
         }

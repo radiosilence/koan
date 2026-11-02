@@ -101,3 +101,43 @@ pub fn moment(secs: i64) -> String {
         at.format("%-d %b %Y, %H:%M").to_string()
     }
 }
+
+/// How long "Copied" stands in for what was copied.
+const COPIED: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// What a pane just copied, read as "copied" for a moment after.
+#[derive(Default)]
+pub struct Copied {
+    which: Option<&'static str>,
+    reset: Option<Task<()>>,
+}
+
+impl Copied {
+    pub fn is(&self, which: &'static str) -> bool {
+        self.which == Some(which)
+    }
+
+    /// Puts `value` on the clipboard and reads `which` as copied until
+    /// `COPIED` has passed. `of` finds this in the view.
+    pub fn copy<V: 'static>(
+        view: &mut V,
+        of: fn(&mut V) -> &mut Copied,
+        which: &'static str,
+        value: String,
+        cx: &mut Context<V>,
+    ) {
+        cx.write_to_clipboard(ClipboardItem::new_string(value));
+        let reset = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(COPIED).await;
+            this.update(cx, |view, cx| {
+                of(view).which = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        let copied = of(view);
+        copied.which = Some(which);
+        copied.reset = Some(reset);
+        cx.notify();
+    }
+}

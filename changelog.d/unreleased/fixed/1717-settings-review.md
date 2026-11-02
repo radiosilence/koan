@@ -1,0 +1,1 @@
+- **Settings in the desktop app no longer undo a sign-in or another app's change.** A setting changed while a sign-in was under way, or after the terminal UI wrote the file, wrote back only itself. A new key, app password or invite is never replaced by another sheet before it is seen, and quitting with a device waiting to pair declines it.

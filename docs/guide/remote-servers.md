@@ -102,6 +102,8 @@ Every cover fetched is kept in the cache's `artwork` directory, so any page aski
 
 Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync, unfavouriting included. A favourite made here before its item was on the server, or before signing in, is sent to it rather than dropped. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime.
 
+On a kōan server the order of the playlists syncs too: reordering them on one device reorders them on the account's other devices, and a playlist one device has that the server lacks keeps its place among the rest. Other servers have nowhere to keep the order, so there it stays on each device.
+
 A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back.
 
 A server playlist may name songs the library has not synced; they are kept in their places whenever kōan pushes the playlist back, so an edit here never deletes them there, and they appear in the playlist, in the server's order, with the first sync after the library gains them.

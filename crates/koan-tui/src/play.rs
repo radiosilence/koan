@@ -13,9 +13,17 @@ use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use crate::app;
 
 /// The terminal UI's saved session, kept apart from the app's on the same
-/// config directory. A second terminal UI on the machine, which is not the
-/// terminal device, shares it.
-pub const SESSION: &str = koan_core::remote::link::LinkIdentity::TERMINAL_FILES;
+/// config directory: this process's while it is the terminal device (it holds
+/// that device's lock, for as long as it runs). `None` for a second terminal
+/// UI on the machine, which restores and saves nothing, rather than each one
+/// overwriting the other's queue as it quits. Decided once per process: the
+/// first terminal quitting later does not hand this one its session halfway
+/// through, after a restore that loaded nothing.
+pub fn session() -> Option<&'static str> {
+    use koan_core::remote::link::LinkIdentity;
+    static DECIDED: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *DECIDED.get_or_init(|| LinkIdentity::terminal().map(|_| LinkIdentity::TERMINAL_FILES))
+}
 
 /// Callbacks for CLI integration. The TUI library crate doesn't own
 /// the logger or signal handler — koan-cli provides those.
@@ -62,29 +70,32 @@ impl Autosave {
     const SESSION_INTERVAL: Duration = Duration::from_millis(100);
     const POSITION_INTERVAL: Duration = Duration::from_secs(1);
 
-    fn start(state: Arc<SharedPlayerState>) -> Self {
+    /// Saves under `session`; with none it saves nothing.
+    fn start(state: Arc<SharedPlayerState>, session: Option<&'static str>) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded::<Save>();
         let writer_state = state.clone();
         let has_played = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let played = has_played.clone();
-        let writer = std::thread::Builder::new()
-            .name("koan-autosave".into())
-            .spawn(move || {
-                while let Ok(first) = rx.recv() {
-                    // Whatever queued up behind it is one write: the state is
-                    // read when it is written.
-                    let save = rx.try_iter().fold(first, Save::max);
-                    write(&writer_state, save, played.load(Ordering::Relaxed));
-                }
-            })
-            .ok();
+        let writer = session.and_then(|session| {
+            std::thread::Builder::new()
+                .name("koan-autosave".into())
+                .spawn(move || {
+                    while let Ok(first) = rx.recv() {
+                        // Whatever queued up behind it is one write: the state
+                        // is read when it is written.
+                        let save = rx.try_iter().fold(first, Save::max);
+                        write(&writer_state, session, save, played.load(Ordering::Relaxed));
+                    }
+                })
+                .ok()
+        });
         let now = Instant::now();
         Self {
             content: state.saved_version(),
             cursor: state.cursor(),
             playback: state.playback_state(),
             state,
-            tx: Some(tx),
+            tx: writer.is_some().then_some(tx),
             writer,
             has_played,
             last_session: now,
@@ -142,7 +153,7 @@ impl Autosave {
 /// `played`: whether anything has played this session. Until it has, a save
 /// of the queue keeps the position already saved for the track under the
 /// cursor, which the restore is still cueing.
-fn write(state: &SharedPlayerState, save: Save, played: bool) {
+fn write(state: &SharedPlayerState, session: &str, save: Save, played: bool) {
     let db = match koan_core::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
@@ -154,7 +165,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
     let result = match save {
         Save::Position => queries::save_playback_position(
             &db.conn,
-            SESSION,
+            session,
             state.play_mode(),
             state
                 .cursor_path()
@@ -167,10 +178,10 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
             let (items, cursor) = state.snapshot_playlist();
             if items.is_empty() {
                 // The mode outlives the queue, and may be what changed.
-                queries::clear_playback_state(&db.conn, SESSION).and_then(|()| {
+                queries::clear_playback_state(&db.conn, session).and_then(|()| {
                     queries::save_playback_position(
                         &db.conn,
-                        SESSION,
+                        session,
                         state.play_mode(),
                         None,
                         0,
@@ -188,7 +199,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
                 let (position_ms, playing) = if played {
                     (state.position_ms(), playing)
                 } else {
-                    queries::load_playback_state(&db.conn, SESSION)
+                    queries::load_playback_state(&db.conn, session)
                         .ok()
                         .flatten()
                         .filter(|saved| saved.cursor_path == cursor_path)
@@ -196,7 +207,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
                 };
                 queries::save_playback_state(
                     &db.conn,
-                    SESSION,
+                    session,
                     &persisted,
                     state.play_mode(),
                     cursor_path.as_deref(),
@@ -421,7 +432,7 @@ pub fn run_tui(
     );
     let mut now_playing = NowPlaying::default();
     // This player's session, whichever device the pages show.
-    let mut autosave = Autosave::start(app.view.local.clone());
+    let mut autosave = Autosave::start(app.view.local.clone(), session());
 
     let flush_deletes = |app: &mut app::App| {
         if let Some(deletes) = app.art.gfx.take_deletes() {

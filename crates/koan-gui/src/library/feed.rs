@@ -1,12 +1,14 @@
 //! The engine's state as the library pages need it: the library's version,
 //! the record and track playing, the downloads still arriving by record, and
-//! the favourites. A slice of the engine mirror, kept here until the app's
-//! own mirror replaces it.
+//! the favourites. Derived from the app's mirror (`crate::mirror`), whose
+//! slices it follows, reshaped once for every page; the favourites and
+//! playlists, which no slice carries, it reads from the engine as the
+//! library moves.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
+use koan_ffi::{KoanEngine, TransferState};
 use koan_kit::app::*;
 
 use super::drag::Playable;
@@ -18,8 +20,6 @@ pub struct Feed {
     pub library_version: Option<u64>,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
-    /// The track under the cursor is playing rather than paused or waiting.
-    pub playing: bool,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
     /// Each track with a transfer, and where it is: a row's availability.
@@ -33,104 +33,132 @@ pub struct Feed {
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
+    /// The newest read of the playlists asked for: an older one landing
+    /// after it is dropped.
+    playlists_read: u64,
     favourites: Favourites,
     /// One read at a time; one asked for while another runs makes it read
     /// again when it lands.
     favourites_reading: bool,
     favourites_stale: bool,
-    _observe: Task<()>,
+    _observe: [Subscription; 4],
 }
 
 impl Feed {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
-        let stream = engine.observe();
-        let observe = cx.spawn(async move |this, cx| {
-            while let Some(batch) = stream.next().await {
-                if this.update(cx, |feed, cx| feed.apply(batch, cx)).is_err() {
-                    break;
-                }
-            }
-        });
-        Self {
+        let mirror = cx.global::<crate::mirror::Mirror>().clone();
+        let observe = [
+            cx.observe(&mirror.library, |feed, library, cx| {
+                let library = library.read(cx);
+                let version = library.known.then_some(library.version);
+                feed.library(version, cx);
+            }),
+            cx.observe(&mirror.playback, |feed, playback, cx| {
+                let entry = playback.read(cx).0.entry.as_ref();
+                let playing = (
+                    entry.and_then(|e| e.album_id),
+                    entry.and_then(|e| e.track_id),
+                );
+                feed.playback(playing, cx);
+            }),
+            cx.observe(&mirror.transfers, |feed, transfers, cx| {
+                let derived = Self::by_track(&transfers.read(cx).0);
+                feed.transfers(derived, cx);
+            }),
+            cx.observe(&mirror.connection, |feed, connection, cx| {
+                let reach = connection
+                    .read(cx)
+                    .0
+                    .as_ref()
+                    .map(|c| (c.signed_in_to.clone(), c.linked, c.server_kind.clone()));
+                feed.connection(reach, cx);
+            }),
+        ];
+        let mut feed = Self {
             engine,
             library_version: None,
             playing_album: None,
             playing_track: None,
-            playing: false,
             arriving: HashMap::new(),
             transfers: HashMap::new(),
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
+            playlists_read: 0,
             favourites: Favourites::default(),
             favourites_reading: false,
             favourites_stale: false,
             _observe: observe,
+        };
+        // Whatever the mirror already holds, at once: the pages are made
+        // after its first report has landed.
+        let library = mirror.library.read(cx);
+        feed.library(library.known.then_some(library.version), cx);
+        let entry = mirror.playback.read(cx).0.entry.as_ref();
+        let playing = (
+            entry.and_then(|e| e.album_id),
+            entry.and_then(|e| e.track_id),
+        );
+        feed.playback(playing, cx);
+        let derived = Self::by_track(&mirror.transfers.read(cx).0);
+        feed.transfers(derived, cx);
+        feed
+    }
+
+    fn library(&mut self, version: Option<u64>, cx: &mut Context<Self>) {
+        if version.is_some() && version != self.library_version {
+            self.library_version = version;
+            self.reload_favourites(cx);
+            self.reload_playlists(cx);
+            cx.notify();
         }
     }
 
-    fn apply(&mut self, batch: Vec<StateSlice>, cx: &mut Context<Self>) {
-        let mut changed = false;
-        for slice in batch {
-            match slice {
-                StateSlice::Library { version } => {
-                    if Some(version) != self.library_version {
-                        self.library_version = Some(version);
-                        self.reload_favourites(cx);
-                        self.reload_playlists(cx);
-                        changed = true;
-                    }
-                }
-                StateSlice::Playback { now_playing } => {
-                    let entry = now_playing.entry.as_ref();
-                    let album = entry.and_then(|e| e.album_id);
-                    let track = entry.and_then(|e| e.track_id);
-                    let playing = now_playing.state == PlayState::Playing && !now_playing.waiting;
-                    if (album, track, playing)
-                        != (self.playing_album, self.playing_track, self.playing)
-                    {
-                        self.playing_album = album;
-                        self.playing_track = track;
-                        self.playing = playing;
-                        changed = true;
-                    }
-                }
-                StateSlice::Transfers { transfers } => {
-                    let mut arriving: HashMap<i64, Vec<i64>> = HashMap::new();
-                    let by_track: HashMap<i64, TransferState> =
-                        transfers.iter().map(|t| (t.track_id, t.state)).collect();
-                    if by_track != self.transfers {
-                        self.transfers = by_track;
-                        changed = true;
-                    }
-                    for t in transfers {
-                        if matches!(t.state, TransferState::Queued | TransferState::Running)
-                            && let Some(album) = t.album_id
-                        {
-                            arriving.entry(album).or_default().push(t.track_id);
-                        }
-                    }
-                    if arriving != self.arriving {
-                        self.arriving = arriving;
-                        changed = true;
-                    }
-                }
-                StateSlice::Connection { connection } => {
-                    let reach = Some((
-                        connection.signed_in_to,
-                        connection.linked,
-                        connection.server_kind,
-                    ));
-                    if reach != self.reach {
-                        self.reach = reach;
-                        self.connection_epoch += 1;
-                        changed = true;
-                    }
-                }
-                _ => {}
+    fn playback(&mut self, playing: (Option<i64>, Option<i64>), cx: &mut Context<Self>) {
+        if playing != (self.playing_album, self.playing_track) {
+            (self.playing_album, self.playing_track) = playing;
+            cx.notify();
+        }
+    }
+
+    /// Each track's transfer, and the tracks still arriving by record.
+    #[allow(clippy::type_complexity)]
+    fn by_track(
+        transfers: &[koan_ffi::Transfer],
+    ) -> (HashMap<i64, TransferState>, HashMap<i64, Vec<i64>>) {
+        let by_track = transfers.iter().map(|t| (t.track_id, t.state)).collect();
+        let mut arriving: HashMap<i64, Vec<i64>> = HashMap::new();
+        for t in transfers {
+            if matches!(t.state, TransferState::Queued | TransferState::Running)
+                && let Some(album) = t.album_id
+            {
+                arriving.entry(album).or_default().push(t.track_id);
             }
         }
-        if changed {
+        (by_track, arriving)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn transfers(
+        &mut self,
+        (by_track, arriving): (HashMap<i64, TransferState>, HashMap<i64, Vec<i64>>),
+        cx: &mut Context<Self>,
+    ) {
+        if by_track != self.transfers || arriving != self.arriving {
+            self.transfers = by_track;
+            self.arriving = arriving;
+            cx.notify();
+        }
+    }
+
+    fn connection(
+        &mut self,
+        reach: Option<(Option<String>, bool, Option<String>)>,
+        cx: &mut Context<Self>,
+    ) {
+        if reach.is_some() && reach != self.reach {
+            self.reach = reach;
+            self.connection_epoch += 1;
             cx.notify();
         }
     }
@@ -166,6 +194,8 @@ impl Feed {
 
     pub fn reload_playlists(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
+        self.playlists_read += 1;
+        let read = self.playlists_read;
         cx.spawn(async move |this, cx| {
             let playlists = match engine.playlists().await {
                 Ok(p) => p,
@@ -175,6 +205,9 @@ impl Feed {
                 }
             };
             this.update(cx, |feed, cx| {
+                if read != feed.playlists_read {
+                    return;
+                }
                 feed.playlists = playlists
                     .into_iter()
                     .filter(|p| !p.readonly)

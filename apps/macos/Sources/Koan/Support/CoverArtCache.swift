@@ -525,6 +525,13 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             ?? "artEvictionSeq"
         let after = Int64(UserDefaults.standard.integer(forKey: mark))
         guard let gone = try? await engine.artEvictions(after: after) else { return }
+        // The mark is older than what the library keeps, or another
+        // database's: any cover here may be another record's now.
+        if gone.purge {
+            purge()
+            UserDefaults.standard.set(Int(gone.seq), forKey: mark)
+            return
+        }
         let sources: [AlbumArtwork.Source] =
             gone.albums.map { .album($0) } + gone.artists.map { .artist($0) }
             + gone.tracks.map { .track($0) }

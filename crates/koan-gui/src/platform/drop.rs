@@ -36,6 +36,10 @@ pub const NOTHING_TO_PLAY: &str = "Nothing there kōan can play.";
 pub struct Imports {
     pub running: usize,
     problem: Option<String>,
+    /// Rung as the last import asked for finishes: each waits for the one
+    /// before it, so imports land in the order they were asked for, a large
+    /// folder's before a file opened after it.
+    last: Option<futures_channel::oneshot::Receiver<()>>,
 }
 
 impl Global for Imports {}
@@ -83,17 +87,22 @@ pub fn add_files_to_playlist(
 }
 
 fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut App) {
-    let paths: Vec<String> = paths
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
     if paths.is_empty() {
         return;
     }
-    cx.default_global::<Imports>().running += 1;
+    let imports = cx.default_global::<Imports>();
+    imports.running += 1;
+    // In line now, in the order asked, before anything is awaited.
+    let (done, next) = futures_channel::oneshot::channel::<()>();
+    let before = imports.last.replace(next);
     let engine = engine.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let problem = match engine.clone().import_files(paths).await {
+        // The one before ending either way (finished, or dropped) is the turn.
+        if let Some(before) = before {
+            let _ = before.await;
+        }
+        let _done = done;
+        let problem = match engine.clone().import_paths(paths).await {
             // As the Mac app says it: an import that fails is a drop with
             // nothing to play in it. The log has the reason.
             Err(e) => {

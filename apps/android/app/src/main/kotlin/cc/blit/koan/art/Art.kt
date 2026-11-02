@@ -123,6 +123,14 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
         mirror.library.drop(1).collect {
             val gone = artEvictions(seq)
             seq = gone.seq
+            // The mark is older than what the library keeps: any cover cached
+            // by id may be another record's now.
+            if (gone.purge) {
+                SleeveAccents.clear()
+                loader.diskCache?.clear()
+                loader.memoryCache?.clear()
+                return@collect
+            }
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
             val keys = HashSet<String>()
             for ((kind, id) in arts) {

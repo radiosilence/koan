@@ -119,6 +119,10 @@ pub struct Dsp {
     /// The library's version, which moves when profiles sync from another
     /// device.
     library: u64,
+    /// The output this device plays through and the outputs it has, as the
+    /// mirror last said: the overview is of the device that resolves to, and
+    /// with the system's default chosen, plugging in a DAC moves it.
+    output: Option<(koan_ffi::OutputChoice, Vec<String>)>,
     /// The extensions the signed-in server lists, and whether it is out
     /// of reach.
     extensions: Vec<String>,
@@ -154,27 +158,52 @@ impl Dsp {
                 forgotten: HashSet::new(),
                 edit_count: 0,
                 library: 0,
+                output: None,
                 extensions: Vec::new(),
                 offline: false,
                 _observe: observe,
             };
             let connection = cx.global::<Mirror>().connection.clone();
             dsp.connection(&connection, cx);
-            dsp.library = cx.global::<Mirror>().library.read(cx).0;
+            dsp.library = cx.global::<Mirror>().library.read(cx).version;
             dsp.reload(cx);
             dsp
         })
     }
 
-    /// Follows the mirror's library and connection: profiles synced from
-    /// another device arrive as a library change, and what the server
-    /// offers decides Sync and Recently deleted.
+    /// Follows the mirror's library, output and connection: profiles synced
+    /// from another device arrive as a library change, the overview is of
+    /// the output in use, and what the server offers decides Sync and
+    /// Recently deleted.
     fn observe(cx: &mut Context<Self>) -> Vec<Subscription> {
         let mirror = cx.global::<Mirror>();
-        let (library, connection) = (mirror.library.clone(), mirror.connection.clone());
+        let (library, connection, outputs) = (
+            mirror.library.clone(),
+            mirror.connection.clone(),
+            mirror.outputs.clone(),
+        );
         vec![
+            cx.observe(&outputs, |dsp: &mut Dsp, outputs, cx| {
+                // Another device's outputs are that device's to equalise.
+                let output = outputs
+                    .read(cx)
+                    .0
+                    .as_ref()
+                    .filter(|o| o.owner.is_none())
+                    .map(|o| {
+                        let ids = o.devices.iter().chain(&o.renderers).map(|d| d.id.clone());
+                        (o.current.clone(), ids.collect())
+                    });
+                if output.is_some() && output != dsp.output {
+                    let first = dsp.output.is_none();
+                    dsp.output = output;
+                    if !first {
+                        dsp.changed(cx);
+                    }
+                }
+            }),
             cx.observe(&library, |dsp: &mut Dsp, library, cx| {
-                let version = library.read(cx).0;
+                let version = library.read(cx).version;
                 if version != dsp.library {
                     dsp.library = version;
                     dsp.reload(cx);
@@ -238,10 +267,12 @@ impl Dsp {
         let read = self.reads;
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
-            let overview = engine.clone().dsp_overview().await;
             // What AutoEQ offers follows what the output plays, so it is read
             // with it.
-            let suggestion = engine.autoeq_suggestion().await;
+            let (overview, suggestion) = futures::join!(
+                engine.clone().dsp_overview(),
+                engine.clone().autoeq_suggestion()
+            );
             let Ok(stamp) = this.update(cx, |dsp, cx| {
                 if read > dsp.applied {
                     dsp.applied = read;
@@ -637,8 +668,11 @@ impl Dsp {
         cx: &mut Context<Self>,
     ) {
         // An edit refused as stale stays closed: what the rest of its drag
-        // sends names a filter that is gone.
+        // sends names a filter that is gone. Its owner still hears so.
         if self.closed.contains(&edit) {
+            self.read(false, cx, move |stamp, cx| {
+                done(Outcome::Changed.at(stamp, None), cx)
+            });
             return;
         }
         let stored = self.stored.remove(&edit);
@@ -722,9 +756,14 @@ impl Dsp {
                 Outcome::Failed
             }
         };
-        let band = self
-            .lanes
-            .remove(&edit)
+        let lane = self.lanes.remove(&edit);
+        // A step queued behind a save that was refused or failed is not
+        // sent; its owner, waiting on its newest step, hears the outcome.
+        let queued = lane
+            .as_ref()
+            .and_then(|lane| lane.next.as_ref())
+            .map(|(_, _, done)| done.clone());
+        let band = lane
             .filter(|_| outcome == Outcome::Saved)
             .map(|lane| lane.expected);
         // Forgotten while this save was in flight: nothing more of it is
@@ -741,7 +780,13 @@ impl Dsp {
                 }
             }
         }
-        self.read(true, cx, move |stamp, cx| done(outcome.at(stamp, band), cx));
+        self.read(true, cx, move |stamp, cx| {
+            let ended = outcome.at(stamp, band);
+            if let Some(queued) = queued {
+                queued(ended.clone(), cx);
+            }
+            done(ended, cx)
+        });
     }
 
     /// The edit `edit` is over, as its owner heard: nothing more of it

@@ -163,8 +163,12 @@ fn track_rows(rows: &[Row], items: &[QueueItem]) -> HashMap<String, usize> {
 }
 
 /// Moves whenever the library's rows change. Pages that read the library ask
-/// again when it does.
-pub struct Library(pub u64);
+/// again when it does. `known` once the engine's first report has landed, so
+/// a page does not read the library twice at launch.
+pub struct Library {
+    pub version: u64,
+    pub known: bool,
+}
 
 /// What the device in view plays through.
 pub struct Outputs(pub Option<OutputsInfo>);
@@ -231,7 +235,10 @@ impl Mirror {
                 at: Instant::now(),
             }),
             queue: cx.new(|_| Queue::default()),
-            library: cx.new(|_| Library(0)),
+            library: cx.new(|_| Library {
+                version: 0,
+                known: false,
+            }),
             outputs: cx.new(|_| Outputs(None)),
             lock: cx.new(|_| Slice(None)),
             transfers: cx.new(|_| Slice(Vec::new())),
@@ -313,7 +320,8 @@ impl Mirror {
                 }
                 StateSlice::Library { version } => {
                     self.library.update(cx, |held, cx| {
-                        held.0 = version;
+                        held.version = version;
+                        held.known = true;
                         cx.notify();
                     });
                 }
