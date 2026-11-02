@@ -4,9 +4,6 @@
 //! built and tested alone; `examples/theme_sheet.rs` draws every component.
 //! The design is `docs/design/koan-kit.md`.
 
-// GPUI's test macro expands deeply around the menu's refill test.
-#![recursion_limit = "256"]
-
 pub mod app;
 pub mod components;
 pub mod sheet;
