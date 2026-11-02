@@ -559,6 +559,7 @@ impl ArtistPage {
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
                     kind: crate::components::RowKind::Art,
+                    note: None,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()

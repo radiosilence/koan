@@ -504,6 +504,7 @@ impl ShelfPage {
                 gathered: true,
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
+                note: None,
                 kind: RowKind::Art,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));
