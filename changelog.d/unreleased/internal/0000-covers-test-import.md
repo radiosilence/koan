@@ -1,0 +1,1 @@
+- **koan-core's cover store tests compile again.** They named `Path`, which the module no longer imports.
