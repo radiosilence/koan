@@ -209,6 +209,8 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 `FadeIn::new(id, element)`: what arrives after its page (a photograph, a biography) fading in over `Motion::NORMAL`, or appearing under Reduce Motion. It takes no size of its own, so the element lays out as it would unwrapped: a wrapper that fills its parent takes the whole header row from the title beside a photo.
 
+`Reveal::new(id, size, element).arriving(true)`: room made for what arrives late, as an artist's photo does: the slot grows from nothing to `size` over `Motion::NORMAL`, moving what is beside it along, while what it holds fades in, laid out at full size and clipped rather than squeezed. Not arriving (known when the page first drew), it stands at its size. A layout change, so it runs on GPUI frames for its length; instant under Reduce Motion.
+
 `EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
 
 ### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)

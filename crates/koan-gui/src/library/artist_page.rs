@@ -1,7 +1,12 @@
-//! An artist's page: the photograph and biography from their Wikipedia
-//! article, play as the one prominent action, their records under a heading
-//! per kind of release, then the records they feature on. An artist with no
-//! records of their own shows the tracks they appear on instead.
+//! An artist's page: the photograph from their Wikipedia article beside
+//! their name, play as the one prominent action, their records under a
+//! heading per kind of release, the records they feature on, then the
+//! article's opening under "about", as the Mac's page has it. An artist with
+//! no records of their own shows the tracks they appear on instead.
+//!
+//! The photograph and biography usually arrive after the page: the photo's
+//! slot grows to make room, moving the title along, as the photo fades in
+//! (`Reveal`); the biography fades in where a spinner stood.
 //!
 //! A list of variable-height items (the header, headings, rows of tiles,
 //! track rows), so only what is on screen is built, however many records an
@@ -29,8 +34,8 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::components::{Cover, CoverArt, FadeIn, RowMetrics, SectionHeading};
-use crate::theme::Space;
+use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
+use crate::theme::{Space, TypeRole};
 
 /// A biography longer than this opens clamped, with "more" under it.
 const BIO_CLAMP: usize = 300;
@@ -56,6 +61,8 @@ enum Item {
         range: std::ops::Range<usize>,
     },
     Track(usize),
+    /// The biography, or a spinner while it is looked up: always last.
+    About,
 }
 
 pub struct ArtistPage {
@@ -65,6 +72,10 @@ pub struct ArtistPage {
     info: Option<ArtistInfo>,
     /// The biography shown whole rather than its opening.
     expanded: bool,
+    /// The photo became known after the page drew: its slot grows in.
+    photo_arriving: bool,
+    /// The biography is being looked up.
+    looking_up: bool,
     loaded_version: Option<u64>,
     request: u64,
     _load: Option<Task<()>>,
@@ -127,6 +138,8 @@ impl ArtistPage {
             record: None,
             info: None,
             expanded: false,
+            photo_arriving: false,
+            looking_up: true,
             loaded_version: None,
             request: 0,
             _load: None,
@@ -212,11 +225,16 @@ impl ArtistPage {
         self._enrich = Some(cx.spawn(async move |this, cx| {
             let fetched = engine.fetch_artist_info(id).await.ok().flatten();
             this.update(cx, |this, cx| {
-                if fetched.is_some() {
-                    this.info = fetched;
+                this.looking_up = false;
+                if let Some(fetched) = fetched {
+                    let had_photo = this.info.as_ref().is_some_and(|i| i.has_image);
+                    this.photo_arriving |= fetched.has_image && !had_photo && this.record.is_some();
+                    this.info = Some(fetched);
                     this.list.remeasure_items(0..1);
-                    cx.notify();
                 }
+                let last = this.items.len();
+                this.list.remeasure_items(last.saturating_sub(1)..last);
+                cx.notify();
             })
             .ok();
         }));
@@ -255,6 +273,7 @@ impl ArtistPage {
             items.push(Item::Heading("appears on".into(), Heading::Appearances));
             items.extend((0..record.appearances.len()).map(Item::Track));
         }
+        items.push(Item::About);
         items
     }
 
@@ -272,6 +291,10 @@ impl ArtistPage {
             Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(p),
             Item::Tiles { .. } => grid.row,
             Item::Track(_) => rows::art_height(p),
+            Item::About => self
+                .list
+                .bounds_for_item(self.items.len().saturating_sub(1))
+                .map_or(Pixels::ZERO, |b| b.size.height),
         })
     }
 
@@ -296,6 +319,7 @@ impl ArtistPage {
                 }
             }
             Item::Track(i) => Anchored::Track(record.appearances.get(*i)?.id),
+            Item::About => return None,
         };
         Some(Anchor {
             at,
@@ -451,6 +475,7 @@ impl ArtistPage {
         let scale = window.scale_factor();
         match item {
             Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
+            Item::About => self.about(p, cx),
             Item::Heading(title, _) => SectionHeading::new(title).into_any_element(),
             Item::FeaturesHeading => {
                 let items: Vec<Playable> = record
@@ -609,11 +634,21 @@ impl ArtistPage {
             .unwrap_or_default();
         // No box until the artist is known to have a photo: the header
         // starts at the page's edge. Once known, the box holds its place with
-        // the placeholder in it, so the photo landing moves nothing.
+        // the placeholder in it, so the photo itself landing moves nothing;
+        // a photo known only after the page drew grows its box in.
         let side = RowMetrics::artist_photo(&p.look);
+        let arriving = self.photo_arriving;
         let photo = self.info.as_ref().is_some_and(|i| i.has_image).then(|| {
             let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
-            FadeIn::new(("artist-photo", id as u64), Cover::new(art, side))
+            Reveal::new(
+                ("artist-photo", id as u64),
+                Size {
+                    width: side,
+                    height: side,
+                },
+                FadeIn::new(("artist-photo-image", id as u64), Cover::new(art, side)),
+            )
+            .arriving(arriving)
         });
         let albums = record.albums.len() as u64;
         let mut header = super::header::playable_header(&self.lib, item, name, cx)
@@ -621,48 +656,77 @@ impl ArtistPage {
         if let Some(photo) = photo {
             header = header.art(photo);
         }
-        if let Some(info) = &self.info
-            && let Some(bio) = &info.bio
-        {
-            let long = bio.len() > BIO_CLAMP;
-            let mut text = div()
-                .typeset(p, Type::Control, p.ink)
-                .child(bio.replace('\n', "\n\n"));
-            if long && !self.expanded {
-                text = text.line_clamp(4);
+        div()
+            .w_full()
+            .pt(RowMetrics::page_top(&p.look))
+            .pb(RowMetrics::header_gap(&p.look))
+            .child(header)
+    }
+
+    /// The article's opening, under "about" after the records, as the Mac's
+    /// page has it; a spinner while it is looked up; nothing when there is
+    /// none.
+    fn about(&mut self, p: &Paint, cx: &mut Context<Self>) -> AnyElement {
+        let id = self.artist_id;
+        let Some(bio) = self.info.as_ref().and_then(|i| i.bio.clone()) else {
+            if !self.looking_up {
+                return div().into_any_element();
             }
-            let links = div()
+            return div()
+                .pt(p.space(Space::L))
                 .flex()
-                .gap(p.space(Space::M))
-                .typeset(p, Type::Fine, p.muted)
-                .when(long && !self.expanded, |d| {
-                    d.child(
-                        div()
-                            .id("bio-more")
-                            .cursor_pointer()
-                            .underline()
-                            .child("more")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.expanded = true;
-                                this.list.remeasure_items(0..1);
-                                cx.notify();
-                            })),
-                    )
-                })
-                .when_some(info.bio_url.clone(), |d, url| {
-                    d.child(
-                        div()
-                            .id("bio-source")
-                            .cursor_pointer()
-                            .underline()
-                            .child("wikipedia")
-                            .on_click(move |_, _, cx| cx.open_url(&url)),
-                    )
-                })
-                .when_some(info.image_credit.clone(), |d, credit| {
-                    d.child(format!("photo: {credit}"))
-                });
-            header = header.body(FadeIn::new(
+                .items_center()
+                .gap(p.space(Space::S))
+                .typeset(p, Type::Control, p.muted)
+                .child(Spinner::new(p.look.font_size(TypeRole::Control)))
+                .child("looking up biography…")
+                .into_any_element();
+        };
+        let info = self.info.as_ref();
+        let long = bio.len() > BIO_CLAMP;
+        let mut text = div()
+            .max_w(p.look.spaced(680.0))
+            .typeset(p, Type::Control, p.muted)
+            .child(bio.replace('\n', "\n\n"));
+        if long && !self.expanded {
+            text = text.line_clamp(4);
+        }
+        let links = div()
+            .flex()
+            .gap(p.space(Space::M))
+            .typeset(p, Type::Fine, p.muted)
+            .when(long && !self.expanded, |d| {
+                d.child(
+                    div()
+                        .id("bio-more")
+                        .cursor_pointer()
+                        .underline()
+                        .child("more")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.expanded = true;
+                            let last = this.items.len();
+                            this.list.remeasure_items(last.saturating_sub(1)..last);
+                            cx.notify();
+                        })),
+                )
+            })
+            .when_some(info.and_then(|i| i.bio_url.clone()), |d, url| {
+                d.child(
+                    div()
+                        .id("bio-source")
+                        .cursor_pointer()
+                        .underline()
+                        .child("from wikipedia")
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                )
+            })
+            .when_some(info.and_then(|i| i.image_credit.clone()), |d, credit| {
+                d.child(format!("photo: {credit}"))
+            });
+        div()
+            .pb(RowMetrics::page_top(&p.look))
+            .child(SectionHeading::new("about"))
+            .child(FadeIn::new(
                 ("artist-bio", id as u64),
                 div()
                     .flex()
@@ -670,13 +734,8 @@ impl ArtistPage {
                     .gap(p.space(Space::S))
                     .child(text)
                     .child(links),
-            ));
-        }
-        div()
-            .w_full()
-            .pt(RowMetrics::page_top(&p.look))
-            .pb(RowMetrics::header_gap(&p.look))
-            .child(header)
+            ))
+            .into_any_element()
     }
 
     /// The artist's photo, once it has been found and decoded.
