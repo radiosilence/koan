@@ -17,7 +17,7 @@ use koan_kit::app::*;
 use crate::components::{NavNote, ProgressRow};
 use crate::engine::engine;
 use crate::mirror::Mirror;
-use crate::platform::actions::{ForceRescan, RebuildIndex, Rescan, Sync};
+use crate::platform::actions::{ClearDownloadedFiles, ForceRescan, RebuildIndex, Rescan, Sync};
 use crate::theme::Tone;
 
 pub struct ActivityHandle(pub Entity<Activity>);
@@ -91,6 +91,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &Rescan, cx| a.update(cx, |a, cx| a.scan(false, cx)));
     cx.on_action(move |_: &ForceRescan, cx| b.update(cx, |a, cx| a.scan(true, cx)));
     cx.on_action(move |_: &Sync, cx| c.update(cx, |a, cx| a.sync(cx)));
+    // App-wide, as the menu's other tasks are, so it works with any window
+    // in front; once the window is handed back, since it asks.
+    cx.on_action(|_: &ClearDownloadedFiles, cx| cx.defer(clear_downloads));
     // Asked first, as Settings asks: what goes with the index is said. A
     // global action runs while GPUI holds the window, so the question waits
     // until it is handed back.
@@ -391,4 +394,77 @@ impl Render for Activity {
             )
             .into_any_element()
     }
+}
+
+/// Clears the downloaded copies after asking how much goes, through
+/// Settings' task model, so it waits for nothing that holds the downloads
+/// and says how it went on the notice line.
+fn clear_downloads(cx: &mut App) {
+    use crate::settings::model::Uses;
+    let bytes = cx.global::<Mirror>().cache.read(cx).0;
+    let model = cx.global::<crate::settings::Settings>().model.clone();
+    if bytes == 0 {
+        crate::notice::show("Nothing downloaded to clear", Tone::Muted, cx);
+        return;
+    }
+    if model.read(cx).conflicts(Uses::DOWNLOADS) {
+        crate::notice::show(
+            "Downloads are in use: clear them once that finishes",
+            Tone::Muted,
+            cx,
+        );
+        return;
+    }
+    let Some(window) = cx.active_window() else {
+        return;
+    };
+    window
+        .update(cx, |_, window, cx| {
+            crate::components::sheet::confirm(
+                crate::components::sheet::Confirm {
+                    title: "clear downloaded files".into(),
+                    verb: "clear".into(),
+                    destructive: true,
+                    lines: vec![
+                        format!(
+                            "The copies of tracks downloaded from your server are deleted from this device: {}.",
+                            crate::time::bytes(bytes)
+                        )
+                        .into(),
+                    ],
+                    note: Some(
+                        "The tracks stay in the library and download again when played.".into(),
+                    ),
+                },
+                window,
+                cx,
+                move |cx| {
+                    model.update(cx, |m, cx| {
+                        m.run(
+                            "Clearing downloads",
+                            Uses::DOWNLOADS,
+                            cx,
+                            |engine| engine.clear_download_cache(),
+                            |_, result, cx| match result {
+                                Ok(c) => crate::notice::show(
+                                    format!(
+                                        "Freed {} across {}",
+                                        crate::time::bytes(c.bytes),
+                                        crate::library::chrome::count(c.files as u64, "file", "files")
+                                    ),
+                                    Tone::Muted,
+                                    cx,
+                                ),
+                                Err(e) => crate::notice::show(
+                                    format!("Downloads not cleared: {e}"),
+                                    Tone::Bad,
+                                    cx,
+                                ),
+                            },
+                        )
+                    })
+                },
+            )
+        })
+        .ok();
 }
