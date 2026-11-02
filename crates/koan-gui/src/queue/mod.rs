@@ -1411,6 +1411,45 @@ fn clear(count: u64, window: &mut Window, cx: &mut App) {
     );
 }
 
+impl QueueView {
+    /// A drag over the page, wherever the rows' own handlers did not take
+    /// it: outside the page the insertion line goes, and below the last row
+    /// it moves to the end, however fast the pointer left the row above.
+    fn drag_over_page(
+        &mut self,
+        page: Bounds<Pixels>,
+        at: Point<Pixels>,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let last = count
+            .checked_sub(1)
+            .and_then(|last| self.list.row_bounds(last))
+            .map(|b| b.bottom());
+        let Some(wanted) = page_drop(page.contains(&at), last, at.y, count) else {
+            return;
+        };
+        if self.drop_at != wanted {
+            self.drop_at = wanted;
+            cx.notify();
+        }
+    }
+}
+
+/// Where a drag over the queue's page, outside its rows, puts the insertion
+/// point: none outside the page, the end below the last row drawn (at
+/// `last`, its bottom edge), and otherwise what the rows said, which is
+/// `None` here.
+fn page_drop(inside: bool, last: Option<Pixels>, y: Pixels, count: usize) -> Option<Option<usize>> {
+    if !inside {
+        Some(None)
+    } else if last.is_some_and(|bottom| y > bottom) {
+        Some(Some(count))
+    } else {
+        None
+    }
+}
+
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
@@ -1470,14 +1509,17 @@ impl Render for QueueView {
                     this.menu_row = None;
                 }
             }))
-            // A library drag that leaves the queue takes its insertion line
-            // with it, so a drag released elsewhere leaves none behind.
+            // A drag that leaves the queue takes its insertion line with it,
+            // so a drag released elsewhere leaves none behind; one in the
+            // blank space under the last row lands at the end.
             .on_drag_move::<PlayableDrag>(cx.listener(
-                |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
-                    if this.drop_at.is_some() && !event.bounds.contains(&event.event.position) {
-                        this.drop_at = None;
-                        cx.notify();
-                    }
+                move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    this.drag_over_page(event.bounds, event.event.position, count, cx)
+                },
+            ))
+            .on_drag_move::<DraggedRows>(cx.listener(
+                move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
+                    this.drag_over_page(event.bounds, event.event.position, count, cx)
                 },
             ))
             // Below the last row: the end of the queue.
@@ -1490,11 +1532,8 @@ impl Render for QueueView {
                 this.drop_library(dragged, dest, cx);
             }))
             .on_drag_move::<PlaylistDrag>(cx.listener(
-                |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                    if this.drop_at.is_some() && !event.bounds.contains(&event.event.position) {
-                        this.drop_at = None;
-                        cx.notify();
-                    }
+                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    this.drag_over_page(event.bounds, event.event.position, count, cx)
                 },
             ))
             .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
@@ -1516,5 +1555,22 @@ impl Render for QueueView {
                 let view = view.clone();
                 move |menu, _, cx| row_menu(menu, &view, cx)
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Below the last row the drop is at the end, whatever row the pointer
+    /// last crossed; outside the page there is none; over the rows, theirs.
+    #[test]
+    fn the_blank_under_the_rows_is_the_end() {
+        let at = |y: f32| Pixels::from(y);
+        assert_eq!(page_drop(true, Some(at(200.)), at(260.), 5), Some(Some(5)));
+        assert_eq!(page_drop(false, Some(at(200.)), at(260.), 5), Some(None));
+        assert_eq!(page_drop(true, Some(at(200.)), at(120.), 5), None);
+        // The last row off screen: the list fills the page, nothing is blank.
+        assert_eq!(page_drop(true, None, at(260.), 5), None);
     }
 }

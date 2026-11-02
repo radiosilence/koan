@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use crate::components::{Button, ButtonKind, TextField};
-use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
+use crate::components::{Button, ButtonKind, CopyButton, TextField};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
@@ -202,25 +202,20 @@ impl Keys {
 /// A key or app password just made, shown this once.
 fn shown_once(kind: Kind, name: String, secret: String) -> Sheet {
     let noun = kind.noun();
-    let copy = secret.clone();
     Sheet::new(format!("{noun} for {name}"))
         .kept()
         .message("This is the only time it is shown. Copy it into the app now; if it is lost, revoke it and make another.")
         .content(move |look, _, _| {
-            let copy = copy.clone();
             div()
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::S))
                 .child(text(secret.clone(), TypeRole::Control, Tone::Strong, look))
-                .child(
-                    Button::new("copy-secret", ButtonKind::Bordered)
-                        .label(format!("Copy {noun}"))
-                        .icon(Icon::Copy)
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                        }),
-                )
+                .child(CopyButton::new(
+                    "copy-secret",
+                    format!("Copy {noun}"),
+                    secret.clone(),
+                ))
                 .into_any_element()
         })
         .done()

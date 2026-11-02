@@ -53,6 +53,23 @@ impl RenderOnce for MenuPanel {
     }
 }
 
+/// The theme's popover holding controls rather than a menu's rows (a
+/// browser's filters): the menu panel's ground and hairline, `points` wide at
+/// 100 %, its content `m` in from the edge and `s` apart.
+pub fn popover_panel(points: f32, look: &Look) -> gpui_kit::Div {
+    div()
+        .w(look.spaced(points))
+        .p(look.space(Space::M))
+        .flex()
+        .flex_col()
+        .gap(look.space(Space::S))
+        .bg(look.palette.bg.hsla())
+        .border(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .text_role(TypeRole::Body, look)
+        .text_color(look.palette.ink.hsla())
+}
+
 /// A row of a menu: its label in `control`, `ink`, after its glyph when
 /// icons are on, on `surface` under the pointer or the arrow keys. A choice
 /// that is in force is ticked; a destructive one is in `bad`.

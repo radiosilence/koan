@@ -19,6 +19,7 @@ mod bars;
 mod button;
 pub mod choice;
 mod collection;
+mod copy;
 mod cover;
 mod dense;
 mod details;
@@ -73,6 +74,7 @@ pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
+pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
@@ -82,7 +84,8 @@ pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
+    form_text,
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
@@ -91,7 +94,7 @@ pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
-pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
+pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::Placeholder;
