@@ -591,6 +591,7 @@ fn trim_cache(inner: &Inner, now: bool) {
                 // Played entries pointed at the files just removed. Pending
                 // again, they are fetched when the window comes back to them.
                 inner.state.reset_items_with_missing_files();
+                inner.state.downloads().forget_removed();
             }
         }
         Err(e) => log::warn!("cache eviction: could not open the database: {e}"),

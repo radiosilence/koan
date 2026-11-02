@@ -624,10 +624,19 @@ impl QueueView {
             let item = &self.queue.read(cx).items[ix];
             let (status, track, on_server, on_disk) =
                 (item.status, item.track_id, item.on_server, item.on_disk);
+            let mut transfer = None;
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
-                favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
+                let feed = feed.read(cx);
+                favourite = Some(feed.is_favourite(Playable::Track(track)));
+                transfer = feed.transfers.get(&track).copied();
             }
-            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk);
+            // Without the library's feed (an offscreen render), the row's own
+            // status is all there is to go on.
+            if self.feed.is_none() && status == EntryStatus::Downloading {
+                transfer = Some(koan_ffi::TransferState::Running);
+            }
+            availability =
+                crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);

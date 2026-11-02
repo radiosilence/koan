@@ -5734,7 +5734,14 @@ impl KoanEngine {
                     // forgotten. Its figures are `spawn_figures`'.
                     let store = engine.state.downloads();
                     let store_version = store.version();
-                    if store_version != last_store {
+                    // A transfer starting, settling or forgotten moves the
+                    // queue's rows (a row downloading is one with a transfer
+                    // running), and one settling has written its track's
+                    // file: the queue reads where its tracks are again now,
+                    // not when the library's coalesced change goes out.
+                    let store_moved = store_version != last_store;
+                    let mut settled = false;
+                    if store_moved {
                         last_store = store_version;
                         let transfers = store.all();
                         let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
@@ -5772,6 +5779,7 @@ impl KoanEngine {
                             .collect();
                         if running.difference(&now_running).next().is_some() {
                             landed = true;
+                            settled = true;
                         }
                         running = now_running;
                     }
@@ -5819,8 +5827,9 @@ impl KoanEngine {
                     // The entry under the cursor carries the server's outage,
                     // which moves no version.
                     let unreachable = koan_core::helpers::server_unreachable();
-                    let queue_moved =
-                        queue_version != last_queue || unreachable != last_unreachable;
+                    let queue_moved = queue_version != last_queue
+                        || unreachable != last_unreachable
+                        || store_moved;
                     last_unreachable = unreachable;
                     let library_moved = library != last_library;
                     last_queue = queue_version;
@@ -5838,8 +5847,9 @@ impl KoanEngine {
                             .relink(&koan_core::helpers::queue_relinks(&db, &engine.state));
                     }
                     if (queue_moved || library_moved) && target.is_none() {
-                        let slices = queue
-                            .update(&engine.state, library_moved, |ids| engine.queue_joins(ids));
+                        let slices = queue.update(&engine.state, library_moved || settled, |ids| {
+                            engine.queue_joins(ids)
+                        });
                         for slice in slices {
                             out.publish(slice);
                         }
