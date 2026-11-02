@@ -1,0 +1,1 @@
+- **A sync's last step no longer waits on one request per missing album.** Albums the server's listing left out are confirmed eight at a time, and each finishing step's time is logged.
