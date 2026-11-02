@@ -47,6 +47,9 @@ pub struct Shell {
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
     library: Option<Entity<LibraryStage>>,
+    /// The downloads page, while it is on stage: made on arriving and let go
+    /// on leaving, so its slices wake nothing while it is not shown.
+    downloads: Option<Entity<crate::downloads::DownloadsPage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
     /// Whether the sidebar shows, and how wide; kept with the window's
@@ -111,6 +114,7 @@ impl Shell {
             queue,
             queue_controls,
             library: None,
+            downloads: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             sidebar_width: f32::from_bits(
@@ -405,7 +409,21 @@ impl Render for Shell {
                 )
             }
         };
-        let stage = match self.nav.read(cx).current() {
+        let route = self.nav.read(cx).current();
+        if route != Route::Downloads {
+            self.downloads = None;
+        }
+        let stage = match route {
+            Route::Downloads => {
+                let nav = self.nav.clone();
+                self.downloads
+                    .get_or_insert_with(|| {
+                        cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx))
+                    })
+                    .clone()
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element()
+            }
             Route::Queue => self
                 .queue
                 .clone()

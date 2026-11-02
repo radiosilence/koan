@@ -1818,6 +1818,29 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// Every item for one of `track_ids` that failed goes back to waiting for
+    /// its file, to be fetched again. Returns the tracks that had one.
+    pub fn retry_failed(&self, track_ids: &[i64]) -> Vec<i64> {
+        let mut pl = self.playlist.write();
+        let mut retried = Vec::new();
+        for item in pl.items.iter_mut() {
+            if let (ItemState::Failed(_), Some(track)) = (&item.state, item.db_id)
+                && track_ids.contains(&track)
+            {
+                item.state = ItemState::Pending;
+                if !retried.contains(&track) {
+                    retried.push(track);
+                }
+            }
+        }
+        drop(pl);
+        if !retried.is_empty() {
+            self.pending_version.fetch_add(1, Ordering::AcqRel);
+            self.bump_version();
+        }
+        retried
+    }
+
     /// An item's own state, without the rest of it.
     pub fn item_state(&self, id: QueueItemId) -> Option<ItemState> {
         let pl = self.playlist.read();
@@ -2580,6 +2603,44 @@ mod tests {
             state,
             played: false,
         }
+    }
+
+    // --- retrying ---
+
+    #[test]
+    fn a_retry_sends_only_failed_items_of_those_tracks_back_to_waiting() {
+        let state = SharedPlayerState::new();
+        let failed = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("failed", ItemState::Failed("404".into()))
+        };
+        let other = PlaylistItem {
+            db_id: Some(2),
+            ..make_item("other", ItemState::Failed("404".into()))
+        };
+        let ready = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("ready", ItemState::Ready)
+        };
+        let (failed_id, other_id, ready_id) = (failed.id, other.id, ready.id);
+        state.add_items(vec![failed, other, ready]);
+        let pending = state.pending_version();
+
+        assert_eq!(state.retry_failed(&[1, 3]), vec![1]);
+        assert!(
+            state.pending_version() > pending,
+            "the download queue hears of it"
+        );
+        assert!(matches!(
+            state.item_state(failed_id),
+            Some(ItemState::Pending)
+        ));
+        assert!(matches!(
+            state.item_state(other_id),
+            Some(ItemState::Failed(_))
+        ));
+        assert!(matches!(state.item_state(ready_id), Some(ItemState::Ready)));
+        assert!(state.retry_failed(&[3]).is_empty());
     }
 
     // --- missing files ---

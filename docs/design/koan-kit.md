@@ -156,6 +156,10 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
 
+### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)
+
+`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed a `ProgressReader` and reads it each frame it is drawn, asking for the next; one off screen reads nothing. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
+
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
 `sheet::{panel, head, head_data, body, note}`: the square panel, its head with the title and trailing actions, its scrolling body. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.

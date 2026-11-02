@@ -577,6 +577,33 @@ impl DownloadStore {
             .count()
     }
 
+    /// Want nothing from the live transfer for `track_id`: it is abandoned,
+    /// and its worker withdraws it when it next asks, leaving no row. Returns
+    /// the queue entries that were waiting on it.
+    pub fn let_go(&self, track_id: i64) -> Vec<QueueItemId> {
+        let mut entries = self.entries.write();
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|e| e.download.track_id == track_id && e.is_live())
+        else {
+            return Vec::new();
+        };
+        entry.keep = false;
+        std::mem::take(&mut entry.waiters).into_iter().collect()
+    }
+
+    /// Drop the settled rows for these tracks, as they are fetched again.
+    pub fn forget_settled(&self, track_ids: &[i64]) {
+        let mut entries = self.entries.write();
+        let before = entries.len();
+        entries.retain(|e| e.is_live() || !track_ids.contains(&e.download.track_id));
+        let changed = entries.len() != before;
+        drop(entries);
+        if changed {
+            self.bump();
+        }
+    }
+
     /// Drop everything that has already settled. The running ones are not this
     /// call's business — stopping a transfer is a different verb.
     pub fn clear_settled(&self) {
@@ -808,6 +835,36 @@ mod tests {
             PathBuf::from(format!("/cache/{title}.opus")),
         );
         (track_id, waiter, feed)
+    }
+
+    #[test]
+    fn letting_go_abandons_the_transfer_and_hands_back_its_waiters() {
+        let store = DownloadStore::new();
+        let (track_id, first, _) = running(&store, 1, "train");
+        let again = QueueItemId::new();
+        store.join(track_id, Some(again));
+        store.join(track_id, None);
+
+        let waiters: HashSet<_> = store.let_go(track_id).into_iter().collect();
+        assert_eq!(waiters, HashSet::from([first, again]));
+        assert!(store.abandoned(track_id), "kept for its own sake no longer");
+        assert!(store.let_go(99).is_empty());
+    }
+
+    #[test]
+    fn a_retried_track_loses_its_settled_row_and_no_other() {
+        let store = DownloadStore::new();
+        let (failed, _, _) = running(&store, 1, "failed");
+        store.end(failed, Outcome::Failed("404".into()));
+        let (done, _, _) = running(&store, 2, "done");
+        store.end(done, Outcome::Done);
+        let (live, _, _) = running(&store, 3, "live");
+
+        let version = store.version();
+        store.forget_settled(&[failed, live]);
+        assert!(store.version() > version);
+        let left: Vec<i64> = store.all().iter().map(|d| d.track_id).collect();
+        assert_eq!(left, vec![live, done], "a live transfer is not settled");
     }
 
     #[test]

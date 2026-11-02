@@ -11,6 +11,7 @@
 //! as it renders. Interactive ones take an id, under which they keep what
 //! the pointer is doing and the state of their transitions.
 
+mod availability;
 mod badge;
 mod button;
 mod cover;
@@ -50,6 +51,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
+pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};

@@ -20,8 +20,9 @@ use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
 use super::tokens::{Paint, Type};
-use crate::components::{Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow};
-use crate::theme::{Icon, KoanIcon};
+use crate::components::{
+    AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
+};
 
 /// A row of one line: the title alone.
 pub fn height(p: &Paint) -> Pixels {
@@ -82,22 +83,6 @@ pub struct RowState {
     /// The list's row kind: one for every row, since a list lays out
     /// uniform rows (`height`, `text_height` or `art_height`).
     pub kind: RowKind,
-}
-
-/// Where the file is, or how its download is going.
-fn availability(p: &Paint, track: &Track, transfer: Option<TransferState>) -> Option<KoanIcon> {
-    let (icon, color) = match transfer {
-        Some(TransferState::Queued) => (Icon::Downloads, p.muted),
-        Some(TransferState::Running) => (Icon::Downloads, p.accent),
-        Some(TransferState::Failed) => (Icon::WarningFilled, p.bad),
-        _ => match (track.on_server, track.on_disk) {
-            (true, true) => (Icon::CloudKept, p.ink),
-            (true, false) => (Icon::Cloud, p.muted),
-            (false, true) => (Icon::OnDevice, p.ink),
-            (false, false) => return None,
-        },
-    };
-    Some(KoanIcon::new(icon).role(Type::Fine).color(color))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -210,7 +195,16 @@ pub fn track_row<V: TrackList>(
                 .child(track.title.clone()),
         )
         .when(state.gathered || names_artist, |row| row.line(detail))
-        .figure(14.0, div().children(availability(p, track, state.transfer)))
+        .figure(
+            14.0,
+            AvailabilityMark::new(crate::transfers::of_track(
+                track.id,
+                track.on_server,
+                track.on_disk,
+                state.transfer,
+            ))
+            .picked(state.selected),
+        )
         .figure(20.0, heart)
         .figure(110.0, div().children(format::quality(track)))
         .figure(64.0, format::duration(track.duration_ms))
