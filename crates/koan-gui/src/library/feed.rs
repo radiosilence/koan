@@ -185,6 +185,9 @@ impl Feed {
     /// again after it, as the Mac does.
     pub fn toggle_favourite(&mut self, item: Playable, cx: &mut Context<Self>) {
         let on = self.favourites.flip(item);
+        if on {
+            crate::rainbow::celebrate(cx);
+        }
         cx.notify();
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {

@@ -311,7 +311,13 @@ impl<V: TileHost> Render for TileView<V> {
                 (hovered.is_some() || state.favourite)
                     .then_some((state.favourite, hovered == Some(Part::Heart))),
             )
-            .pick(state.selecting.then_some(state.selected));
+            .pick(state.selecting.then_some(state.selected))
+            // The rainbow refracts through the sleeve the pointer is on.
+            .sheen(
+                crate::rainbow::Painted::now()
+                    .filter(|_| over_sleeve)
+                    .map(|brat| (ElementId::from("tile-sheen"), brat)),
+            );
 
         let title = div()
             .w_full()

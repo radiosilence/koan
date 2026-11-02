@@ -881,7 +881,7 @@ impl Render for Transport {
                     // credited artist to the artist.
                     .children(entry.map(|e| {
                         let album = e.album_id.map(crate::navigator::Route::Album);
-                        links::names(
+                        let names = links::names(
                             vec![
                                 links::link(
                                     "np-title".into(),
@@ -895,6 +895,17 @@ impl Render for Transport {
                             TypeRole::Meta,
                             p.strong,
                             &p,
+                        );
+                        // The rainbow's shimmer through the playing title.
+                        div().relative().child(names).when_some(
+                            crate::rainbow::Painted::palette(cx),
+                            |title, brat| {
+                                title.child(
+                                    crate::components::Sheen::new("np-title-sheen")
+                                        .brat(brat)
+                                        .strength(0.35),
+                                )
+                            },
                         )
                     }))
                     .children(entry.map(|e| {
@@ -1261,6 +1272,7 @@ impl Render for Seek {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .prism(crate::rainbow::Painted::palette(cx).is_some())
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)

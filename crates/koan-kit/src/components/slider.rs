@@ -32,6 +32,8 @@ pub struct Slider {
     reach: Option<Glide>,
     /// What it sets, for a screen reader: "seek", "volume".
     name: Option<SharedString>,
+    /// A gliding fill drawn as the rainbow appearance's trail.
+    prism: bool,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
@@ -201,7 +203,15 @@ impl Slider {
             on_commit: None,
             glide: None,
             reach: None,
+            prism: false,
         }
+    }
+
+    /// With a `glide`, the fill as a rainbow trail running back from the
+    /// playhead: the hidden rainbow appearance's seek bar.
+    pub fn prism(mut self, prism: bool) -> Self {
+        self.prism = prism;
+        self
     }
 
     /// The value moves on its own from `value` as `glide` says; see `Glide`.
@@ -296,6 +306,7 @@ impl RenderOnce for Slider {
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
         let glide = self.glide.clone().filter(|_| SHADED);
+        let prism = self.prism;
         let reach = self.reach.clone();
         let rule = look.palette.rule.hsla();
 
@@ -449,6 +460,11 @@ impl RenderOnce for Slider {
             })
             .when_some(glide, |rail, glide| {
                 let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
+                let program = if prism {
+                    &super::prism::PRISM_GLIDE
+                } else {
+                    &GLIDE
+                };
                 rail.child(
                     canvas(
                         move |_, window, cx| {
@@ -463,7 +479,7 @@ impl RenderOnce for Slider {
                             glide.0.attach(false, window, cx);
                             glide
                         },
-                        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
+                        |bounds, glide, window, _| glide.0.paint(program, None, bounds, window),
                     )
                     .absolute()
                     .top_0()
