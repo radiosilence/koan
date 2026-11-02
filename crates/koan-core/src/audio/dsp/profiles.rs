@@ -811,7 +811,8 @@ pub fn save(imported: Imported, name: Option<&str>) -> Result<String, String> {
     };
     let filters = (!imported.filters.is_empty()).then_some(imported.filters);
     let source = imported.source;
-    persist(|cfg| {
+    let rewrote = impulses.is_some();
+    let changed = persist_changed(|cfg| {
         let profile = profile_mut(&mut cfg.dsp.profiles, &name);
         for s in source {
             if !profile.source.contains(&s) {
@@ -831,8 +832,12 @@ pub fn save(imported: Imported, name: Option<&str>) -> Result<String, String> {
         if let Some(impulses) = impulses {
             profile.impulses = impulses;
         }
-    })
-    .map_err(|e| e.to_string())?;
+    })?;
+    // Responses written over files of the same names leave the config as it
+    // was, and are a change all the same.
+    if rewrote && !changed {
+        files_changed();
+    }
     Ok(name)
 }
 
@@ -1220,10 +1225,16 @@ fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String
 fn persist_changed(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<bool, String> {
     let changed = Config::persist_changed(mutate).map_err(|e| e.to_string())?;
     if changed {
-        crate::signal::engine_changed().bump();
-        crate::remote::dsp_sync::changed();
+        files_changed();
     }
     Ok(changed)
+}
+
+/// Says the profiles changed: to every client watching the engine, and to
+/// the account's other devices through the server.
+fn files_changed() {
+    crate::signal::engine_changed().bump();
+    crate::remote::dsp_sync::changed();
 }
 
 /// Where `name` keeps its files: responses, and an AutoEQ result's CSV.
