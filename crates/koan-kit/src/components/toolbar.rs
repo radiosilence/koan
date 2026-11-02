@@ -210,6 +210,12 @@ impl ToolbarButton {
         self
     }
 
+    /// The tooltip: what it does and its keys, "back (⌘[)".
+    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
+        self.button = self.button.help(help);
+        self
+    }
+
     /// Drawn pressed: a toggle that is on, or a menu or panel it opened
     /// that is showing.
     pub fn selected(mut self, selected: bool) -> Self {

@@ -1,0 +1,1 @@
+- **Tooltips with keys, and a remote library's files from the GUI app's menus.** Toolbar and transport buttons say what they do and the keys that do the same, as the Mac app's do; the library's and the queue's context menus download tracks to the cache now and remove downloaded copies, asking first, and the queue's menu organises its tracks.

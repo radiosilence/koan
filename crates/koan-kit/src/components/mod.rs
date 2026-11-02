@@ -22,12 +22,14 @@ mod collection;
 mod copy;
 mod cover;
 mod dense;
+mod details;
 mod drag;
 mod empty;
 mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod inspector;
 mod level;
 mod menu;
 mod metrics;
@@ -54,6 +56,7 @@ mod suggestions;
 mod table;
 mod toggle;
 mod toolbar;
+mod viewer;
 mod window;
 
 use std::sync::Arc;
@@ -74,6 +77,7 @@ pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
+pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
 pub use fade::FadeIn;
@@ -83,6 +87,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
     form_text,
 };
+pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
@@ -113,6 +118,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use viewer::Viewer;
 pub use window::SecondaryWindow;
 
 use crate::theme::{Look, MARK, Motion};

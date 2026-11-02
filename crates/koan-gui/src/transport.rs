@@ -28,7 +28,7 @@ use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::ShowEq;
+use crate::platform::actions::{Next, Previous, ShowEq, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -694,6 +694,12 @@ fn trailing_item(p: &Paint) -> Div {
 /// The group a text button's glyph follows the pointer by.
 const TEXT_BUTTON: &str = "transport-text-button";
 
+/// A transport control's tooltip.
+fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = SharedString::from(text);
+    move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
+}
+
 /// A transport control: `on` for the two that toggle, underlined in the
 /// accent while on and `muted` while off, as an icon toggle is.
 fn control(
@@ -776,7 +782,28 @@ impl Render for Transport {
             .flex()
             .items_center()
             .gap(p.space(Space::M))
-            .child(covers::draw(self.cover.clone(), COVER, p.surface))
+            .child(
+                div()
+                    .id("transport-cover")
+                    .flex_shrink_0()
+                    .when_some(
+                        entry.and_then(|e| {
+                            e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
+                        }),
+                        |d, (album, title, artist)| {
+                            d.cursor_pointer().on_click(move |_, window, cx| {
+                                crate::artwork::show(
+                                    album,
+                                    title.clone(),
+                                    Some(artist.clone().into()),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        },
+                    )
+                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+            )
             .child(
                 div()
                     .flex()
@@ -869,11 +896,13 @@ impl Render for Transport {
                     )
                     .child(
                         control("previous", Icon::Previous, "prev", None, &p)
+                            .tooltip(tip(help("previous track", &Previous, cx)))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
                         control("next", Icon::Next, "next", None, &p)
+                            .tooltip(tip(help("next track", &Next, cx)))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
