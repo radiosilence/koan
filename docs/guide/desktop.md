@@ -18,7 +18,7 @@ Files and folders dropped on the queue are added to the library where they lie a
 
 The same context menu has download to cache, which fetches a remote library's tracks onto this device now, and remove downloaded files, which asks first and deletes those copies; they stay on the server and download again when played. The queue's menu has them too, with organise.
 
-Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
+Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. A pattern typed or changed can be saved under a name, which stores it in `config.toml` for every kōan on that configuration; the sheet says whether the name is new or replaces one before it saves. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
 
 Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite signs in, asking first when it would replace an account signed in elsewhere, and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
 
@@ -35,6 +35,8 @@ On macOS the desktop app's Dock menu shows what is playing, with its heart, and 
 The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the kōan button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
+
+If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
@@ -82,6 +84,10 @@ A playlist's page is laid out as the queue is, grouped by record or flat (the al
 
 Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens that kind's browser with the same filter on (favourites, played in the last month, or on this device), so the full listing starts with what the preview showed. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
 
+## History
+
+History lists every play, most recent first, under a heading per day, with the time each started where a record's page puts the track number. A track played three times is three rows. Plays another client scrobbled to the server are marked. Rows play, queue and drag as the library's do; Delete forgets the selected plays and "remove from history" in the context menu forgets those under the pointer, and the toolbar's ⋯ clears everything. Each asks first, naming what goes; signed in to a kōan server, forgetting reaches every device on the account. The toolbar's filter narrows it as it does the browsers.
+
 ## Search
 
 The field at the top of the sidebar searches the library as you type, ⌘K or `/` reaching it from anywhere. Under it, a panel suggests a few tracks, records and artists; the arrows light one and Return goes to it, while Return with none lit, or the sidebar's Results row, opens every result on a page laid out as the shelves are, its headings opening each browser with the query as its search. Escape or the field's clear mark empties it.
@@ -96,7 +102,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 ## Settings
 
-⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ has a window of its own, below.
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 

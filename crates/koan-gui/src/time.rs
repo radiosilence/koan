@@ -9,16 +9,33 @@ pub fn clock(ms: u64) -> String {
     }
 }
 
-/// A size as people read one: "1.2 GB", in decimal units as the Mac shows
-/// them.
+/// A size in bytes, in the largest unit that keeps it above one, as
+/// Foundation's file-size style writes it (decimal units).
 pub fn bytes(n: u64) -> String {
-    let n = n as f64;
-    match n {
-        n if n >= 1e9 => format!("{:.1} GB", n / 1e9),
-        n if n >= 1e6 => format!("{:.0} MB", n / 1e6),
-        n if n >= 1e3 => format!("{:.0} KB", n / 1e3),
-        n => format!("{n:.0} bytes"),
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    if n < 1000 {
+        return format!("{n} {}", if n == 1 { "byte" } else { "bytes" });
     }
+    let mut value = n as f64;
+    let mut unit = 0;
+    // Past 999.5 the next unit up, so nothing reads "1000 MB".
+    while value >= 999.5 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let shown = if value >= 100.0 {
+        format!("{value:.0}")
+    } else if value >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    };
+    let shown = if shown.contains('.') {
+        shown.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &shown
+    };
+    format!("{shown} {}", UNITS[unit])
 }
 
 /// How long ago Unix second `at` was, from `now`, as the Mac's short

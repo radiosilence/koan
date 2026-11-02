@@ -53,6 +53,18 @@ impl RowListState {
         self.0.scroll_to_reveal_item(ix);
     }
 
+    /// Scrolls row `ix` and the rows either side of it on screen: what a
+    /// screen reader moving down the list needs, since only rows drawn are
+    /// in the accessibility tree.
+    pub fn reveal_around(&self, ix: usize) {
+        let count = self.0.item_count();
+        if count == 0 {
+            return;
+        }
+        self.0.scroll_to_reveal_item((ix + 1).min(count - 1));
+        self.0.scroll_to_reveal_item(ix.saturating_sub(1));
+    }
+
     /// Where row `ix` was drawn last frame, in the window; `None` while it
     /// is off screen.
     pub fn row_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
@@ -76,6 +88,7 @@ type MakeRow = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
 pub struct RowList {
     state: RowListState,
     row: MakeRow,
+    name: Option<SharedString>,
 }
 
 impl RowList {
@@ -87,13 +100,20 @@ impl RowList {
         Self {
             state: state.clone(),
             row: Box::new(row),
+            name: None,
         }
+    }
+
+    /// What the list is of, for a screen reader: "queue", a playlist's name.
+    pub fn named(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 }
 
 impl RenderOnce for RowList {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        div()
+        super::accessible(div().id("row-list"), gpui_kit::Role::List, self.name)
             .relative()
             .size_full()
             .child(list(self.state.0.clone(), self.row).size_full())

@@ -7,8 +7,11 @@ use gpui_kit::{
     div,
 };
 
-use super::{Handler, child, fade, fill, transition};
+use super::{Handler, accessible, answers_click, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
+
+/// The hover group a nav row's glyph brightens by.
+const NAV_ROW: &str = "koan-nav-row";
 
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
@@ -26,6 +29,8 @@ pub struct NavRow {
     art: Option<AnyElement>,
     detail: Option<SharedString>,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -53,8 +58,17 @@ impl NavRow {
             art: None,
             detail: None,
             selected: false,
+            cursor: false,
             on_click: None,
         }
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
+        self
     }
 
     /// The place's own face, square, before the label: a playlist's sleeve.
@@ -106,13 +120,18 @@ impl RenderOnce for NavRow {
         );
         let on_click = self.on_click;
         let ink = look.palette.ink.hsla();
+        let name = self.label.clone();
         let label = div()
             .min_w_0()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
             .child(self.label);
-        self.base
+        let selected = self.selected;
+        // A link to a screen reader: to its place, selected where it is.
+        accessible(self.base, gpui_kit::Role::Link, Some(name))
+            .aria_selected(selected)
+            .group(NAV_ROW)
             .relative()
             .flex()
             .flex_none()
@@ -137,7 +156,16 @@ impl RenderOnce for NavRow {
             .children(
                 self.icon
                     .filter(|_| look.icons && self.art.is_none())
-                    .map(|icon| KoanIcon::new(icon).color(color)),
+                    // A glyph draws in its own colour: it brightens with the
+                    // label under the pointer by the row's group.
+                    .map(|icon| {
+                        let glyph = KoanIcon::new(icon).color(color);
+                        if selected {
+                            glyph
+                        } else {
+                            glyph.hover_color(NAV_ROW, ink)
+                        }
+                    }),
             )
             .children(self.art)
             .map(|row| match self.detail {
@@ -156,9 +184,14 @@ impl RenderOnce for NavRow {
                 ),
             })
             .when_some(on_click, |row, on_click| {
-                row.cursor_pointer()
+                answers_click(row, on_click.clone())
+                    .cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }
 
@@ -188,23 +221,31 @@ impl NavHeading {
 impl RenderOnce for NavHeading {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
-            .flex()
-            .flex_none()
-            .items_end()
-            .justify_between()
-            .pt(look.space(Space::L))
-            .pb(look.space(Space::Xs))
-            .px(look.space(Space::L))
-            .text_role(TypeRole::Fine, &look)
-            .text_color(look.palette.ink.hsla())
-            .child(self.title)
-            .children(self.trailing)
+        accessible(
+            div().id(ElementId::Name(
+                format!("nav-heading-{}", self.title).into(),
+            )),
+            gpui_kit::Role::Heading,
+            Some(self.title.clone()),
+        )
+        .aria_level(2)
+        .flex()
+        .flex_none()
+        .items_end()
+        .justify_between()
+        .pt(look.space(Space::L))
+        .pb(look.space(Space::Xs))
+        .px(look.space(Space::L))
+        .text_role(TypeRole::Fine, &look)
+        .text_color(look.palette.ink.hsla())
+        .child(self.title)
+        .children(self.trailing)
     }
 }
 
 /// A line at the foot of a navigation list: what the app is doing, or what
-/// went wrong.
+/// went wrong. One line, ended in an ellipsis where it runs past the list,
+/// so a long path in an error never widens or lengthens the foot.
 #[derive(IntoElement)]
 pub struct NavNote {
     text: SharedString,
@@ -223,7 +264,13 @@ impl NavNote {
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        let id = SharedString::from(format!("note-{}", self.text));
+        super::announced(div().id(id), self.text.clone(), self.tone)
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
             .px(look.space(Space::L))
             .py(look.space(Space::Xs))
             .text_role(TypeRole::Fine, &look)

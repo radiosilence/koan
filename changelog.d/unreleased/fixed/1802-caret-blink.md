@@ -1,0 +1,1 @@
+- **A focused text field no longer redraws its page twice a second.** The caret's blink is presented by the GPU instead of redrawing every view above the field, so the album grid or a browser stays at rest while its filter field has the keyboard.

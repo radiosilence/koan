@@ -106,14 +106,18 @@ pub fn install(cx: &mut App) {
             glides: HashMap::new(),
             running: HashSet::new(),
             _figures: cx.observe(&mirror.figures, |this: &mut Transfers, figures, cx| {
-                this.take(&figures.read(cx).0, cx)
+                let figures = figures.read(cx).0.clone();
+                this.take(&figures, cx)
             }),
             _transfers: cx.observe(&mirror.transfers, |this: &mut Transfers, list, cx| {
-                this.states(&list.read(cx).0, cx)
+                let list = list.read(cx).0.clone();
+                this.states(&list, cx)
             }),
         };
-        transfers.states(&mirror.transfers.read(cx).0, cx);
-        transfers.take(&mirror.figures.read(cx).0, cx);
+        let list = mirror.transfers.read(cx).0.clone();
+        transfers.states(&list, cx);
+        let figures = mirror.figures.read(cx).0.clone();
+        transfers.take(&figures, cx);
         transfers
     });
     cx.set_global(TransfersHandle(transfers));

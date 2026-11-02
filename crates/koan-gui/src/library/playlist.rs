@@ -692,7 +692,7 @@ impl PlaylistPage {
                 }),
             )
             .lead(
-                ShuffleButton::new("playlist-shuffle")
+                ShuffleButton::new("playlist-shuffle", self.name())
                     .disabled(empty)
                     .on_click(move |_, _, cx| shuffle.read(cx).play_from(None, true, cx)),
             )
@@ -864,11 +864,10 @@ impl PlaylistPage {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = match covers::image(album, side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            };
-            Cover::new(art, side).into_any_element()
+            let art = covers::art(album, side, cx);
+            Cover::new(art, side)
+                .id(("sleeve", row as u64))
+                .into_any_element()
         });
         let feed = self.lib.feed.clone();
         let nav = self.lib.nav.read(cx).navigator();
@@ -960,8 +959,14 @@ impl PlaylistPage {
                 cx.notify();
             }
         };
+        let list = self.list.clone();
         row_frame
             .selected(selected)
+            .when(p.a11y, |frame| {
+                frame
+                    .place(row, count)
+                    .on_reveal(move |_, _| list.reveal_around(row))
+            })
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })
@@ -1098,6 +1103,7 @@ impl Render for PlaylistPage {
             RowList::new(&self.list, move |row, window, cx| {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
             })
+            .named(self.name())
             .into_any_element()
         };
         div()
@@ -1167,6 +1173,12 @@ impl Render for PlaylistPage {
                 move |menu, window, cx| row_menu(menu, &view, window, cx)
             })
             .into_any_element()
+    }
+}
+
+impl Focusable for PlaylistPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

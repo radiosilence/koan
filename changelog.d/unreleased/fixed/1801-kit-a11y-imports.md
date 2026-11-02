@@ -1,0 +1,1 @@
+- **koan-kit builds again.** The slider used an accessibility setter whose trait it did not import.

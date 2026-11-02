@@ -78,7 +78,8 @@ impl RenderOnce for Viewer {
                 .text_color(color)
                 .child(text)
         };
-        self.base
+        // A dialog to a screen reader, named by its record.
+        super::accessible(self.base, gpui_kit::Role::Dialog, Some(self.title.clone()))
             .absolute()
             .inset_0()
             .flex()

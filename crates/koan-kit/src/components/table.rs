@@ -13,7 +13,7 @@
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{RowKind, RowMetrics};
+use super::{Handler, RowKind, RowMetrics};
 use crate::theme::{KoanStyled, Look, TypeRole};
 
 /// A fixed-width cell, its width in points at 100 % and grown with the text
@@ -44,10 +44,15 @@ pub struct TableRow {
     base: Stateful<Div>,
     kind: RowKind,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     leading: Vec<Cell>,
     title: Option<AnyElement>,
     lines: Vec<AnyElement>,
     trailing: Vec<Cell>,
+    spoken: Option<SharedString>,
+    place: Option<(usize, usize)>,
+    reveal: Option<Handler<()>>,
 }
 
 impl TableRow {
@@ -56,11 +61,39 @@ impl TableRow {
             base: div().id(id),
             kind,
             selected: false,
+            cursor: false,
             leading: Vec::new(),
             title: None,
             lines: Vec::new(),
             trailing: Vec::new(),
+            spoken: None,
+            place: None,
+            reveal: None,
         }
+    }
+
+    /// The row as one node for a screen reader, read as `name` (the title,
+    /// its credit and record, its length and state): a list item, or a
+    /// heading for a record's heading. The controls inside stay reachable as
+    /// its children.
+    pub fn spoken(mut self, name: impl Into<SharedString>) -> Self {
+        self.spoken = Some(name.into());
+        self
+    }
+
+    /// Row `ix` of `count`, so a reader says where it is in a list that
+    /// draws only what is on screen.
+    pub fn place(mut self, ix: usize, count: usize) -> Self {
+        self.place = Some((ix, count));
+        self
+    }
+
+    /// Run when a screen reader moves to the row: the list scrolls it, and
+    /// its neighbours, on screen, so the reader can go on past what was
+    /// drawn (`RowListState::reveal_around`).
+    pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.reveal = Some(std::sync::Arc::new(move |_, window, cx| reveal(window, cx)));
+        self
     }
 
     /// A cell before the title, `points` wide, its content at its trailing
@@ -111,6 +144,14 @@ impl TableRow {
     /// that colours its cells does by `on_selection` too.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 }
@@ -279,8 +320,33 @@ impl RenderOnce for TableRow {
                 .justify_end()
                 .child(cell.content)
         };
-        self.base
-            .group(ROW_GROUP)
+        let heading = self.kind == RowKind::Heading;
+        let base = match self.spoken {
+            Some(name) => super::accessible(
+                self.base,
+                if heading {
+                    gpui_kit::Role::Heading
+                } else {
+                    gpui_kit::Role::ListItem
+                },
+                Some(name),
+            )
+            .when(heading, |row| row.aria_level(3))
+            .when(!heading, |row| row.aria_selected(selected))
+            .when_some(self.place, |row, (ix, count)| {
+                row.aria_position_in_set(ix + 1).aria_size_of_set(count)
+            }),
+            None => self.base,
+        };
+        let base = match self.reveal {
+            Some(reveal) => base.on_a11y_action(
+                gpui_kit::AccessibleAction::ScrollIntoView,
+                move |_, window, cx| reveal(&(), window, cx),
+            ),
+            None => base,
+        };
+        base.group(ROW_GROUP)
+            .relative()
             .h(RowMetrics::height(self.kind, &look))
             .w_full()
             .flex()
@@ -313,5 +379,9 @@ impl RenderOnce for TableRow {
                     .text_role(TypeRole::Meta, &look)
                     .text_color(if selected { on } else { p.muted.hsla() })
             }))
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }

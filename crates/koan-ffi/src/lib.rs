@@ -961,12 +961,17 @@ impl KoanEngine {
         offload::offload(|| {
             init_logging();
             let identity = koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+                // Each says what to do about it: the words every front end
+                // shows.
                 let message = if e.kind() == std::io::ErrorKind::WouldBlock {
-                    "another kōan desktop app is running on this configuration".to_string()
+                    "another kōan desktop app is running on this configuration. Quit it, or \
+                     use that one."
+                        .to_string()
                 } else {
                     format!(
-                        "could not take this device's lock in {}: {e}",
-                        config::config_dir().display()
+                        "could not take this device's lock in {}: {e}. Check that the folder \
+                         exists and can be written.",
+                        koan_core::places::runtime().display()
                     )
                 };
                 KoanError::Refused { message }

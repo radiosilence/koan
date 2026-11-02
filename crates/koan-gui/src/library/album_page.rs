@@ -8,15 +8,13 @@ use std::rc::Rc;
 
 use koan_ffi::{Album, Track};
 use koan_kit::app::*;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
+use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
@@ -73,6 +71,10 @@ fn lines(tracks: &[Track]) -> Vec<Line> {
     out
 }
 
+/// How long a record's first read may take before the page says it is
+/// still reading.
+const SLOW_READ: std::time::Duration = std::time::Duration::from_millis(300);
+
 pub struct AlbumPage {
     lib: Lib,
     album_id: i64,
@@ -84,7 +86,15 @@ pub struct AlbumPage {
     request: u64,
     loaded_version: Option<u64>,
     _load: Option<Task<()>>,
+    /// The first read has taken long enough to say so: a record from a
+    /// server can, where a local one lands within a frame or two.
+    slow: bool,
+    _slow: Option<Task<()>>,
     scroll: UniformListScrollHandle,
+    /// The keyboard's place among the tracks.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
@@ -97,8 +107,6 @@ pub struct AlbumPage {
 impl AlbumPage {
     pub fn new(lib: Lib, album_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
-        // The window takes this record's colours while its page shows.
-        cx.set_global(crate::root::ShownRecord(Some(album_id)));
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
@@ -115,15 +123,6 @@ impl AlbumPage {
             }),
             cx.on_release(move |this, cx| {
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
-                // The window takes the playing record's colours back, unless
-                // another record's page has taken them meanwhile.
-                if cx
-                    .try_global::<crate::root::ShownRecord>()
-                    .and_then(|s| s.0)
-                    == Some(this.album_id)
-                {
-                    cx.set_global(crate::root::ShownRecord(None));
-                }
             }),
         ];
         let mut this = Self {
@@ -136,7 +135,11 @@ impl AlbumPage {
             request: 0,
             loaded_version: None,
             _load: None,
+            slow: false,
+            _slow: None,
             scroll: UniformListScrollHandle::new(),
+            cursor: Default::default(),
+            keyed: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
@@ -145,6 +148,18 @@ impl AlbumPage {
             _subscriptions: subscriptions,
         };
         this.load(cx);
+        // One timer for the first read alone, so a spinner shows only for a
+        // read there was something to wait for.
+        this._slow = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SLOW_READ).await;
+            this.update(cx, |this, cx| {
+                if this.album.is_none() && this.gone.is_none() {
+                    this.slow = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
         this
     }
 
@@ -256,6 +271,12 @@ impl AlbumPage {
             transfer: feed.transfers.get(&id).copied(),
             drag,
             kind,
+            note: None,
+            cursor: self.keyed && self.cursor.at == Some(index),
+            place: Some((index, self.tracks.len())),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), i, self.lines.len())),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -320,6 +341,9 @@ impl AlbumPage {
                         div()
                             .id("album-sleeve")
                             .cursor_pointer()
+                            .tooltip(|window, cx| {
+                                crate::components::Tooltip::view("show artwork".into(), window, cx)
+                            })
                             .on_click({
                                 let (album_id, credit) = (
                                     self.album_id,
@@ -393,6 +417,9 @@ impl TrackList for AlbumPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                // The keyboard carries on from the row clicked.
+                self.cursor.at = Some(index);
+                self.cursor.anchor = Some(index);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -430,17 +457,7 @@ impl Render for AlbumPage {
         }
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
         let content = match (self.width.get(), self.gone) {
             (_, Some(failed)) => div()
                 .size_full()
@@ -474,8 +491,7 @@ impl Render for AlbumPage {
                     .flex_col()
                     .child(self.header(p, grid, window, cx))
                     .child(actions::list_menu(
-                        div()
-                            .id("album-track-list")
+                        crate::components::spoken_list("album-track-list", "tracks")
                             .relative()
                             .flex_1()
                             .min_h_0()
@@ -495,27 +511,84 @@ impl Render for AlbumPage {
                                 .size_full(),
                             )
                             // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                            .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                            .child(crate::components::list_scrollbar(&self.scroll)),
                         cx.weak_entity(),
                         window,
                         cx,
                     ))
                     .into_any_element()
             }
-            // Still reading: nothing rather than a spinner, since a local
-            // record lands within a frame or two.
+            // Still reading: nothing at first, since a local record lands
+            // within a frame or two; the spinner once it has not.
+            _ if self.slow => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(crate::components::Spinner::new(
+                    p.look.font_size(crate::theme::TypeRole::Body),
+                ))
+                .into_any_element(),
             _ => div().into_any_element(),
         };
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .relative()
-            .size_full()
-            .typeset(p, Type::Body, p.ink)
-            .child(measure)
-            .child(content)
+        self.keyed = self.focus.is_focused(window);
+        super::keys::keyed(
+            div().key_context("Library List").track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .relative()
+        .size_full()
+        .typeset(p, Type::Body, p.ink)
+        .child(measure)
+        .child(content)
+    }
+}
+
+impl Focusable for AlbumPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl super::keys::KeyedList for AlbumPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
+        self.selection.only(order[from]);
+        if to > from {
+            self.selection.click(order[to], true, &order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
+        self.selection.click(order[ix], false, &order);
+    }
+
+    /// The line the track is drawn on, past the disc headings above it.
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        let line = self
+            .lines
+            .iter()
+            .position(|l| matches!(l, Line::Track { index, .. } if *index == ix));
+        if let Some(line) = line {
+            self.scroll
+                .scroll_to_item(line, crate::components::ScrollStrategy::Top);
+        }
+    }
+
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.tracks.iter().map(|t| t.id).collect();
+        actions::play_list(&self.lib, ids, ix, cx);
     }
 }
 

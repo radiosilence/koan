@@ -6,8 +6,8 @@ use koan_ffi::Playlist;
 use koan_kit::app::*;
 
 use crate::components::{
-    Button, ButtonKind, CoverArt, DropTarget, INSERTION, Mosaic, NavHeading, NavNote, NavRow,
-    RowMetrics, ScrollArea,
+    Button, ButtonKind, CoverArt, DropTarget, INSERTION, ListCursor, Mosaic, NavHeading, NavNote,
+    NavRow, RowMetrics, ScrollArea, list_actions,
 };
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
@@ -45,6 +45,9 @@ pub struct Sidebar {
     loading: Option<Task<()>>,
     /// The library's art cache, once the library has loaded.
     covers: Option<(Entity<Covers>, [Subscription; 2])>,
+    /// The faces not yet in memory at the last render: a sleeve landing
+    /// redraws the sidebar only when it is one of these.
+    pending: std::collections::HashSet<Key>,
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
@@ -58,6 +61,10 @@ pub struct Sidebar {
     /// and whether it holds a query, which lists the results page.
     search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
     searching: bool,
+    /// The sidebar as one stop in the window's Tab order, its rows reached
+    /// with the arrows.
+    focus: FocusHandle,
+    cursor: ListCursor,
     _subscriptions: [Subscription; 5],
 }
 
@@ -71,11 +78,14 @@ impl Sidebar {
             faces: HashMap::new(),
             loading: None,
             covers: None,
+            pending: Default::default(),
             importing: 0,
             drop_playlist: None,
             reorders: 0,
             search: None,
             searching: false,
+            focus: cx.focus_handle(),
+            cursor: ListCursor::default(),
             import_problem: None,
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
@@ -137,7 +147,12 @@ impl Sidebar {
         self.covers = Some((
             covers.clone(),
             [
-                cx.observe(&covers, |_, _, cx| cx.notify()),
+                cx.observe(&covers, |this, covers, cx| {
+                    let covers = covers.read(cx);
+                    if this.pending.iter().any(|key| covers.has(*key)) {
+                        cx.notify();
+                    }
+                }),
                 cx.on_release(move |this, cx| {
                     if let Some((covers, _)) = &this.covers {
                         covers.update(cx, |c, cx| c.release(id, cx));
@@ -156,19 +171,33 @@ impl Sidebar {
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
-                    let mut faces = HashMap::new();
-                    for playlist in &playlists {
-                        match engine.clone().playlist_cover_album_ids(playlist.id).await {
-                            Ok(albums) => {
-                                faces.insert(playlist.id, albums);
-                            }
-                            Err(e) => log::warn!("playlist {} sleeve: {e}", playlist.id),
-                        }
-                    }
+                    // Every playlist's sleeve read together, not one after
+                    // another.
+                    let read = futures::future::join_all(playlists.iter().map(|playlist| {
+                        let (engine, id) = (engine.clone(), playlist.id);
+                        async move { (id, engine.playlist_cover_album_ids(id).await) }
+                    }))
+                    .await;
                     this.update(cx, |this, cx| {
                         if this.reorders != reorders {
                             this.reload(cx);
                             return;
+                        }
+                        // A sleeve that could not be read keeps the one it had,
+                        // rather than reading as an empty playlist.
+                        let mut faces = HashMap::new();
+                        for (id, albums) in read {
+                            match albums {
+                                Ok(albums) => {
+                                    faces.insert(id, albums);
+                                }
+                                Err(e) => {
+                                    log::warn!("playlist {id} sleeve: {e}");
+                                    if let Some(kept) = this.faces.get(&id) {
+                                        faces.insert(id, kept.clone());
+                                    }
+                                }
+                            }
                         }
                         this.faces = faces;
                         let gone: Vec<i64> = this
@@ -217,6 +246,44 @@ impl Sidebar {
     }
 }
 
+impl Sidebar {
+    /// The places the sidebar lists, in its order: what the arrows walk.
+    fn places(&self) -> Vec<Route> {
+        std::iter::once(Route::Queue)
+            .chain(self.searching.then_some(Route::Search))
+            .chain(LIBRARY.iter().map(|(page, _, _)| *page))
+            .chain(self.playlists.iter().map(|p| Route::Playlist(p.id)))
+            .collect()
+    }
+
+    /// The arrows: from the place showing when the keyboard first arrives.
+    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let places = self.places();
+        if self.cursor.at.is_none() {
+            let current = self.nav.read(cx).current();
+            self.cursor.at = places.iter().position(|p| *p == current);
+        }
+        self.cursor.step(by, places.len(), false);
+        cx.notify();
+    }
+
+    fn open_cursor(&mut self, cx: &mut Context<Self>) {
+        let places = self.places();
+        if let Some(page) = self.cursor.at.and_then(|i| places.get(i)).copied() {
+            self.nav.update(cx, |nav, cx| {
+                nav.choose(page);
+                cx.notify();
+            });
+        }
+    }
+}
+
+impl Focusable for Sidebar {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -233,6 +300,12 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let current = Some(self.nav.read(cx).current());
+        // The row under the keyboard's cursor, while the sidebar holds it.
+        let keyed = self.focus.is_focused(window).then(|| {
+            let places = self.places();
+            self.cursor.at.and_then(|i| places.get(i).copied())
+        });
+        let keyed = keyed.flatten();
         // A drag that ended anywhere, or was given up, leaves no line.
         let dragging = cx.has_active_drag();
         if !dragging {
@@ -246,6 +319,7 @@ impl Render for Sidebar {
             NavRow::new(id, label)
                 .icon(icon)
                 .selected(current == Some(page))
+                .cursor(keyed == Some(page))
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
@@ -348,39 +422,63 @@ impl Render for Sidebar {
                             sleeve.into_iter().map(CoverArt::from).collect(),
                             RowMetrics::nav_art(&p.look),
                         ))
+                        .cursor(keyed == Some(page))
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))
                         // Dragged among the playlists it moves; dropped on
                         // the queue, its tracks are queued.
                         .on_drag(drag, |drag: &PlaylistDrag, at, _, cx| drag.preview(at, cx))
-                        .drop_highlight::<ExternalPaths>(&p.look)
-                        .drop_highlight::<PlayableDrag>(&p.look)
                         // Files, and what is dragged from the library, dropped on a
-                        // playlist's row are added to it.
-                        .on_drop(cx.listener({
-                            let id = playlist.id;
-                            move |_, paths: &ExternalPaths, _, cx| {
-                                drop::add_files_to_playlist(
-                                    &engine(cx),
-                                    id,
-                                    paths.paths().to_vec(),
-                                    cx,
-                                )
-                            }
-                        }))
-                        .on_drop(cx.listener({
-                            let id = playlist.id;
-                            move |_, dragged: &PlayableDrag, _, cx| {
-                                if dragged.is_from(id) {
-                                    return;
-                                }
-                                let sets = dragged.sets.to_vec();
-                                command(cx, "add to playlist", move |e| {
-                                    e.add_to_playlist(id, sets)
-                                });
-                            }
-                        }))
+                        // playlist's row are added to it; a smart or file-backed
+                        // playlist takes nothing, does not light for it, and says
+                        // why when something is dropped on it anyway.
+                        .when(playlist.readonly, |row| {
+                            let why: SharedString = if playlist.smart {
+                                "A smart playlist is filled by its rules, and can't be added to"
+                                    .into()
+                            } else if playlist.from_file {
+                                "A playlist read from a file can't be added to here".into()
+                            } else {
+                                "This playlist is read-only, and can't be added to".into()
+                            };
+                            let refused = why.clone();
+                            row.on_drop(move |_: &PlayableDrag, _, cx| {
+                                crate::notice::show(refused.clone(), Tone::Muted, cx)
+                            })
+                            .on_drop(
+                                move |_: &ExternalPaths, _, cx| {
+                                    crate::notice::show(why.clone(), Tone::Muted, cx)
+                                },
+                            )
+                        })
+                        .when(!playlist.readonly, |row| {
+                            row.drop_highlight::<ExternalPaths>(&p.look)
+                                .drop_highlight::<PlayableDrag>(&p.look)
+                                .on_drop(cx.listener({
+                                    let id = playlist.id;
+                                    move |_, paths: &ExternalPaths, _, cx| {
+                                        drop::add_files_to_playlist(
+                                            &engine(cx),
+                                            id,
+                                            paths.paths().to_vec(),
+                                            cx,
+                                        )
+                                    }
+                                }))
+                                .on_drop(cx.listener({
+                                    let id = playlist.id;
+                                    move |_, dragged: &PlayableDrag, _, cx| {
+                                        if dragged.is_from(id) {
+                                            return;
+                                        }
+                                        let sets = dragged.sets.to_vec();
+                                        command(cx, "add to playlist", move |e| {
+                                            e.add_to_playlist(id, sets)
+                                        });
+                                    }
+                                }))
+                        })
                         .on_drop(cx.listener(
                             move |this, dragged: &PlaylistDrag, _, cx| {
                                 let at = this.drop_playlist.take().unwrap_or(index);
@@ -419,6 +517,21 @@ impl Render for Sidebar {
             });
         div()
             .id("sidebar")
+            .track_focus(&self.focus)
+            .key_context("Sidebar List")
+            .on_action(cx.listener(|this, _: &list_actions::Up, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &list_actions::Down, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &list_actions::First, _, cx| {
+                let len = this.places().len();
+                this.cursor.to(0, len, false);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &list_actions::Last, _, cx| {
+                let len = this.places().len();
+                this.cursor.to(usize::MAX, len, false);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &list_actions::Activate, _, cx| this.open_cursor(cx)))
             // A playlist drag that leaves the sidebar, or ends, takes its
             // insertion line with it.
             .on_drag_move::<PlaylistDrag>(cx.listener(
@@ -493,18 +606,29 @@ impl Sidebar {
                     .collect()
             })
             .collect();
-        let (sleeves, more) = covers.update(cx, |c, cx| {
+        // Below whatever a page shows: the sidebar's faces are small and
+        // there are few, but a page's sleeves on screen come first.
+        let (sleeves, more, pending) = covers.update(cx, |c, cx| {
             c.request(
                 owner,
-                keys.iter().flatten().map(|key| (*key, Priority::Visible)),
+                keys.iter()
+                    .flatten()
+                    .map(|key| (*key, Priority::Ahead(0.0))),
             );
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let sleeves = keys
                 .iter()
                 .map(|keys| keys.iter().map(|key| c.sleeve(*key)).collect())
                 .collect();
-            (sleeves, more)
+            let pending = keys
+                .iter()
+                .flatten()
+                .filter(|k| !c.has(**k))
+                .copied()
+                .collect();
+            (sleeves, more, pending)
         });
+        self.pending = pending;
         if more {
             window.request_animation_frame();
         }

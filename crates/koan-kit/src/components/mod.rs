@@ -31,6 +31,9 @@ mod filter_field;
 mod form;
 mod inspector;
 mod level;
+mod link_text;
+mod list_keys;
+mod lists;
 mod menu;
 mod metrics;
 mod page;
@@ -48,12 +51,15 @@ mod segmented;
 mod selection_bar;
 pub mod sheet;
 mod slider;
+mod sparkline;
 mod spinner;
 mod split;
 mod status;
 mod stepper;
 mod suggestions;
 mod table;
+mod tabs;
+mod tile;
 mod toggle;
 mod toolbar;
 mod viewer;
@@ -64,7 +70,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::{
     AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, Pixels, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
@@ -79,6 +85,13 @@ pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
+pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
+/// The list keys' actions, by name: `list_actions::Down`.
+pub mod list_actions {
+    pub use super::list_keys::{
+        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+    };
+}
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
@@ -89,6 +102,12 @@ pub use form::{
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
+pub use link_text::{link_action, link_text, name_line};
+pub use lists::{
+    List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
+    uniform_list, width_probe,
+};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
@@ -107,16 +126,19 @@ pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
 pub use slider::{Glide, Slider};
+pub use sparkline::Sparkline;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use status::StatusBlock;
 pub use stepper::Stepper;
 pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
+pub use tabs::{StatusLine, TabStrip};
+pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
-    ToolbarSelection, WINDOW_BUTTONS,
+    ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use viewer::Viewer;
 pub use window::SecondaryWindow;
@@ -259,6 +281,29 @@ pub(crate) fn ring(handle: &FocusHandle, look: &Look, window: &Window) -> Option
     })
 }
 
+/// A keyboard stop kept under `id`, for a control a page draws itself: its
+/// element tracks it, and GPUI turns Return and Space on it into a click.
+pub fn tab_stop(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusHandle {
+    focus(id, window, cx)
+}
+
+/// The focus ring for `handle`, as the kit's own controls draw it: shown
+/// while it holds the keyboard and the keyboard was used last.
+pub fn focus_ring(handle: &FocusHandle, window: &Window, cx: &App) -> Option<Div> {
+    ring(handle, &Look::of(window, cx), window)
+}
+
+/// The focus ring drawn inside a row, for the row a list's keyboard cursor
+/// is on: the list holds the focus, so the row's ring sits within it rather
+/// than standing off over its neighbours.
+pub(crate) fn cursor_ring(look: &Look) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .border(MARK)
+        .border_color(look.accent.hsla())
+}
+
 /// Two colours mixed, `t` of the way from `a` to `b`.
 pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
     let (a, b) = (gpui_kit::Rgba::from(a), gpui_kit::Rgba::from(b));
@@ -371,4 +416,78 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         .absolute()
         .size_full()
         .into_any_element()
+}
+
+/// A control as a screen reader meets it: its role and its name. The tree
+/// is built only while assistive technology is attached, so this costs
+/// nothing otherwise. See docs/design/koan-kit.md, "Accessibility".
+pub(crate) fn accessible<E: StatefulInteractiveElement>(
+    element: E,
+    role: gpui_kit::Role,
+    name: Option<SharedString>,
+) -> E {
+    let element = element.role(role);
+    match name {
+        Some(name) => element.aria_label(name),
+        None => element,
+    }
+}
+
+/// Answers a screen reader's click as a pointer's would, with `handler`.
+/// A row's or a tile's parts as a screen reader says them: the non-empty
+/// ones, in order, between commas. What `TableRow::spoken` takes.
+pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
+    parts
+        .into_iter()
+        .filter(|part| !part.as_ref().is_empty())
+        .map(|part| part.as_ref().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
+/// Something the app says on its own, read out as it appears without
+/// moving focus: politely, or at once when something went wrong. The text is
+/// both name and value, since VoiceOver announces a live node's value and
+/// Orca its name; and the element must be a leaf, since a live region's
+/// descendants are live too and would be announced again.
+pub(crate) fn announced<E: StatefulInteractiveElement>(
+    element: E,
+    text: SharedString,
+    tone: crate::theme::Tone,
+) -> E {
+    let alarm = tone == crate::theme::Tone::Bad;
+    accessible(
+        element,
+        if alarm {
+            gpui_kit::Role::Alert
+        } else {
+            gpui_kit::Role::Status
+        },
+        Some(text.clone()),
+    )
+    .aria_value(text)
+    .aria_live(if alarm {
+        gpui_kit::accesskit::Live::Assertive
+    } else {
+        gpui_kit::accesskit::Live::Polite
+    })
+}
+
+/// A checked state as AccessKit has it.
+pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
+    if on {
+        gpui_kit::Toggled::True
+    } else {
+        gpui_kit::Toggled::False
+    }
+}
+
+pub(crate) fn answers_click<E: StatefulInteractiveElement>(
+    element: E,
+    handler: Handler<gpui_kit::ClickEvent>,
+) -> E {
+    element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
+        handler(&gpui_kit::ClickEvent::default(), window, cx)
+    })
 }

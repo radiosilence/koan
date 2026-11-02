@@ -1,5 +1,6 @@
 use gpui_kit::{
-    App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
+    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
+    div, px,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -11,6 +12,7 @@ pub struct EmptyState {
     icon: Icon,
     title: SharedString,
     detail: Option<SharedString>,
+    tone: Tone,
 }
 
 impl EmptyState {
@@ -19,7 +21,15 @@ impl EmptyState {
             icon,
             title: label(title),
             detail: None,
+            tone: Tone::Muted,
         }
+    }
+
+    /// Something went wrong rather than nothing being there: the glyph in
+    /// `bad`, as the Mac's startup error draws its warning.
+    pub fn warning(mut self) -> Self {
+        self.tone = Tone::Bad;
+        self
     }
 
     /// A sentence, which keeps its case.
@@ -32,38 +42,49 @@ impl EmptyState {
 impl RenderOnce for EmptyState {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(look.space(Space::M))
-                    .p(look.space(Space::Xxl))
-                    // Room for a title on one line, at the size type is drawn.
-                    .max_w(px(420.0 * look.scale.text))
-                    .text_center()
-                    .child(
-                        KoanIcon::new(self.icon)
-                            .points(28.0 * look.scale.text)
-                            .tone(Tone::Muted),
-                    )
-                    .child(
-                        div()
-                            .text_role(TypeRole::Body, &look)
-                            .text_color(look.palette.ink.hsla())
-                            .child(self.title),
-                    )
-                    .children(self.detail.map(|detail| {
-                        div()
-                            .text_role(TypeRole::Meta, &look)
-                            .text_color(look.palette.muted.hsla())
-                            .child(detail)
-                    })),
-            )
+        // A group to a screen reader, named by what it says.
+        let spoken: gpui_kit::SharedString = match &self.detail {
+            Some(detail) => format!("{}. {detail}", self.title).into(),
+            None => self.title.clone(),
+        };
+        super::accessible(
+            div().id(gpui_kit::ElementId::Name(
+                format!("empty-{}", self.title).into(),
+            )),
+            gpui_kit::Role::Group,
+            Some(spoken),
+        )
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(look.space(Space::M))
+                .p(look.space(Space::Xxl))
+                // Room for a title on one line, at the size type is drawn.
+                .max_w(px(420.0 * look.scale.text))
+                .text_center()
+                .child(
+                    KoanIcon::new(self.icon)
+                        .points(28.0 * look.scale.text)
+                        .tone(self.tone),
+                )
+                .child(
+                    div()
+                        .text_role(TypeRole::Body, &look)
+                        .text_color(look.palette.ink.hsla())
+                        .child(self.title),
+                )
+                .children(self.detail.map(|detail| {
+                    div()
+                        .text_role(TypeRole::Meta, &look)
+                        .text_color(look.palette.muted.hsla())
+                        .child(detail)
+                })),
+        )
     }
 }

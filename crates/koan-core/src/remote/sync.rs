@@ -1155,6 +1155,12 @@ mod tests {
         library_modified: Mutex<Option<i64>>,
         /// Added to every answer, as a server across the internet.
         latency: Duration,
+        /// Answer as a koan server offering `koanHistory`, with this many
+        /// plays, and with `playlists` playlists of `playlist_songs` songs.
+        koan: bool,
+        plays: usize,
+        playlists: usize,
+        playlist_songs: usize,
     }
 
     impl StubServer {
@@ -1335,6 +1341,81 @@ mod tests {
                     ),
                 )
             }
+            "ping" if state.koan => (
+                200,
+                r#"{"subsonic-response":{"status":"ok","type":"koan","openSubsonic":true}}"#.to_string(),
+            ),
+            "getOpenSubsonicExtensions" if state.koan => (
+                200,
+                format!(
+                    r#"{{"subsonic-response":{{"status":"ok","openSubsonicExtensions":[{{"name":"{}","versions":[1]}}]}}}}"#,
+                    crate::remote::profile::HISTORY
+                ),
+            ),
+            "getStarred2" if state.koan => (
+                200,
+                r#"{"subsonic-response":{"status":"ok","starred2":{}}}"#.to_string(),
+            ),
+            "getPlaylists" if state.koan => {
+                let lists: Vec<String> = (0..state.playlists)
+                    .map(|i| {
+                        format!(
+                            r#"{{"id":"p{i}","name":"Playlist {i}","owner":"u","songCount":{},"changed":"2024-01-15T10:30:00Z"}}"#,
+                            state.playlist_songs
+                        )
+                    })
+                    .collect();
+                (
+                    200,
+                    format!(
+                        r#"{{"subsonic-response":{{"status":"ok","playlists":{{"playlist":[{}]}}}}}}"#,
+                        lists.join(",")
+                    ),
+                )
+            }
+            "getPlaylist" if state.koan => {
+                let id = params.get("id").copied().unwrap_or("");
+                let i: usize = id.trim_start_matches('p').parse().unwrap_or(0);
+                let albums = state.albums.lock().unwrap();
+                let entries: Vec<String> = (0..state.playlist_songs)
+                    .map(|j| {
+                        let (album, _, _) = &albums[(i * state.playlist_songs + j) % albums.len()];
+                        format!(r#"{{"id":"s{album}","title":"Song {album}"}}"#)
+                    })
+                    .collect();
+                (
+                    200,
+                    format!(
+                        r#"{{"subsonic-response":{{"status":"ok","playlist":{{"id":"{id}","name":"Playlist {i}","owner":"u","songCount":{},"changed":"2024-01-15T10:30:00Z","entry":[{}]}}}}}}"#,
+                        entries.len(),
+                        entries.join(",")
+                    ),
+                )
+            }
+            "koanHistory" if state.koan => {
+                let since = params.get("since").copied().unwrap_or("0.0");
+                let after: usize = since.split('.').next().unwrap_or("0").parse().unwrap_or(0);
+                let count: usize = params.get("count").and_then(|c| c.parse().ok()).unwrap_or(500);
+                let end = (after + count).min(state.plays);
+                let albums = state.albums.lock().unwrap();
+                let plays: Vec<String> = (after + 1..=end)
+                    .map(|seq| {
+                        let (album, _, _) = &albums[seq % albums.len()];
+                        format!(
+                            r#"{{"id":"s{album}","seq":{seq},"played":{},"listenedMs":180000}}"#,
+                            1_700_000_000_000i64 + seq as i64 * 200_000
+                        )
+                    })
+                    .collect();
+                (
+                    200,
+                    format!(
+                        r#"{{"subsonic-response":{{"status":"ok","koanHistory":{{"cursor":"{end}.0","more":{},"play":[{}]}}}}}}"#,
+                        end < state.plays,
+                        plays.join(",")
+                    ),
+                )
+            }
             "getAlbum" => {
                 let id = params.get("id").copied().unwrap_or("");
                 state.album_calls.lock().unwrap().push(id.to_string());
@@ -1420,6 +1501,53 @@ mod tests {
         run("unchanged");
         state.albums.lock().unwrap().truncate(51_000);
         run("1000 records deleted");
+    }
+
+    /// A fresh sign-in to a koan server the size of the one that showed the
+    /// last phase slow, each answer 20 ms away: the walk, then every step the
+    /// apps show as finishing. Prints the figures; run by hand with
+    /// `cargo test -p koan-core --release --lib fresh_sign_in_on_a_large_library -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn fresh_sign_in_on_a_large_library() {
+        let (db, _dir) = test_db();
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(52_000)),
+            lists_songs: true,
+            latency: Duration::from_millis(20),
+            koan: true,
+            plays: 20_000,
+            playlists: 200,
+            playlist_songs: 50,
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        let started = std::time::Instant::now();
+        let synced = crate::helpers::sync_remote(
+            &db,
+            &client,
+            crate::helpers::Walk::Always,
+            &server.url(),
+            "u",
+            &|_| {},
+        )
+        .unwrap();
+        let (f, a) = (synced.library.finishing, synced.after);
+        println!(
+            "fresh sign-in: {:?} in all; library closing: confirm {:?}, deletions {:?}, statistics {:?}; \
+             after: favourites {:?}, playlists {:?} ({} pulled), history {:?} ({} plays), EQ {:?}",
+            started.elapsed(),
+            f.confirm,
+            f.vanished,
+            f.optimize,
+            a.favourites,
+            a.playlists,
+            synced.playlists.pulled,
+            a.history,
+            synced.history.adopted,
+            a.dsp,
+        );
     }
 
     #[test]

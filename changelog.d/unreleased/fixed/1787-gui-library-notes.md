@@ -1,0 +1,1 @@
+- **A heart clicked twice quickly in the desktop app shows the second click.** The sidebar redraws only for its own playlists' covers, its icons brighten on hover, and idle cover fetch threads end.

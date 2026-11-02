@@ -7158,6 +7158,22 @@ impl Window {
             .push((action, Box::new(listener)));
     }
 
+    /// KOAN: acts as though assistive technology attached (or left), for
+    /// tests: the test platform never attaches any, so no tree is built
+    /// otherwise (#1778).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_a11y_active_for_test(&mut self, active: bool) {
+        self.a11y.set_active_flag(active);
+        self.refresh();
+    }
+
+    /// KOAN: handles `request` as though assistive technology had sent it,
+    /// for tests that drive elements the way a screen reader does (#1776).
+    #[cfg(not(target_family = "wasm"))]
+    pub fn dispatch_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        self.handle_a11y_action(request, cx);
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
         // Take listeners out temporarily so the closures can borrow Window

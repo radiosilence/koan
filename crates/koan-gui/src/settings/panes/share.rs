@@ -6,8 +6,6 @@ use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{InviteTo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::link::LinkDevice;
 use super::server::ServerPane;
@@ -392,7 +390,11 @@ impl ShareForm {
         );
         rows.push(
             Row::new("Port")
-                .control(div().w(px(120.)).child(TextField::new(&self.port)))
+                .control(
+                    div()
+                        .w(look.spaced(120.0))
+                        .child(TextField::new(&self.port)),
+                )
                 .into_any_element(),
         );
         section(
@@ -453,6 +455,7 @@ fn away_from_home(
                     options.iter().map(|(label, _)| label.as_str()),
                     values.iter().position(|v| *v == choice),
                 )
+                .named("invite phones to")
                 .disabled(sharing.busy())
                 .on_change(move |index, window, cx| {
                     let to = values[*index];

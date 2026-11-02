@@ -17,7 +17,7 @@ use crate::components::{Button, ButtonKind, Menu, MenuEntry};
 use crate::engine::{command, engine};
 use crate::mirror::Mirror;
 use crate::notice;
-use crate::theme::{Icon, Tone};
+use crate::theme::{Icon, Tone, label};
 
 /// What the control menu draws, read from the slices as it opens and again
 /// whenever the devices move while it is open.
@@ -176,24 +176,23 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             let (id, name, paired) = (device.id.clone(), device.name.clone(), device.tv_paired);
             entry = entry.trailing(move |_, _| {
                 let (id, name) = (id.clone(), name.clone());
-                Button::new(
+                Button::icon_only(
                     ("tv-wake", crate::transport::id_hash(&id)),
-                    ButtonKind::Icon,
+                    if paired {
+                        Icon::Close
+                    } else {
+                        Icon::Television
+                    },
+                    label(if paired {
+                        "stop waking"
+                    } else {
+                        "set up waking…"
+                    }),
                 )
-                .icon(if paired {
-                    Icon::Close
-                } else {
-                    Icon::Television
-                })
-                .label(if paired {
-                    "stop waking"
-                } else {
-                    "set up waking…"
-                })
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     if paired {
-                        crate::tv_wake::stop(id.clone(), cx);
+                        crate::tv_wake::stop(id.clone(), name.clone(), window, cx);
                     } else {
                         crate::tv_wake::open(id.clone(), name.clone(), window, cx);
                     }
@@ -207,15 +206,17 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             let id = device.id.clone();
             entry = entry.trailing(move |_, _| {
                 let id = id.clone();
-                Button::new(("forget", crate::transport::id_hash(&id)), ButtonKind::Icon)
-                    .icon(Icon::Clear)
-                    .label("forget")
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        let id = id.clone();
-                        command(cx, "forget device", move |e| e.forget_device(id));
-                    })
-                    .into_any_element()
+                Button::icon_only(
+                    ("forget", crate::transport::id_hash(&id)),
+                    Icon::Clear,
+                    label("forget this device"),
+                )
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    let id = id.clone();
+                    command(cx, "forget device", move |e| e.forget_device(id));
+                })
+                .into_any_element()
             });
         }
         menu = menu.item(entry);

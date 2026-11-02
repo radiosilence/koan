@@ -84,6 +84,33 @@ pub struct RowState {
     /// The list's row kind: one for every row, since a list lays out
     /// uniform rows (`height`, `text_height` or `art_height`).
     pub kind: RowKind,
+    /// A glyph before the figures, with what it means under the pointer: a
+    /// play another client scrobbled in, in the history.
+    pub note: Option<(crate::theme::Icon, &'static str)>,
+    /// Under the list's keyboard cursor.
+    pub cursor: bool,
+    /// Its place in the list, of how many, for a screen reader.
+    pub place: Option<(usize, usize)>,
+    /// Where it sits in a list that draws only what is on screen, to scroll
+    /// its neighbours in when a screen reader moves to it.
+    pub reveal: Option<Reveal>,
+}
+
+/// A row's list and its index in it.
+pub enum Reveal {
+    Rows(crate::components::RowListState, usize),
+    Uniform(crate::components::UniformListScrollHandle, usize, usize),
+}
+
+impl Reveal {
+    fn run(&self) {
+        match self {
+            Reveal::Rows(list, ix) => list.reveal_around(*ix),
+            Reveal::Uniform(handle, ix, count) => {
+                crate::components::reveal_around(handle, *ix, *count)
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -184,8 +211,39 @@ pub fn track_row<V: TrackList>(
         )
     });
 
+    let spoken = p.a11y.then(|| {
+        let length = track
+            .duration_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| crate::time::clock(ms as u64))
+            .unwrap_or_default();
+        crate::components::spoken([
+            track.title.as_str(),
+            if names_artist {
+                track.artist_name.as_str()
+            } else {
+                ""
+            },
+            if state.gathered {
+                track.album_title.as_str()
+            } else {
+                ""
+            },
+            length.as_str(),
+            if state.current { "playing" } else { "" },
+            if state.favourite { "favourite" } else { "" },
+        ])
+    });
     TableRow::new(("row", id as u64), state.kind)
+        .when_some(spoken, |row, spoken| row.spoken(spoken))
+        .when_some(state.place.filter(|_| p.a11y), |row, (ix, count)| {
+            row.place(ix, count)
+        })
+        .when_some(state.reveal, |row, reveal| {
+            row.on_reveal(move |_, _| reveal.run())
+        })
         .selected(state.selected)
+        .cursor(state.cursor)
         .lead_exact(state.lead_width, lead)
         .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))
         .title(
@@ -194,6 +252,19 @@ pub fn track_row<V: TrackList>(
                 .child(track.title.clone()),
         )
         .when(state.gathered || names_artist, |row| row.line(detail))
+        .when_some(state.note, |row, (icon, meaning)| {
+            row.figure(
+                16.0,
+                div()
+                    .id(("row-note", id as u64))
+                    .flex()
+                    .justify_center()
+                    .tooltip(move |window, cx| {
+                        crate::components::Tooltip::view(meaning.into(), window, cx)
+                    })
+                    .child(crate::theme::KoanIcon::new(icon).color(p.muted)),
+            )
+        })
         .figure(
             14.0,
             AvailabilityMark::new(crate::transfers::of_track(
@@ -202,6 +273,7 @@ pub fn track_row<V: TrackList>(
                 track.on_disk,
                 state.transfer,
             ))
+            .id(("row-availability", track.id as u64))
             .picked(state.selected),
         )
         .figure(20.0, heart)

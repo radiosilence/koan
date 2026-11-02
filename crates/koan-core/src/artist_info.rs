@@ -109,19 +109,7 @@ fn fetch_since(
         return Ok(held);
     };
 
-    // MusicBrainz answers 503 while it is busy, often for seconds at a time;
-    // a page opened then would otherwise show nothing until its next visit.
-    let mut found = look_up(&subject, now);
-    for wait in [2, 4] {
-        if !matches!(
-            found,
-            Err(ArtistInfoError::MusicBrainz(MusicBrainzError::RateLimited))
-        ) {
-            break;
-        }
-        std::thread::sleep(Duration::from_secs(wait));
-        found = look_up(&subject, now);
-    }
+    let found = look_up(&subject, now);
     if let Ok((_, Some(mbid))) = &found
         && subject.mbid.is_none()
     {
@@ -147,30 +135,59 @@ fn fetch_since(
     }
 }
 
+/// How long after a lookup a refused photo address is not looked up again.
+const RELOOK_AFTER_REFUSAL_SECS: i64 = 24 * 60 * 60;
+
 /// The photograph's bytes. Network, every time: the front end caches images,
 /// and the database is no place for them. No connection is held while it
 /// downloads.
 ///
 /// A stored address Commons refuses (it serves only its standard thumbnail
-/// widths, and files are renamed) is looked up again once, and the new one
-/// downloaded.
+/// widths, and files are renamed) is looked up again, and the new one
+/// downloaded; at most once a day, so an address the lookup still names is
+/// not looked up on every request.
 pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
-    let url = cached(&pool.get()?.conn, artist_id)?.and_then(|info| info.image_url);
-    let Some(url) = url else {
+    let held = cached(&pool.get()?.conn, artist_id)?;
+    let looked_up = held.as_ref().map_or(0, |info| info.fetched_at);
+    let Some(url) = held.and_then(|info| info.image_url) else {
         return Ok(None);
     };
     let http = wikimedia::client();
+    // Looked up again at most once a day: a lookup that found the same
+    // refused address, or none newer, is not repeated on every request.
+    let recent = crate::clock::unix_secs() - looked_up < RELOOK_AFTER_REFUSAL_SECS;
+    // A refused address with nothing to replace it is no photo: the page
+    // gives its box back, and nobody asks again this session.
     match wikimedia::download(&http, &url) {
+        Err(e) if e.refused() && recent => {
+            log::debug!("artist {artist_id}'s photo was refused ({e}); looked up within the day");
+            Ok(None)
+        }
         Err(e) if e.refused() => {
             log::info!("artist {artist_id}'s photo was refused ({e}); looking it up again");
-            let fresh = fetch_since(pool, artist_id, true)?.and_then(|info| info.image_url);
-            match fresh {
+            let fresh = fetch_since(pool, artist_id, true);
+            // Marked as looked up whatever the lookup did (throttled, offline,
+            // nothing found, which store nothing), so the daily bound holds.
+            touch(pool, artist_id);
+            match fresh?.and_then(|info| info.image_url) {
                 Some(fresh) if fresh != url => Ok(Some(wikimedia::download(&http, &fresh)?)),
-                Some(_) => Err(e.into()),
-                None => Ok(None),
+                Some(_) | None => Ok(None),
             }
         }
         found => Ok(Some(found?)),
+    }
+}
+
+/// Moves an artist's info's lookup time to now, where it has a row.
+fn touch(pool: &Pool, artist_id: i64) {
+    let now = crate::clock::unix_secs();
+    if let Ok(db) = pool.get()
+        && let Err(e) = db.conn.execute(
+            "UPDATE artist_info SET fetched_at = ?1 WHERE artist_id = ?2",
+            params![now, artist_id],
+        )
+    {
+        log::warn!("artist {artist_id}'s info: {e}");
     }
 }
 
@@ -233,7 +250,7 @@ fn look_up(subject: &Subject, now: i64) -> Result<(ArtistInfo, Option<String>), 
         return Ok((info, None));
     };
     throttle();
-    let Some(qid) = musicbrainz::wikidata_id(&mb, &mbid)? else {
+    let Some(qid) = when_busy(|| musicbrainz::wikidata_id(&mb, &mbid))? else {
         return Ok((info, Some(mbid)));
     };
 
@@ -271,14 +288,14 @@ fn resolve_mbid(
     let name = &subject.name;
     if let Some(release) = &subject.release {
         throttle();
-        let credits = musicbrainz::release_artists(mb, release)?;
+        let credits = when_busy(|| musicbrainz::release_artists(mb, release))?;
         if let Some(mbid) = credited(&credits, name) {
             return Ok(Some(mbid));
         }
     }
 
     throttle();
-    let results = musicbrainz::search_artist(mb, name, 5)?;
+    let results = when_busy(|| musicbrainz::search_artist(mb, name, 5))?;
     let mut exact = results
         .into_iter()
         .filter(|r| r.score >= 95 && same_name(&r.name, name));
@@ -345,6 +362,24 @@ fn store(conn: &Connection, artist_id: i64, info: &ArtistInfo) -> rusqlite::Resu
         ],
     )?;
     Ok(())
+}
+
+/// One MusicBrainz request, asked again after 2 s and then 4 s while
+/// MusicBrainz answers that it is busy (503), as it often is for seconds at a
+/// time: a page opened then would otherwise show nothing until its next
+/// visit. Only the request that was refused is repeated, not the look-up
+/// around it.
+fn when_busy<T>(request: impl Fn() -> Result<T, MusicBrainzError>) -> Result<T, MusicBrainzError> {
+    let mut answer = request();
+    for wait in [2, 4] {
+        if !matches!(answer, Err(MusicBrainzError::RateLimited)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(wait));
+        throttle();
+        answer = request();
+    }
+    answer
 }
 
 /// MusicBrainz allows one request a second per client, and paging through

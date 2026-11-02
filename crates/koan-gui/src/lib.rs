@@ -21,6 +21,7 @@ pub mod organize;
 pub mod paint;
 pub mod platform;
 pub mod queue;
+pub mod rainbow;
 pub mod root;
 pub mod search;
 pub mod server_banner;
@@ -35,4 +36,4 @@ pub mod transport;
 pub mod tv_wake;
 pub mod window_state;
 
-pub use koan_kit::{components, sheet, theme};
+pub use koan_kit::{components, storybook, theme};

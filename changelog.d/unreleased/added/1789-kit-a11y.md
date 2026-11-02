@@ -1,0 +1,1 @@
+- **Screen readers can read the kōan GUI app's controls.** Every koan-kit component (buttons, switches, sliders, steppers, choices, menus, navigation, headings, progress and sheets) reports its role, name and state to VoiceOver and Orca, and answers a click or a step as the pointer or the arrow keys would.

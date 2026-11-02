@@ -235,6 +235,9 @@ impl Motion {
     pub const NORMAL: Duration = Duration::from_millis(120);
     /// The accent arriving with a record.
     pub const SETTLE: Duration = Duration::from_millis(250);
+    /// A sleeve arriving where its record's colour stood, as the Mac's grid
+    /// fades one in.
+    pub const ARRIVE: Duration = Duration::from_millis(200);
 
     /// The quick-out curve, `cubic-bezier(0.2, 0.9, 0.3, 1)`, at `t` in 0..=1.
     pub fn quick_out(t: f32) -> f32 {

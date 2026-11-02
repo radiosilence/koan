@@ -3,7 +3,6 @@
 //! Left, the record and track playing; centre, the controls over the seek
 //! slider; right, the format, the sleep and output menus, and EQ.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{
@@ -14,14 +13,12 @@ use koan_kit::app::*;
 use koan_kit::raw::{Hsla, px};
 // the bounds a cached view keeps between frames.
 use koan_kit::raw::StyleRefinement;
-// decoded images handed to the renderer.
-use koan_kit::raw::RenderImage;
 // painted and hit-tested by hand: drawing koan-kit has no component for.
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider, TransportMetrics,
+    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
+    MenuSlot, SHADED, Slider, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -36,6 +33,9 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
+    /// Where F6 brings the keyboard: the bar, from which Tab reaches its
+    /// controls.
+    focus: FocusHandle,
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     /// The renderer played to, for why its last track was skipped.
@@ -49,13 +49,15 @@ pub struct Transport {
     menus: MenuSlot<Menu>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
-    cover: Option<Arc<RenderImage>>,
+    cover: CoverArt,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
     eq: Option<EqState>,
     /// The profile the playing stream named when `eq` was read.
     eq_profile: Option<String>,
+    /// The library version the EQ was last read at.
+    eq_library: u64,
     _eq_load: Option<Task<()>>,
     _subscriptions: [Subscription; 8],
 }
@@ -77,8 +79,11 @@ struct EqState {
     /// The preset it was set from, and whether it was changed since.
     preset: Option<String>,
     edited: bool,
-    /// No correction and no tuning: it plays untouched.
+    /// No correction and no tuning: it holds no EQ.
     flat: bool,
+    /// Processing is off: it plays untouched whatever it holds, and the
+    /// button is not tinted. Its menu still shows what it holds.
+    off: bool,
     presets: Vec<String>,
 }
 
@@ -98,6 +103,7 @@ impl EqState {
             preset: state.and_then(|s| s.preset.clone()),
             edited: state.is_some_and(|s| s.preset_edited),
             flat: state.is_none_or(|s| s.flat),
+            off: !overview.enabled,
             presets: overview
                 .profiles
                 .iter()
@@ -111,6 +117,7 @@ impl EqState {
     /// What the button's tooltip says: the preset in force, never "flat".
     fn summary(&self) -> String {
         match &self.preset {
+            _ if self.off => "EQ: processing off".into(),
             Some(preset) if self.edited => format!("EQ: {preset}, edited"),
             Some(preset) => format!("EQ: {preset}"),
             None if self.flat => "EQ".into(),
@@ -168,7 +175,7 @@ impl Transport {
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
-                    if this.cover.is_none() {
+                    if !matches!(this.cover, CoverArt::Image(_)) {
                         let album = this
                             .playback
                             .read(cx)
@@ -186,16 +193,27 @@ impl Transport {
                 // What EQ plays follows the output, its presets (published
                 // with the outputs) and the profiles (synced with the library).
                 cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
-                cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
+                // Only when the library's version moves: a scan notifies
+                // with every batch, and an overview reads every profile's
+                // responses from disk.
+                cx.observe(&mirror.library, |this, library, cx| {
+                    let version = library.read(cx).version;
+                    if version != this.eq_library {
+                        this.eq_library = version;
+                        this.reload_eq(cx);
+                    }
+                }),
             ],
+            focus: cx.focus_handle(),
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
             devices: mirror.devices,
             menus: MenuSlot::default(),
-            cover: None,
+            cover: CoverArt::Missing,
             eq: None,
             eq_profile: None,
+            eq_library: mirror.library.read(cx).version,
             _eq_load: None,
         };
         this.reload_eq(cx);
@@ -375,12 +393,13 @@ impl Transport {
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
-        let color = if eq.flat { p.ink } else { p.accent_text };
+        let plain = eq.flat || eq.off;
+        let color = if plain { p.ink } else { p.accent_text };
         let summary: SharedString = eq.summary().into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(if eq.flat { p.ink } else { p.accent })
+                .color(if plain { p.ink } else { p.accent })
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()
@@ -724,22 +743,30 @@ fn control(
     label: &'static str,
     on: Option<bool>,
     p: &Paint,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Stateful<Div> {
+    // A stop in the window's Tab order, which Return and Space click.
+    let focus = crate::components::tab_stop(&id.into(), window, cx);
+    let ring = crate::components::focus_ring(&focus, window, cx);
     let (color, underline) = match on {
         Some(true) => (p.ink, Some(p.accent)),
         Some(false) => (p.muted, None),
         None => (p.ink, None),
     };
-    // 44 points to hit, as the spec asks, but only the glyph's width in the
-    // layout: the rest of the hit area reaches into the gaps beside it, so
-    // the glyphs sit as far apart as the Mac's.
+    // 44 points wide to hit, as the spec asks, but only the glyph's width in
+    // the layout: the rest of the hit area reaches into the gaps beside it,
+    // so the glyphs sit as far apart as the Mac's. As tall as the controls'
+    // row, which the transport's metrics keep clear of the seek bar.
     let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
     let reach = (theme::HIT - glyph) / 2.;
     div()
         .id(id)
+        .relative()
+        .track_focus(&focus)
         .w(theme::HIT)
         .mx(-reach)
-        .h(theme::HIT)
+        .h_full()
         .flex()
         .items_center()
         .justify_center()
@@ -752,6 +779,7 @@ fn control(
                 .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
                 .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
         )
+        .children(ring)
 }
 
 fn format_badge(format: &StreamFormat) -> String {
@@ -775,7 +803,7 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -807,21 +835,45 @@ impl Render for Transport {
                             e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
                         }),
                         |d, (album, title, artist)| {
-                            d.cursor_pointer().on_click(move |_, window, cx| {
-                                crate::artwork::show(
-                                    album,
-                                    title.clone(),
-                                    Some(artist.clone().into()),
-                                    window,
-                                    cx,
-                                )
-                            })
+                            d.cursor_pointer()
+                                .tooltip(tip("show artwork".to_owned()))
+                                .on_click(move |_, window, cx| {
+                                    crate::artwork::show(
+                                        album,
+                                        title.clone(),
+                                        Some(artist.clone().into()),
+                                        window,
+                                        cx,
+                                    )
+                                })
                         },
                     )
-                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+                    .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
             )
             .child(
                 div()
+                    // Announced, without moving focus, as the track changes:
+                    // a leaf holding only the words, since a live region's
+                    // descendants are live too, and the links below would be
+                    // announced again. VoiceOver reads a live node's value,
+                    // Orca its name, so it carries both.
+                    .when(p.a11y, |d| {
+                        let spoken = crate::components::spoken(
+                            entry
+                                .map(|e| [e.title.as_str(), e.artist.as_str(), e.album.as_str()])
+                                .unwrap_or(["nothing playing", "", ""]),
+                        );
+                        d.child(
+                            div()
+                                .id("now-playing")
+                                .role(a11y::Role::Status)
+                                .aria_label(spoken.clone())
+                                .aria_value(spoken)
+                                .aria_live(a11y::Live::Polite)
+                                .absolute()
+                                .size_0(),
+                        )
+                    })
                     .flex()
                     .flex_col()
                     .min_w(px(0.))
@@ -882,12 +934,10 @@ impl Render for Transport {
             .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
-        // The controls and the seek bar centred in the bar as the Mac's:
-        // as much space above the play button's outline as below the seek
-        // row. The rows' hit areas, taller than what they draw, may overlap.
+        // The controls and the seek bar placed by koan-kit's metrics: centred
+        // in the bar as the Mac's, the controls' hit row never reaching the
+        // seek row or above the rule.
         let rows = TransportMetrics::centre_rows(&p.look);
-        let controls_top = rows.outline_top - (theme::HIT - rows.outline) / 2.;
-        let seek_top = rows.track_centre - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
             .h_full()
@@ -895,29 +945,36 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(controls_top)
+                    .top(rows.controls_top)
                     .left_0()
                     .right_0()
-                    .h(theme::HIT)
+                    .h(rows.controls_height)
                     .flex()
                     .items_center()
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
-                            move |_, _, cx| {
-                                command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                            },
-                        ),
+                        control(
+                            "shuffle",
+                            Icon::Shuffle,
+                            "shuffle",
+                            Some(shuffle),
+                            &p,
+                            window,
+                            cx,
+                        )
+                        .on_click(move |_, _, cx| {
+                            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
+                        }),
                     )
                     .child(
-                        control("previous", Icon::Previous, "prev", None, &p)
+                        control("previous", Icon::Previous, "prev", None, &p, window, cx)
                             .tooltip(tip(help("previous track", &Previous, cx)))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", Icon::Next, "next", None, &p)
+                        control("next", Icon::Next, "next", None, &p, window, cx)
                             .tooltip(tip(help("next track", &Next, cx)))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
@@ -928,6 +985,8 @@ impl Render for Transport {
                             repeat_label,
                             Some(now.repeat_mode != RepeatMode::Off),
                             &p,
+                            window,
+                            cx,
                         )
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
@@ -940,7 +999,7 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(seek_top)
+                    .top(rows.seek_top)
                     .left_0()
                     .right_0()
                     .h(TransportMetrics::SEEK)
@@ -992,12 +1051,20 @@ impl Render for Transport {
                             .read(cx)
                             .0
                             .as_ref()
-                            .is_none_or(|o| o.owner.is_none())
+                            // Only this device's outputs: with another device
+                            // controlled, or its outputs not yet heard, a
+                            // preset chosen here would name this device's
+                            // output to the other one.
+                            .is_some_and(|o| o.owner.is_none())
                     })
                     .map(|eq| self.eq_button(&eq, &p, cx)),
             );
 
+        let ring = crate::components::focus_ring(&self.focus, window, cx);
         div()
+            .id("transport")
+            .relative()
+            .track_focus(&self.focus)
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()
@@ -1011,6 +1078,13 @@ impl Render for Transport {
             .child(left)
             .child(centre)
             .child(right)
+            .children(ring)
+    }
+}
+
+impl Focusable for Transport {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

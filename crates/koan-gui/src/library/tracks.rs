@@ -13,15 +13,13 @@ use std::time::Duration;
 
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
+use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
@@ -59,6 +57,10 @@ pub struct TrackBrowser {
     request: u64,
     _load: Option<Task<()>>,
     scroll: UniformListScrollHandle,
+    /// The keyboard's place in the list.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     /// The rows on screen as of the last frame.
     visible: Range<usize>,
     selection: Selection,
@@ -85,7 +87,7 @@ impl TrackBrowser {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(crate::components::offset_down(y));
         }
     }
 
@@ -145,6 +147,8 @@ impl TrackBrowser {
             request: 0,
             _load: None,
             scroll: UniformListScrollHandle::new(),
+            cursor: Default::default(),
+            keyed: false,
             visible: 0..0,
             selection: Selection::default(),
             pick: None,
@@ -316,7 +320,7 @@ impl TrackBrowser {
                     Priority::Ahead(i.abs_diff(visible.start).min(i.abs_diff(visible.end)) as f32)
                 };
                 Some((
-                    Key::new(Art::Album(album), px(rows::SLEEVE), scale),
+                    Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale),
                     priority,
                 ))
             })
@@ -349,7 +353,7 @@ impl TrackBrowser {
             _ => PlayableDrag::new(&[item], title).with_sleeve(album),
         };
         let sleeve = album.map(|album| {
-            let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
+            let key = Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale);
             self.lib.covers.update(cx, |c, _| c.sleeve(key))
         });
         let feed = self.lib.feed.read(cx);
@@ -362,7 +366,13 @@ impl TrackBrowser {
             gathered: true,
             transfer: feed.transfers.get(&id).copied(),
             drag,
+            note: None,
+            cursor: self.keyed && self.cursor.at == Some(index),
             kind: crate::components::RowKind::Art,
+            place: Some((index, self.total as usize)),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), index, self.total as usize)),
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }
@@ -416,6 +426,9 @@ impl TrackList for TrackBrowser {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                // The keyboard carries on from the row clicked.
+                self.cursor.at = Some(index);
+                self.cursor.anchor = Some(index);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -444,6 +457,11 @@ impl TrackList for TrackBrowser {
 }
 
 impl TrackBrowser {
+    /// Whether tracks are being picked: what the toolbar's select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
     /// The browser's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
@@ -545,12 +563,19 @@ impl Render for TrackBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("tracks-list", "tracks")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
+        self.keyed = self.focus.is_focused(window);
+        let page = super::keys::keyed(
+            div().key_context("Library List").track_focus(&self.focus),
+            cx,
+        );
+        page.on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::dismiss))
             .size_full()
             .flex()
@@ -562,14 +587,53 @@ impl Render for TrackBrowser {
                     .id("track-list")
                     .flex_1()
                     .min_h_0()
-                    .pt(px(10.0))
+                    .pt(p.look.spaced(10.0))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                    .child(crate::components::list_scrollbar(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,
             ))
+    }
+}
+
+impl Focusable for TrackBrowser {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl super::keys::KeyedList for TrackBrowser {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        self.selection.only(order[from]);
+        if to > from {
+            self.selection.click(order[to], true, &order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        self.selection.click(order[ix], false, &order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.scroll
+            .scroll_to_item(ix, crate::components::ScrollStrategy::Top);
+    }
+
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.tracks.iter().map(|t| t.id).collect();
+        actions::play_list(&self.lib, ids, ix, cx);
     }
 }

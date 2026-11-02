@@ -189,6 +189,57 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git a/src/elements/div.rs b/src/elements/div.rs
+index 11f0b72..2c5b9ec 100644
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// KOAN: report this element as disabled: present and perceivable, but
++    /// taking no input (#1776).
++    fn aria_disabled(mut self, disabled: bool) -> Self {
++        self.interactivity().aria.disabled = disabled;
++        self
++    }
++
++    /// KOAN: announce changes to this element's subtree, politely or at
++    /// once, without moving focus (#1778).
++    fn aria_live(mut self, live: accesskit::Live) -> Self {
++        self.interactivity().aria.live = Some(live);
++        self
++    }
++
+     /// Set the selected state for this element.
+     fn aria_selected(mut self, selected: bool) -> Self {
+         self.interactivity().aria.selected = Some(selected);
+@@ -2161,6 +2175,10 @@ pub(crate) struct AriaProperties {
+     pub(crate) selected: Option<bool>,
+     pub(crate) expanded: Option<bool>,
+     pub(crate) toggled: Option<accesskit::Toggled>,
++    // KOAN: a region whose changes are announced (#1778).
++    pub(crate) live: Option<accesskit::Live>,
++    // KOAN: a control that takes no input is reported as such (#1776).
++    pub(crate) disabled: bool,
+     pub(crate) numeric_value: Option<f64>,
+     pub(crate) min_numeric_value: Option<f64>,
+     pub(crate) max_numeric_value: Option<f64>,
+@@ -3608,6 +3626,14 @@ impl Interactivity {
+         if let Some(toggled) = self.aria.toggled {
+             node.set_toggled(toggled);
+         }
++        // KOAN: live regions (#1778).
++        if let Some(live) = self.aria.live {
++            node.set_live(live);
++        }
++        // KOAN: disabled (#1776).
++        if self.aria.disabled {
++            node.set_disabled();
++        }
+         if let Some(value) = self.aria.numeric_value {
+             node.set_numeric_value(value);
+         }
 diff --git a/src/gpui.rs b/src/gpui.rs
 index 2328e95..5b5e7bc 100644
 --- a/src/gpui.rs
@@ -573,10 +624,10 @@ index 6cb3387..40e041a 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..d10a378
+index 0000000..c799f78
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,241 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -588,7 +639,7 @@ index 0000000..d10a378
 +#![allow(missing_docs)]
 +
 +use std::sync::OnceLock;
-+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 +use std::time::Instant;
 +
 +use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
@@ -605,7 +656,8 @@ index 0000000..d10a378
 +///   where `koan_sample(image, tile, uv)` reads the shader's image
 +///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 +///   kept to its edge
-+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>) -> vec4<f32>`
++/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
++///   where `koan_sample(tile, uv)` reads the image the same way
 +///
 +/// `position` is the pixel's centre within the quad and `size` the quad's
 +/// size, both in device pixels; `time` is seconds since the uniforms' origin
@@ -661,6 +713,13 @@ index 0000000..d10a378
 +    /// negative for an origin before it: an anchor can be older than the
 +    /// first shader.
 +    origin: AtomicI64,
++    /// Nanoseconds from [`shader_epoch`] after which `live` lapses by
++    /// itself; 0 for never. A transition is live for its length and no
++    /// longer, with nothing to stop it.
++    until: AtomicU64,
++    /// A lapse not yet presented: the present that lands a transition at
++    /// its end, however early the last refresh before it fell.
++    landing: AtomicBool,
 +}
 +
 +impl ShaderUniforms {
@@ -704,6 +763,24 @@ index 0000000..d10a378
 +
 +    pub fn is_live(&self) -> bool {
 +        self.live.load(Ordering::Relaxed)
++            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
++    }
++
++    /// Whether a deadline was set and has passed.
++    fn lapsed(&self) -> bool {
++        let until = self.until.load(Ordering::Relaxed);
++        until != 0
++            && (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) >= until
++    }
++
++    /// Live until `deadline` and no longer; `None` for as long as `live` is
++    /// set.
++    pub fn set_live_until(&self, deadline: Option<Instant>) {
++        let nanos = deadline.map_or(0, |d| {
++            (d.saturating_duration_since(shader_epoch()).as_nanos() as u64).max(1)
++        });
++        self.until.store(nanos, Ordering::Relaxed);
++        self.landing.store(deadline.is_some(), Ordering::Relaxed);
 +    }
 +
 +    /// Presented on every refresh while live, for a shader moved by `time`.
@@ -715,7 +792,8 @@ index 0000000..d10a378
 +    /// this was asked, or live and continuous.
 +    pub fn take_present(&self) -> bool {
 +        let changed = self.changed.swap(false, Ordering::Relaxed);
-+        changed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
++        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
++        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
 +    }
 +
 +    /// Every value, as a renderer copies them into a frame.
@@ -791,8 +869,45 @@ index 0000000..d10a378
 +        }
 +    }
 +}
+diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
+index ae98aa5..ea0f6a4 100644
+--- a/src/window/a11y/debug.rs
++++ b/src/window/a11y/debug.rs
+@@ -268,6 +268,14 @@ fn node_to_json(
+     if let Some(v) = node.toggled() {
+         aria.insert("toggled".into(), json!(format!("{v:?}")));
+     }
++    // KOAN: disabled (#1776).
++    if node.is_disabled() {
++        aria.insert("disabled".into(), json!(true));
++    }
++    // KOAN: live regions (#1778).
++    if let Some(v) = node.live() {
++        aria.insert("live".into(), json!(format!("{v:?}")));
++    }
+     if let Some(v) = node.orientation() {
+         aria.insert("orientation".into(), json!(format!("{v:?}")));
+     }
+diff --git a/src/window/a11y.rs b/src/window/a11y.rs
+index 5b63821..d5794cd 100644
+--- a/src/window/a11y.rs
++++ b/src/window/a11y.rs
+@@ -221,6 +221,13 @@ impl A11y {
+         self.active_this_frame
+     }
+ 
++    // KOAN: #1778.
++    /// As assistive technology attaching or leaving would set it.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn set_active_flag(&self, active: bool) {
++        self.active_flag.store(active, Ordering::SeqCst);
++    }
++
+     pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
+         self.focus_ids.insert(node_id, focus_id);
+     }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..0c4d2ca 100644
+index c559412..de0eb09 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1913,28 +1913,40 @@ impl Window {
@@ -926,3 +1041,26 @@ index c559412..0c4d2ca 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+@@ -7074,6 +7158,22 @@ impl Window {
+             .push((action, Box::new(listener)));
+     }
+ 
++    /// KOAN: acts as though assistive technology attached (or left), for
++    /// tests: the test platform never attaches any, so no tree is built
++    /// otherwise (#1778).
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn set_a11y_active_for_test(&mut self, active: bool) {
++        self.a11y.set_active_flag(active);
++        self.refresh();
++    }
++
++    /// KOAN: handles `request` as though assistive technology had sent it,
++    /// for tests that drive elements the way a screen reader does (#1776).
++    #[cfg(not(target_family = "wasm"))]
++    pub fn dispatch_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
++        self.handle_a11y_action(request, cx);
++    }
++
+     #[cfg(not(target_family = "wasm"))]
+     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+         // Take listeners out temporarily so the closures can borrow Window

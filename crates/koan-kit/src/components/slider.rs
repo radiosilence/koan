@@ -5,13 +5,13 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
-    SharedString, Styled, Window, canvas, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
 use super::{Animated, SHADED, ShaderProgram};
 
-use super::{Handler, child, focus, pointer, ring, track};
-use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole};
+use super::{Handler, accessible, child, focus, pointer, ring, track};
+use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole, label};
 
 /// A 1-point `rule` track with a 3-point accent fill up to the value, and a
 /// square 8 × 8 `ink` thumb shown only on hover, focus or drag. The values
@@ -30,6 +30,8 @@ pub struct Slider {
     on_commit: Option<Handler<()>>,
     glide: Option<Glide>,
     reach: Option<Glide>,
+    /// What it sets, for a screen reader: "seek", "volume".
+    name: Option<SharedString>,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
@@ -191,6 +193,7 @@ impl Slider {
             value: value.clamp(0.0, 1.0),
             low: None,
             high: None,
+            name: None,
             step: 0.05,
             disabled: false,
             compact: false,
@@ -218,6 +221,12 @@ impl Slider {
     }
 
     /// What sits at either end, such as the time played and the time left.
+    /// What it sets, as a screen reader names it ("seek").
+    pub fn named(mut self, name: impl AsRef<str>) -> Self {
+        self.name = Some(label(name));
+        self
+    }
+
     pub fn ends(mut self, low: impl Into<SharedString>, high: impl Into<SharedString>) -> Self {
         self.low = Some(low.into());
         self.high = Some(high.into());
@@ -290,12 +299,18 @@ impl RenderOnce for Slider {
         let reach = self.reach.clone();
         let rule = look.palette.rule.hsla();
 
-        // Whether a drag that began on this slider is under way. Set and
-        // cleared without a notify: nothing is drawn from it.
-        let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
+        // A drag that began on this slider, and the value it last sent: a
+        // move is compared with that, not with the value drawn, which an
+        // owner that has not redrawn yet still holds. Set and cleared without
+        // a notify: nothing is drawn from it; the press redraws the slider
+        // (`track`), which registers the drag's listeners.
+        let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| None::<f32>);
+        let drag_live = dragging.read(cx).is_some();
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
-        let drag_moves = (!self.disabled)
+        // Window-wide listeners only while a drag is under way: a slider at
+        // rest costs the window's other mouse events nothing.
+        let drag_moves = (!self.disabled && drag_live)
             .then(|| self.on_change.clone())
             .flatten()
             .map(|on_change| (on_change, self.on_commit.clone(), dragging.clone()));
@@ -326,7 +341,7 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.button == MouseButton::Left
-                                && starting.update(cx, |d, _| std::mem::replace(d, false))
+                                && starting.update(cx, |d, _| d.take()).is_some()
                                 && let Some(commit) = &lost
                             {
                                 // The drag ended where the window did not
@@ -342,10 +357,11 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.pressed_button == Some(MouseButton::Left)
-                                && *moving.read(cx)
+                                && let Some(sent) = *moving.read(cx)
                             {
                                 let to = at(bounds, event.position);
-                                if to != value {
+                                if to != sent {
+                                    moving.update(cx, |d, _| *d = Some(to));
                                     on_change(&to, window, cx);
                                 }
                             }
@@ -353,7 +369,7 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.button == MouseButton::Left
-                                && ending.update(cx, |d, _| std::mem::replace(d, false))
+                                && ending.update(cx, |d, _| d.take()).is_some()
                                 && let Some(on_commit) = &on_commit
                             {
                                 on_commit(&(), window, cx);
@@ -466,23 +482,47 @@ impl RenderOnce for Slider {
                     .child(text)
             })
         };
-        let mut slider = div()
-            .id(self.id.clone())
-            .relative()
-            .flex()
-            .items_center()
-            .gap(look.space(Space::S));
+        // A slider to a screen reader: the share as its value, said as the
+        // value at the low end where there is one (the time played).
+        let mut slider = accessible(
+            div().id(self.id.clone()),
+            gpui_kit::Role::Slider,
+            self.name.clone(),
+        )
+        .aria_disabled(self.disabled)
+        .aria_numeric_value(value as f64)
+        .aria_min_numeric_value(0.0)
+        .aria_max_numeric_value(1.0)
+        .aria_numeric_value_step(self.step as f64)
+        .when_some(self.low.clone(), |d, low| d.aria_value(low))
+        .relative()
+        .flex()
+        .items_center()
+        .gap(look.space(Space::S));
         if self.disabled {
             slider = slider.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let (down, key) = (on_change.clone(), on_change);
             let key_commit = self.on_commit;
+            for (action, by) in [
+                (gpui_kit::AccessibleAction::Increment, self.step),
+                (gpui_kit::AccessibleAction::Decrement, -self.step),
+            ] {
+                let (set, commit) = (key.clone(), key_commit.clone());
+                slider = slider.on_a11y_action(action, move |_, window, cx| {
+                    set(&(value + by).clamp(0.0, 1.0), window, cx);
+                    if let Some(commit) = &commit {
+                        commit(&(), window, cx);
+                    }
+                });
+            }
             let down_bounds = track_bounds.clone();
             let step = self.step;
             rail = rail.on_mouse_down(MouseButton::Left, move |event, window, cx| {
                 let bounds = *down_bounds.read(cx);
-                dragging.update(cx, |d, _| *d = true);
-                down(&at(bounds, event.position), window, cx);
+                let to = at(bounds, event.position);
+                dragging.update(cx, |d, _| *d = Some(to));
+                down(&to, window, cx);
             });
             slider = track(slider, &state)
                 .track_focus(&handle)

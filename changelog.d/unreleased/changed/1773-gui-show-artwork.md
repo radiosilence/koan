@@ -1,0 +1,1 @@
+- **A record's sleeve says it opens the artwork.** The cover on a record's page and in the transport show "show artwork" under the pointer.

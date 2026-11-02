@@ -11,8 +11,8 @@ use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
 // gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::FocusTrapElement as _;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, relative};
+// a sheet's height as a share of its window's.
+use koan_kit::raw::relative;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
@@ -352,7 +352,7 @@ impl Sheets {
                     }
                 }
             })
-            .w(px(460.))
+            .w(look.spaced(460.0))
             .max_h(relative(0.9))
             .overflow_y_scroll()
             .flex()

@@ -94,10 +94,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     };
     let look = Look::of(window, cx);
     let side = Viewer::side(window.viewport_size(), &look);
-    let art = match covers::image(Some(album), side, cx) {
-        Some(image) => CoverArt::Image(image),
-        None => CoverArt::Missing,
-    };
+    let art = covers::art(Some(album), side, cx);
     let mut viewer = Viewer::new("artwork-viewer", art, title).on_click(|_, _, cx| hide(cx));
     if let Some(detail) = detail {
         viewer = viewer.detail(detail);

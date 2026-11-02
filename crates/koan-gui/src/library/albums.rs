@@ -12,14 +12,11 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::components::{UniformListScrollHandle, uniform_list};
 use koan_ffi::{AlbumSort, BrowseFilter};
 use koan_kit::app::*;
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{ScrollEvent, TouchPhase, UniformListScrollHandle, uniform_list};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
+// a fling's phase, which the grid's cover aiming reads from the scroll.
+use koan_kit::raw::TouchPhase;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -145,7 +142,7 @@ impl AlbumGrid {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(crate::components::offset_down(y));
         }
     }
 
@@ -175,7 +172,7 @@ impl AlbumGrid {
                         loaded,
                     });
                 }
-                let offset = px(this.heading.borrow().offset);
+                let offset = Pixels::from(this.heading.borrow().offset);
                 this.lib
                     .nav
                     .update(cx, |nav, _| nav.remember_offset(Page::Albums, offset));
@@ -466,9 +463,15 @@ impl AlbumGrid {
                 cx.notify();
             })
         }));
-        let height = grid.row - px(tile::LINE_GAP);
+        let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
-        for record in records.get(start..end).unwrap_or_default() {
+        let count = records.len();
+        for (ix, record) in records
+            .get(start..end)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let item = Playable::Album(record.id);
             let selected = self.selection.contains(item);
             let (drag, pick, after) = match (&pick, selected) {
@@ -510,6 +513,7 @@ impl AlbumGrid {
                 drag,
                 pick,
                 after,
+                place: (start + ix, count),
             };
             tiles.push(self.tiles.tile(record, state, height, cx));
         }
@@ -566,7 +570,7 @@ impl AlbumGrid {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -px(y)));
+                .set_offset(crate::components::offset_down(Pixels::from(y)));
         }
         self.grid = Some(grid);
     }
@@ -683,9 +687,9 @@ impl AlbumGrid {
         let y = if to_end {
             handle.max_offset().y
         } else {
-            px(0.0)
+            Pixels::ZERO
         };
-        handle.set_offset(point(px(0.0), -y));
+        handle.set_offset(crate::components::offset_down(y));
         cx.notify();
     }
 
@@ -695,9 +699,9 @@ impl AlbumGrid {
         let max = handle.max_offset().y;
         let mut y = -handle.offset().y + distance;
         if y > max {
-            y = px(0.0);
+            y = Pixels::ZERO;
         }
-        handle.set_offset(point(px(0.0), -y));
+        handle.set_offset(crate::components::offset_down(y));
         cx.notify();
     }
 }
@@ -723,6 +727,20 @@ impl actions::Menus for AlbumGrid {
 }
 
 impl TileHost for AlbumGrid {
+    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+        if let (Some(grid), Some(ix)) = (
+            self.grid,
+            self.records.iter().position(|record| record.id == album),
+        ) {
+            let columns = grid.columns.max(1);
+            crate::components::reveal_around(
+                &self.scroll,
+                ix / columns,
+                self.records.len().div_ceil(columns),
+            );
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -777,6 +795,11 @@ impl TileHost for AlbumGrid {
 }
 
 impl AlbumGrid {
+    /// Whether records are being picked: what the toolbar's select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
     /// The grid's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
@@ -834,17 +857,7 @@ impl Render for AlbumGrid {
 
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
 
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
@@ -879,6 +892,11 @@ impl Render for AlbumGrid {
             .pt(grid.margin)
             .pb(grid.margin)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("albums-list", "albums")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element(),
             None => div().into_any_element(),
         };
@@ -903,7 +921,7 @@ impl Render for AlbumGrid {
                     .child(measure)
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                    .child(crate::components::list_scrollbar(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,
@@ -920,6 +938,12 @@ impl Render for AlbumGrid {
     }
 }
 
+impl Focusable for AlbumGrid {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,7 +951,7 @@ mod tests {
     use core::prelude::v1::test;
 
     fn grid() -> Grid {
-        Grid::for_width(px(800.0), &Scale::of(100))
+        Grid::for_width(Pixels::from(800.0), &Scale::of(100))
     }
 
     fn keys(row: usize) -> Vec<Key> {

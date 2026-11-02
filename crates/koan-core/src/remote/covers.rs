@@ -393,6 +393,8 @@ fn pass() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn config(dir: &Path) -> Config {

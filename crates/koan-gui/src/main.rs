@@ -40,16 +40,18 @@ fn main() {
         cx.spawn(async move |cx: &mut AsyncApp| {
             let engine = match koan_ffi::KoanEngine::open_desktop().await {
                 Ok(engine) => engine,
-                // Refused while another desktop app on this configuration is
-                // running, which the single-instance handover makes a launch
-                // that got past it. Said on stderr and in the log; the app does
-                // not run unlinked.
+                // A database from a newer koan, a configuration that does not
+                // parse, another desktop app on this configuration that got
+                // past the single-instance handover: said in a window, in the
+                // engine's words, and in the log. The app does not run
+                // without its engine.
                 Err(e) => {
                     log::error!("could not open the engine: {e}");
                     cx.background_executor()
                         .spawn(async { log::logger().flush() })
                         .await;
-                    cx.update(|cx| cx.quit());
+                    let message = e.to_string();
+                    cx.update(|cx| platform::startup_error::show(message, opening, cx));
                     return;
                 }
             };

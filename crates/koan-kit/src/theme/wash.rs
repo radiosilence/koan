@@ -1002,7 +1002,8 @@ mod tests {
     #[test]
     fn baked_red_stays_red_in_bgra() {
         let baked = bake(&solid(220, 20, 20), true, 1.0);
-        let [b, _, r, a] = baked.get_pixel(64, 64).0;
+        // The middle of the texture, whatever size it is baked at.
+        let [b, _, r, a] = baked.get_pixel(baked.width() / 2, baked.height() / 2).0;
         assert!(r > b, "red {r} blue {b}");
         assert_eq!(a, 255);
     }

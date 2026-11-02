@@ -442,7 +442,8 @@ impl ShelfPage {
             })
         }));
         let mut tiles = Vec::with_capacity(s.albums.len());
-        for album in &s.albums {
+        let count = s.albums.len();
+        for (ix, album) in s.albums.iter().enumerate() {
             let Some(record) = self.records.get(&album.id).cloned() else {
                 continue;
             };
@@ -471,6 +472,7 @@ impl ShelfPage {
                 drag,
                 pick,
                 after,
+                place: (ix, count),
             };
             tiles.push(self.tiles.tile(&record, state, grid.tile_height(), cx));
         }
@@ -504,7 +506,11 @@ impl ShelfPage {
                 gathered: true,
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
+                note: None,
+                cursor: false,
                 kind: RowKind::Art,
+                place: Some((index, s.tracks.len())),
+                reveal: None,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));
         }
@@ -772,6 +778,12 @@ impl Render for ShelfPage {
                     cx,
                 ))
             })
+    }
+}
+
+impl Focusable for ShelfPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

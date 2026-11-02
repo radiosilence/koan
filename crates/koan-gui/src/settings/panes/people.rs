@@ -8,12 +8,10 @@
 use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
-use crate::theme::{Icon, Look, Space, Tone, TypeRole};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 // overlays placed against another element.
 use koan_kit::raw::{anchored, deferred};
 
@@ -314,6 +312,7 @@ impl Render for PeoplePane {
                     ROLES.map(role_label),
                     ROLES.iter().position(|r| *r == role),
                 )
+                .named(format!("{name}'s role"))
                 .on_change(move |index, window, cx| {
                     let role = ROLES[*index];
                     entity.update(cx, |this, cx| this.set_role(name.clone(), role, window, cx))
@@ -341,7 +340,7 @@ impl Render for PeoplePane {
         rows.push(buttons(
             vec![
                 div()
-                    .w(px(200.))
+                    .w(look.spaced(200.0))
                     .child(TextField::new(&self.username))
                     .into_any_element(),
                 Picker::new(
@@ -349,6 +348,7 @@ impl Render for PeoplePane {
                     ROLES.map(role_label),
                     ROLES.iter().position(|r| *r == role),
                 )
+                .named("new person's role")
                 .on_change({
                     let entity = entity.clone();
                     move |index, _, cx| {
@@ -475,10 +475,12 @@ fn more_menu(
     div()
         .relative()
         .child(
-            Button::new(("people-more", index), ButtonKind::Icon)
-                .label(format!("More for {account}"))
-                .icon(Icon::MoreCircled)
-                .on_click(move |_, _, cx| opener(cx)),
+            Button::icon_only(
+                ("people-more", index),
+                Icon::MoreCircled,
+                label(format!("More for {account}")),
+            )
+            .on_click(move |_, _, cx| opener(cx)),
         )
         .when(shown, |this| {
             this.child(
@@ -526,7 +528,7 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .w_full()
                     .items_center()
                     .gap(look.space(Space::Xs))
-                    .child(code.element(px(168.), px(12.)))
+                    .child(code.element(look.spaced(168.0), look.spaced(12.0)))
                     .child(text(
                         "Scan with a phone's camera to open it there.",
                         TypeRole::Fine,

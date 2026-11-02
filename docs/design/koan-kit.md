@@ -12,13 +12,13 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 gpui-kit  ->  koan-kit  ->  koan-gui
 ```
 
-**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and its example is the theme sheet (today's `examples/theme_sheet.rs`), which draws every component offscreen.
+**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and `cargo run -p koan-kit` opens its storybook: every component and container on a page of its own, in each state, with the appearance, the accent (a sample sleeve among them, for its tone mapping and the wash), the text size, Reduce Motion and Show icons to switch. `examples/storybook.rs` draws each page offscreen, dark and light, to a PNG.
 
 **koan-gui** builds pages from koan-kit only. It does not depend on `gpui-kit`: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
 ## Beyond kōan
 
-koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone example (the theme sheet, which draws every component), its own docs, and tests of its own.
+koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone storybook, its own docs, and tests of its own.
 
 One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published. Upstreaming the patch is the real fix.
 
@@ -173,9 +173,11 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
 
+A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_outlined`), which takes its tooltip: what it does, with its keys where it has them (koan-gui's `platform::actions::help`, "back (⌘[)"). A glyph-only button made any other way without help or a label fails a debug assertion, so none goes without saying what it does.
+
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.
 
-`Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record.
+`Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record. While what it stands for is still loading (`CoverArt::Loading`, `Placeholder::loading(true)`), the same ensō draws itself: the `Spinner`, placed so its stroke lies exactly on the mark (same diameter, brush and centre) in the mark's colour, so loading that ends in no picture leaves the mark where it was. A `Cover` given an `id` fades its picture in over the spinner when it arrives after loading.
 
 `Level::new(id, value, max)`: a whole number on a `Slider` between two glyphs (a volume's speakers by default), `numbered()` to write it after them. A drag moves only the slider and commits once, when let go or stepped by a key: for a value set over the network, where every step would be a round trip and the value reported back lags the hand.
 
@@ -206,7 +208,7 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
 
-`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included. A list measuring its items takes `SectionHeading::height`.
+`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 
 `FadeIn::new(id, element)`: what arrives after its page (a photograph, a biography) fading in over `Motion::NORMAL`, or appearing under Reduce Motion. It takes no size of its own, so the element lays out as it would unwrapped: a wrapper that fills its parent takes the whole header row from the title beside a photo.
 
@@ -225,6 +227,18 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 ### Banner (Mac: `ServerBanner`)
 
 `Banner::new(icon, message, tone).action(label, run)`: a line across the top of the page column for something true of every page until it is put right, the server this device cannot use. `fine` in its tone over a rule, two lines at most, the action a compact button at the far edge.
+
+### Record tile (Mac: `AlbumGridCell`, `AlbumCollection`'s tiles)
+
+`TileGrid::for_width(width, scale)` lays a record grid out: `TileColumns` across, the page's margin, each row's height with its caption, and the measures a tile's owner tells its parts apart by (`caption_lines`, `TileArt::on_heart`). `TileArt::new(side, sleeve)` is the sleeve and what lies over it: the codec and the release's badge, the play mark or the starting ellipsis over a dim, the playing bars, the share on this device as a bar along the foot, the heart on its disc, and while picking the tick and the picked outline. While a sleeve is on its way the ensō draws itself (`TileSleeve::Loading`); one that arrives fades in over the record's colour, or over that ensō where no colour stood in. The tile's one interactive element and its engine wiring stay with the page.
+
+### Lists (Mac: `KoanTable`, `NSCollectionView`)
+
+`uniform_list` and `list` with their handles, `list_scrollbar` over either, `offset_down` for a handle's offset, `OVERDRAW` for a `list`'s layout past the screen, and `width_probe`, which keeps a page's width and redraws it when it changes. A page of `TableRow`s takes `table_list`; one laying out tiles a row at a time takes these.
+
+### Names, tabs and status (Mac: `LinkText`, Settings' tabs, its status line)
+
+`link_text(id, text, ink, link_action(...))` is a name that leads somewhere, underlined under the pointer; `name_line` sets a line of them on one baseline, each ending in an ellipsis rather than cut mid-glyph. `TabStrip` is a window's tabs, glyph over label, the chosen one in the accent and underlined. `StatusLine` is the one line at a window's foot that says what is under way or how it went. `Sparkline` is a small line through a series of values, an EQ curve's thumbnail. `FormRow::compact()` takes an 80-point label column for a popover's rows. `SecondaryWindow::transparent_titlebar()` runs the content under the title bar, the window drawing its top `strip_height()` itself.
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
@@ -253,6 +267,40 @@ The question host gives the keyboard back to whatever had it when it asked, once
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
 `SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+
+## Accessibility
+
+Every koan-kit component reports itself to the accessibility tree GPUI builds over AccessKit (VoiceOver, Orca, UI Automation), so a page made from the kit is read without code of its own. The tree is built only while assistive technology is attached, so this costs nothing otherwise. Each sets its role and name beside its id (`accessible` in `components/mod.rs`) and answers a reader's click with the handler a pointer would call (`answers_click`):
+
+| Component | Role, name and state |
+|---|---|
+| `Button`, `ToolbarButton`, `PlayButton`, `ShuffleButton` | Button, named by the label or a glyph's tooltip ("shuffle Hounds of Love") |
+| `Toggle`, `IconToggle` | Switch, toggled |
+| `Slider` (`named`), `Level` | Slider: the value, its range and step, and the low end's text as the value said ("1:00"); Increment and Decrement step it as the arrow keys do |
+| `Stepper` | SpinButton, with value, range and step; Increment and Decrement |
+| `Segmented` | RadioGroup of RadioButtons, the chosen one toggled, with their place in the set |
+| `Picker` (`named`) | ComboBox, named by its form row's title, the choice as its value, expanded while open |
+| `MenuPanel`, `MenuRow` | Menu of MenuItems, a checkbox item where it ticks, its second line as the description |
+| `NavRow`, `NavHeading` | Link, selected where it is; Heading |
+| `PageHeader`'s title, `SectionHeading` | Heading, levels 1 and 2 |
+| `Badge` | Label |
+| `ProgressRow` | ProgressIndicator, with its share and its counts |
+| `EmptyState` | Group, named by what it says |
+| sheets' `panel`, `Viewer` | Dialog |
+| `Toolbar` | Toolbar |
+| `TableRow` (`spoken`, `place`, `on_reveal`) | ListItem, or Heading for a record's heading, read as one line ("Cloudbusting, Kate Bush, Hounds of Love, 5:10, favourite"); its place in the list; selected. The links and the heart inside stay reachable as its children |
+| `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
+| `Banner`'s message, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
+
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
+
+What only a reader reads, a row's spoken line, its place and its reveal, is worked out only while one is attached (`Window::is_a11y_active`; koan-gui's `Paint::a11y`), since a list's rows are made again at every scroll frame.
+
+A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row's neighbours into view (`RowListState::reveal_around`; `reveal_around` for a `uniform_list`, which keeps one scroll and so asks for the neighbour the reader is heading for), so the next row is drawn before the reader reaches it.
+
+Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
 
 ## Swift roles and their GPUI components
 
@@ -290,7 +338,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 The spec wins, except where noted for the user's call.
 
-- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`), 16 for now by the user's call.
+- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`): 16, as the Swift lists use, and the tile grids take the same (`RowMetrics::page_margin_on`).
 - **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
 - **Form label column.** Swift's is 200; koan-gui had 210. 200.
 
