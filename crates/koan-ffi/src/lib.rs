@@ -1050,8 +1050,9 @@ impl KoanEngine {
         // A cover kept on this device, read off the engine's pool, before any
         // request.
         let kept = {
-            let (cfg, id) = (cfg.clone(), remote_id.clone());
-            offload::offload(move || koan_core::remote::covers::kept(&cfg, &id, size)).await
+            let id = remote_id.clone();
+            offload::offload(move || koan_core::remote::covers::kept(&Config::cached(), &id, size))
+                .await
         };
         if let Some(data) = kept {
             return Self::remote_cover(track_id, Ok(data));
