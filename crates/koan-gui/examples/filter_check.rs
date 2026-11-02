@@ -42,6 +42,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         theme::init(cx);
     });
     let lib = cx.update(|cx| {
+        // The library pages follow the mirror of the engine's state.
+        let mirror = koan_gui::mirror::Mirror::follow(&engine, cx);
+        cx.set_global(mirror);
         let navigator = cx.new(|_| koan_gui::navigator::Navigator::default());
         library::Lib::new(engine, Browse::load(), navigator, None, cx)
     });

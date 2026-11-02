@@ -102,7 +102,7 @@ impl Sidebar {
                 cx.observe(&covers, |_, _, cx| cx.notify()),
                 cx.on_release(move |this, cx| {
                     if let Some((covers, _)) = &this.covers {
-                        covers.update(cx, |c, _| c.release(id));
+                        covers.update(cx, |c, cx| c.release(id, cx));
                     }
                 }),
             ],
