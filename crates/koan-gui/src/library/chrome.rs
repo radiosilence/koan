@@ -378,7 +378,7 @@ impl FilterPanel {
         set: fn(&mut Browse, Option<String>),
     ) -> impl IntoElement {
         let browse = self.lib.browse.clone();
-        FormRow::new(label).control(
+        FormRow::new(label).compact().control(
             Popover::new(id)
                 .appearance(false)
                 .arrow(false)
@@ -447,7 +447,7 @@ impl Render for FilterPanel {
                 }),
             )
             .child(
-                FormRow::new("years").control(
+                FormRow::new("years").compact().control(
                     div()
                         .flex()
                         .gap(p.space(Space::S))

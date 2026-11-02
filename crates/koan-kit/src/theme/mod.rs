@@ -22,11 +22,13 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::{
-    App, AppContext, Context, Entity, Global, Hsla, Pixels, SharedString, Styled, Subscription,
-    Window, WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
+    WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, AccentState, Shade};
+/// A colour as the theme hands it out, for passing a role's colour along.
+pub use gpui_kit::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
     DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
@@ -130,7 +132,12 @@ fn read_motion_settings(cx: &mut App) {
     {
         let reduce =
             objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
-        cx.set_reduce_motion(reduce);
+        if cx.reduce_motion() != reduce {
+            cx.set_reduce_motion(reduce);
+            // Touched, so what observes the theme to know whether it may
+            // move (a timer of its own) hears of it as of Low Power.
+            cx.global_mut::<KoanTheme>();
+        }
         let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
         if cx.global::<KoanTheme>().low_power != low_power {
             cx.global_mut::<KoanTheme>().low_power = low_power;

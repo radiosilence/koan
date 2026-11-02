@@ -12,8 +12,6 @@ use koan_ffi::{
 };
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::bands::{self, Fields};
 use super::graph::{Editing, Graph, Part, Stroke};
@@ -101,29 +99,26 @@ impl Render for ProfilePage {
                         .border_b(crate::theme::HAIRLINE)
                         .border_color(look.palette.rule.hsla())
                         .child(
-                            div().h(px(GRAPH_H)).child(
+                            div().h(Pixels::from(GRAPH_H)).child(
                                 koan_kit::app::AnyView::from(self.graph.clone())
                                     // the bounds a cached view keeps between frames.
-                                    .cached(koan_kit::raw::StyleRefinement::default().size_full()),
+                                    .cached(StyleRefinement::default().size_full()),
                             ),
                         ),
                 )
             })
-            .child(
-                koan_kit::app::AnyView::from(self.body.clone()).cached(
-                    // the bounds a cached view keeps between frames.
-                    koan_kit::raw::StyleRefinement::default()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full(),
-                ),
-            )
+            .child(koan_kit::app::AnyView::from(self.body.clone()).cached(
+                // the bounds a cached view keeps between frames.
+                StyleRefinement::default().flex_1().min_h_0().w_full(),
+            ))
     }
 }
 
 /// The graph's room at the top of the page: the chart, its legend and the
 /// brushes, held to one height so the graph can be cached.
 const GRAPH_H: f32 = 290.0;
+/// The curve drawn inside that frame, in points.
+const CURVE_H: f32 = 220.0;
 
 pub struct ProfileBody {
     dsp: Entity<Dsp>,
@@ -174,7 +169,8 @@ impl ProfileBody {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).height(px(220.0)));
+        let graph = cx
+            .new(|cx| Graph::new(Graph::flat_response(), window, cx).height(Pixels::from(CURVE_H)));
         let name_input = cx.new(|cx| InputState::new(window, cx).default_value(name.clone()));
         let subscriptions = vec![
             cx.observe(&dsp, |p: &mut Self, _, cx| p.load(cx)),
@@ -1046,7 +1042,7 @@ impl ProfileBody {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(look.spaced(2.0))
                             .child(thumb(db.clone(), Stroke::eq(1), Some(range)))
                             .child(note(name, Tone::Muted, &look))
                     });
@@ -1495,7 +1491,7 @@ impl ProfileBody {
                     div()
                         .flex()
                         .flex_col()
-                        .py(px(2.0))
+                        .py(look.spaced(2.0))
                         .child(
                             div()
                                 .flex()
@@ -1742,7 +1738,7 @@ fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
         div()
             .flex()
             .items_baseline()
-            .gap(px(6.0))
+            .gap(look.spaced(6.0))
             .child(Badge::new(role_label(role)).accent(role == DspRole::Correction))
             .child(
                 div()
@@ -1758,7 +1754,7 @@ fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(look.spaced(4.0))
         .child(match &d.corrects {
             Some(c) => line(
                 if d.corrects_baked {

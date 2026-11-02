@@ -16,8 +16,6 @@ use crate::components::CopyButton;
 use crate::theme::{Look, Space, Tone, TypeRole};
 use koan_ffi::{ConnectionInfo, Invite, KoanEngine, KoanError};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, size};
 
 use crate::mirror::Slice;
 use crate::settings::form::{section, text};
@@ -152,13 +150,16 @@ impl Render for LinkDevice {
             .invite
             .as_ref()
             .map(|(invite, _)| invite.qr_link.clone());
-        let side = px(220.);
+        let side = look.spaced(220.0);
         // Laid out the same while the code is asked for, the caption and the
         // button held invisible, so nothing moves when it arrives.
         let code = match &self.invite {
-            Some((_, code)) => code.element(side, px(14.)).into_any_element(),
-            None => crate::components::Spinner::new(px(24.))
-                .reserving(size(side, side))
+            Some((_, code)) => code.element(side, look.spaced(14.0)).into_any_element(),
+            None => crate::components::Spinner::new(look.spaced(24.0))
+                .reserving(Size {
+                    width: side,
+                    height: side,
+                })
                 .into_any_element(),
         };
         let rows = vec![

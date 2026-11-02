@@ -236,7 +236,7 @@ impl QueueView {
         // The queue can arrive before the window's saved layout is read.
         let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         if view.queue.read(cx).grouped != grouped {
-            view.queue.update(cx, |queue, _| queue.regroup(grouped));
+            crate::mirror::regroup(&view.queue, grouped, cx);
         }
         view.lay_out(cx);
         view
@@ -246,10 +246,7 @@ impl QueueView {
     fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
         window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
         window_state::save(window.window_bounds(), cx);
-        self.queue.update(cx, |queue, cx| {
-            queue.regroup(grouped);
-            cx.notify();
-        });
+        crate::mirror::regroup(&self.queue, grouped, cx);
     }
 
     /// The rows' hearts read and toggle the library's favourites.
@@ -1084,7 +1081,24 @@ pub(crate) fn track(
     // plays, moving with the music; a tick once played; the pending square
     // while it waits; next in line to download, or failed.
     let quiet = if look.picked { p.on_selection } else { p.rule };
+    // What the mark means, said when the pointer rests on it.
+    let meaning = match item.status {
+        EntryStatus::Playing => Some("playing"),
+        EntryStatus::Played => Some("played"),
+        EntryStatus::PriorityPending => Some("downloads next"),
+        EntryStatus::Failed => Some("couldn't be played"),
+        EntryStatus::Queued | EntryStatus::Downloading if look.waiting => {
+            Some("waiting for its download")
+        }
+        EntryStatus::Queued | EntryStatus::Downloading => None,
+    };
     let mark = div()
+        .id(look.id("status", 0))
+        .when_some(meaning, |d, meaning| {
+            d.tooltip(move |window, cx| {
+                crate::components::Tooltip::view(crate::theme::label(meaning), window, cx)
+            })
+        })
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
             // Bars only while the music moves them, and in the look that
@@ -1142,6 +1156,7 @@ pub(crate) fn track(
             AVAILABILITY_WORD
         },
         AvailabilityMark::new(extras.availability.clone())
+            .id(look.id("availability", 0))
             .picked(look.picked)
             .into_any_element(),
     )

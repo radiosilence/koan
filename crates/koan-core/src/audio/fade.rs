@@ -17,6 +17,19 @@ pub const QUICK_FADE: std::time::Duration = std::time::Duration::from_millis(15)
 /// without a step.
 const SLEEP_GLIDE_SECONDS: f64 = 0.1;
 
+/// The gain the output's render callback last applied (the pause and resume
+/// ramp, a sleep timer's fade, mute), as `f32` bits: what the analyser scales
+/// the samples it reads by, so the bars show what reaches the listener. The
+/// decode thread feeds the analyser after ReplayGain and DSP; this is the
+/// rest. One store per callback. Written only by outputs made for playback
+/// (`FadeControl::for_output`), so the analyser follows the one playing.
+static HEARD_GAIN: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+
+/// See `HEARD_GAIN`.
+pub fn heard_gain() -> f32 {
+    f32::from_bits(HEARD_GAIN.load(Ordering::Relaxed))
+}
+
 /// What the player asks of a fade. Shared with the render callback, so atomics
 /// only.
 #[derive(Default)]
@@ -42,6 +55,8 @@ pub struct FadeControl {
     /// How long one render callback asks for, in microseconds: how late after
     /// a fade begins the callback may first see it.
     period_us: AtomicU32,
+    /// The callback publishes the gain it applies (`HEARD_GAIN`).
+    publish: bool,
 }
 
 impl FadeControl {
@@ -55,7 +70,12 @@ impl FadeControl {
 
     /// A fade for an output unit, muted when `playback.muted` says so.
     pub fn for_output() -> Arc<Self> {
-        let control = Self::new();
+        let control = Arc::new(Self {
+            audible: AtomicBool::new(true),
+            sleep_gain: AtomicU32::new(1.0f32.to_bits()),
+            publish: true,
+            ..Default::default()
+        });
         if crate::config::Config::cached().playback.muted {
             log::info!("audio: muted (playback.muted)");
             control.muted.store(true, Ordering::Release);
@@ -223,9 +243,23 @@ impl Fader {
     /// Apply the ramps to interleaved samples just read from the ring.
     pub fn apply(&mut self, samples: &mut [f32], channels: usize) {
         self.ramp(samples, channels);
-        if self.control.muted.load(Ordering::Relaxed) {
+        let muted = self.control.muted.load(Ordering::Relaxed);
+        if muted {
             samples.fill(0.0);
         }
+        if self.control.publish {
+            HEARD_GAIN.store(self.gain(muted).to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// The gain applied to the last frame: the ramp squared, the sleep gain,
+    /// and nothing while muted.
+    fn gain(&self, muted: bool) -> f32 {
+        if muted {
+            return 0.0;
+        }
+        let level = self.pos as f32 / self.len as f32;
+        level * level * self.sleep
     }
 
     fn ramp(&mut self, samples: &mut [f32], channels: usize) {
@@ -265,6 +299,16 @@ impl Fader {
         }
         if !rising && self.pos == 0 {
             self.control.silent.store(true, Ordering::Release);
+        }
+    }
+}
+
+impl Drop for Fader {
+    /// The output gone (closed, or a renderer playing instead): nothing of
+    /// this one's fade applies to what is heard next.
+    fn drop(&mut self) {
+        if self.control.publish {
+            HEARD_GAIN.store(1.0f32.to_bits(), Ordering::Relaxed);
         }
     }
 }
@@ -549,5 +593,28 @@ mod tests {
                 "{frames} frames"
             );
         }
+    }
+
+    #[test]
+    fn an_output_publishes_the_gain_it_applies() {
+        let control = Arc::new(FadeControl {
+            audible: AtomicBool::new(true),
+            sleep_gain: AtomicU32::new(1.0f32.to_bits()),
+            publish: true,
+            ..Default::default()
+        });
+        let mut fader = Fader::new(control.clone(), RATE);
+        let mut block = vec![1.0f32; 64];
+        fader.apply(&mut block, 1);
+        assert_eq!(heard_gain(), 1.0);
+        control.fade_out();
+        // Half way down the pause fade, as the ear hears it.
+        let half = (RATE * FADE_SECONDS / 2.0) as usize;
+        let mut block = vec![1.0f32; half];
+        fader.apply(&mut block, 1);
+        assert!((heard_gain() - 0.25).abs() < 0.01, "{}", heard_gain());
+        assert_eq!(heard_gain(), *block.last().unwrap());
+        drop(fader);
+        assert_eq!(heard_gain(), 1.0);
     }
 }

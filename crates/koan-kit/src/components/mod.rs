@@ -31,6 +31,8 @@ mod filter_field;
 mod form;
 mod inspector;
 mod level;
+mod link_text;
+mod lists;
 mod menu;
 mod metrics;
 mod page;
@@ -48,12 +50,15 @@ mod segmented;
 mod selection_bar;
 pub mod sheet;
 mod slider;
+mod sparkline;
 mod spinner;
 mod split;
 mod status;
 mod stepper;
 mod suggestions;
 mod table;
+mod tabs;
+mod tile;
 mod toggle;
 mod toolbar;
 mod viewer;
@@ -89,6 +94,11 @@ pub use form::{
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
+pub use link_text::{link_action, link_text, name_line};
+pub use lists::{
+    List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, uniform_list, width_probe,
+};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
@@ -107,16 +117,19 @@ pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
 pub use slider::{Glide, Slider};
+pub use sparkline::Sparkline;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use status::StatusBlock;
 pub use stepper::Stepper;
 pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
+pub use tabs::{StatusLine, TabStrip};
+pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
-    ToolbarSelection, WINDOW_BUTTONS,
+    ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use viewer::Viewer;
 pub use window::SecondaryWindow;

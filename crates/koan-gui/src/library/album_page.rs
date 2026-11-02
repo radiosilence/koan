@@ -8,10 +8,8 @@ use std::rc::Rc;
 
 use koan_ffi::{Album, Track};
 use koan_kit::app::*;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
+use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -105,8 +103,6 @@ pub struct AlbumPage {
 impl AlbumPage {
     pub fn new(lib: Lib, album_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
-        // The window takes this record's colours while its page shows.
-        cx.set_global(crate::root::ShownRecord(Some(album_id)));
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
@@ -123,15 +119,6 @@ impl AlbumPage {
             }),
             cx.on_release(move |this, cx| {
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
-                // The window takes the playing record's colours back, unless
-                // another record's page has taken them meanwhile.
-                if cx
-                    .try_global::<crate::root::ShownRecord>()
-                    .and_then(|s| s.0)
-                    == Some(this.album_id)
-                {
-                    cx.set_global(crate::root::ShownRecord(None));
-                }
             }),
         ];
         let mut this = Self {
@@ -343,6 +330,9 @@ impl AlbumPage {
                         div()
                             .id("album-sleeve")
                             .cursor_pointer()
+                            .tooltip(|window, cx| {
+                                crate::components::Tooltip::view("show artwork".into(), window, cx)
+                            })
                             .on_click({
                                 let (album_id, credit) = (
                                     self.album_id,
@@ -453,17 +443,7 @@ impl Render for AlbumPage {
         }
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
         let content = match (self.width.get(), self.gone) {
             (_, Some(failed)) => div()
                 .size_full()
@@ -518,7 +498,7 @@ impl Render for AlbumPage {
                                 .size_full(),
                             )
                             // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                            .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                            .child(crate::components::list_scrollbar(&self.scroll)),
                         cx.weak_entity(),
                         window,
                         cx,

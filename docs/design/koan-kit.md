@@ -173,6 +173,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
 
+A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_outlined`), which takes its tooltip: what it does, with its keys where it has them (koan-gui's `platform::actions::help`, "back (⌘[)"). A glyph-only button made any other way without help or a label fails a debug assertion, so none goes without saying what it does.
+
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.
 
 `Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record. While what it stands for is still loading (`CoverArt::Loading`, `Placeholder::loading(true)`), the same ensō draws itself: the `Spinner`, placed so its stroke lies exactly on the mark (same diameter, brush and centre) in the mark's colour, so loading that ends in no picture leaves the mark where it was. A `Cover` given an `id` fades its picture in over the spinner when it arrives after loading.
@@ -225,6 +227,18 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 ### Banner (Mac: `ServerBanner`)
 
 `Banner::new(icon, message, tone).action(label, run)`: a line across the top of the page column for something true of every page until it is put right, the server this device cannot use. `fine` in its tone over a rule, two lines at most, the action a compact button at the far edge.
+
+### Record tile (Mac: `AlbumGridCell`, `AlbumCollection`'s tiles)
+
+`TileGrid::for_width(width, scale)` lays a record grid out: `TileColumns` across, the page's margin, each row's height with its caption, and the measures a tile's owner tells its parts apart by (`caption_lines`, `TileArt::on_heart`). `TileArt::new(side, sleeve)` is the sleeve and what lies over it: the codec and the release's badge, the play mark or the starting ellipsis over a dim, the playing bars, the share on this device as a bar along the foot, the heart on its disc, and while picking the tick and the picked outline. While a sleeve is on its way the ensō draws itself (`TileSleeve::Loading`); one that arrives fades in over the record's colour, or over that ensō where no colour stood in. The tile's one interactive element and its engine wiring stay with the page.
+
+### Lists (Mac: `KoanTable`, `NSCollectionView`)
+
+`uniform_list` and `list` with their handles, `list_scrollbar` over either, `offset_down` for a handle's offset, `OVERDRAW` for a `list`'s layout past the screen, and `width_probe`, which keeps a page's width and redraws it when it changes. A page of `TableRow`s takes `table_list`; one laying out tiles a row at a time takes these.
+
+### Names, tabs and status (Mac: `LinkText`, Settings' tabs, its status line)
+
+`link_text(id, text, ink, link_action(...))` is a name that leads somewhere, underlined under the pointer; `name_line` sets a line of them on one baseline, each ending in an ellipsis rather than cut mid-glyph. `TabStrip` is a window's tabs, glyph over label, the chosen one in the accent and underlined. `StatusLine` is the one line at a window's foot that says what is under way or how it went. `Sparkline` is a small line through a series of values, an EQ curve's thumbnail. `FormRow::compact()` takes an 80-point label column for a popover's rows. `SecondaryWindow::transparent_titlebar()` runs the content under the title bar, the window drawing its top `strip_height()` itself.
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 

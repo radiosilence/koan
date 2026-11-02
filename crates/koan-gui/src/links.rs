@@ -4,12 +4,12 @@
 
 use koan_ffi::CreditPart;
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::Hsla;
 
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
-use crate::theme::{KoanStyled, TypeRole};
+use crate::theme::TypeRole;
+
+use crate::theme::Hsla;
 
 /// One name, leading to `route` when it has one. A click on it is not also
 /// a click on whatever it sits in, a row say.
@@ -20,21 +20,17 @@ pub fn link(
     nav: &Entity<Navigator>,
     ink: Hsla,
 ) -> Stateful<Div> {
-    let name = div().id(id).flex_shrink_0().child(text.into());
-    let Some(route) = route else {
-        return name;
-    };
     let nav = nav.clone();
-    name.cursor_pointer()
-        .hover(move |s| s.underline().text_color(ink))
-        .on_click(move |_, _, cx| {
-            cx.stop_propagation();
+    let go = route.map(|route| {
+        crate::components::link_action(move |_, _, cx| {
             nav.update(cx, |nav, cx| {
                 if nav.go(route) {
                     cx.notify();
                 }
-            });
+            })
         })
+    });
+    crate::components::link_text(id, text, ink, go)
 }
 
 /// A credit, each credited artist its own link; the joins between them, and
@@ -66,14 +62,8 @@ pub fn credit(
         .collect()
 }
 
-/// One line of names on one baseline, clipped at its container's edge.
+/// One line of names on one baseline; a name that does not fit ends in an
+/// ellipsis.
 pub fn names(children: Vec<AnyElement>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
-    div()
-        .flex()
-        .min_w_0()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_role(role, &p.look)
-        .text_color(color)
-        .children(children)
+    crate::components::name_line(children, role, color, &p.look)
 }
