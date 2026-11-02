@@ -1142,7 +1142,7 @@ impl Render for Seek {
             .entry
             .as_ref()
             .and_then(|e| e.track_id)
-            .and_then(|track| crate::transfers::reported(track, cx));
+            .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
             .compact()
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))

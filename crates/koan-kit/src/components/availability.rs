@@ -2,9 +2,17 @@
 //! that says so draws, right-aligned in its slot so a column of them lines
 //! up. The Mac's `AvailabilityMark`.
 
-use gpui_kit::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Window, div};
+use std::rc::Rc;
+
+use gpui_kit::{
+    AnyElement, App, Hsla, IntoElement, ParentElement, RenderOnce, Styled, Window, div,
+};
 
 use super::{Glide, ProgressRing, SHADED};
+
+/// A running transfer's glide in the colour its ring is drawn in: a glide
+/// carries its ring's colour, so a picked row's ring has its own.
+pub type RingGlide = Rc<dyn Fn(Hsla, &mut App) -> Glide>;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
 #[derive(Clone)]
@@ -20,7 +28,7 @@ pub enum Availability {
     /// `Glide` (its share at the last report and its rate), reckoned on the
     /// GPU per present with no frame drawn; turning while the size is
     /// unknown.
-    Transferring(Glide),
+    Transferring(RingGlide),
     Stored {
         on_server: bool,
         on_disk: bool,
@@ -96,7 +104,8 @@ impl RenderOnce for AvailabilityMark {
             Availability::Queued => mark(Icon::Downloads, "queued", muted),
             Availability::Failed => mark(Icon::WarningFilled, "failed", bad),
             Availability::NotHere => mark(Icon::CloudMissing, "away", quiet),
-            Availability::Transferring(glide) => {
+            Availability::Transferring(ring) => {
+                let glide = ring(muted, cx);
                 // Without shaders the ring draws the glide's last value, and
                 // the next frame draws it again for as long as it shows.
                 if !SHADED {

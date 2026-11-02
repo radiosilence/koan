@@ -603,7 +603,7 @@ impl QueueView {
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
                 favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
             }
-            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk, cx);
+            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk);
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);

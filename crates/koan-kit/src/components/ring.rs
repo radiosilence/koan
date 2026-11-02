@@ -35,17 +35,19 @@ pub struct ProgressRing {
 }
 
 /// The ring from twelve o'clock: `u[0]` the share at the origin (below zero
-/// while unknown), `u[1]` its rate a second, `u[2]` the stroke in device
-/// pixels, `u[8..12]` the colour. Ahead of the last report it reckons at
+/// while unknown), `u[1]` its rate a second, `u[8..12]` the colour. The
+/// stroke is the ring's own share of its side, so a glide drawn at two sizes
+/// needs nothing per size. Ahead of the last report it reckons at
 /// most a second on, so a transfer that stalls is not drawn finishing.
 static RING: ShaderProgram = ShaderProgram {
     name: "koan-progress-ring",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float side = min(size.x, size.y);
+    float stroke = side * 0.125;
     float2 d = position - size * 0.5;
-    float radius = (side - u[2]) * 0.5;
-    float edge = clamp(u[2] * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    float radius = (side - stroke) * 0.5;
+    float edge = clamp(stroke * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
     if (edge <= 0.0) {
         return float4(0.0);
     }
@@ -55,11 +57,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     }
     float shown;
     if (u[0] < 0.0) {
-        float from = a - fract(time);
-        if (from < 0.0) {
-            from += 1.0;
+        float start = a - fract(time);
+        if (start < 0.0) {
+            start += 1.0;
         }
-        shown = from < 0.7 ? 1.0 : 0.0;
+        shown = start < 0.7 ? 1.0 : 0.0;
     } else {
         float share = clamp(u[0] + u[1] * min(time, 1.0), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
@@ -70,9 +72,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
     let side = min(size.x, size.y);
+    let stroke = side * 0.125;
     let d = position - size * 0.5;
-    let radius = (side - u[0].z) * 0.5;
-    let edge = clamp(u[0].z * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    let radius = (side - stroke) * 0.5;
+    let edge = clamp(stroke * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
     if (edge <= 0.0) {
         return vec4<f32>(0.0);
     }
@@ -82,11 +85,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
     }
     var shown = 0.0;
     if (u[0].x < 0.0) {
-        var from = a - fract(time);
-        if (from < 0.0) {
-            from += 1.0;
+        var start = a - fract(time);
+        if (start < 0.0) {
+            start += 1.0;
         }
-        shown = select(0.0, 1.0, from < 0.7);
+        shown = select(0.0, 1.0, start < 0.7);
     } else {
         let share = clamp(u[0].x + u[0].y * min(time, 1.0), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
@@ -112,7 +115,9 @@ impl ProgressRing {
     /// Filled from `glide`, the transfer's share at a moment and its rate,
     /// reckoned per present where the renderer draws shaders (`Glide::set`,
     /// or `set_unknown` while the size is unknown). Elsewhere the ring draws
-    /// the glide's value as it was last set.
+    /// the glide's value as it was last set. The ring writes its colour into
+    /// the glide, so a glide is drawn in one colour: one per colour, and
+    /// never one a slider also draws.
     pub fn glide(mut self, glide: &Glide) -> Self {
         let value = glide.value();
         self.progress = (value >= 0.0).then_some(value);
@@ -189,8 +194,6 @@ impl RenderOnce for ProgressRing {
             let color = self.color.to_rgb();
             return canvas(
                 move |_, window, cx| {
-                    let stroke = f32::from(side) * STROKE * window.scale_factor();
-                    glide.0.set(2, stroke);
                     glide.0.set_all(8, &[color.r, color.g, color.b, color.a]);
                     glide.0.attach(false, window, cx);
                     glide
