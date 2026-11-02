@@ -2,9 +2,12 @@
 //! download's bytes. With no size to measure against, seven-tenths of the
 //! ring turn instead.
 //!
-//! As the spinner is drawn, on the GPU's side: the ring's dots are laid out
-//! once per size, close enough to read as one line, and a frame chooses how
-//! many to draw from where. Nothing is built or allocated per frame. An
+//! Given a `Glide` (`ProgressRing::glide`) and a renderer with shaders, the
+//! ring is a shader quad: the share at a moment and its rate, reckoned per
+//! present, so it fills smoothly between the transfer's reports with no
+//! frame drawn, and turns while the size is unknown. Elsewhere, as the
+//! spinner is drawn: the ring's dots laid out once per size, close enough to
+//! read as one line, and a frame choosing how many to draw from where. An
 //! indeterminate ring asks for frames only while it is painted.
 
 use std::cell::RefCell;
@@ -15,6 +18,7 @@ use std::time::Duration;
 
 use gpui_kit::*;
 
+use super::{Glide, SHADED, ShaderProgram};
 use crate::theme::{Look, TypeRole};
 
 /// One turn of an indeterminate ring.
@@ -27,7 +31,71 @@ pub struct ProgressRing {
     progress: Option<f32>,
     color: Hsla,
     role: TypeRole,
+    glide: Option<Glide>,
 }
+
+/// The ring from twelve o'clock: `u[0]` the share at the origin (below zero
+/// while unknown), `u[1]` its rate a second, `u[2]` the stroke in device
+/// pixels, `u[8..12]` the colour. Ahead of the last report it reckons at
+/// most a second on, so a transfer that stalls is not drawn finishing.
+static RING: ShaderProgram = ShaderProgram {
+    name: "koan-progress-ring",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float side = min(size.x, size.y);
+    float2 d = position - size * 0.5;
+    float radius = (side - u[2]) * 0.5;
+    float edge = clamp(u[2] * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    if (edge <= 0.0) {
+        return float4(0.0);
+    }
+    float a = atan2(d.x, -d.y) / 6.28318530718;
+    if (a < 0.0) {
+        a += 1.0;
+    }
+    float shown;
+    if (u[0] < 0.0) {
+        float from = a - fract(time);
+        if (from < 0.0) {
+            from += 1.0;
+        }
+        shown = from < 0.7 ? 1.0 : 0.0;
+    } else {
+        float share = clamp(u[0] + u[1] * min(time, 1.0), 0.02, 1.0);
+        shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
+    }
+    return float4(u[8], u[9], u[10], u[11] * edge * shown);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
+    let side = min(size.x, size.y);
+    let d = position - size * 0.5;
+    let radius = (side - u[0].z) * 0.5;
+    let edge = clamp(u[0].z * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    if (edge <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    var a = atan2(d.x, -d.y) / 6.28318530718;
+    if (a < 0.0) {
+        a += 1.0;
+    }
+    var shown = 0.0;
+    if (u[0].x < 0.0) {
+        var from = a - fract(time);
+        if (from < 0.0) {
+            from += 1.0;
+        }
+        shown = select(0.0, 1.0, from < 0.7);
+    } else {
+        let share = clamp(u[0].x + u[0].y * min(time, 1.0), 0.02, 1.0);
+        shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
+    }
+    return vec4<f32>(u[2].xyz, u[2].w * edge * shown);
+}
+"#,
+    prepare: None,
+};
 
 impl ProgressRing {
     /// `progress` from 0 to 1, or `None` while the size is unknown. Sized as
@@ -37,7 +105,19 @@ impl ProgressRing {
             progress,
             color,
             role: TypeRole::Fine,
+            glide: None,
         }
+    }
+
+    /// Filled from `glide`, the transfer's share at a moment and its rate,
+    /// reckoned per present where the renderer draws shaders (`Glide::set`,
+    /// or `set_unknown` while the size is unknown). Elsewhere the ring draws
+    /// the glide's value as it was last set.
+    pub fn glide(mut self, glide: &Glide) -> Self {
+        let value = glide.value();
+        self.progress = (value >= 0.0).then_some(value);
+        self.glide = Some(glide.clone());
+        self
     }
 
     /// Sized as a glyph beside `role` type instead.
@@ -105,6 +185,22 @@ impl RenderOnce for ProgressRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
+        if let Some(glide) = self.glide.filter(|_| SHADED) {
+            let color = self.color.to_rgb();
+            return canvas(
+                move |_, window, cx| {
+                    let stroke = f32::from(side) * STROKE * window.scale_factor();
+                    glide.0.set(2, stroke);
+                    glide.0.set_all(8, &[color.r, color.g, color.b, color.a]);
+                    glide.0.attach(false, window, cx);
+                    glide
+                },
+                |bounds, glide, window, _| glide.0.paint(&RING, None, bounds, window),
+            )
+            .size(side)
+            .flex_none()
+            .into_any_element();
+        }
         let ring = dots(side);
         let (progress, color) = (self.progress, self.color);
         canvas(
@@ -128,6 +224,7 @@ impl RenderOnce for ProgressRing {
         )
         .size(side)
         .flex_none()
+        .into_any_element()
     }
 }
 

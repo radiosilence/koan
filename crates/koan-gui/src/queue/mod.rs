@@ -17,7 +17,7 @@ use koan_kit::app::*;
 use koan_kit::raw::Hsla;
 
 use crate::components::{
-    AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    Availability, AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
     KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
     RowListState, RowMetrics, RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarSelection,
@@ -595,11 +595,15 @@ impl QueueView {
         // What a track row reads beyond its item: its heart. A transfer's
         // progress its availability mark reads each frame it is drawn.
         let mut favourite = None;
+        let mut availability = None;
         if let Row::Track { ix, .. } = r {
-            let track = self.queue.read(cx).items[ix].track_id;
+            let item = &self.queue.read(cx).items[ix];
+            let (status, track, on_server, on_disk) =
+                (item.status, item.track_id, item.on_server, item.on_disk);
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
                 favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
             }
+            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk, cx);
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);
@@ -648,7 +652,11 @@ impl QueueView {
                     grouped,
                     sleeve,
                     numbering,
-                    Extras { favourite, feed },
+                    Extras {
+                        favourite,
+                        feed,
+                        availability,
+                    },
                     &look,
                 );
                 (frame, id)
@@ -900,6 +908,8 @@ pub(crate) struct Extras {
     /// `None` for a track the library does not hold, or before it loads.
     pub favourite: Option<bool>,
     pub feed: Option<Entity<Feed>>,
+    /// Where its file is, or its transfer's glide.
+    pub availability: Option<Availability>,
 }
 
 fn link(
@@ -1049,7 +1059,7 @@ pub(crate) fn track(
         } else {
             AVAILABILITY_WORD
         },
-        AvailabilityMark::new(crate::transfers::of_queue_item(item))
+        AvailabilityMark::new(extras.availability.clone())
             .picked(look.picked)
             .into_any_element(),
     )

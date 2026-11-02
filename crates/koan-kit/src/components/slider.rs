@@ -29,6 +29,7 @@ pub struct Slider {
     on_change: Option<Handler<f32>>,
     on_commit: Option<Handler<()>>,
     glide: Option<Glide>,
+    reach: Option<Glide>,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
@@ -40,7 +41,7 @@ pub struct Slider {
 /// renders, and stops it (`set_moving(false)`) when the value rests or
 /// nothing shows it.
 #[derive(Clone, Default)]
-pub struct Glide(Animated);
+pub struct Glide(pub(crate) Animated);
 
 impl Glide {
     pub fn new() -> Self {
@@ -56,6 +57,18 @@ impl Glide {
     /// Whether the value is moving: presented every refresh while it is.
     pub fn set_moving(&self, moving: bool) {
         self.0.run(moving);
+    }
+
+    /// No value to show, as a download whose size is unknown: a ring turns
+    /// instead, presented every refresh until a value is set.
+    pub fn set_unknown(&self) {
+        self.0.set_all(0, &[-1.0, 0.0]);
+        self.0.run(true);
+    }
+
+    /// The value as last set, before any motion since.
+    pub fn value(&self) -> f32 {
+        self.0.get(0)
     }
 
     /// The fill, thumb and their colours, in device pixels.
@@ -133,12 +146,23 @@ impl Slider {
             on_change: None,
             on_commit: None,
             glide: None,
+            reach: None,
         }
     }
 
     /// The value moves on its own from `value` as `glide` says; see `Glide`.
     pub fn glide(mut self, glide: &Glide) -> Self {
         self.glide = Some(glide.clone());
+        self
+    }
+
+    /// How far the value can go, as a share moving on its own: a seek bar's
+    /// track still downloading, as far as its bytes reach. The track's rule
+    /// is dimmed past it, as the Mac's is, so a file all here looks like the
+    /// ordinary bar; drawn by the same shader as the glide where the
+    /// renderer has shaders.
+    pub fn reach(mut self, reach: &Glide) -> Self {
+        self.reach = Some(reach.clone());
         self
     }
 
@@ -184,6 +208,8 @@ const THUMB: f32 = 8.0;
 /// A compact slider's rail.
 const COMPACT: Pixels = px(20.0);
 const FILL: f32 = 3.0;
+/// The track's rule past what has downloaded, as the Mac dims it.
+const REACH_DIM: f32 = 0.4;
 
 fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
     let width = f32::from(bounds.size.width);
@@ -210,6 +236,8 @@ impl RenderOnce for Slider {
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
         let glide = self.glide.clone().filter(|_| SHADED);
+        let reach = self.reach.clone();
+        let rule = look.palette.rule.hsla();
 
         // Whether a drag that began on this slider is under way. Set and
         // cleared without a notify: nothing is drawn from it.
@@ -292,8 +320,44 @@ impl RenderOnce for Slider {
                     .right_0()
                     .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                     .h(HAIRLINE)
-                    .bg(look.palette.rule.hsla()),
+                    .bg(rule)
+                    .when(reach.is_some(), |d| d.opacity(REACH_DIM)),
             )
+            .when_some(reach.clone().filter(|_| !SHADED), |rail, reach| {
+                rail.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .w(gpui_kit::relative(reach.value().clamp(0.0, 1.0)))
+                        .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
+                        .h(HAIRLINE)
+                        .bg(rule),
+                )
+            })
+            .when_some(reach.filter(|_| SHADED), |rail, reach| {
+                rail.child(
+                    canvas(
+                        move |_, window, cx| {
+                            let scale = window.scale_factor();
+                            reach.style(&Style {
+                                fill: f32::from(HAIRLINE) * scale,
+                                thumb: 0.0,
+                                inset: THUMB / 2.0 * scale,
+                                fill_color: rule,
+                                thumb_color: rule,
+                            });
+                            reach.0.attach(false, window, cx);
+                            reach
+                        },
+                        |bounds, reach, window, _| reach.0.paint(&GLIDE, None, bounds, window),
+                    )
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-THUMB / 2.0))
+                    .right(px(-THUMB / 2.0)),
+                )
+            })
             .when(glide.is_none(), |rail| {
                 rail.child(
                     div()

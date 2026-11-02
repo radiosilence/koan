@@ -14,8 +14,8 @@
 mod animated;
 mod availability;
 mod badge;
-mod bars;
 mod banner;
+mod bars;
 mod button;
 pub mod choice;
 mod collection;
@@ -64,10 +64,10 @@ use gpui_kit::{
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
-pub use availability::{Availability, AvailabilityMark, ProgressReader};
+pub use availability::{Availability, AvailabilityMark};
 pub use badge::{Badge, Chip};
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use banner::Banner;
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use cover::{Cover, CoverArt, Mosaic};

@@ -201,6 +201,7 @@ pub fn track_row<V: TrackList>(
                 track.on_server,
                 track.on_disk,
                 state.transfer,
+                cx,
             ))
             .picked(state.selected),
         )
