@@ -215,6 +215,12 @@ impl RenderOnce for PageHeader {
     }
 }
 
+/// The header's play glyph, the Mac's 17 points at the chosen text size:
+/// the square is the prominent action's, and its glyph fills it as one.
+const PLAY_GLYPH: f32 = 17.0;
+/// The shuffle glyph beside it, the Mac's 15 points.
+const SHUFFLE_GLYPH: f32 = 15.0;
+
 /// A header's play: the page's one prominent action, as the Mac draws it
 /// in the theme. A square in a hairline accent outline with the play glyph
 /// in the accent, 44 points to hit, and the spinner while what it plays is
@@ -275,7 +281,7 @@ impl RenderOnce for PlayButton {
                 super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
             } else {
                 crate::theme::KoanIcon::new(crate::theme::Icon::Play)
-                    .role(TypeRole::Body)
+                    .points(PLAY_GLYPH * look.scale.size)
                     .color(look.text_color(crate::theme::Tone::Accent))
                     .into_any_element()
             })
@@ -335,7 +341,7 @@ impl RenderOnce for ShuffleButton {
             })
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
-                    .role(TypeRole::Body)
+                    .points(SHUFFLE_GLYPH * look.scale.size)
                     .tone(crate::theme::Tone::Muted),
             )
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {

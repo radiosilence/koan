@@ -351,7 +351,6 @@ impl TrackBrowser {
             lead: (index + 1).to_string().into(),
             lead_width,
             current: feed.playing_track == Some(id),
-            playing: feed.playing,
             favourite: feed.is_favourite(item),
             selected,
             gathered: true,

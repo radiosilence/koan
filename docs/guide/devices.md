@@ -143,6 +143,14 @@ the machine with "(desktop)" after it, beside the macOS app and the terminal
 UI on the same machine; see [The desktop app](desktop.md). One runs per
 configuration directory.
 
+Its devices button, in the transport beside the output menu, is Play on: it
+lists this computer and every other device, each with what it is playing, and
+picking one controls it. While another device is controlled, its name stands
+beside the button in the accent, and the transport and queue are that
+device's. **Move here** on a row sends the music there at its place. What
+became of a move that did not simply arrive (a device asleep, a refusal,
+tracks only this computer has) shows at the foot of the sidebar.
+
 ### Who is connected
 
 Settings → Devices → **Connected now** lists who is connected to this device

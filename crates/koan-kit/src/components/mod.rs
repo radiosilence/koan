@@ -21,6 +21,7 @@ mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod level;
 mod menu;
 mod metrics;
 mod page;
@@ -62,8 +63,9 @@ pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
+pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
-pub use metrics::{BarMetrics, RowKind, RowMetrics, TileColumns, TransportMetrics};
+pub use metrics::{BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TransportMetrics};
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;

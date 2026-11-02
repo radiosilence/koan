@@ -36,12 +36,14 @@ impl BarMetrics {
     pub const HEIGHT: Pixels = px(11.0);
 }
 
-/// The transport bar's figures, the spec's: 68 tall, a 40-point cover, the
+/// The transport bar's figures, the spec's: 64 tall, a 40-point cover, the
 /// controls 22 apart over the seek bar.
 pub struct TransportMetrics;
 
 impl TransportMetrics {
-    pub const HEIGHT: Pixels = px(68.0);
+    /// The Mac's: 9 points above and below a 46-point zone, the rule drawn
+    /// inside its top.
+    pub const HEIGHT: Pixels = px(64.0);
     pub const COVER: Pixels = px(40.0);
     /// The middle column, the controls over the seek bar.
     pub const CENTRE: Pixels = px(520.0);
@@ -60,12 +62,6 @@ impl TransportMetrics {
         look.spaced(12.0)
     }
 
-    /// From the bar's top rule to the play button's outline, the Mac's
-    /// measured at 2x.
-    pub fn controls_top(look: &Look) -> Pixels {
-        look.spaced(6.5)
-    }
-
     /// The play button's outline: an outlined icon button around a `body`
     /// glyph, its padding (the hairline drawn inside it) included.
     pub fn play_outline(look: &Look) -> Pixels {
@@ -74,11 +70,42 @@ impl TransportMetrics {
         )) + look.spaced(7.0) * 2.0
     }
 
-    /// From the play button's outline to the seek line's centre, the Mac's:
-    /// its stack puts 5 points between the controls and a 14-point seek row.
-    pub fn outline_to_track(look: &Look) -> Pixels {
-        look.spaced(12.0)
+    /// The seek row as the Mac lays it out: its line's reach, 14 points.
+    const SEEK_ROW: f32 = 14.0;
+    /// Between the controls and the seek row, the Mac's stack spacing.
+    const STACK_GAP: f32 = 5.0;
+
+    /// Where the centre column's two rows stand, from the bar's top (its
+    /// rule included): the play button's outline and the seek line's centre.
+    /// The controls, the gap and the seek row are centred in the bar, so the
+    /// space above the outline equals the space below the seek row, as the
+    /// Mac's transport measures at 2x (7.5 points each in its 64).
+    pub fn centre_rows(look: &Look) -> CentreRows {
+        let outline = Self::play_outline(look);
+        let gap = look.spaced(Self::STACK_GAP);
+        let row = look.spaced(Self::SEEK_ROW);
+        let margin = ((Self::HEIGHT - outline - gap - row) / 2.).max(px(0.));
+        CentreRows {
+            outline_top: margin,
+            outline,
+            track_centre: margin + outline + gap + row / 2.,
+        }
     }
+
+    /// A trailing glyph (sleep, play on, output, EQ), the Mac's 17 points
+    /// at the chosen text size: larger than the `body` glyphs beside the
+    /// bar's text, as the Mac draws its device and output buttons.
+    pub fn trailing_icon(look: &Look) -> f32 {
+        17.0 * look.scale.size
+    }
+}
+
+/// The centre column's rows, from `TransportMetrics::centre_rows`.
+#[derive(Clone, Copy, Debug)]
+pub struct CentreRows {
+    pub outline_top: Pixels,
+    pub outline: Pixels,
+    pub track_centre: Pixels,
 }
 
 /// A grid of record tiles across a width: how many columns, how big each
