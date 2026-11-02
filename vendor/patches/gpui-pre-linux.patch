@@ -10,7 +10,7 @@ index a5390e7..ba23948 100644
  
  pub use linux::{current_platform, linux_platform};
 diff --git a/src/linux/x11/client.rs b/src/linux/x11/client.rs
-index e21f019..03936eb 100644
+index e21f019..7ef6cb2 100644
 --- a/src/linux/x11/client.rs
 +++ b/src/linux/x11/client.rs
 @@ -3,6 +3,7 @@ use ashpd::WindowIdentifier;
@@ -21,7 +21,7 @@ index e21f019..03936eb 100644
  };
  use collections::HashMap;
  use core::str;
-@@ -119,8 +120,16 @@ enum RefreshState {
+@@ -119,8 +120,20 @@ enum RefreshState {
          refresh_rate: Duration,
          event_loop_token: RegistrationToken,
      },
@@ -35,10 +35,14 @@ index e21f019..03936eb 100644
 +/// KOAN: how many refreshes no one asked for before the timer parks.
 +const IDLE_FRAMES: u32 = 3;
 +
++/// KOAN: how long after input the refresh timer stays up, as long as GPUI
++/// keeps presenting after high-rate input (`InputRateTracker`).
++const INPUT_SUSTAIN: Duration = Duration::from_secs(1);
++
  #[derive(Debug)]
  #[non_exhaustive]
  pub enum EventHandlerError {
-@@ -183,6 +192,8 @@ pub struct X11ClientState {
+@@ -183,6 +196,8 @@ pub struct X11ClientState {
      /// A weak pointer to this state, for event-loop callbacks registered by its methods.
      this: X11ClientStatePtr,
      pub(crate) loop_handle: LoopHandle<'static, ()>,
@@ -47,7 +51,7 @@ index e21f019..03936eb 100644
      /// Long-lived sources this client registered on the loop, removed when its
      /// [`X11Connection`] drops.
      registrations: Vec<RegistrationToken>,
-@@ -502,6 +513,7 @@ impl X11Connection {
+@@ -502,6 +517,7 @@ impl X11Connection {
              RefCell::new(X11ClientState {
                  this: X11ClientStatePtr(this.clone()),
                  registrations: Vec::new(),
@@ -55,7 +59,7 @@ index e21f019..03936eb 100644
                  graphical_environment: GraphicalEnvironment {
                      activation_token: None,
                      ..environment.clone()
-@@ -599,6 +611,25 @@ impl X11Client {
+@@ -599,6 +615,25 @@ impl X11Client {
              .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
          self.0.borrow_mut().registrations.push(token);
  
@@ -81,7 +85,7 @@ index e21f019..03936eb 100644
          let token = handle
              .insert_source(XDPEventSource::new(&background_executor), {
                  let this = this.clone();
-@@ -1742,6 +1773,8 @@ impl X11Client {
+@@ -1742,6 +1777,8 @@ impl X11Client {
          .log_err();
          xcb_flush(&state.xcb_connection);
  
@@ -90,7 +94,7 @@ index e21f019..03936eb 100644
          let window_ref = WindowRef {
              window: window.0.clone(),
              refresh_state: None,
-@@ -1974,9 +2007,14 @@ impl X11ClientState {
+@@ -1974,9 +2011,14 @@ impl X11ClientState {
          match (is_visible, window_ref.refresh_state.take()) {
              (false, refresh_state @ Some(RefreshState::Hidden { .. }))
              | (false, refresh_state @ None)
@@ -106,7 +110,7 @@ index e21f019..03936eb 100644
              (
                  false,
                  Some(RefreshState::PeriodicRefresh {
-@@ -2046,12 +2084,40 @@ impl X11ClientState {
+@@ -2046,12 +2088,46 @@ impl X11ClientState {
          }
      }
  
@@ -142,18 +146,28 @@ index e21f019..03936eb 100644
          x_window: xproto::Window,
          refresh_rate: Duration,
      ) -> RegistrationToken {
-+        // KOAN: refreshes in a row that no one asked for.
++        // KOAN: refreshes in a row that no one asked for, and this timer's
++        // place among the window's.
 +        let mut idle_frames = 0;
++        let timer = self.windows.get(&x_window).map(|w| {
++            let timer = w.window.refresh_timer.get() + 1;
++            w.window.refresh_timer.set(timer);
++            timer
++        });
          self.loop_handle
              .insert_source(calloop::timer::Timer::immediate(), {
                  let this = self.this.clone();
-@@ -2071,10 +2137,26 @@ impl X11ClientState {
+@@ -2071,10 +2147,39 @@ impl X11ClientState {
                                  signal_at: PlatformFrameSignal::capture(|| instant),
                                  signal_source: FrameRequestSource::LocalSchedule,
                              });
 +                            // KOAN: a few refreshes no one asked for: nothing
 +                            // to draw. The frame waker restarts the timer.
-+                            if window.woken.replace(false) {
++                            let recent_input = window
++                                .last_input
++                                .get()
++                                .is_some_and(|at| at.elapsed() < INPUT_SUSTAIN);
++                            if window.woken.replace(false) || recent_input {
 +                                idle_frames = 0;
 +                            } else {
 +                                idle_frames += 1;
@@ -163,9 +177,18 @@ index e21f019..03936eb 100644
                      };
                      client.process_x11_events(&xcb_connection).log_err();
 +                    if idle_frames >= IDLE_FRAMES {
-+                        if let Some(window) = client.0.borrow_mut().windows.get_mut(&x_window)
-+                            && let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) =
-+                                window.refresh_state
++                        let mut state = client.0.borrow_mut();
++                        let Some(window) = state.windows.get_mut(&x_window) else {
++                            return calloop::timer::TimeoutAction::Drop;
++                        };
++                        // KOAN: replaced by another timer while this one ran
++                        // (the window hidden and shown again): the state is
++                        // that timer's to park.
++                        if Some(window.window.refresh_timer.get()) != timer {
++                            return calloop::timer::TimeoutAction::Drop;
++                        }
++                        if let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) =
++                            window.refresh_state
 +                        {
 +                            window.refresh_state = Some(RefreshState::Parked { refresh_rate });
 +                            return calloop::timer::TimeoutAction::Drop;
@@ -175,7 +198,7 @@ index e21f019..03936eb 100644
                      // Take into account that some frames have been skipped
                      let now = Instant::now();
 diff --git a/src/linux/x11/window.rs b/src/linux/x11/window.rs
-index f6ee76a..07a90e1 100644
+index f6ee76a..d747b7c 100644
 --- a/src/linux/x11/window.rs
 +++ b/src/linux/x11/window.rs
 @@ -29,8 +29,15 @@ use x11rb::{
@@ -195,7 +218,7 @@ index f6ee76a..07a90e1 100644
  };
  
  use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
-@@ -313,6 +320,11 @@ pub(crate) struct X11WindowStatePtr {
+@@ -313,6 +320,18 @@ pub(crate) struct X11WindowStatePtr {
      pub(crate) callbacks: Rc<RefCell<Callbacks>>,
      xcb: Rc<XCBConnection>,
      pub(crate) x_window: xproto::Window,
@@ -203,20 +226,38 @@ index f6ee76a..07a90e1 100644
 +    // client's ping that restarts the timer once it has parked for being
 +    // idle. Apart from `state` so a waker can ring them during any borrow.
 +    pub(crate) woken: Rc<Cell<bool>>,
++    /// KOAN: which refresh timer is the window's own, so one replaced while
++    /// it ran leaves the new one's state alone.
++    pub(crate) refresh_timer: Rc<Cell<u64>>,
++    /// KOAN: when input last arrived. GPUI keeps presenting for a second
++    /// after input so the display does not drop its refresh rate between
++    /// events, so the timer stays up that long.
++    pub(crate) last_input: Rc<Cell<Option<std::time::Instant>>>,
 +    pub(crate) frame_wake: Rc<RefCell<Option<Ping>>>,
  }
  
  impl rwh::HasWindowHandle for RawWindow {
-@@ -958,6 +970,8 @@ impl X11Window {
+@@ -958,6 +977,10 @@ impl X11Window {
              callbacks: Rc::new(RefCell::new(Callbacks::default())),
              xcb: xcb.clone(),
              x_window,
 +            woken: Rc::new(Cell::new(false)),
++            refresh_timer: Rc::new(Cell::new(0)),
++            last_input: Rc::new(Cell::new(None)),
 +            frame_wake: Rc::new(RefCell::new(None)),
          };
  
          let state = ptr.state.borrow_mut();
-@@ -1385,6 +1399,28 @@ impl X11WindowStatePtr {
+@@ -1194,6 +1217,8 @@ impl X11WindowStatePtr {
+     }
+ 
+     pub fn handle_input(&self, input: PlatformInput) {
++        // KOAN: input keeps the refresh timer up a while.
++        self.last_input.set(Some(std::time::Instant::now()));
+         if self.is_blocked() {
+             return;
+         }
+@@ -1385,6 +1410,28 @@ impl X11WindowStatePtr {
  }
  
  impl PlatformWindow for X11Window {
@@ -245,3 +286,21 @@ index f6ee76a..07a90e1 100644
      fn bounds(&self) -> Bounds<Pixels> {
          self.0.state.borrow().bounds
      }
+@@ -1772,6 +1819,8 @@ impl PlatformWindow for X11Window {
+             }
+ 
+             inner.force_render_after_recovery = true;
++            // KOAN: the next frame must come, parked or not.
++            self.schedule_frame();
+             return;
+         }
+ 
+@@ -1779,6 +1828,8 @@ impl PlatformWindow for X11Window {
+ 
+         if renderer.needs_redraw() {
+             inner.force_render_after_recovery = true;
++            // KOAN: as above.
++            self.schedule_frame();
+         }
+     }
+ 

@@ -147,20 +147,29 @@ fn fetch_since(
     }
 }
 
+/// How long after a lookup a refused photo address is not looked up again.
+const RELOOK_AFTER_REFUSAL_SECS: i64 = 24 * 60 * 60;
+
 /// The photograph's bytes. Network, every time: the front end caches images,
 /// and the database is no place for them. No connection is held while it
 /// downloads.
 ///
 /// A stored address Commons refuses (it serves only its standard thumbnail
-/// widths, and files are renamed) is looked up again once, and the new one
-/// downloaded.
+/// widths, and files are renamed) is looked up again, and the new one
+/// downloaded; at most once a day, so an address the lookup still names is
+/// not looked up on every request.
 pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
-    let url = cached(&pool.get()?.conn, artist_id)?.and_then(|info| info.image_url);
-    let Some(url) = url else {
+    let held = cached(&pool.get()?.conn, artist_id)?;
+    let looked_up = held.as_ref().map_or(0, |info| info.fetched_at);
+    let Some(url) = held.and_then(|info| info.image_url) else {
         return Ok(None);
     };
     let http = wikimedia::client();
+    // Looked up again at most once a day: a lookup that found the same
+    // refused address, or none newer, is not repeated on every request.
+    let recent = crate::clock::unix_secs() - looked_up < RELOOK_AFTER_REFUSAL_SECS;
     match wikimedia::download(&http, &url) {
+        Err(e) if e.refused() && recent => Err(e.into()),
         Err(e) if e.refused() => {
             log::info!("artist {artist_id}'s photo was refused ({e}); looking it up again");
             let fresh = fetch_since(pool, artist_id, true)?.and_then(|info| info.image_url);
