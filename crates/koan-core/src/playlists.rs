@@ -1424,6 +1424,8 @@ mod tests {
         creates_without_id: usize,
         /// `getPlaylists` answers with none, as a server answering wrongly.
         hide_listing: bool,
+        /// Lists `koanPlaylistOrder`, as a kōan server keeping the order.
+        keeps_order: bool,
     }
 
     fn serve(server: std::sync::Arc<parking_lot::Mutex<Server>>) -> String {
@@ -1532,8 +1534,47 @@ mod tests {
                     full(server.lists.last().unwrap())
                 ))
             }
+            "ping" if server.lock().keeps_order => {
+                ok(r#","type":"koan","openSubsonic":true"#.into())
+            }
+            "getOpenSubsonicExtensions" if server.lock().keeps_order => ok(format!(
+                r#","openSubsonicExtensions":[{{"name":"{}","versions":[1]}}]"#,
+                crate::remote::profile::PLAYLIST_ORDER
+            )),
             _ => ok(String::new()),
         }
+    }
+
+    #[test]
+    fn a_sync_adopts_the_servers_playlist_order_around_local_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let (p1, p2) = (id("p1"), id("p2"));
+        let here = queries::create_playlist(&db.conn, queries::LOCAL_USER, "Here", None).unwrap();
+        queries::reorder_playlists(&db.conn, &[p1, here, p2]).unwrap();
+
+        server.lock().lists.reverse();
+        reconcile_playlists(&db, &client, &url, "u");
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(order, [p2, here, p1]);
     }
 
     fn remote_meta(title: &str, remote_id: &str) -> TrackMeta {
