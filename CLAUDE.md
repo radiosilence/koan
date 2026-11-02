@@ -151,7 +151,9 @@ just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bi
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
-just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set
+just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode
+just vendor-gpui VER # the vendored GPUI crates rebuilt from release VER + vendor/patches; fails loudly on a hunk that does not apply
+just vendor-gpui-patches # vendor/patches written from the vendored copies, after editing one
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
 just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
 just gui-parity # the parity inventory: the Mac app's views, actions, settings, tooltips as a checklist

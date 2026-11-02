@@ -15,7 +15,7 @@ cli *ARGS:
 gui-library dir albums="5000" tracks="10":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run --release -p koan-gui --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
+    cargo run --release -p koan-gui --features runtime-shaders --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
     mkdir -p "{{dir}}/config"
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
     KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
@@ -29,7 +29,7 @@ gui-walk out="target/gui-walk" albums="300" tracks="10":
     lib="target/gui-walk-library"
     [ -d "$lib/config" ] || just gui-library "$lib" {{albums}} {{tracks}}
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
-    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --example walk -- "{{out}}"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example walk -- "{{out}}"
 
 # The SwiftUI app's evidence renders beside the GUI walk's, page by page,
 # with the edges that disagree marked: {{out}}/sheets. Both apps draw
@@ -47,7 +47,7 @@ gui-compare out="target/gui-compare":
     KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
         KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
         -ApplePersistenceIgnoreState YES
-    cargo run --release -p koan-gui --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
+    cargo run --release -p koan-gui --features runtime-shaders --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
 
 # The parity inventory: what the SwiftUI app has, as a checklist for #1625.
 # `--summary` for the counts alone.
@@ -519,6 +519,19 @@ tv_deployment_target := "26.0"
 
 # koan-gui's pages choosing a look by hand rather than from koan-kit, against
 # a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
+# Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
+# failing on the first patch that does not apply; vendor/ is untouched then.
+vendor-gpui version:
+    scripts/vendor-gpui.sh {{version}}
+
+# Write vendor/patches from the vendored copies: after editing one.
+vendor-gpui-patches:
+    scripts/vendor-gpui.sh --patches
+
+# The vendored copies are their releases plus their patches (CI).
+vendor-gpui-check:
+    scripts/vendor-gpui.sh --check
+
 gui-theme-leaks *args:
     python3 scripts/gui-theme-leaks.py {{args}}
 
@@ -1927,7 +1940,7 @@ gui-run *ARGS:
     fi
     # Ctrl-C is how the app is quit from here, not a failure.
     trap 'exit 0' INT
-    cargo run --profile gui-dev -p koan-gui -- {{ARGS}}
+    cargo run --profile gui-dev -p koan-gui --features runtime-shaders -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
 # on Linux an AppImage and a .deb, all under target/gui.
