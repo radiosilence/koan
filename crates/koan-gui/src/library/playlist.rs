@@ -106,8 +106,6 @@ pub struct PlaylistPage {
     menu_row: Option<usize>,
     /// The entry playing, when the queue plays one of this playlist's.
     playing: Option<i64>,
-    /// Shuffles undo would take back before any other edit.
-    undo_shuffles: u32,
     /// What the last export had to say.
     note: Option<SharedString>,
     focus: FocusHandle,
@@ -162,7 +160,6 @@ impl PlaylistPage {
             drop_at: None,
             menu_row: None,
             playing,
-            undo_shuffles: 0,
             note: None,
             focus: cx.focus_handle(),
             _loading: None,
@@ -199,7 +196,6 @@ impl PlaylistPage {
                 .playlist_cover_album_ids(id)
                 .await
                 .unwrap_or_default();
-            let undo_shuffles = engine.playlist_undo_shuffles(id).await;
             let grouped = playlist.as_ref().and_then(|p| p.grouped).unwrap_or(false);
             let laid = cx
                 .background_spawn(async move { lay_out(entries, grouped) })
@@ -208,7 +204,6 @@ impl PlaylistPage {
                 this.playlist = playlist;
                 this.loaded = true;
                 this.faces = faces;
-                this.undo_shuffles = undo_shuffles;
                 this.set_laid(laid);
                 cx.notify();
             })
