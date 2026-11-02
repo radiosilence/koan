@@ -155,6 +155,33 @@ fn rows_arrived(
     }
 }
 
+/// The main window, opened again where it was left when kōan has been
+/// running with it closed, or brought to the front when it is open.
+pub fn show_window(cx: &mut App) {
+    if let Some(window) = main_window(cx) {
+        cx.activate(true);
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        return;
+    }
+    let saved = cx
+        .background_executor()
+        .spawn(async { window_state::read() });
+    cx.spawn(async move |cx| {
+        let saved = saved.await;
+        cx.update(|cx| open_window(saved, cx));
+    })
+    .detach();
+}
+
+/// The main window, while it is open: any window but Settings.
+pub fn main_window(cx: &App) -> Option<AnyWindowHandle> {
+    cx.windows()
+        .into_iter()
+        .find(|w| !settings::is_settings_window(*w, cx))
+}
+
 fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     cx.on_app_quit(|cx| {
         // Written now: the app is going, and nothing spawned would finish.
@@ -172,7 +199,17 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         async {}
     })
     .detach();
+    open_window(saved, cx);
+    // `--settings` opens Settings beside the window, for checking it
+    // without a keyboard.
+    if std::env::args().any(|arg| arg == "--settings") {
+        settings::open(cx);
+    }
+    #[cfg(feature = "profiler")]
+    crate::measure::start(cx);
+}
 
+fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
     let bounds = match saved {
         Some(saved) => window_state::place(saved, cx),
         None => WindowBounds::Windowed(Bounds::centered(None, size(px(1180.), px(760.)), cx)),
@@ -188,10 +225,12 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
-        // Closing the last window quits, which waits for nothing spawned:
-        // a file of a few bytes, written now.
-        window.on_window_should_close(cx, |window, _| {
+        // Closing the last window quits, unless kōan is kept running,
+        // and quitting waits for nothing spawned: a file of a few bytes,
+        // written now.
+        window.on_window_should_close(cx, |window, cx| {
             window_state::write(window.window_bounds());
+            crate::platform::residency::window_closing(cx);
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));
@@ -201,14 +240,8 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         log::error!("the window did not open: {e}");
         cx.quit();
     }
+    crate::platform::residency::window_opening();
     cx.activate(true);
-    // `--settings` opens Settings beside the window, for checking it
-    // without a keyboard.
-    if std::env::args().any(|arg| arg == "--settings") {
-        settings::open(cx);
-    }
-    #[cfg(feature = "profiler")]
-    crate::measure::start(cx);
 }
 
 /// On macOS the toolbar runs under the window's buttons. Elsewhere the

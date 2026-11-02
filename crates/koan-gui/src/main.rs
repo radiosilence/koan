@@ -26,6 +26,9 @@ fn main() {
     platform::about::name_unbundled();
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let application = koan_kit::raw::application().with_assets(theme::icons::Assets);
+    // Opened again from the Dock or Finder while running: the window, which
+    // kōan kept running with it closed opens again.
+    application.on_reopen(platform::to_front);
     application.on_open_urls(move |urls| {
         for next in instance::sort_urls(urls) {
             let _ = opened.unbounded_send(next);

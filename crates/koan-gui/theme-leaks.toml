@@ -62,9 +62,6 @@ raw = 3
 ["platform/menus.rs"]
 raw = 4
 
-["platform/mod.rs"]
-raw = 1
-
 ["platform/shortcuts_sheet.rs"]
 raw = 1
 
