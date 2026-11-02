@@ -669,16 +669,30 @@ impl Render for Transport {
             .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
+        // The controls and the seek bar placed as the Mac's: the play
+        // button's outline `controls_top` under the rule and
+        // `outline_to_track` above the seek line, at any text size. The rows'
+        // hit areas, taller than what they draw, may overlap.
+        let outline = TransportMetrics::play_outline(&p.look);
+        // Measured from below the bar's rule, which the column's top includes.
+        let below_rule = theme::HAIRLINE + TransportMetrics::controls_top(&p.look);
+        let controls_top = below_rule - (theme::HIT - outline) / 2.;
+        let seek_top = below_rule + outline + TransportMetrics::outline_to_track(&p.look)
+            - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(TransportMetrics::row_gap(&p.look))
+            .h_full()
+            .relative()
             .child(
                 div()
+                    .absolute()
+                    .top(controls_top)
+                    .left_0()
+                    .right_0()
+                    .h(theme::HIT)
                     .flex()
                     .items_center()
+                    .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
                         control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
@@ -713,11 +727,19 @@ impl Render for Transport {
             // that hold it (the bar, the shell), whose other cached children
             // replay their last frame rather than laying out again.
             .child(
-                self.seek.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(TransportMetrics::SEEK),
-                ),
+                div()
+                    .absolute()
+                    .top(seek_top)
+                    .left_0()
+                    .right_0()
+                    .h(TransportMetrics::SEEK)
+                    .child(
+                        self.seek.clone().cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .h(TransportMetrics::SEEK),
+                        ),
+                    ),
             );
 
         let right = div()
@@ -775,7 +797,10 @@ impl Render for Transport {
             .items_center()
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
-            .bg(p.bg)
+            // With the wash under the whole window the bar has no ground of
+            // its own, as the toolbar and sidebar: the wash runs under it and
+            // its rule is the edge. Otherwise it is on `bg`.
+            .when(!cx.global::<theme::KoanTheme>().wash_window, |d| d.bg(p.bg))
             .border_t(theme::HAIRLINE)
             .border_color(p.rule)
             .child(left)
@@ -924,6 +949,14 @@ impl Render for Seek {
                 })
             })
             .on_commit(move |_, _, cx| commit.update(cx, |this, cx| this.commit(cx)));
-        div().relative().w_full().child(slider).child(measure)
+        // The slider's line on the row's middle, where the controls are
+        // placed from.
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .items_center()
+            .child(div().w_full().child(slider))
+            .child(measure)
     }
 }
