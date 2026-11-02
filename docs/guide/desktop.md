@@ -80,7 +80,7 @@ A playlist's page is laid out as the queue is, grouped by record or flat (the al
 
 ## Favourites, Recently played and Downloaded
 
-Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens that kind's browser with the same filter on (favourites, played in the last month, or on this device), so the full listing starts with what the preview showed. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
+Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens the whole listing of that kind on the shelf (favourite albums, artists played in the last month, tracks on this device) on a page of its own, which starts with what the preview showed and leaves the library's own browsers filtered as they were. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
 
 ## History
 

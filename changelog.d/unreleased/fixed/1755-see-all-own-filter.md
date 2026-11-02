@@ -1,0 +1,1 @@
+- **A shelf's "see all" keeps its own filter.** Opening a shelf's albums, artists or tracks shows them on a page of their own, and the library's browsers keep the filter they had, rather than staying on favourites afterwards.

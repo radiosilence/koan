@@ -20,6 +20,7 @@ use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
+use crate::navigator::{Listing, Shelf};
 use crate::theme::Icon;
 
 const TYPING: Duration = Duration::from_millis(80);
@@ -46,6 +47,11 @@ pub struct ArtistBrowser {
     /// state rather than staying held, so the query can still be changed.
     failed: bool,
     lib: Lib,
+    /// A shelf's "see all": the shelf's filter and order in place of the
+    /// shared ones, and no controls to change them.
+    scope: Option<Shelf>,
+    /// The route the browser is on, for its place in the navigator.
+    page: Page,
     artists: Vec<Artist>,
     order: Vec<Playable>,
     loaded: Option<(Query, u64)>,
@@ -79,10 +85,25 @@ impl ArtistBrowser {
     }
 
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::scoped(lib, None, window, cx)
+    }
+
+    /// The browser narrowed to `scope`'s shelf, or the library's own.
+    pub fn scoped(
+        lib: Lib,
+        scope: Option<Shelf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let page = scope.map_or(Page::Artists, |shelf| {
+            Page::Shelved(shelf, Listing::Artists)
+        });
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            // A search's own listing follows its query.
+            cx.observe(&lib.search, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
@@ -94,8 +115,8 @@ impl ArtistBrowser {
                     .retain(|p| !matches!(p, Playable::Artist(id) if artists.contains(&id)));
                 cx.notify();
             }),
-            cx.on_release(|this, cx| {
-                if let Some(loaded) = this.loaded.take() {
+            cx.on_release(move |this, cx| {
+                if let Some(loaded) = this.loaded.take().filter(|_| this.scope.is_none()) {
                     this.lib.kept.put(KeptArtists {
                         artists: std::mem::take(&mut this.artists),
                         order: std::mem::take(&mut this.order),
@@ -105,20 +126,26 @@ impl ArtistBrowser {
                 let offset = -this.scroll.0.borrow().base_handle.offset().y;
                 this.lib
                     .nav
-                    .update(cx, |nav, _| nav.remember_offset(Page::Artists, offset));
+                    .update(cx, |nav, _| nav.remember_offset(page, offset));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Artists, cx);
-        let restore = lib.nav.read(cx).offset(Page::Artists);
+        let rewinds = lib.nav.read(cx).rewinds(page, cx);
+        let restore = lib.nav.read(cx).offset(page);
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter artists", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
-        let (artists, order, loaded) = match lib.kept.take::<KeptArtists>() {
+        let (artists, order, loaded) = match scope
+            .is_none()
+            .then(|| lib.kept.take::<KeptArtists>())
+            .flatten()
+        {
             Some(k) => (k.artists, k.order, Some(k.loaded)),
             None => (Vec::new(), Vec::new(), None),
         };
         let mut this = Self {
             lib,
+            scope,
+            page,
             artists,
             order,
             loaded,
@@ -160,6 +187,12 @@ impl ArtistBrowser {
     }
 
     fn query(&self, cx: &App) -> Query {
+        if let Some(shelf) = self.scope {
+            return Query {
+                search: super::scope::search(shelf, &self.lib, cx),
+                filter: super::scope::filter(shelf),
+            };
+        }
         let browse = self.lib.browse.read(cx);
         Query {
             search: browse.search(),
@@ -363,7 +396,7 @@ impl ArtistBrowser {
 impl Render for ArtistBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Artists, cx);
+        let rewinds = self.lib.nav.read(cx).rewinds(self.page, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll
@@ -375,7 +408,9 @@ impl Render for ArtistBrowser {
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
-            "artists",
+            self.scope.map_or("artists", |shelf| {
+                super::scope::title(shelf, Listing::Artists)
+            }),
             chrome::count(self.artists.len() as u64, "artist", "artists"),
             div(),
         );

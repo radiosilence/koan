@@ -24,6 +24,9 @@ use crate::engine::{command, engine};
 use crate::mirror::{Mirror, Playback, Playhead};
 use crate::theme::{Icon, KoanTheme, Look};
 
+/// How long a clicked line holds the emphasis while its seek lands.
+const SEEK_LANDS: Duration = Duration::from_secs(1);
+
 pub struct LyricsPanel {
     playback: Entity<Playback>,
     playhead: Entity<Playhead>,
@@ -36,6 +39,10 @@ pub struct LyricsPanel {
     loading: Option<i64>,
     /// The line being sung.
     active: Option<usize>,
+    /// A line clicked to seek to, and when: it stays the line sung until the
+    /// playhead reaches it, so the emphasis moves once rather than back to
+    /// the old line while the seek lands.
+    sought: Option<(usize, Instant)>,
     _load: Option<Task<()>>,
     _follow: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -58,6 +65,7 @@ impl LyricsPanel {
             fetching: None,
             loading: None,
             active: None,
+            sought: None,
             _load: None,
             _follow: None,
         };
@@ -134,7 +142,12 @@ impl LyricsPanel {
             return;
         }
         let position = anchor.at(Instant::now(), 0) as f64 / 1000.0;
-        let (active, next) = place(&lyrics.lines, position);
+        let (mut active, next) = place(&lyrics.lines, position);
+        match self.sought {
+            Some((line, _)) if active == Some(line) => self.sought = None,
+            Some((line, at)) if at.elapsed() < SEEK_LANDS => active = Some(line),
+            _ => self.sought = None,
+        }
         if active != self.active {
             self.active = active;
             cx.notify();
@@ -158,6 +171,11 @@ impl LyricsPanel {
         else {
             return;
         };
+        self.sought = Some((line, Instant::now()));
+        if self.active != Some(line) {
+            self.active = Some(line);
+            cx.notify();
+        }
         command(cx, "seek to a line", move |e| e.seek(at));
     }
 }

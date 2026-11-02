@@ -352,6 +352,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/keys.rs` | The list keys (koan-kit's `list_keys`: arrows, Home/End, Page Up/Down, Return, Ctrl-Space) for a library list, through `KeyedList`: its length, how a range or a row is picked, revealing a row and what Return does |
 | `library/history.rs` | Play history: every play under its day, laid out off the main thread, in the library's track rows with the time as their lead and a mark for plays scrobbled in elsewhere; picked by play, forgotten and cleared behind previews |
 | `library/shelf.rs` | Favourites, Recently played, Downloaded and the search's results: the head of each kind on the shelf in a koan-kit `Collection`, each heading opening the browser filtered to the shelf, one pick across the kinds |
+| `library/scope.rs` | A shelf's "see all": the filter and order a browser takes in place of the shared ones (`Route::Shelved`), so the library browsers' own filter is left as it was |
 | `search/mod.rs` | `Search`: the sidebar's query and the search shelf's answer, each keystroke read off the main thread with older answers dropped by generation; the suggestions it offers. An empty query forgets `Route::Search` |
 | `search/field.rs` | The sidebar's search field (koan-kit `FilterField`) and its suggestions panel; the arrows light a line, Return takes it or opens the results |
 | `search/picker.rs` | ⇧⌘K: tracks by full text, records and artists fuzzily, several picked, then add, add and play, or replace the queue (asking first) |

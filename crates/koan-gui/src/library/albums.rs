@@ -25,6 +25,7 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::navigator::{Listing, Shelf};
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
@@ -94,6 +95,11 @@ pub struct AlbumGrid {
     /// state rather than staying held, so the query can still be changed.
     failed: bool,
     lib: Lib,
+    /// A shelf's "see all": the shelf's filter and order in place of the
+    /// shared ones, and no controls to change them.
+    scope: Option<Shelf>,
+    /// The route the grid is on, for its place in the navigator.
+    page: Page,
     /// The listing, as its tiles draw it.
     records: Rc<Vec<Rc<Record>>>,
     tiles: Tiles<AlbumGrid>,
@@ -147,11 +153,24 @@ impl AlbumGrid {
     }
 
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::scoped(lib, None, window, cx)
+    }
+
+    /// The grid narrowed to `scope`'s shelf, or the library's own.
+    pub fn scoped(
+        lib: Lib,
+        scope: Option<Shelf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let page = scope.map_or(Page::Albums, |shelf| Page::Shelved(shelf, Listing::Albums));
         let id = cx.entity_id();
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            // A search's own listing follows its query.
+            cx.observe(&lib.search, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
@@ -165,7 +184,7 @@ impl AlbumGrid {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                if let Some(loaded) = this.loaded.take() {
+                if let Some(loaded) = this.loaded.take().filter(|_| this.scope.is_none()) {
                     this.lib.kept.put(KeptAlbums {
                         records: this.records.clone(),
                         order: std::mem::take(&mut this.order),
@@ -175,21 +194,28 @@ impl AlbumGrid {
                 let offset = Pixels::from(this.heading.borrow().offset);
                 this.lib
                     .nav
-                    .update(cx, |nav, _| nav.remember_offset(Page::Albums, offset));
+                    .update(cx, |nav, _| nav.remember_offset(page, offset));
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Albums, cx);
-        let restore = lib.nav.read(cx).offset(Page::Albums);
+        let rewinds = lib.nav.read(cx).rewinds(page, cx);
+        let restore = lib.nav.read(cx).offset(page);
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter albums", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
-        let (records, order, loaded) = match lib.kept.take::<KeptAlbums>() {
+        let kept = if scope.is_none() {
+            lib.kept.take::<KeptAlbums>()
+        } else {
+            None
+        };
+        let (records, order, loaded) = match kept {
             Some(k) => (k.records, k.order, Some(k.loaded)),
             None => (Rc::new(Vec::new()), Vec::new(), None),
         };
         let mut this = Self {
             lib,
+            scope,
+            page,
             records,
             tiles: Tiles::default(),
             aimed: None,
@@ -241,6 +267,14 @@ impl AlbumGrid {
 
     fn query(&self, cx: &App) -> Query {
         let browse = self.lib.browse.read(cx);
+        if let Some(shelf) = self.scope {
+            return Query {
+                search: super::scope::search(shelf, &self.lib, cx),
+                filter: super::scope::filter(shelf),
+                sort: super::scope::album_sort(shelf),
+                seed: browse.seed,
+            };
+        }
         Query {
             search: browse.search(),
             filter: browse.filter.clone(),
@@ -820,7 +854,7 @@ impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         self.scale.set(window.scale_factor());
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Albums, cx);
+        let rewinds = self.lib.nav.read(cx).rewinds(self.page, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll
@@ -842,7 +876,9 @@ impl Render for AlbumGrid {
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
-            "albums",
+            self.scope.map_or("albums", |shelf| {
+                super::scope::title(shelf, Listing::Albums)
+            }),
             chrome::count(count as u64, "album", "albums"),
             div(),
         );
