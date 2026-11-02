@@ -1,0 +1,1 @@
+- **Organise previews from where files went.** After a move that left some files behind, the GUI app reads the selection again, so the next preview starts from the moved files' new paths.

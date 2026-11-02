@@ -28,11 +28,15 @@ const RESTORE_WAIT: Duration = Duration::from_millis(500);
 /// before it starts saving whatever is there.
 const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 
+/// The app's name to the desktop on Linux, for every window it opens.
+pub const APP_ID: &str = "koan-gui";
+
 /// The engine and what follows it, as globals every view reads: the mirror
 /// of its state and the cover cache.
 pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(engine, cx);
     cx.set_global(mirror);
+    crate::notice::install(cx);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
     crate::levels::install(cx);
@@ -41,6 +45,31 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     crate::dsp::window::init(cx);
     // Reads the mirror set up above.
     crate::library::activity::init(cx);
+    // Invites and pairing links opened from outside: Settings answers them.
+    // Any waiting from the launch itself are answered now.
+    cx.observe_global::<crate::platform::Links>(answer_links)
+        .detach();
+    answer_links(cx);
+}
+
+/// Hands each link waiting to Settings, as an invite or a pairing; anything
+/// else is not koan's and is dropped.
+fn answer_links(cx: &mut App) {
+    for link in crate::platform::Links::take(cx) {
+        let engine = crate::engine::engine(cx);
+        let incoming = if let Some(pairing) = engine.parse_pairing_link(link.clone()) {
+            settings::Incoming::Pairing {
+                server: pairing.server,
+                id: pairing.id,
+            }
+        } else if engine.parse_invite(link.clone()).is_some() {
+            settings::Incoming::Invite(link)
+        } else {
+            log::info!("ignoring a link that is not koan's");
+            continue;
+        };
+        settings::answer(incoming, cx);
+    }
 }
 
 /// Opens the window once the restored session is in the mirror, and keeps
@@ -151,13 +180,15 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // The `.desktop` file's StartupWMClass.
-        app_id: Some("koan-gui".into()),
+        app_id: Some(APP_ID.into()),
         ..Default::default()
     };
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
-        window.on_window_should_close(cx, |window, cx| {
-            window_state::save(window.window_bounds(), cx);
+        // Closing the last window quits, which waits for nothing spawned:
+        // a file of a few bytes, written now.
+        window.on_window_should_close(cx, |window, _| {
+            window_state::write(window.window_bounds());
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));

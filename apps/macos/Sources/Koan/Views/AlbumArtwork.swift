@@ -16,28 +16,54 @@ struct AlbumArtwork: View {
 
     /// How large a bitmap to keep, not how large to draw it.
     ///
-    /// Two cached sizes rather than one per call site: every entry is held
+    /// A few cached sizes rather than one per call site: every entry is held
     /// until evicted, and a bucket the whole app shares is one bitmap where a
-    /// per-frame size would be a dozen near-identical ones. Both are generous
-    /// enough for their callers at 2×.
+    /// per-frame size would be a dozen near-identical ones.
     enum Size: String, Hashable {
         /// List rows, headers and the transport — nothing above 64pt.
         case thumb
-        /// Grid tiles, a record's own page, the window wash.
+        /// Grid tiles, a record's own page on a phone or a Mac, the window
+        /// wash.
         case tile
+        /// What fills a large screen: Now Playing on an iPad or a television,
+        /// a record's header there. Drawn from the tile's bytes until its own
+        /// arrive.
+        case large
         /// The viewer, and only the viewer. Never cached.
         case full
 
         var pixels: Int? {
             switch self {
             case .thumb: 128
-            // Half the 1000px a server is asked for, which JPEG decodes at
-            // half scale rather than in full and then resampled. Enough for
-            // a grid tile (at most 210pt) at 2x; larger uses draw it scaled
-            // up a little.
+            // Enough for a grid tile (at most 210pt) at 2x, from the 600px
+            // a server is asked for.
             case .tile: 500
+            case .large: 1200
             case .full: nil
             }
+        }
+
+        /// The size of the bytes it is drawn from, asked of the server: 600
+        /// for rows and grids, which every koan server keeps ready, 1200 for
+        /// a large screen, and the original for the viewer.
+        var fetched: UInt32? {
+            switch self {
+            case .thumb, .tile: 600
+            case .large: 1200
+            case .full: nil
+            }
+        }
+
+        /// A record header's or Now Playing's sleeve: large on an iPad or a
+        /// television, a tile elsewhere.
+        static var hero: Size {
+            #if os(tvOS)
+            return .large
+            #elseif os(iOS)
+            return UIDevice.current.userInterfaceIdiom == .pad ? .large : .tile
+            #else
+            return .tile
+            #endif
         }
     }
 
@@ -75,7 +101,9 @@ struct AlbumArtwork: View {
         // placeholder, no fade, no waiting for `.task` to run after the first
         // render. The cache is neither observable nor main-actor bound, so this
         // is a lock and a hash lookup and subscribes the view to nothing.
+        // A large sleeve shows the tile's bitmap while its own is coming.
         let ready = image ?? cache.cached(source, size: size)
+            ?? (size == .large ? cache.cached(source, size: .tile) : nil)
         return square
             // The ground stays put. Swapping it for the art would be a *cross*
             // dissolve — the placeholder fading out under an image fading in —
@@ -137,10 +165,18 @@ struct AlbumArtwork: View {
                 guard !Task.isCancelled else { return }
 
                 isLoading = true
+                // The tile first: kept ready on the server and usually here
+                // already, so a large sleeve shows at once and sharpens in
+                // place when its own bytes land.
+                if size == .large, image == nil {
+                    let tile = await cache.image(for: source, size: .tile)
+                    guard !Task.isCancelled else { return }
+                    if let tile { image = tile }
+                }
                 let loaded = await cache.image(for: source, size: size)
                 isLoading = false
                 guard !Task.isCancelled else { return }
-                image = loaded
+                if let loaded { image = loaded }
             }
     }
 

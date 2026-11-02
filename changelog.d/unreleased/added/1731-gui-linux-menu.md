@@ -1,0 +1,1 @@
+- **The GUI app's menus on Linux.** Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from a kōan button at the left of the toolbar, each item with its keys.

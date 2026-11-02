@@ -4,9 +4,8 @@
 use koan_ffi::{
     DspJoin, DspOverview, DspProfileSummary, DspRole, DspStarter, DspTargets, DspTuningEntry,
 };
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};

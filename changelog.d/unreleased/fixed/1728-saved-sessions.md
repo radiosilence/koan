@@ -1,0 +1,1 @@
+- **Saved queues stay with the device that saved them.** A second terminal UI on a machine no longer overwrites the first one's queue when it quits; saving and clearing the playback state works through MCP; and clearing the app's saved session through its own server no longer loses the queue at the next launch.

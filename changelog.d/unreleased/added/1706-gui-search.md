@@ -1,0 +1,1 @@
+- **Search in the GUI app.** The sidebar's field searches as you type, with a few suggestions of each kind under it and every result on a page of its own, and ⇧⌘K opens the picker for building a queue from several tracks, records and artists at once. Filter and search fields have a clear mark, and Escape empties them.
