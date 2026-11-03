@@ -530,7 +530,7 @@ mod tests {
     fn the_wheel_over_the_edge_scrolls(cx: &mut TestAppContext) {
         let (page, cx) = page(50, cx);
         let bounds = cx.debug_bounds("page").expect("drawn");
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(bounds.right() - px(4.0), bounds.center().y),
             delta: ScrollDelta::Pixels(point(px(0.0), px(-60.0))),
             ..Default::default()
