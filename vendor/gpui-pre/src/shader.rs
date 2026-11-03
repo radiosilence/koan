@@ -158,7 +158,9 @@ impl Track {
     }
 
     pub(crate) fn decode(f: &[f32]) -> Self {
-        let code = f[4] as u32;
+        // KOAN: 16 and above flags a colour slot mixed in OKLab, as the
+        // shaders read it (`code % 16`) (#1859).
+        let code = f[4] as u32 % 16;
         let repeat = match code / 4 {
             1 => TrackRepeat::Loop,
             2 => TrackRepeat::Alternate,
@@ -413,6 +415,9 @@ pub struct ShaderUniforms {
     /// one; 0 for a plain colour. Resolved as each present is made, so a
     /// slot's colour moves in the program with no frame drawn.
     colors: [AtomicU16; SHADER_PLAIN],
+    /// How many of `colors` name a slot: none, as for most shaders, and a
+    /// write or a present does no colour work at all.
+    colored: AtomicU32,
     /// Whether a slot the uniforms name was moving at the last present: the
     /// present after it stops lands it.
     colors_moved: AtomicBool,
@@ -442,6 +447,7 @@ impl Default for ShaderUniforms {
             moving_until: AtomicU64::new(0),
             track_landing: AtomicBool::new(false),
             colors: std::array::from_fn(|_| AtomicU16::new(0)),
+            colored: AtomicU32::new(0),
             colors_moved: AtomicBool::new(false),
             sequence: AtomicU64::new(0),
             writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
@@ -504,8 +510,10 @@ impl ShaderUniforms {
     fn set_unpublished(&self, index: usize, value: f32) -> bool {
         // KOAN: #1859.
         let mut moved = false;
-        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
-            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
+        if self.colored.load(Ordering::Relaxed) != 0 {
+            for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
+                moved |= self.put_color(colour, 0);
+            }
         }
         if moved {
             self.changed.store(true, Ordering::Relaxed);
@@ -681,13 +689,13 @@ impl ShaderUniforms {
         let mut changed = false;
         for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
             if other != index {
-                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
+                changed |= self.put_color(other, 0);
             }
         }
         for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
             changed |= self.write(index + i, value);
         }
-        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
+        changed |= self.put_color(index, slot);
         if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
@@ -695,7 +703,26 @@ impl ShaderUniforms {
     }
 
     /// Whether a colour slot the uniforms draw is moving at `at`.
+    /// Names `slot` (plus one; 0 for none) at plain uniform `index`, keeping
+    /// `colored`'s count. Whether it changed.
+    fn put_color(&self, index: usize, slot: u16) -> bool {
+        let old = self.colors[index].swap(slot, Ordering::Relaxed);
+        match (old != 0, slot != 0) {
+            (false, true) => {
+                self.colored.fetch_add(1, Ordering::Relaxed);
+            }
+            (true, false) => {
+                self.colored.fetch_sub(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        old != slot
+    }
+
     fn colors_moving(&self, at: Instant) -> bool {
+        if self.colored.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
         self.colors.iter().any(|slot| {
             let slot = slot.load(Ordering::Relaxed);
             slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
@@ -712,11 +739,16 @@ impl ShaderUniforms {
     /// program, taken as one publish.
     pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
         let (time, values, colors) = self.read(|| {
+            let colored = self.colored.load(Ordering::Relaxed) != 0;
             (
                 self.time_at_unpublished(now),
                 self.snapshot_unpublished(),
                 std::array::from_fn::<u16, SHADER_PLAIN, _>(|i| {
-                    self.colors[i].load(Ordering::Relaxed)
+                    if colored {
+                        self.colors[i].load(Ordering::Relaxed)
+                    } else {
+                        0
+                    }
                 }),
             )
         });
@@ -833,5 +865,43 @@ mod half_tests {
             let (a, _) = unpack_halves(pack_halves(v, 0.0));
             assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
         }
+    }
+    /// KOAN: a colour slot mixed in OKLab carries 16 in its track's code;
+    /// the CPU reads the curve and repeat beneath it, as the shaders do.
+    #[test]
+    fn the_oklab_flag_leaves_the_repeat_as_it_was() {
+        for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
+            let track = Track {
+                from: 0.0,
+                to: 1.0,
+                start: 2.0,
+                length: 3.0,
+                curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                repeat,
+            };
+            let mut encoded = track.encode();
+            encoded[4] += 16.0;
+            let decoded = Track::decode(&encoded);
+            assert_eq!(decoded.repeat, repeat);
+            assert!(matches!(decoded.curve, TrackCurve::Bezier(..)));
+        }
+    }
+
+    /// KOAN: uniforms naming no colour slot do no colour work; one named is
+    /// counted, and let go by a plain write over it.
+    #[test]
+    fn colour_slots_are_counted_as_they_are_named_and_let_go() {
+        let slot = |h: f32| crate::Hsla { h, s: 0.0, l: 0.0, a: 1.0 };
+        let uniforms = ShaderUniforms::new();
+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
+        uniforms.set_color(0, slot(2.0));
+        uniforms.set_color(4, slot(3.0));
+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2);
+        uniforms.set_color(4, slot(4.0));
+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2, "renamed, not added");
+        uniforms.set(1, 0.5);
+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 1);
+        uniforms.set_color(4, crate::Hsla::default());
+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
     }
 }

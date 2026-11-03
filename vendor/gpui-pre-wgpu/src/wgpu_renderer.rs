@@ -741,10 +741,11 @@ impl WgpuRendererCore {
                         },
                         count: None,
                     },
-                    // KOAN: colour slots (#1859).
+                    // KOAN: colour slots (#1859), read by the stock shaders'
+                    // vertices and by path rasterisation's fragments.
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,

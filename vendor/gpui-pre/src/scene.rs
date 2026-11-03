@@ -136,6 +136,9 @@ impl Scene {
         for sprite in &self.subpixel_sprites {
             set.note(&sprite.color);
         }
+        for path in &self.paths {
+            set.note(&path.color.solid);
+        }
         set
     }
 

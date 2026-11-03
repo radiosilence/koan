@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..91388e4 100644
+index 862e62a..27b8a5d 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -126,6 +126,22 @@ pub struct MetalRenderer {
@@ -180,7 +180,15 @@ index 862e62a..91388e4 100644
  
          let mut command_encoder = new_command_encoder_for_texture(
              command_buffer,
-@@ -813,6 +901,21 @@ impl MetalRenderer {
+@@ -771,6 +859,7 @@ impl MetalRenderer {
+                     let did_draw = self.draw_paths_to_intermediate(
+                         paths,
+                         writer,
++                        &instance_bindings.color_slots, // KOAN: #1859.
+                         viewport_size,
+                         command_buffer,
+                     )?;
+@@ -813,6 +902,21 @@ impl MetalRenderer {
                          viewport_size,
                          command_encoder,
                      ),
@@ -202,7 +210,28 @@ index 862e62a..91388e4 100644
                  PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                      &scene.surfaces[range.clone()],
                      range.start,
-@@ -911,6 +1014,12 @@ impl MetalRenderer {
+@@ -833,6 +937,7 @@ impl MetalRenderer {
+         &self,
+         paths: &[Path<ScaledPixels>],
+         writer: &mut InstanceBufferWriter,
++        color_slots: &InstanceBinding, // KOAN: #1859.
+         viewport_size: Size<DevicePixels>,
+         command_buffer: &metal::CommandBufferRef,
+     ) -> Result<bool> {
+@@ -889,6 +994,12 @@ impl MetalRenderer {
+             Some(&vertex_instance_bindings.buffer),
+             vertex_instance_bindings.offset as u64,
+         );
++        // KOAN: colour slots (#1859).
++        command_encoder.set_fragment_buffer(
++            COLOR_SLOTS_INDEX,
++            Some(&color_slots.buffer),
++            color_slots.offset as u64,
++        );
+         command_encoder.draw_primitives(
+             metal::MTLPrimitiveType::Triangle,
+             0,
+@@ -911,6 +1022,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
@@ -215,7 +244,7 @@ index 862e62a..91388e4 100644
          command_encoder.set_vertex_buffer(
              ShadowInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -941,6 +1050,310 @@ impl MetalRenderer {
+@@ -941,6 +1058,310 @@ impl MetalRenderer {
          );
      }
  
@@ -526,7 +555,7 @@ index 862e62a..91388e4 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -953,6 +1366,12 @@ impl MetalRenderer {
+@@ -953,6 +1374,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
@@ -539,7 +568,7 @@ index 862e62a..91388e4 100644
          command_encoder.set_vertex_buffer(
              QuadInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1066,6 +1485,12 @@ impl MetalRenderer {
+@@ -1066,6 +1493,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
@@ -552,7 +581,7 @@ index 862e62a..91388e4 100644
          command_encoder.set_vertex_buffer(
              UnderlineInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1116,6 +1541,12 @@ impl MetalRenderer {
+@@ -1116,6 +1549,12 @@ impl MetalRenderer {
              DevicePixels(texture.height() as i32),
          );
          command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
@@ -565,7 +594,7 @@ index 862e62a..91388e4 100644
          command_encoder.set_vertex_buffer(
              SpriteInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1486,8 +1917,277 @@ struct InstanceBindings {
+@@ -1486,7 +1925,276 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
@@ -752,8 +781,8 @@ index 862e62a..91388e4 100644
 +        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
 +    }
 +    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
- }
- 
++}
++
 +// Track `k` of the uniforms at `time`.
 +float koan_track(constant float *u, uint k, float time) {
 +    constant float *t = u + 16 + k * 8;
@@ -837,13 +866,12 @@ index 862e62a..91388e4 100644
 +        discard_fragment();
 +    }
 +    return shade(in.local, s.bounds.zw, s.time.x, (constant float *)s.uniforms, image, s.tile);
-+}
+ }
 +"#;
-+
+ 
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
-         quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2199,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2207,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -874,7 +902,7 @@ index 862e62a..91388e4 100644
      })
  }
  
-@@ -1799,4 +2523,287 @@ mod tests {
+@@ -1799,4 +2531,287 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
@@ -1163,7 +1191,7 @@ index 862e62a..91388e4 100644
 +    }
  }
 diff --git a/src/shaders.metal b/src/shaders.metal
-index 2b52bb9..3845dbc 100644
+index 2b52bb9..ebb8104 100644
 --- a/src/shaders.metal
 +++ b/src/shaders.metal
 @@ -4,6 +4,8 @@
@@ -1259,7 +1287,28 @@ index 2b52bb9..3845dbc 100644
    return MonochromeSpriteVertexOutput{
        device_position,
        tile_position,
-@@ -1277,3 +1286,112 @@ float4 fill_color(Background background,
+@@ -771,7 +780,8 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
+ 
+ fragment float4 path_rasterization_fragment(
+   PathRasterizationFragmentInput input [[stage_in]],
+-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
++  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
++  constant float *koan_slots [[buffer(20)]]  // KOAN: colour slots (#1859).
+ ) {
+   float2 dx = dfdx(input.st_position);
+   float2 dy = dfdy(input.st_position);
+@@ -799,6 +809,10 @@ fragment float4 path_rasterization_fragment(
+     background.colors[0].color,
+     background.colors[1].color
+   );
++  // KOAN: a path drawn in a colour slot follows it as it moves (#1859).
++  if (background.tag != 1 && background.solid.h >= 2.0) {
++    gradient_color.solid = koan_rgba(background.solid, koan_slots);
++  }
+ 
+   float4 color = fill_color(
+     background,
+@@ -1277,3 +1291,112 @@ float4 fill_color(Background background,
  
    return color;
  }

@@ -780,7 +780,8 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant float *koan_slots [[buffer(20)]]  // KOAN: colour slots (#1859).
 ) {
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
@@ -808,6 +809,10 @@ fragment float4 path_rasterization_fragment(
     background.colors[0].color,
     background.colors[1].color
   );
+  // KOAN: a path drawn in a colour slot follows it as it moves (#1859).
+  if (background.tag != 1 && background.solid.h >= 2.0) {
+    gradient_color.solid = koan_rgba(background.solid, koan_slots);
+  }
 
   float4 color = fill_color(
     background,

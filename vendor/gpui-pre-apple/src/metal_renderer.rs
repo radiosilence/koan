@@ -859,6 +859,7 @@ impl MetalRenderer {
                     let did_draw = self.draw_paths_to_intermediate(
                         paths,
                         writer,
+                        &instance_bindings.color_slots, // KOAN: #1859.
                         viewport_size,
                         command_buffer,
                     )?;
@@ -936,6 +937,7 @@ impl MetalRenderer {
         &self,
         paths: &[Path<ScaledPixels>],
         writer: &mut InstanceBufferWriter,
+        color_slots: &InstanceBinding, // KOAN: #1859.
         viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
     ) -> Result<bool> {
@@ -991,6 +993,12 @@ impl MetalRenderer {
             PathRasterizationInputIndex::Vertices as u64,
             Some(&vertex_instance_bindings.buffer),
             vertex_instance_bindings.offset as u64,
+        );
+        // KOAN: colour slots (#1859).
+        command_encoder.set_fragment_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&color_slots.buffer),
+            color_slots.offset as u64,
         );
         command_encoder.draw_primitives(
             metal::MTLPrimitiveType::Triangle,

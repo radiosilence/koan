@@ -466,18 +466,25 @@ impl KoanTheme {
             }
             feed.target = accent;
             feed.aim(contrast, ease);
-            // What reads the accent on the CPU (a shader's uniforms, a path)
-            // reads it again once it has landed; the slots move the rest.
-            if ease && feed.slots.is_some() {
-                feed._landing = Some(cx.spawn(async move |feed, cx| {
+            // What reads the accent on the CPU (a fade's ends, a comparison)
+            // reads it as each move starts and again as it lands; the slots
+            // move everything drawn. A retarget before the landing (the
+            // rainbow's steps) is heard at its start all the same.
+            cx.notify();
+            feed._landing = (ease && feed.slots.is_some()).then(|| {
+                cx.spawn(async move |feed, cx| {
                     cx.background_executor().timer(Motion::DISSOLVE).await;
                     feed.update(cx, |_, cx| cx.notify()).ok();
-                }));
-            } else {
-                feed._landing = None;
-                cx.notify();
-            }
+                })
+            });
         });
+        // A window at rest presents nothing by itself: one present each, and
+        // a window drawing with the slots keeps presenting while they move.
+        for window in cx.windows() {
+            window
+                .update(cx, |_, window, _| window.request_present())
+                .ok();
+        }
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
