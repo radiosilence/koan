@@ -1291,6 +1291,23 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+
+        // While the owner holds its session back, a save is refused and the
+        // saved queue stays as it was.
+        queries::playback_state::clear_playback_state(&db.conn, "terminal-").unwrap();
+        state.set_save_gate(Arc::new(|| false));
+        let resp = schema(Some("terminal-")).execute(save).await;
+        assert!(
+            resp.errors
+                .iter()
+                .any(|e| e.message.contains("still being restored")),
+            "{:?}",
+            resp.errors
+        );
+        assert!(
+            !queries::playback_state::has_saved_queue(&db.conn, "terminal-").unwrap(),
+            "a held session was written"
+        );
     }
 
     /// A queue item with no library row behind it cannot go in a playlist: a

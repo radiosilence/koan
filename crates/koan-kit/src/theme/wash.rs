@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
+    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
     Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
@@ -81,8 +81,9 @@ pub const FIELD: u32 = 32;
 /// way, so a gradient this soft shows no bands at any size. Uniforms: 0
 /// whether to lay it over `bg` (the layer drawn first), 1 whether the
 /// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1). Tracks: 0 the drift's
-/// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1)
-/// and 4 the turn in radians, each at full amplitude. The overscan (1.38),
+/// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1),
+/// 4 the turn's swing (-1 to 1) and 5 how far it turns, in radians, each at
+/// full amplitude; a new turn eases there rather than jumping (#1883). The overscan (1.38),
 /// reach (0.12), rise (0.10), field (32) and strength (0.6) are written into
 /// the source; a test holds them to the constants.
 pub static WASH: ShaderProgram = ShaderProgram {
@@ -106,7 +107,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float opacity = koan_track(u, 1, time);
     float scale = 1.0 + (koan_track(u, 2, time) - 1.0) * amplitude;
     float travel = koan_track(u, 3, time) * amplitude;
-    float turn = koan_track(u, 4, time) * amplitude;
+    float turn = koan_track(u, 4, time) * koan_track(u, 5, time) * amplitude;
     float side = max(size.x, size.y) * 1.38 * scale;
     float2 centre = size * 0.5 + float2(size.x * 0.12, size.y * 0.10) * travel;
     // Turned about the centre: the field is sampled the other way.
@@ -179,7 +180,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let opacity = koan_track(u, 1u, time);
     let scale = 1.0 + (koan_track(u, 2u, time) - 1.0) * amplitude;
     let travel = koan_track(u, 3u, time) * amplitude;
-    let turn = koan_track(u, 4u, time) * amplitude;
+    let turn = koan_track(u, 4u, time) * koan_track(u, 5u, time) * amplitude;
     let side = max(size.x, size.y) * 1.38 * scale;
     let centre = size * 0.5 + vec2<f32>(size.x * 0.12, size.y * 0.10) * travel;
     let d = position - centre;
@@ -739,13 +740,34 @@ impl Wash {
         .detach();
     }
 
+    /// The person's pace (Settings → Appearance), drawn either way. A drift
+    /// set to nothing keeps the last pace while its amplitude eases out, so
+    /// it comes to rest as it does when the music stops.
+    fn follow_pace(&mut self, now: Instant, cx: &App) {
+        let drifting = self.amplitude.to > 0.0 || self.amplitude.moving(now);
+        let percent = cx.global::<KoanTheme>().wash_drift;
+        if !drifting || percent == 0 {
+            return;
+        }
+        let pace = percent as f32 / 100.0;
+        if pace != self.pace {
+            // The phase (now - epoch) * pace stays where it was.
+            let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+            let kept = since * self.pace as f64 / pace as f64;
+            self.epoch = now - Duration::from_secs_f64(kept);
+            self.pace = pace;
+        }
+    }
+
     /// Where the texture is this frame: its scale over the overscan, and its
-    /// travel across the page from -1 to 1.
+    /// travel across the page from -1 to 1, at the person's pace. Image
+    /// sprites take no transform, so drawn this way the wash does not turn.
     fn pose(&self, now: Instant) -> (f32, f32) {
         // Reduced to the cycle in f64 before narrowing, as the shader's clock
         // is: in f32, a window open for days counts time in steps a frame
         // long.
-        let t = (now.duration_since(self.epoch).as_secs_f64() % CYCLE as f64) as f32;
+        let since = now.duration_since(self.epoch).as_secs_f64() * self.pace as f64;
+        let t = (since % CYCLE as f64) as f32;
         pose_at(t, self.amplitude.at(now))
     }
 }
@@ -835,6 +857,7 @@ impl Render for Wash {
                 .previous
                 .as_ref()
                 .is_some_and(|l| l.opacity.moving(now));
+        self.follow_pace(now, cx);
         if SHADED {
             return self.render_shaded(now, &look, cx).into_any_element();
         }
@@ -896,6 +919,9 @@ impl Wash {
         // and hold once it has come to rest at nothing: a wash at rest
         // presents nothing.
         let drifting = self.amplitude.to > 0.0 || self.amplitude.moving(now);
+        // The person's turn (Settings → Appearance); the pace is followed
+        // in `render`, for both ways of drawing.
+        let turn = cx.global::<KoanTheme>().wash_turn as f32 * std::f32::consts::PI / 180.0;
         let previous = self
             .previous
             .as_ref()
@@ -920,22 +946,12 @@ impl Wash {
             self.amplitude.write(&shader, 0);
             opacity.write(&shader, 1);
             if drifting {
-                // The person's pace and turn (Settings → Appearance).
-                let theme = cx.global::<KoanTheme>();
-                let pace = theme.wash_drift.max(1) as f32 / 100.0;
-                if pace != self.pace {
-                    // The phase (now - epoch) * pace stays where it was.
-                    let since = now.saturating_duration_since(self.epoch).as_secs_f64();
-                    let kept = since * self.pace as f64 / pace as f64;
-                    self.epoch = now - Duration::from_secs_f64(kept);
-                    self.pace = pace;
-                }
-                let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
+                let pace = self.pace;
                 let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
                     (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
                     (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD / pace),
-                    (4, -turn, turn, self.epoch, TURN_PERIOD / pace),
+                    (4, -1.0, 1.0, self.epoch, TURN_PERIOD / pace),
                 ] {
                     shader.segment(
                         k,
@@ -951,6 +967,11 @@ impl Wash {
                 shader.hold(2, 1.0);
                 shader.hold(3, 0.0);
                 shader.hold(4, 0.0);
+            }
+            // How far it turns: a change of Turn eases there over the
+            // settle, so the angle moves rather than jumps (#1883).
+            if shader.track(5).to != turn {
+                shader.to(5, turn, Motion::SETTLE, Ease::InOut);
             }
             rests = rests.max(opacity.rests(now));
             quads.push((image, shader));
@@ -970,8 +991,11 @@ impl Wash {
             .child(
                 canvas(
                     move |_, window, cx| {
+                        // Not decorative: Reduce Motion stops the drift
+                        // through its amplitude, and the dissolve between
+                        // records still runs, as the Mac's does.
                         for (_, shader) in &quads {
-                            shader.attach(true, window, cx);
+                            shader.attach(false, window, cx);
                         }
                         quads
                     },

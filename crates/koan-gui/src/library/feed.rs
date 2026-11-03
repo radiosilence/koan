@@ -301,12 +301,17 @@ impl Feed {
                     .chain(albums.into_iter().map(Playable::Album))
                     .chain(artists.into_iter().map(Playable::Artist))
                     .collect();
+                let before = feed.favourites.set.clone();
                 if feed.favourites_stale || !feed.favourites.read_landed(edits, read) {
                     feed.reload_favourites(cx);
                     return;
                 }
-                feed.favourites_revision += 1;
-                cx.notify();
+                // The read after a toggle finds what the toggle's answer
+                // already counted: the shelves read again only for a change.
+                if feed.favourites.set != before {
+                    feed.favourites_revision += 1;
+                    cx.notify();
+                }
             })
             .ok();
         })

@@ -1039,12 +1039,15 @@ impl ProfileBody {
                                 .map(|t| t.name.clone())
                                 .unwrap_or_else(|| id.clone())
                         };
+                        // Cells of one width, so the previews stand in
+                        // columns; a long name ends in an ellipsis.
                         div()
+                            .w(look.spaced(150.0))
                             .flex()
                             .flex_col()
                             .gap(look.spaced(2.0))
                             .child(thumb(db.clone(), Stroke::eq(1), Some(range)))
-                            .child(note(name, Tone::Muted, &look))
+                            .child(note(name, Tone::Muted, &look).truncate())
                     });
                 rows.push(
                     div()
@@ -1365,9 +1368,11 @@ impl ProfileBody {
                             .text_color(look.palette.ink.hsla())
                             .child(layer.profile.clone()),
                     )
-                    .children(
-                        role.map(|r| Badge::new(role_label(r)).accent(r == DspRole::Correction)),
-                    )
+                    .children(role.map(|r| {
+                        Badge::new(role_label(r))
+                            .accent(r == DspRole::Correction)
+                            .key(("layer-role", i))
+                    }))
                     .child(menu(
                         ("layer-options", i),
                         label("Options"),
@@ -1765,7 +1770,7 @@ fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
                 c.clone(),
                 false,
             ),
-            None => line(DspRole::Correction, "None".into(), true),
+            None => line(DspRole::Correction, label("none").to_string(), true),
         })
         .when(!d.tunings.is_empty(), |el| {
             el.child(line(DspRole::Tuning, d.tunings.join(", "), false))

@@ -91,7 +91,7 @@ pub fn start(
     restored: impl Future<Output = Option<u32>> + 'static,
     cx: &mut App,
 ) {
-    cx.set_global(MainWindow::default());
+    cx.set_global(MainWindowSlot::default());
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
@@ -129,7 +129,10 @@ pub fn start(
         // app starts then. Otherwise someone opened kōan and wants it.
         let keep = settings.settings().await.devices_keep_running;
         let background = keep && crate::platform::residency::launched_at_login();
-        cx.update(|cx| open(saved, !background, cx));
+        cx.update(|cx| {
+            crate::platform::residency::adopt(keep, cx);
+            open(saved, !background, cx)
+        });
     })
     .detach();
 }
@@ -138,12 +141,18 @@ pub fn start(
 /// decided whether to open it: nothing opens it again before that, or a
 /// file opened at launch would open a second.
 #[derive(Default)]
-struct MainWindow {
+struct MainWindowSlot {
     handle: Option<AnyWindowHandle>,
+    /// The shell it draws, for what the app's menus ask of it from any
+    /// window.
+    shell: Option<WeakEntity<Shell>>,
     ready: bool,
+    /// Its saved bounds are being read to open it again: asked again
+    /// meanwhile, it is not opened twice.
+    opening: bool,
 }
 
-impl Global for MainWindow {}
+impl Global for MainWindowSlot {}
 
 /// Resolves once the mirror's queue holds `rows` rows, woken by the queue
 /// changing rather than by looking.
@@ -174,7 +183,7 @@ fn rows_arrived(
 /// it did: before launching has decided about the window, it leaves that to
 /// launching.
 pub fn show_window(cx: &mut App) -> bool {
-    if !cx.try_global::<MainWindow>().is_some_and(|m| m.ready) {
+    if !cx.try_global::<MainWindowSlot>().is_some_and(|m| m.ready) {
         return false;
     }
     if let Some(window) = main_window(cx) {
@@ -184,20 +193,33 @@ pub fn show_window(cx: &mut App) -> bool {
             .ok();
         return true;
     }
+    let slot = cx.global_mut::<MainWindowSlot>();
+    if std::mem::replace(&mut slot.opening, true) {
+        return true;
+    }
     let saved = cx
         .background_executor()
         .spawn(async { window_state::read() });
     cx.spawn(async move |cx| {
         let saved = saved.await;
-        cx.update(|cx| open_window(saved, cx));
+        cx.update(|cx| {
+            cx.global_mut::<MainWindowSlot>().opening = false;
+            open_window(saved, cx)
+        });
     })
     .detach();
     true
 }
 
 /// The main window, while it is open. Settings, EQ and About are not it.
+/// The main window's shell, while the window is open.
+pub fn main_shell(cx: &App) -> Option<Entity<Shell>> {
+    main_window(cx)?;
+    cx.try_global::<MainWindowSlot>()?.shell.as_ref()?.upgrade()
+}
+
 pub fn main_window(cx: &App) -> Option<AnyWindowHandle> {
-    let handle = cx.try_global::<MainWindow>()?.handle?;
+    let handle = cx.try_global::<MainWindowSlot>()?.handle?;
     cx.windows().contains(&handle).then_some(handle)
 }
 
@@ -218,12 +240,12 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
         async {}
     })
     .detach();
-    cx.global_mut::<MainWindow>().ready = true;
+    cx.global_mut::<MainWindowSlot>().ready = true;
     if show {
         open_window(saved, cx);
     } else {
         log::info!("opened at login; staying in the menu bar");
-        crate::platform::residency::window_closing(cx);
+        crate::platform::residency::settle_dock(cx);
     }
     // `--settings` opens Settings beside the window, for checking it
     // without a keyboard.
@@ -245,16 +267,16 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             // Closing the last window quits, unless kōan is kept running,
             // and quitting waits for nothing spawned: a file of a few bytes,
             // written now.
-            window.on_window_should_close(cx, |window, cx| {
+            window.on_window_should_close(cx, |window, _| {
                 window_state::write(window.window_bounds());
-                crate::platform::residency::window_closing(cx);
                 true
             });
             let shell = cx.new(|cx| Shell::new(window, cx));
+            cx.global_mut::<MainWindowSlot>().shell = Some(shell.downgrade());
             cx.new(|cx| WindowRoot::new(shell, window, cx))
         });
     match opened {
-        Ok(handle) => cx.global_mut::<MainWindow>().handle = Some(handle),
+        Ok(handle) => cx.global_mut::<MainWindowSlot>().handle = Some(handle),
         Err(e) => {
             log::error!("the window did not open: {e}");
             cx.quit();

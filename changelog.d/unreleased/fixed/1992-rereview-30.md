@@ -1,0 +1,1 @@
+- **Sidebar sleeves, transport presses and selected rows.** In the kōan GUI app a playlist's sleeve in the sidebar is drawn again when it is dropped from memory rather than going blank, a press between two of the transport's buttons acts on one of them, never both, and a selected list row's detail stays readable.

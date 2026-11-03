@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Primitive, ScaledPixels};
+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Point, Primitive, ScaledPixels};
 
 /// How many plain floats a shader's uniform block holds, written by the app
 /// when they change: colours, sizes, flags.
@@ -286,7 +286,9 @@ fn to_half(v: f32) -> u16 {
         return sign | 0x7c00;
     }
     // Rounded to the nearest half.
-    let rounded = (exponent as u32) << 10 | (mantissa + 0x1000) >> 13;
+    // Added, not ORed: a mantissa that rounds up past its top carries into
+    // the exponent.
+    let rounded = ((exponent as u32) << 10) + ((mantissa + 0x1000) >> 13);
     sign | rounded.min(0x7bff) as u16
 }
 
@@ -655,6 +657,12 @@ pub struct PaintShader {
     // painted inside `Window::paint_layer_group`, drawn into a texture of
     // its own (#1859).
     pub group: Option<usize>,
+    // KOAN: where the shader's origin sits in its group's texture: the
+    // texture is the visible part of the shader's bounds, its content moved
+    // to the texture's origin, or the window's size, its content where it was
+    // painted. Taken when the group closes, so an enclosing group moving the
+    // shader leaves it as it is (#1878).
+    pub group_inset: Point<ScaledPixels>,
 }
 
 impl From<PaintShader> for Primitive {
@@ -707,8 +715,8 @@ impl ShaderInstance {
             clip: rect(&shader.content_mask.bounds),
             uniforms,
             time: [time, 0.0, 0.0, 0.0],
-            // A group's texture is the window's size, its content where it
-            // was painted: the tile is the quad's own bounds.
+            // A group's texture holds the quad's bounds from its inset
+            // (#1878).
             tile: match (&shader.image, shader.group) {
                 (Some(tile), _) => {
                     let b = tile.bounds;
@@ -719,9 +727,29 @@ impl ShaderInstance {
                         b.size.height.0 as f32,
                     ]
                 }
-                (None, Some(_)) => rect(&shader.bounds),
+                (None, Some(_)) => [
+                    shader.group_inset.x.0,
+                    shader.group_inset.y.0,
+                    shader.bounds.size.width.0,
+                    shader.bounds.size.height.0,
+                ],
                 (None, None) => [0.0; 4],
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod half_tests {
+    use super::*;
+
+    /// KOAN: a value whose mantissa rounds up carries into the exponent:
+    /// just under 0.5 packs as 0.5, not 0.25.
+    #[test]
+    fn a_rounding_carry_reaches_the_exponent() {
+        for v in [0.49995_f32, 0.24999, 0.062499, 0.999_99, 0.3, 0.75] {
+            let (a, _) = unpack_halves(pack_halves(v, 0.0));
+            assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
         }
     }
 }

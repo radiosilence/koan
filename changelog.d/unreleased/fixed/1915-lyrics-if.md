@@ -1,0 +1,1 @@
+- **Clippy passes on koan-kit again.** The lyrics' line colour reads as one condition.

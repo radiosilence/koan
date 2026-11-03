@@ -34,6 +34,9 @@ pub enum Answer {
     /// The control's ground lifting to the accent and settling back: a
     /// bordered button pressed, rows landing.
     Lift,
+    /// A short streak leaving the glyph the way it points: a skip, forward
+    /// (`true`) or back.
+    Streak(bool),
 }
 
 impl Answer {
@@ -44,13 +47,35 @@ impl Answer {
             Answer::Close => 2.0,
             Answer::Sweep => 3.0,
             Answer::Lift => 4.0,
+            Answer::Streak(_) => 5.0,
         }
     }
 
+    /// Which way it travels, for a streak: 1 forward, -1 back.
+    fn heading(self) -> f32 {
+        match self {
+            Answer::Streak(false) => -1.0,
+            _ => 1.0,
+        }
+    }
+
+    /// How long it runs: a ring, out or in, is a press's echo and as quick
+    /// as a sleeve arriving; what travels (dots, a line drawn the width of
+    /// a row) or lifts a ground takes the longest token.
     fn duration(self) -> Duration {
         match self {
-            Answer::Ring | Answer::Close | Answer::Sweep => Motion::SETTLE,
-            Answer::Burst | Answer::Lift => Motion::SETTLE,
+            Answer::Ring | Answer::Close | Answer::Streak(_) => Motion::ARRIVE,
+            Answer::Burst | Answer::Sweep | Answer::Lift => Motion::SETTLE,
+        }
+    }
+
+    /// How what it draws travels: out from the control decisively and
+    /// settling (quick-out); a ring closing in eases both ways, as a
+    /// gathering rather than a throw.
+    fn ease(self) -> Ease {
+        match self {
+            Answer::Close => Ease::InOut,
+            _ => Ease::QuickOut,
         }
     }
 
@@ -58,22 +83,24 @@ impl Answer {
     fn spill(self) -> f32 {
         match self {
             Answer::Ring | Answer::Close => 6.0,
-            Answer::Burst => 9.0,
+            Answer::Burst | Answer::Streak(_) => 9.0,
             Answer::Sweep | Answer::Lift => 0.0,
         }
     }
 }
 
-/// The answers as one program. Uniforms: 0 the answer, 2..6 the colour, 6
-/// the spill and 7 a point, in device pixels; track 0 the answer's progress
-/// from 0 to 1.
+/// The answers as one program. Uniforms: 0 the answer, 1 which way a streak
+/// goes, 2..6 the colour, 6
+/// the spill and 7 a point, in device pixels; track 0 the answer's time
+/// from 0 to 1, which its fade follows, and track 1 its travel, on the
+/// answer's own curve.
 pub static ANSWER: ShaderProgram = ShaderProgram {
     name: "koan-answer",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
     if (t >= 1.0) { return float4(0.0); }
-    float e = 1.0 - (1.0 - t) * (1.0 - t);
+    float e = clamp(koan_track(u, 1, time), 0.0, 1.0);
     float spill = u[6];
     float pt = u[7];
     float2 inner = size - 2.0 * spill;
@@ -101,6 +128,13 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float line = size.y - pt;
         bool under = position.y >= line && position.x <= size.x * e;
         a = under ? 0.6 * (1.0 - t * t) : 0.0;
+    } else if (kind == 5) {
+        float x = (position.x - c.x) * u[1];
+        float half_w = 0.5 * inner.x;
+        float head = half_w + spill * e;
+        float tail = mix(half_w, head, t);
+        float across = clamp(0.75 * pt - abs(position.y - c.y) + 0.5, 0.0, 1.0);
+        a = (x >= tail && x <= head) ? 0.45 * (1.0 - t) * across : 0.0;
     } else {
         a = 0.12 * (1.0 - e);
     }
@@ -111,7 +145,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
     if (t >= 1.0) { return vec4<f32>(0.0); }
-    let e = 1.0 - (1.0 - t) * (1.0 - t);
+    let e = clamp(koan_track(u, 1u, time), 0.0, 1.0);
     let spill = u[1].z;
     let pt = u[1].w;
     let inner = size - 2.0 * spill;
@@ -140,6 +174,15 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         if (position.y >= line && position.x <= size.x * e) {
             a = 0.6 * (1.0 - t * t);
         }
+    } else if (kind == 5) {
+        let x = (position.x - c.x) * u[0].y;
+        let half_w = 0.5 * inner.x;
+        let head = half_w + spill * e;
+        let tail = mix(half_w, head, t);
+        let across = clamp(0.75 * pt - abs(position.y - c.y) + 0.5, 0.0, 1.0);
+        if (x >= tail && x <= head) {
+            a = 0.45 * (1.0 - t) * across;
+        }
     } else {
         a = 0.12 * (1.0 - e);
     }
@@ -155,7 +198,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 struct State {
     animated: Animated,
     live: Option<Answer>,
-    started: Option<Instant>,
+    /// When the control's own handler last started an answer: the change it
+    /// answered is not answered again as the control draws it, once.
+    own: Option<Instant>,
     /// The mark `follow` was last given.
     seen: Option<u64>,
     _end: Option<Task<()>>,
@@ -176,24 +221,24 @@ impl Answerer {
     /// Starts `answer` in `color`, from the control's own handler. Nothing
     /// happens under Reduce Motion or where the renderer draws no shaders.
     pub fn start(&self, answer: Answer, color: Hsla, cx: &mut App) {
+        self.0.update(cx, |s, _| s.own = Some(Instant::now()));
+        self.run(answer, color, cx);
+    }
+
+    /// Draws `answer` in `color`.
+    fn run(&self, answer: Answer, color: Hsla, cx: &mut App) {
         if !SHADED || !KoanTheme::motion_allowed(cx) {
             return;
         }
         self.0.update(cx, |s, cx| {
-            s.animated.set_all(0, &[answer.code(), 0.0]);
+            s.animated.set_all(0, &[answer.code(), answer.heading()]);
             s.animated.set_color(2, color);
-            let now = Instant::now();
-            s.animated.segment(
-                0,
-                0.0,
-                1.0,
-                Animated::now(),
-                answer.duration(),
-                Ease::Linear,
-                Repeat::Once,
-            );
+            let at = Animated::now();
+            for (k, ease) in [(0, Ease::Linear), (1, answer.ease())] {
+                s.animated
+                    .segment(k, 0.0, 1.0, at, answer.duration(), ease, Repeat::Once);
+            }
             s.live = Some(answer);
-            s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
                 // The quad leaves the scene once the answer has run.
@@ -225,6 +270,13 @@ impl Answerer {
         self.moved(mark, false, answer, color, window, cx);
     }
 
+    /// Notes `mark` without answering: a state the control answers only one
+    /// way into (an option becoming the chosen one), passed while it stands
+    /// in the other, so the next move in answers.
+    pub fn note(&self, mark: u64, cx: &mut App) {
+        self.0.update(cx, |s, _| s.seen = Some(mark));
+    }
+
     /// As `follow`, for something whose appearing is the news (a notice):
     /// its first draw answers too.
     pub fn announce(
@@ -252,16 +304,27 @@ impl Answerer {
         if seen == Some(mark) {
             return;
         }
-        let answered = s.started.is_some_and(|at| at.elapsed() < answer.duration());
-        self.0.update(cx, |s, _| s.seen = Some(mark));
+        // The change the control's own handler just answered, once; any
+        // other change, however soon after, is answered.
+        let answered = self.0.update(cx, |s, _| {
+            s.seen = Some(mark);
+            s.own
+                .take()
+                .is_some_and(|at| at.elapsed() < answer.duration())
+        });
         if (first || seen.is_some()) && !answered {
-            self.start(answer, color, cx);
+            self.run(answer, color, cx);
             window.request_animation_frame();
         }
     }
 
-    #[cfg(test)]
-    fn seen(&self, cx: &App) -> Option<u64> {
+    /// Whether an answer is being drawn.
+    pub fn live(&self, cx: &App) -> bool {
+        self.0.read(cx).live.is_some()
+    }
+
+    /// The mark last followed or noted.
+    pub(crate) fn seen(&self, cx: &App) -> Option<u64> {
         self.0.read(cx).seen
     }
 
@@ -338,6 +401,40 @@ mod tests {
         assert_eq!(seen, [Some(1), Some(0)]);
     }
 
+    /// A change the control's own handler answered is not answered again as
+    /// it draws, once; the next change is answered.
+    #[gpui_kit::test]
+    fn a_handler_s_answer_holds_off_one_change(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Two {
+            marks: [0, 0],
+            answers: Vec::new(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let own = |view: &Entity<Two>, cx: &mut VisualTestContext| {
+            view.update(cx, |two, cx| two.answers[0].0.read(cx).own.is_some())
+        };
+        view.update(cx, |two, cx| two.answers[0].start(Answer::Burst, red(), cx));
+        assert!(own(&view, cx), "the handler's answer is noted");
+        view.update(cx, |two, cx| {
+            two.marks[0] = 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(!own(&view, cx), "the change it answered took the note");
+        view.update(cx, |two, cx| {
+            two.marks[0] = 2;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let seen = view.update(cx, |two, cx| two.answers[0].seen(cx));
+        assert_eq!(seen, Some(2));
+    }
+
     #[test]
     fn every_answer_is_within_the_motion_tokens() {
         for answer in [
@@ -346,6 +443,7 @@ mod tests {
             Answer::Close,
             Answer::Sweep,
             Answer::Lift,
+            Answer::Streak(true),
         ] {
             assert!(answer.duration() <= Motion::SETTLE);
         }

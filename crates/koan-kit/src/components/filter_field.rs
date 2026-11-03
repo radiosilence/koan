@@ -11,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::TextField;
-use crate::theme::{Icon, KoanIcon, Look, Tone, TypeRole};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 
 #[derive(IntoElement)]
 pub struct FilterField {
@@ -117,6 +117,81 @@ impl RenderOnce for FilterField {
     }
 }
 
+/// A filter field's look standing for a search that happens elsewhere: the
+/// glyph and what is searched for, or `prompt` in `muted` while nothing is,
+/// the whole row a button. The sidebar's search field, which opens the
+/// search box over the window and shows its query.
+#[derive(IntoElement)]
+pub struct FilterButton {
+    id: ElementId,
+    text: SharedString,
+    prompt: SharedString,
+    on_click: Option<super::Handler<ClickEvent>>,
+}
+
+impl FilterButton {
+    /// `prompt` in the app's words ("search"); `text` is data (a query) and
+    /// keeps its case.
+    pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>, prompt: &str) -> Self {
+        Self {
+            id: id.into(),
+            text: text.into(),
+            prompt: crate::theme::label(prompt),
+            on_click: None,
+        }
+    }
+
+    pub fn on_click(mut self, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(std::sync::Arc::new(run));
+        self
+    }
+}
+
+impl RenderOnce for FilterButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let empty = self.text.is_empty();
+        let shown = if empty {
+            self.prompt.clone()
+        } else {
+            self.text.clone()
+        };
+        let row = super::accessible(
+            div().id(self.id),
+            gpui_kit::Role::Button,
+            Some(shown.clone()),
+        );
+        let row = match self.on_click {
+            Some(run) => super::answers_click(row, run.clone())
+                .cursor_pointer()
+                .on_click(move |e, window, cx| run(e, window, cx)),
+            None => row,
+        };
+        row.flex()
+            .items_center()
+            .w_full()
+            .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
+            .child(
+                KoanIcon::new(Icon::Search)
+                    .role(TypeRole::Control)
+                    .tone(Tone::Muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_role(TypeRole::Control, &look)
+                    .text_color(if empty {
+                        look.palette.muted.hsla()
+                    } else {
+                        look.palette.ink.hsla()
+                    })
+                    .child(shown),
+            )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui_kit::{Modifiers, TestAppContext, VisualTestContext, point};
@@ -127,13 +202,14 @@ mod tests {
 
     struct Bar {
         input: Entity<InputState>,
+        width: Pixels,
     }
 
     impl Render for Bar {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             // As the shell builds it: bare space in the middle, the page's
             // group trailing, the field leading the group.
-            div().w(px(900.)).child(
+            div().w(self.width).child(
                 Toolbar::new()
                     .leading(ToolbarButton::new("back", Icon::Back, "back"))
                     .principal(div().id("drag").size_full())
@@ -145,7 +221,11 @@ mod tests {
                                     .child(FilterField::new(&self.input)),
                             )
                             .spacer()
-                            .child(ToolbarButton::new("sort", Icon::Sort, "sort")),
+                            .child(
+                                div()
+                                    .debug_selector(|| "sort".into())
+                                    .child(ToolbarButton::new("sort", Icon::Sort, "sort")),
+                            ),
                     ),
             )
         }
@@ -160,6 +240,7 @@ mod tests {
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
             input: cx.new(|cx| InputState::new(window, cx).placeholder("filter albums")),
+            width: px(900.),
         });
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
@@ -177,6 +258,37 @@ mod tests {
             focused(cx),
             "a click at {at:?} on {field:?} focused nothing"
         );
+    }
+
+    /// In a narrow toolbar the field gives up its width, down to its
+    /// minimum, before the buttons beside it give up any.
+    #[gpui_kit::test]
+    fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|window, cx| Bar {
+            input: cx.new(|cx| InputState::new(window, cx).placeholder("filter albums")),
+            width: px(220.),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let field = cx.debug_bounds("filter").expect("field drawn");
+        let sort = cx.debug_bounds("sort").expect("button drawn");
+        assert!(
+            field.size.width < super::super::ToolbarMetrics::FIELD,
+            "the field kept its whole measure: {field:?}"
+        );
+        assert!(
+            field.size.width >= super::super::ToolbarMetrics::FIELD_MIN,
+            "the field went under its minimum: {field:?}"
+        );
+        assert!(
+            sort.size.width >= crate::theme::TOOLBAR_BUTTON,
+            "the button gave up width: {sort:?}"
+        );
+        assert!(sort.right() <= px(220.), "the button is cut off: {sort:?}");
     }
 
     struct Field {

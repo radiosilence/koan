@@ -1,0 +1,1 @@
+- **The desktop app's lyrics keep their place through quick lines and song changes.** A line reached mid-glide carries on smoothly instead of snapping. A new song never starts from the last one's place, the same words included. A click during a glide lands on the line under the pointer.

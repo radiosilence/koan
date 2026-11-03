@@ -76,7 +76,7 @@ impl TransportMetrics {
     /// the outline, as tall as `HIT` where there is room and never reaching
     /// above the rule or into the seek row, so a click in it never seeks.
     pub fn centre_rows(look: &Look) -> CentreRows {
-        let inner = Self::HEIGHT - crate::theme::HAIRLINE;
+        let inner = Self::HEIGHT - look.hairline;
         let outline = super::ButtonKind::IconOutlined.glyph_side(look);
         let gap = look.spaced(Self::STACK_GAP);
         let row = look.spaced(Self::SEEK_ROW);
@@ -122,15 +122,18 @@ pub struct CentreRows {
 ///
 /// The tiles keep one size whatever the width. A window being resized moves
 /// the tiles apart rather than growing them: the spare width is shared out
-/// equally among the gaps and the two side margins, so the grid's edge stays
-/// near the page's margin, and a column is added only once another tile fits
-/// at the least gap, or dropped once one no longer does.
+/// equally among the gaps, so the grid's first and last columns stand on the
+/// page's margin, in line with its header and rows, and a column is added
+/// only once another tile fits at the least gap, or dropped once one no
+/// longer does. One tile alone stands on the left margin too, the spare
+/// width beside it, so the first column is level with the header at every
+/// width.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileColumns {
     pub columns: usize,
     pub side: Pixels,
     pub gap: Pixels,
-    /// Each side's margin: the page's, and its share of the spare width.
+    /// Each side's margin: the page's.
     pub inset: Pixels,
 }
 
@@ -150,17 +153,17 @@ impl TileColumns {
         let side = Self::SIDE.min(usable.floor());
         let spare =
             (usable - side * columns as f32 - Self::MIN_GAP * (columns as f32 - 1.0)).max(0.0);
-        // The gaps between columns and the two margins share the spare width.
-        let share = spare / (columns as f32 + 1.0);
+        // The gaps between columns share the spare width; the margins stay
+        // the page's.
         Self {
             columns,
             side: px(side),
             gap: px(if columns > 1 {
-                Self::MIN_GAP + share
+                Self::MIN_GAP + spare / (columns as f32 - 1.0)
             } else {
                 0.0
             }),
-            inset: px(margin + if columns > 1 { share } else { spare / 2.0 }),
+            inset: px(margin),
         }
     }
 }
@@ -238,9 +241,6 @@ impl RowMetrics {
         look.space(Space::Xs)
     }
 
-    /// A page's margin on every side, and what a row's content is inset by
-    /// so it lines up under the page's header. One figure, so the page's
-    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     /// A lead column wide enough for the longest number in a list of
     /// `count` rows, measured in the face the numbers are drawn in (`meta`):
     /// two digits at least.
@@ -253,9 +253,12 @@ impl RowMetrics {
             .advance(face, size, '0')
             .map(|size| size.width)
             .unwrap_or(size * 0.6);
-        digit * digits + look.spaced(4.0)
+        digit * digits + px(4.0)
     }
 
+    /// A page's margin on every side, and what a row's content is inset by
+    /// so it lines up under the page's header. One figure, so the page's
+    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     pub fn page_margin(look: &Look) -> Pixels {
         Self::page_margin_on(&look.scale)
     }
@@ -312,8 +315,7 @@ pub struct TileGrid {
     pub gap: Pixels,
     /// The margin asked for: above the first row and below the last.
     pub margin: Pixels,
-    /// Either side of a row: the margin asked for and a share of the spare
-    /// width.
+    /// Either side of a row: the margin asked for.
     pub inset: Pixels,
     /// A row's height, its spacing below included.
     pub row: Pixels,

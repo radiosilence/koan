@@ -1,0 +1,1 @@
+- **Playlist edits in the kōan GUI app.** Offline, dragging in a playlist with tracks not on this device no longer sends those tracks to the end; play on an empty playlist leaves the queue alone; and a playlist dropped on its own page is not added to itself.

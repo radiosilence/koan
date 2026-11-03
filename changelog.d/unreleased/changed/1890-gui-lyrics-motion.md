@@ -1,0 +1,1 @@
+- **The desktop app's lyrics move with the song.** The column glides to each line as it is reached, the sung line eases into emphasis, past lines settle quieter than those to come, and the panel's edges fade. The GPU draws all of it, timed from the playhead.

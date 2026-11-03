@@ -40,6 +40,7 @@ mod level;
 mod link_text;
 mod list_keys;
 mod lists;
+mod lyrics;
 mod menu;
 mod metrics;
 mod page;
@@ -78,14 +79,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{
-    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
+    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+    Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track,
+    ShaderProgram, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
@@ -112,22 +113,23 @@ pub mod list_actions {
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
-pub use filter_field::FilterField;
+pub use filter_field::{FilterButton, FilterField};
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
-    form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
+    form_note, form_text,
 };
 pub use heart::Heart;
-pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
-    uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
+    spoken_list, uniform_list, width_probe,
 };
-pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use lyrics::{LYRICS, SyncedLines};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
@@ -139,7 +141,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popo
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
-pub use prism::{Burst, Prism, PrismFill, Sheen};
+pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -226,6 +228,18 @@ pub(crate) fn focus(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusH
         })
         .read(cx)
         .clone()
+}
+
+/// A control's name for a screen reader where its owner gave none: its id
+/// read as words ("wash-tint" as "wash tint"), so no slider or choice is met
+/// unnamed. An id that is not a name gives none.
+pub(crate) fn spoken_id(id: &ElementId) -> Option<SharedString> {
+    match id {
+        ElementId::Name(name) | ElementId::NamedInteger(name, _) => {
+            Some(name.replace(['-', '_'], " ").into())
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
@@ -372,34 +386,66 @@ pub fn focus_ring(handle: &FocusHandle, window: &Window, cx: &App) -> Option<Div
     ring(handle, &Look::of(window, cx), window)
 }
 
+/// Where a list's or a grid's keyboard cursor was last laid out, owned by
+/// the page that has the cursor and handed to what draws it (`.spot`). The
+/// cursor's ring writes its bounds here as it is laid out, so the page's
+/// scroll area can bring it into view (`ScrollArea::follow`) and the menu
+/// key can open under it, both from layout rather than from a global.
+#[derive(Clone, Default)]
+pub struct CursorSpot(std::rc::Rc<Spot>);
+
+#[derive(Default)]
+struct Spot {
+    bounds: std::cell::Cell<Option<Bounds<Pixels>>>,
+    /// Bumped each time the keys move the cursor: what a scroll area
+    /// follows, so moving to the same item again still scrolls to it.
+    moves: std::cell::Cell<u64>,
+}
+
+impl CursorSpot {
+    /// The keys moved the cursor: where it was is no longer where it is,
+    /// and the next layout brings it into view.
+    pub fn moved(&self) {
+        self.0.bounds.set(None);
+        self.0.moves.set(self.0.moves.get() + 1);
+    }
+
+    /// Where the cursor's ring was laid out since it last moved.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.bounds.get()
+    }
+
+    /// Where the cursor was laid out is no longer trusted, its moves left
+    /// alone: the next layout says again.
+    pub(crate) fn forget_bounds(&self) {
+        self.0.bounds.set(None);
+    }
+
+    pub(crate) fn moves(&self) -> u64 {
+        self.0.moves.get()
+    }
+
+    fn record(&self, bounds: Bounds<Pixels>) {
+        self.0.bounds.set(Some(bounds));
+    }
+}
+
 /// The focus ring drawn inside a row, for the row a list's keyboard cursor
 /// is on: the list holds the focus, so the row's ring sits within it rather
-/// than standing off over its neighbours.
-pub(crate) fn cursor_ring(look: &Look) -> Div {
-    div()
+/// than standing off over its neighbours. Laid out, it tells `spot` where.
+pub(crate) fn cursor_ring(look: &Look, spot: Option<&CursorSpot>) -> Div {
+    let ring = div()
         .absolute()
         .inset_0()
         .border(MARK)
-        .border_color(look.accent.hsla())
-        .child(
-            canvas(
-                |bounds, window, cx| {
-                    let id = window.window_handle().window_id();
-                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
-                },
-                |_, _, _, _| {},
-            )
-            .size_full(),
-        )
+        .border_color(look.accent.hsla());
+    match spot.cloned() {
+        Some(spot) => {
+            ring.child(canvas(move |bounds, _, _| spot.record(bounds), |_, _, _, _| {}).size_full())
+        }
+        None => ring,
+    }
 }
-
-/// Where the keyboard's cursor ring was drawn, and in which window: what the
-/// menu key opens a context menu under. The key clears it and lets a frame
-/// draw, so only a ring drawn in that frame counts.
-#[derive(Default)]
-pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
-
-impl Global for CursorAt {}
 
 /// A fill or an outline following a control's state on the GPU: lit at once
 /// as the state comes on (the pointer arrives), and faded out over
@@ -454,6 +500,62 @@ pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut
     })
 }
 
+/// The fill under a control that lights under the pointer, as every
+/// control's does: `surface` arriving with the pointer, `hover` while
+/// pressed, fading out over `Motion::LEAVE` once it has gone. The caller
+/// tracks `pointer` on the control with `track` and adds the fill before its
+/// content, so the content draws over it.
+pub(crate) fn hover_fill(
+    id: &ElementId,
+    look: &Look,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<Pointer>, AnyElement) {
+    let state = pointer(&child(id, "pointer"), window, cx);
+    let (hovered, pressed) = {
+        let p = state.read(cx);
+        (p.hovered, p.pressed)
+    };
+    let color = if pressed {
+        look.palette.hover.hsla()
+    } else {
+        look.palette.surface.hsla()
+    };
+    let lit = transition(child(id, "lit"), hovered || pressed, window, cx);
+    (state, fill(color, &lit))
+}
+
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
+}
+
+/// A row a click acts on, lit under the pointer as controls are (`surface`,
+/// leaving over `Motion::LEAVE`): its content goes in as children, over the
+/// fill.
+pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let id = id.into();
+    let look = Look::of(window, cx);
+    let (state, fill) = hover_fill(&id, &look, window, cx);
+    track(div().id(id), &state)
+        .relative()
+        .cursor_pointer()
+        .child(fill)
+}
+
 /// A fill under a control, in `color`, faded with `transition`.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if !SHADED {
@@ -488,7 +590,6 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
     }
 }
 
-/// Answers a screen reader's click as a pointer's would, with `handler`.
 /// A row's or a tile's parts as a screen reader says them: the non-empty
 /// ones, in order, between commas. What `TableRow::spoken` takes.
 pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
@@ -538,6 +639,7 @@ pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
     }
 }
 
+/// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
     handler: Handler<gpui_kit::ClickEvent>,

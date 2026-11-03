@@ -55,10 +55,13 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         let (engine, waiting) = model.update(cx, |m, _| {
             (m.engine().clone(), std::mem::take(&mut m.waiting_pairs))
         });
+        // All at once: quitting waits only a moment for them.
+        let declines = waiting
+            .into_iter()
+            .map(|pair| engine.clone().decline_pairing(pair));
+        let declines = futures::future::join_all(declines);
         async move {
-            for pair in waiting {
-                engine.clone().decline_pairing(pair).await.ok();
-            }
+            declines.await;
         }
     })
     .detach();
@@ -113,6 +116,8 @@ pub fn open(cx: &mut App) {
     match opened {
         Ok((handle, view)) => {
             cx.global_mut::<Settings>().window = Some((handle, view.downgrade()));
+            // Opened from the menu bar with no window: in the Dock again.
+            crate::platform::residency::settle_dock(cx);
             // Now the Settings window: it takes what a closed one left unseen.
             let model = cx.global::<Settings>().model.clone();
             model.update(cx, |_, cx| cx.notify());
@@ -181,8 +186,6 @@ pub struct SettingsWindow {
     /// account is an admin's, and so whether there is a People tab at all.
     people: Option<Entity<panes::people::People>>,
     people_for: Option<String>,
-    /// Pressed on the strip along the top, to move the window on the next
-    /// move: a click alone is not a drag.
     _people: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -215,9 +218,11 @@ impl SettingsWindow {
             }),
             // The CLI and the TUI write the same file; coming back to this
             // window is the moment to notice they did.
+            // The system's settings can turn the login item off the same way.
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.ctx.model.update(cx, |model, cx| model.reload(cx));
+                    crate::platform::residency::read_login(cx);
                 }
             }),
             cx.on_release(|_, cx| {

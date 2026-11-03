@@ -92,6 +92,8 @@ pub struct MenuRow {
     disabled: bool,
     /// A row that opens a submenu: the chevron at its end.
     opens: bool,
+    /// Its submenu shows.
+    expanded: bool,
     /// The rich row's second line, and whether it warns.
     detail: Option<(SharedString, bool)>,
     /// The rich row: its glyph large in a column of its own, the chosen row
@@ -122,6 +124,7 @@ impl MenuRow {
             destructive: false,
             disabled: false,
             opens: false,
+            expanded: false,
             detail: None,
             rich: false,
             reach: None,
@@ -245,6 +248,12 @@ impl MenuRow {
         self
     }
 
+    /// The submenu it opens is showing: said to a screen reader.
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
     /// A second line under the label, in `fine`, `muted`; in `bad` when it
     /// warns.
     pub fn detail(mut self, detail: impl Into<SharedString>, warns: bool) -> Self {
@@ -322,40 +331,47 @@ impl RenderOnce for MenuAction {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let (help, run) = (self.help.clone(), self.run);
-        super::accessible(
-            div().id(self.id),
-            gpui_kit::Role::Button,
-            Some(self.help.clone()),
-        )
-        .flex()
-        .items_center()
-        .justify_center()
-        .h(look.spaced(MenuAction::SLOT))
-        .cursor_pointer()
-        .hover(|button| button.bg(look.palette.hover.hsla()))
-        .map(|button| {
-            let color = if self.lit {
-                look.color(Tone::Accent)
-            } else {
-                look.palette.muted.hsla()
-            };
-            match self.face {
-                ActionFace::Glyph(icon) => button
-                    .w(look.spaced(MenuAction::SLOT))
-                    .child(KoanIcon::new(icon).role(TypeRole::Control).color(color)),
-                ActionFace::Text(text) => button
-                    .px(look.space(Space::S))
-                    .text_role(TypeRole::Meta, &look)
-                    .text_color(color)
-                    .whitespace_nowrap()
-                    .child(text),
-            }
-        })
-        .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
-        .on_click(move |event, window, cx| {
-            cx.stop_propagation();
-            run(event, window, cx)
-        })
+        // Words shown lead the name a screen reader gives it, so the name
+        // holds what is seen ("move here") as well as what it does.
+        let name: SharedString = match &self.face {
+            ActionFace::Text(text) => format!("{text}: {}", self.help).into(),
+            ActionFace::Glyph(_) => self.help.clone(),
+        };
+        super::accessible(div().id(self.id), gpui_kit::Role::Button, Some(name))
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(look.spaced(MenuAction::SLOT))
+            .cursor_pointer()
+            .hover(|button| button.bg(look.palette.hover.hsla()))
+            .map(|button| {
+                let color = if self.lit {
+                    look.color(Tone::Accent)
+                } else {
+                    look.palette.muted.hsla()
+                };
+                match self.face {
+                    ActionFace::Glyph(icon) => button
+                        .w(look.spaced(MenuAction::SLOT))
+                        .child(KoanIcon::new(icon).role(TypeRole::Control).color(color)),
+                    ActionFace::Text(text) => button
+                        .px(look.space(Space::S))
+                        .text_role(TypeRole::Meta, &look)
+                        .text_color(color)
+                        .whitespace_nowrap()
+                        .child(text),
+                }
+            })
+            .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
+            // A screen reader's press, as a pointer's.
+            .on_a11y_action(gpui_kit::AccessibleAction::Click, {
+                let run = run.clone();
+                move |_, window, cx| run(&gpui_kit::ClickEvent::default(), window, cx)
+            })
+            .on_click(move |event, window, cx| {
+                cx.stop_propagation();
+                run(event, window, cx)
+            })
     }
 }
 
@@ -410,8 +426,12 @@ impl RenderOnce for MenuRow {
                                 muted
                             })
                             .child(detail)
-                            .tooltip(move |window, cx| {
-                                super::Tooltip::view(full.clone(), window, cx)
+                            // Its whole text, for a line cut short; an empty
+                            // line has none to give.
+                            .when(!full.is_empty(), |line| {
+                                line.tooltip(move |window, cx| {
+                                    super::Tooltip::view(full.clone(), window, cx)
+                                })
                             }),
                     )
             }
@@ -425,11 +445,18 @@ impl RenderOnce for MenuRow {
         // here"): what is chosen is never moved to, so the two never meet.
         // Beside glyphs every row may carry, it keeps its own column.
         let shares = self.slots > 0 && last_wide;
-        if shares && self.checked == Some(true) && !self.disabled {
+        // A disabled choice still says it is the choice, quietly: muted, as
+        // its label is, never the accent of something to choose.
+        let ticked = if self.disabled {
+            look.palette.muted.hsla()
+        } else {
+            accent
+        };
+        if shares && self.checked == Some(true) {
             filled.push(Some(
                 KoanIcon::new(Icon::Check)
                     .points(tick)
-                    .color(accent)
+                    .color(ticked)
                     .into_any_element(),
             ));
         }
@@ -451,7 +478,7 @@ impl RenderOnce for MenuRow {
                 row.aria_toggled(super::toggled(checked))
             })
             .when_some(described, |row, d| row.aria_description(d))
-            .when(self.opens, |row| row.aria_expanded(false))
+            .when(self.opens, |row| row.aria_expanded(self.expanded))
             .relative()
             .flex()
             .items_center()
@@ -555,7 +582,7 @@ impl RenderOnce for MenuRow {
                     .ml(look.space(Space::M))
                     .size(gpui_kit::px(crate::theme::icons::side(tick)))
                     .when(checked, |cell| {
-                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(accent))
+                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(ticked))
                     })
             }))
             .when(self.opens, |row| {

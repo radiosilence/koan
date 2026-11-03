@@ -438,7 +438,9 @@ pub fn follow_edit(
 /// side's change is judged against its own record: the server's `changed`
 /// against the stamp it had at the last sync, the local `changed_at` against
 /// the one that sync covered. Only one side moved: that side wins. Both moved:
-/// last writer wins on `changed`. Neither: nothing is fetched at all.
+/// last writer wins on `changed`. Neither: nothing is fetched at all. A pull
+/// whose local copy is edited or pushed between the decision and the store
+/// is left for the next sync to weigh again.
 ///
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
@@ -533,7 +535,7 @@ pub fn reconcile_playlists(
     for chunk in pulls.chunks(FETCHING * 4) {
         let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
         for ((summary, local), full) in chunk.iter().zip(fetched) {
-            let (summary, local) = (*summary, local.clone());
+            let (summary, local) = (*summary, local.as_ref());
             let full = match full {
                 Ok(full) => full,
                 Err(e) => {
@@ -562,19 +564,35 @@ pub fn reconcile_playlists(
             let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
             let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
+            // A push in flight records what it did only once the server has
+            // answered: one of this playlist (`push_lock`), or one creating a
+            // playlist there that this listing may already hold (`CREATING`),
+            // is waited for, so the check below sees what it wrote.
+            let lock = match local {
+                Some(local) => push_lock(local.id),
+                None => CREATING.clone(),
+            };
+            let _push = lock.lock();
             // All of it or none: a copy renamed but not refilled, or refilled but
             // not marked synced, would push back as an edit nobody made.
             let stored = queries::atomically(&db.conn, || {
-                // Edited here, or made here from another listing, since it was
+                // Edited here, made here from another listing, or pushed (which
+                // moves the synced stamp, not the revision) since it was
                 // decided to pull it: the next sync weighs it again rather than
                 // writing over the edit.
                 let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-                if now.as_ref().map(|p| (p.id, p.revision))
-                    != local.as_ref().map(|p| (p.id, p.revision))
-                {
+                let seen = |p: &queries::PlaylistRow| {
+                    (
+                        p.id,
+                        p.revision,
+                        p.synced_revision,
+                        p.remote_changed.clone(),
+                    )
+                };
+                if now.as_ref().map(seen) != local.map(seen) {
                     return Ok(false);
                 }
-                let id = match &local {
+                let id = match local {
                     Some(local) => local.id,
                     None => queries::create_playlist(
                         &db.conn,
@@ -661,6 +679,14 @@ pub fn reconcile_playlists(
 /// made offline and then a restart before the next sync gives way to the
 /// server's order, as an edit from another device would.
 static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
+
+/// A server being left: the reorder not yet sent is dropped with the
+/// playlists it names, so the next account's order is adopted, not
+/// overwritten.
+pub(crate) fn forget_unsent_order() {
+    let _lane = ORDER_LANE.lock();
+    ORDER_UNSENT.store(false, Ordering::Relaxed);
+}
 
 /// Held while the order goes either way, and while a reorder is written, so
 /// a sync never adopts the server's order over a reorder on its way there,
@@ -761,10 +787,10 @@ pub fn set_account_order(db: &Database, user: i64, ids: &[i64]) -> Result<(), Db
 /// last.
 pub fn push_order() {
     let cfg = Config::cached();
-    if !cfg.remote.enabled {
-        return;
-    }
-    let Some(client) = subsonic_client(&cfg) else {
+    // Signed out, a reorder is this device's alone: the account's order is
+    // adopted at the next sign-in rather than overwritten by it.
+    let Some(client) = cfg.remote.enabled.then(|| subsonic_client(&cfg)).flatten() else {
+        ORDER_UNSENT.store(false, Ordering::Relaxed);
         return;
     };
     ORDER_UNSENT.store(true, Ordering::Relaxed);
@@ -887,6 +913,13 @@ fn push_lock(id: i64) -> std::sync::Arc<parking_lot::Mutex<()>> {
         .clone()
 }
 
+/// Held by a push that creates a playlist on the server, from before the
+/// create until its server id is recorded here. A sync whose listing already
+/// holds that playlist, with no local copy known for it yet, waits for it
+/// rather than pulling it in as a second copy.
+static CREATING: std::sync::LazyLock<std::sync::Arc<parking_lot::Mutex<()>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Send a playlist's name and contents to the server, in order.
 ///
 /// `createPlaylist` with a `playlistId` replaces the contents wholesale, which
@@ -909,6 +942,9 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
     let remote_id = local.remote_id.as_deref();
+    // Taken after this playlist's own lock, as a sync takes either alone.
+    let creating = CREATING.clone();
+    let _creating = remote_id.is_none().then(|| creating.lock());
     let song_ids = match queries::remote_ids_for_playlist(&db.conn, id) {
         Ok(ids) => ids,
         Err(e) => {
@@ -1651,10 +1687,52 @@ mod tests {
         }
     }
 
+    /// Held by the tests that read or move `ORDER_GENERATION` and
+    /// `ORDER_UNSENT`, which are the process's: run side by side, one's
+    /// change lands in the other's sync.
+    static ORDER_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    /// A reorder left unsent when a server is left is not sent to the next
+    /// account: its order is adopted.
+    #[test]
+    fn an_order_unsent_when_leaving_is_not_sent_to_the_next_account() {
+        let _order = ORDER_TESTS.lock();
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        forget_unsent_order();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(
+            order,
+            [id("p1"), id("p2")],
+            "the account's order is adopted"
+        );
+        assert!(!ORDER_UNSENT.load(Ordering::Relaxed));
+    }
+
     /// A listing asked for before this device made or sent a reorder is
     /// older than that order, and is not adopted over it.
     #[test]
     fn a_listing_older_than_a_send_is_not_adopted() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
@@ -1700,6 +1778,7 @@ mod tests {
 
     #[test]
     fn a_sync_adopts_the_servers_playlist_order_around_local_ones() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
