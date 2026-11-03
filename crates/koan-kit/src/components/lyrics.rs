@@ -236,8 +236,11 @@ impl RenderOnce for SyncedLines {
                             x: s.scroll.offset().x,
                             y: to,
                         });
+                        // By a little is the next line or so: less than half
+                        // the panel.
                         let travel = from.map(|from| from - to);
-                        match travel.filter(|t| *t > Pixels::ZERO && *t < band * 0.5) {
+                        let little = view.size.height * 0.5;
+                        match travel.filter(|t| *t > Pixels::ZERO && *t < little) {
                             Some(travel) => s.animated.segment(
                                 1,
                                 f32::from(travel) * scale,
@@ -261,9 +264,12 @@ impl RenderOnce for SyncedLines {
             }
             (s.scroll.clone(), s.animated.clone(), s.before, waiting)
         });
+        // Back before the first line, the line left goes back to upcoming
+        // with the rest.
         let forward = match (before, active) {
             (Some(b), Some(a)) => b < a,
-            _ => true,
+            (Some(_), None) => false,
+            (None, _) => true,
         };
         if waiting {
             window.request_animation_frame();
