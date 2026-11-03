@@ -909,9 +909,9 @@ mod tests {
         assert!(settled(&cfg, "al-none"), "the miss stays");
     }
 
-    /// A replaced cover counts once.
+    /// A replaced cover is one file, and a discard removes every size.
     #[test]
-    fn a_replaced_cover_counts_once() {
+    fn a_replaced_cover_is_one_file_until_discarded() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path());
         keep(&cfg, "al-1", Some(600), &[0; 10]);
