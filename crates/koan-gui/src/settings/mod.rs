@@ -113,6 +113,8 @@ pub fn open(cx: &mut App) {
     match opened {
         Ok((handle, view)) => {
             cx.global_mut::<Settings>().window = Some((handle, view.downgrade()));
+            // Opened from the menu bar with no window: in the Dock again.
+            crate::platform::residency::settle_dock(cx);
             // Now the Settings window: it takes what a closed one left unseen.
             let model = cx.global::<Settings>().model.clone();
             model.update(cx, |_, cx| cx.notify());

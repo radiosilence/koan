@@ -203,7 +203,10 @@ fn show(cx: &mut App) {
         .fixed()
         .options(cx);
     match cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
-        Ok(window) => cx.set_global(Open(Some(window))),
+        Ok(window) => {
+            cx.set_global(Open(Some(window)));
+            crate::platform::residency::settle_dock(cx);
+        }
         Err(e) => log::warn!("about: {e}"),
     }
 }

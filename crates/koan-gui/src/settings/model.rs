@@ -272,7 +272,7 @@ impl SettingsModel {
                 // Kept running as the file says now, edited here or by
                 // the terminal UI or by hand.
                 if let Some(shown) = model.draft.as_ref().map(Draft::drawn) {
-                    crate::platform::residency::adopt(shown.devices_keep_running, cx);
+                    crate::platform::residency::follow_file(shown.devices_keep_running, cx);
                 }
                 model.redraw(cx);
             })

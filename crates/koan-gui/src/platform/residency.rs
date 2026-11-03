@@ -114,6 +114,17 @@ pub fn adopt(keep: bool, cx: &mut App) {
     }
 }
 
+/// What the configuration file says now, read again by Settings: turned off
+/// elsewhere (the terminal UI, an edit by hand) while the main window is
+/// closed, the main window opens, as from the toggle, so closing Settings
+/// does not quit kōan with nothing to bring back.
+pub fn follow_file(keep: bool, cx: &mut App) {
+    if !cx.has_global::<Residency>() || keep_running(cx) == keep {
+        return;
+    }
+    apply(keep, cx);
+}
+
 /// In the Dock and the app switcher while any of kōan's windows is open
 /// (the main window, Settings, EQ), or while it is not kept running; kept
 /// running with none, the menu bar only.
