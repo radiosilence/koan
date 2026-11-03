@@ -187,6 +187,8 @@ impl AlbumPage {
                     Ok(page) if page.album.is_some() => {
                         this.lines = lines(&page.tracks);
                         this.album = page.album;
+                        let ids = |t: &[Track]| -> Vec<i64> { t.iter().map(|t| t.id).collect() };
+                        this.cursor.relocate(&ids(&this.tracks), &ids(&page.tracks));
                         this.tracks = page.tracks;
                         this.gone = None;
                     }
@@ -425,7 +427,7 @@ impl TrackList for AlbumPage {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.place(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -568,7 +570,7 @@ impl super::keys::KeyedList for AlbumPage {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }

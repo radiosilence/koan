@@ -1024,7 +1024,7 @@ impl PlaylistPage {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.place(row);
+                this.cursor.click(row, event.modifiers().shift);
                 this.click(row, event, cx);
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -1237,7 +1237,8 @@ impl super::keys::KeyedList for PlaylistPage {
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        let entries = self.rows[from].items().start..self.rows[to].items().end;
+        let (lo, hi) = (from.min(to), from.max(to));
+        let entries = self.rows[lo].items().start..self.rows[hi].items().end;
         self.selected = self.items[entries]
             .iter()
             .map(|i| i.queue_item_id.clone())

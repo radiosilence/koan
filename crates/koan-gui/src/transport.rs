@@ -1092,6 +1092,9 @@ impl Render for Transport {
             .id("transport")
             .relative()
             .track_focus(&self.focus)
+            // F6 brings the keyboard here; a click on a control leaves it
+            // where it was, with the list it was working.
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()

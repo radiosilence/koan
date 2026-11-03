@@ -445,7 +445,7 @@ impl ShelfPage {
         let item = Playable::Artist(id);
         let m = e.modifiers();
         let order = self.order();
-        self.place(item, &order);
+        self.place(item, m.shift, &order);
         if !self.selection.take(item, m.shift, m.secondary(cx), &order) {
             self.lib
                 .nav
@@ -627,7 +627,7 @@ impl TileHost for ShelfPage {
         window.focus(&self.focus, cx);
         let item = Playable::Album(album);
         let order = self.order();
-        self.place(item, &order);
+        self.place(item, modifiers.shift, &order);
         if self
             .selection
             .take(item, modifiers.shift, modifiers.secondary(cx), &order)
@@ -715,8 +715,8 @@ impl TrackList for ShelfPage {
                 let ids = self.row_tracks();
                 let item = Playable::Track(track);
                 let order = self.order();
-                self.place(item, &order);
                 let m = event.modifiers();
+                self.place(item, m.shift, &order);
                 // Outside the mode a plain click marks the row alone: the
                 // mode would turn every tile's and pill's click into a tick.
                 let plays = if !m.shift && !m.secondary(cx) && !self.selection.is_active() {
@@ -740,10 +740,11 @@ impl TrackList for ShelfPage {
 }
 
 impl ShelfPage {
-    /// The keyboard carries on from the item clicked.
-    fn place(&mut self, item: Playable, order: &[Playable]) {
+    /// The keyboard carries on from the item clicked, a ⇧-click from the
+    /// same origin.
+    fn place(&mut self, item: Playable, shift: bool, order: &[Playable]) {
         if let Some(at) = order.iter().position(|p| *p == item) {
-            self.cursor.place(at);
+            self.cursor.click(at, shift);
         }
     }
 }

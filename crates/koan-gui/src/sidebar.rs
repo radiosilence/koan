@@ -65,6 +65,8 @@ pub struct Sidebar {
     /// with the arrows.
     focus: FocusHandle,
     cursor: ListCursor,
+    /// Where the cursor was laid out, for the rows' scroll to follow.
+    spot: crate::components::CursorSpot,
     /// Transfers queued or running, counted beside "downloads" while any are.
     running: usize,
     _subscriptions: [Subscription; 7],
@@ -89,6 +91,7 @@ impl Sidebar {
             searching: false,
             focus: cx.focus_handle().tab_stop(true),
             cursor: ListCursor::default(),
+            spot: Default::default(),
             import_problem: None,
             running: running(&transfers.read(cx).0),
             _subscriptions: [
@@ -265,6 +268,7 @@ impl Sidebar {
             self.cursor.at = places.iter().position(|p| *p == current);
         }
         self.cursor.step(by, places.len(), false);
+        self.spot.moved();
         cx.notify();
     }
 
@@ -275,6 +279,7 @@ impl Sidebar {
                 nav.choose(page);
                 cx.notify();
             });
+            cx.emit(Opened);
         }
     }
 }
@@ -342,6 +347,12 @@ fn running(transfers: &[koan_ffi::Transfer]) -> usize {
     transfers.iter().filter(|t| !t.state.is_settled()).count()
 }
 
+/// A place in the sidebar was opened, by a click or Return: the page takes
+/// the keyboard, the page already showing included.
+pub struct Opened;
+
+impl EventEmitter<Opened> for Sidebar {}
+
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -351,6 +362,7 @@ fn go(
             nav.choose(page);
             cx.notify();
         });
+        cx.emit(Opened);
     })
 }
 
@@ -378,6 +390,7 @@ impl Render for Sidebar {
                 .icon(icon)
                 .selected(current == Some(page))
                 .cursor(keyed == Some(page))
+                .spot(&self.spot)
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
@@ -495,6 +508,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
+                        .spot(&self.spot)
                         .arrivals(playlist_arrivals[index])
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
@@ -610,11 +624,13 @@ impl Render for Sidebar {
             .on_action(cx.listener(|this, _: &list_actions::First, _, cx| {
                 let len = this.places().len();
                 this.cursor.to(0, len, false);
+                this.spot.moved();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &list_actions::Last, _, cx| {
                 let len = this.places().len();
                 this.cursor.to(usize::MAX, len, false);
+                this.spot.moved();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &list_actions::Activate, _, cx| this.open_cursor(cx)))
@@ -638,7 +654,7 @@ impl Render for Sidebar {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(ScrollArea::new("sidebar-rows", body)),
+                    .child(ScrollArea::new("sidebar-rows", body).follow(&self.spot)),
             )
             .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.

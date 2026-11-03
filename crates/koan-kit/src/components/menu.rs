@@ -8,6 +8,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -714,6 +715,8 @@ impl Render for Menu {
                     .left_0()
                     .size_full(),
             )
+            // Tab stays in the open menu rather than reaching the page under it.
+            .focus_trap("menu-trap", &self.focus)
     }
 }
 

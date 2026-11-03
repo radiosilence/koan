@@ -814,7 +814,7 @@ impl TileHost for AlbumGrid {
         let item = Playable::Album(album);
         // The keyboard carries on from the tile clicked.
         if let Some(index) = self.records.iter().position(|r| r.id == album) {
-            self.cursor.place(index);
+            self.cursor.click(index, modifiers.shift);
         }
         if self
             .selection

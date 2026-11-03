@@ -29,7 +29,8 @@ pub trait KeyedList: Sized + 'static {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Picks rows `from..=to`, and those alone.
+    /// Picks the rows from `from` to `to`, either way round, and those
+    /// alone; a ⇧-click goes on extending from `from`.
     fn pick(&mut self, from: usize, to: usize, cx: &mut Context<Self>);
     /// Adds row `ix` to the pick, or takes it out.
     fn toggle(&mut self, ix: usize, cx: &mut Context<Self>);
@@ -59,7 +60,7 @@ pub trait KeyedList: Sized + 'static {
 
 fn moved<V: KeyedList>(this: &mut V, m: Option<Moved>, cx: &mut Context<V>) {
     if let Some(m) = m {
-        this.pick(m.pick.0, m.pick.1, cx);
+        this.pick(m.from, m.to, cx);
         this.reveal(m.to, cx);
         if let Some(spot) = this.spot() {
             spot.moved();
@@ -163,9 +164,10 @@ fn row_below(at: usize, rows: isize, columns: usize) -> usize {
     }
 }
 
-/// A grid's or a mixed page's pick from `from` to `to` of `order`: one item
-/// alone is marked without starting a pick, as a plain click marks a row, so
-/// a click on a tile still plays it; a range starts one.
+/// A grid's or a mixed page's pick from `from` to `to` of `order`, either
+/// way round, extending later from `from`: one item alone is marked without
+/// starting a pick, as a plain click marks a row, so a click on a tile still
+/// plays it; a range starts one.
 pub fn mark_range(selection: &mut Selection, order: &[Playable], from: usize, to: usize) {
     if from == to {
         selection.arrow(order[from]);

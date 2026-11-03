@@ -897,7 +897,7 @@ impl TileHost for ArtistPage {
         let order = self.order();
         // The keyboard carries on from the tile clicked.
         if let Some(at) = order.iter().position(|p| *p == item) {
-            self.cursor.place(at);
+            self.cursor.click(at, modifiers.shift);
         }
         if self
             .selection
@@ -962,7 +962,7 @@ impl TrackList for ArtistPage {
             RowPart::Row => {
                 if let Some(r) = &self.record {
                     let at = r.albums.len() + r.features.len() + index;
-                    self.cursor.place(at);
+                    self.cursor.click(at, event.modifiers().shift);
                 }
                 let ids: Vec<i64> = self
                     .record

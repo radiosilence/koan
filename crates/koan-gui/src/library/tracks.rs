@@ -205,6 +205,7 @@ impl TrackBrowser {
             .is_some_and(|(q, _)| *q != this.query(cx))
         {
             this.tracks = Default::default();
+            this.cursor = Default::default();
             this.total = 0;
             this.loaded = None;
         }
@@ -311,7 +312,12 @@ impl TrackBrowser {
                                 let covers =
                                     list.len() >= this.visible.end.min(page.total as usize);
                                 if covers || done {
-                                    this.tracks = pending.take().unwrap_or_default();
+                                    let tracks = pending.take().unwrap_or_default();
+                                    let ids = |t: &[Track]| -> Vec<i64> {
+                                        t.iter().map(|t| t.id).collect()
+                                    };
+                                    this.cursor.relocate(&ids(&this.tracks), &ids(&tracks));
+                                    this.tracks = tracks;
                                     this.total = page.total;
                                     this.loaded = Some(wanted.clone());
                                     this.restore_scroll();
@@ -480,7 +486,7 @@ impl TrackList for TrackBrowser {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.place(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -669,7 +675,7 @@ impl super::keys::KeyedList for TrackBrowser {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }

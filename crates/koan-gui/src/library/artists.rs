@@ -363,7 +363,7 @@ impl ArtistBrowser {
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.place(index);
+                this.cursor.click(index, e.modifiers().shift);
                 let order = &this.order;
                 if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
                     this.lib
@@ -524,7 +524,7 @@ impl super::keys::KeyedList for ArtistBrowser {
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         self.selection.only(self.order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(self.order[to], true, &self.order);
         }
     }
