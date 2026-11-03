@@ -1,0 +1,1 @@
+- **Typing in the desktop app's search box no longer lags, and its results scroll.** A keystroke draws the query alone, whatever the results hold; the results are drawn when an answer lands, and in a small window the wheel and the touchpad scroll them between the query and the keys.

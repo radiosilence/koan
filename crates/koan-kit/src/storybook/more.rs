@@ -8,13 +8,13 @@ use gpui::*;
 use super::{Story, StoryContent, text};
 use crate::components::{
     Align, BarLevels, Burst, Collection, CollectionSection, CollectionWidth, Column, CommandBar,
-    CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget,
-    EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector, KoanContextMenu,
-    MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars,
-    Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader, SectionHeading, Sheen,
-    ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel, SuggestionRow,
-    SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text,
-    name_line, plain_text, table_list,
+    CommandResults, CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip,
+    DropTarget, EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector,
+    KoanContextMenu, MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton,
+    PlayingBars, Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader,
+    SectionHeading, Sheen, ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel,
+    SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action,
+    link_text, name_line, plain_text, table_list,
 };
 use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
@@ -430,34 +430,37 @@ impl StoryContent {
                     frame(420.0)
                         .relative()
                         .child(
-                            CommandBar::new("story-command", &self.more.command)
-                                .section(
-                                    "Records",
-                                    vec![
-                                        SuggestionRow::new("story-command-1", "Polar Bear")
-                                            .detail("Polar Bear")
-                                            .figure("2008")
-                                            .icon(Icon::Album),
-                                        SuggestionRow::new("story-command-2", "Peepers")
-                                            .detail("Polar Bear")
-                                            .figure("2010")
-                                            .icon(Icon::Album)
-                                            .picked(true),
-                                    ],
-                                )
-                                .section(
-                                    "Artists",
-                                    vec![
-                                        SuggestionRow::new("story-command-3", "Polar Bear")
-                                            .icon(Icon::Artist),
-                                    ],
-                                )
-                                .lit(Some(0))
-                                .key("↩", "play")
-                                .key("⌘↩", "play next")
-                                .key("⌥↩", "add to queue")
-                                .key("⇥", "tick")
-                                .key("esc", "clear"),
+                            CommandBar::new("story-command", CommandBar::field(&self.more.command))
+                                .results(
+                                    CommandResults::new("story-command-results")
+                                        .section(
+                                            "Records",
+                                            vec![
+                                                SuggestionRow::new("story-command-1", "Polar Bear")
+                                                    .detail("Polar Bear")
+                                                    .figure("2008")
+                                                    .icon(Icon::Album),
+                                                SuggestionRow::new("story-command-2", "Peepers")
+                                                    .detail("Polar Bear")
+                                                    .figure("2010")
+                                                    .icon(Icon::Album)
+                                                    .picked(true),
+                                            ],
+                                        )
+                                        .section(
+                                            "Artists",
+                                            vec![
+                                                SuggestionRow::new("story-command-3", "Polar Bear")
+                                                    .icon(Icon::Artist),
+                                            ],
+                                        )
+                                        .lit(Some(0))
+                                        .key("↩", "play")
+                                        .key("⌘↩", "play next")
+                                        .key("⌥↩", "add to queue")
+                                        .key("⇥", "tick")
+                                        .key("esc", "clear"),
+                                ),
                         )
                         .into_any_element(),
                     SectionHeader::new("Inspector and synced lines").into_any_element(),

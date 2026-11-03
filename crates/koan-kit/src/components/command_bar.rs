@@ -5,8 +5,12 @@
 //! window behind is dimmed and takes no clicks; a click on it closes the
 //! bar.
 //!
-//! The owner holds the query's `InputState`, decides what is found and
-//! what each key does: the bar draws what it is given.
+//! The bar is two parts its owner draws apart: the query's field
+//! (`CommandBar::field`) and what was found (`CommandResults`). An owner
+//! keeps each in a view of its own, as a filter field is kept beside the
+//! listing it narrows, so a keystroke draws the field and nothing else, and
+//! the results are drawn only when an answer lands. The owner holds the
+//! query's `InputState`, decides what is found and what each key does.
 
 use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
@@ -24,7 +28,119 @@ pub struct CommandSection {
 #[derive(IntoElement)]
 pub struct CommandBar {
     id: ElementId,
-    input: Entity<InputState>,
+    field: AnyElement,
+    results: Option<AnyElement>,
+    on_dismiss: Option<super::Handler<()>>,
+}
+
+impl CommandBar {
+    /// The bar's width at 100 %, and how far down the window it hangs.
+    const WIDTH: f32 = 640.0;
+    const TOP: f32 = 0.14;
+
+    /// `field` is the query's field as `CommandBar::field` draws it, or a
+    /// view drawing it.
+    pub fn new(id: impl Into<ElementId>, field: impl IntoElement) -> Self {
+        Self {
+            id: id.into(),
+            field: field.into_any_element(),
+            results: None,
+            on_dismiss: None,
+        }
+    }
+
+    /// The query's field: bare, in `title small`.
+    pub fn field(input: &Entity<InputState>) -> TextField {
+        TextField::new(input)
+            .label(label("search"))
+            .bare()
+            .role(TypeRole::TitleSmall)
+    }
+
+    /// What was found and the keys' foot, as `CommandResults` draws them,
+    /// or a view drawing them, cached in the room under the query
+    /// (`flex_1`, `min_h_0`, `w_full`).
+    pub fn results(mut self, results: impl IntoElement) -> Self {
+        self.results = Some(results.into_any_element());
+        self
+    }
+
+    /// A click on the dimmed window around the bar.
+    pub fn on_dismiss(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
+        self.on_dismiss = Some(std::sync::Arc::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for CommandBar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let p = look.palette;
+        let dismiss = self.on_dismiss;
+        let height = window.viewport_size().height;
+        sheet::scrim(self.id.clone(), &look)
+            .pt(height * Self::TOP)
+            .when_some(dismiss, |d, dismiss| {
+                d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    dismiss(&(), window, cx)
+                })
+            })
+            .child(
+                // A dialog to a screen reader, holding the query and its
+                // results.
+                super::accessible(
+                    div().id(super::child(&self.id, "bar")),
+                    gpui::Role::Dialog,
+                    Some(label("search")),
+                )
+                .w(look.spaced(Self::WIDTH))
+                // What the window has below the panel's top, less a margin:
+                // in a small window the list scrolls between the query and
+                // the keys rather than running past them. The room is
+                // fixed, so the results can be a cached view (whose size is
+                // its style's alone); the panel's ground and edge are drawn
+                // by the query and the results, around what they hold, and
+                // the room below them is the dimmed window, which closes
+                // the bar.
+                .h(height * (1.0 - Self::TOP) - look.space(Space::Xl))
+                .flex()
+                .flex_col()
+                .child(
+                    super::accessible(
+                        div().id(super::child(&self.id, "query")),
+                        gpui::Role::ComboBox,
+                        Some(label("search")),
+                    )
+                    .flex_none()
+                    .bg(p.bg.hsla())
+                    .border_t(look.hairline)
+                    .border_l(look.hairline)
+                    .border_r(look.hairline)
+                    .border_color(p.rule.hsla())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .flex()
+                    .items_center()
+                    .gap(look.space(Space::M))
+                    .px(look.space(Space::L))
+                    .py(look.space(Space::M))
+                    .child(
+                        KoanIcon::new(Icon::Search)
+                            .role(TypeRole::TitleSmall)
+                            .tone(Tone::Muted),
+                    )
+                    .child(div().flex_1().min_w_0().child(self.field)),
+                )
+                .children(self.results),
+            )
+    }
+}
+
+/// What the bar found, under its query: headed groups of rows, scrolling
+/// between the query and the keys when they outgrow the panel, and along the
+/// foot what the keys do.
+#[derive(IntoElement)]
+pub struct CommandResults {
+    id: ElementId,
     sections: Vec<CommandSection>,
     /// The lit row's place among all the rows, headings left out.
     lit: Option<usize>,
@@ -35,24 +151,17 @@ pub struct CommandBar {
     /// A row after every section, under no heading ("All results…"); lit as
     /// the row after the last section's last.
     last: Option<SuggestionRow>,
-    on_dismiss: Option<super::Handler<()>>,
 }
 
-impl CommandBar {
-    /// The bar's width at 100 %, and how far down the window it hangs.
-    const WIDTH: f32 = 640.0;
-    const TOP: f32 = 0.14;
-
-    pub fn new(id: impl Into<ElementId>, input: &Entity<InputState>) -> Self {
+impl CommandResults {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            input: input.clone(),
             sections: Vec::new(),
             lit: None,
             keys: Vec::new(),
             empty: None,
             last: None,
-            on_dismiss: None,
         }
     }
 
@@ -89,15 +198,9 @@ impl CommandBar {
         self.empty = Some(label(text));
         self
     }
-
-    /// A click on the dimmed window around the bar.
-    pub fn on_dismiss(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
-        self.on_dismiss = Some(std::sync::Arc::new(handler));
-        self
-    }
 }
 
-impl RenderOnce for CommandBar {
+impl RenderOnce for CommandResults {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let p = look.palette;
@@ -125,25 +228,39 @@ impl RenderOnce for CommandBar {
         }
         let body = if found {
             // Takes what the panel has left after the query and the keys, and
-            // scrolls within it: the rows never draw past the panel, over
-            // the keys or the page behind.
+            // scrolls within it: each level down to the scroll shrinks with
+            // the panel, so the scroll is no taller than the room it has and
+            // the wheel moves it.
             div()
                 .flex_1()
                 .min_h_0()
-                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .border_t(look.hairline)
+                .border_color(p.rule.hsla())
                 .pb(look.space(Space::Xs))
                 .child(
                     // The results, a list box for a screen reader.
                     super::accessible(
-                        div().id(super::child(&self.id, "list")).size_full(),
+                        div()
+                            .id(super::child(&self.id, "list"))
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col(),
                         gpui::Role::ListBox,
                         Some(label("results")),
                     )
-                    .child(ScrollArea::items(super::child(&self.id, "rows"), items).reveal(reveal)),
+                    .child(
+                        ScrollArea::items(super::child(&self.id, "rows"), items)
+                            .reveal(reveal)
+                            .shrinks(),
+                    ),
                 )
                 .into_any_element()
         } else {
             div()
+                .flex_none()
                 .children(self.empty.map(|text| {
                     div()
                         .px(look.space(Space::L))
@@ -175,66 +292,22 @@ impl RenderOnce for CommandBar {
                     .child(div().text_color(p.ink.hsla()).child(keys))
                     .child(verb)
             }));
-        let dismiss = self.on_dismiss;
-        let height = window.viewport_size().height;
-        sheet::scrim(self.id.clone(), &look)
-            .pt(height * Self::TOP)
-            .when_some(dismiss, |d, dismiss| {
-                d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    dismiss(&(), window, cx)
-                })
-            })
-            .child(
-                // A dialog to a screen reader, holding the query and its
-                // results.
-                super::accessible(
-                    div().id(super::child(&self.id, "bar")),
-                    gpui::Role::Dialog,
-                    Some(label("search")),
-                )
-                .w(look.spaced(Self::WIDTH))
-                // What the window has below the panel's top, less a margin:
-                // in a small window the list scrolls between the query and
-                // the keys rather than running past them.
-                .max_h(height * (1.0 - Self::TOP) - look.space(Space::Xl))
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                .bg(p.bg.hsla())
-                .border(look.hairline)
-                .border_color(p.rule.hsla())
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    super::accessible(
-                        div().id(super::child(&self.id, "query")),
-                        gpui::Role::ComboBox,
-                        Some(label("search")),
-                    )
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::M))
-                    .px(look.space(Space::L))
-                    .py(look.space(Space::M))
-                    .when(found, |d| {
-                        d.border_b(look.hairline).border_color(p.rule.hsla())
-                    })
-                    .child(
-                        KoanIcon::new(Icon::Search)
-                            .role(TypeRole::TitleSmall)
-                            .tone(Tone::Muted),
-                    )
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            TextField::new(&self.input)
-                                .label(label("search"))
-                                .bare()
-                                .role(TypeRole::TitleSmall),
-                        ),
-                    ),
-                )
-                .child(body)
-                .child(foot),
-            )
+        // As tall as what it holds, up to the room under the query: the
+        // panel's ground and its edge below the query.
+        div()
+            .w_full()
+            .max_h_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .bg(p.bg.hsla())
+            .border_l(look.hairline)
+            .border_r(look.hairline)
+            .border_b(look.hairline)
+            .border_color(p.rule.hsla())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(body)
+            .child(foot)
     }
 }
