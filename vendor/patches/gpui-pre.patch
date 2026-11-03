@@ -577,7 +577,7 @@ index 0000000..fbb968f
 +    })
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..2c5b9ec 100644
+index 11f0b72..cbd672e 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -627,6 +627,60 @@ index 11f0b72..2c5b9ec 100644
          if let Some(value) = self.aria.numeric_value {
              node.set_numeric_value(value);
          }
+@@ -3830,6 +3856,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
+                         window,
+                         cx,
+                     ) {
++                        // KOAN: (#1814) as for a hover, the element's own view draws
++                        // again, in case it is cached.
++                        cx.notify(current_view);
+                         long_press_tooltip_active.set(true);
+                         window.prevent_default();
+                         cx.stop_propagation();
+@@ -3931,6 +3960,17 @@ fn handle_tooltip_mouse_move(
+         }
+     };
+ 
++    // KOAN: what the pointer did to the tooltip, as it changes (#1814).
++    match action {
++        Action::None => {}
++        Action::CancelShow => log::debug!("tooltip: cancel show, view {current_view:?}"),
++        Action::ScheduleShow => log::debug!(
++            "tooltip: schedule show, view {current_view:?}, mouse {:?}, keyboard last {}",
++            window.mouse_position(),
++            window.last_input_was_keyboard()
++        ),
++        Action::CheckVisible => log::debug!("tooltip: check visible, view {current_view:?}"),
++    }
+     match action {
+         Action::None => {}
+         Action::CancelShow => {
+@@ -3948,7 +3988,7 @@ fn handle_tooltip_mouse_move(
+                         return;
+                     };
+                     cx.update(|window, cx| {
+-                        show_tooltip(
++                        let shown = show_tooltip(
+                             &active_tooltip,
+                             &build_tooltip,
+                             &check_is_hovered_during_prepaint,
+@@ -3956,6 +3996,16 @@ fn handle_tooltip_mouse_move(
+                             window,
+                             cx,
+                         );
++                        // KOAN: the delay passed (#1814).
++                        log::debug!(
++                            "tooltip: delay passed, view {current_view:?}, built {shown}, still over {}",
++                            check_is_hovered_during_prepaint(window)
++                        );
++                        // KOAN: a refresh replays a cached view's last
++                        // prepaint, made before the tooltip was active, so
++                        // the tooltip of an element in one never showed. Its
++                        // own view draws again and asks for it.
++                        cx.notify(current_view);
+                     })
+                     .ok();
+                 }
 diff --git a/src/gpui.rs b/src/gpui.rs
 index 2328e95..f00ef65 100644
 --- a/src/gpui.rs
@@ -3057,7 +3111,7 @@ index 5b63821..e2888a3 100644
          self.nodes_stack.last_mut()
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..213abdb 100644
+index c559412..b2a10e7 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -70,9 +70,9 @@ mod prompts;
@@ -3254,7 +3308,21 @@ index c559412..213abdb 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -3913,7 +3994,15 @@ impl Window {
+@@ -3867,6 +3948,13 @@ impl Window {
+             // case, instead update the tooltip's visibility here.
+             let is_visible =
+                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
++            // KOAN: a tooltip asked for and whether it was drawn (#1814).
++            log::debug!(
++                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
++                mouse_position,
++                self.mouse_position(),
++                tooltip_bounds
++            );
+             if !is_visible {
+                 continue;
+             }
+@@ -3913,7 +4001,15 @@ impl Window {
              traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
  
              for deferred_draw_ix in traversal_order {
@@ -3271,7 +3339,7 @@ index c559412..213abdb 100644
                      let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                      self.element_id_stack
                          .clone_from(&deferred_draw.element_id_stack);
-@@ -3926,12 +4015,16 @@ impl Window {
+@@ -3926,12 +4022,16 @@ impl Window {
                          deferred_draw.rem_size,
                          deferred_draw.absolute_offset,
                          deferred_draw.prepaint_range.clone(),
@@ -3288,7 +3356,7 @@ index c559412..213abdb 100644
                      self.with_rendered_view(current_view, |window| {
                          window.with_rem_size(Some(rem_size), |window| {
                              window.with_absolute_element_offset(absolute_offset, |window| {
-@@ -3939,9 +4032,17 @@ impl Window {
+@@ -3939,9 +4039,17 @@ impl Window {
                              });
                          });
                      });
@@ -3307,7 +3375,7 @@ index c559412..213abdb 100644
                  }
                  let prepaint_end = self.prepaint_index();
                  self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
-@@ -3985,6 +4086,11 @@ impl Window {
+@@ -3985,6 +4093,11 @@ impl Window {
                  })
              } else {
                  self.reuse_paint(deferred_draw.paint_range.clone());
@@ -3319,7 +3387,7 @@ index c559412..213abdb 100644
              }
              let paint_end = self.paint_index();
              deferred_draw.paint_range = paint_start..paint_end;
-@@ -4058,6 +4164,7 @@ impl Window {
+@@ -4058,6 +4171,7 @@ impl Window {
                      absolute_offset: deferred_draw.absolute_offset,
                      prepaint_range: deferred_draw.prepaint_range.clone(),
                      paint_range: deferred_draw.paint_range.clone(),
@@ -3327,7 +3395,7 @@ index c559412..213abdb 100644
                  }),
          );
      }
-@@ -4540,6 +4647,7 @@ impl Window {
+@@ -4540,6 +4654,7 @@ impl Window {
              absolute_offset,
              prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
              paint_range: PaintIndex::default()..PaintIndex::default(),
@@ -3335,7 +3403,7 @@ index c559412..213abdb 100644
          });
      }
  
-@@ -4690,6 +4798,110 @@ impl Window {
+@@ -4690,6 +4805,110 @@ impl Window {
          }
      }
  
@@ -3446,7 +3514,7 @@ index c559412..213abdb 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4989,12 @@ impl Window {
+@@ -4777,7 +4996,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -3460,7 +3528,7 @@ index c559412..213abdb 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7051,6 +7268,30 @@ impl Window {
+@@ -7051,6 +7275,30 @@ impl Window {
          self.a11y.is_active()
      }
  
@@ -3491,7 +3559,7 @@ index c559412..213abdb 100644
      /// Debug representation of the last frame's accessibility information.
      pub fn debug_a11y_tree_json(&self) -> Option<String> {
          self.a11y.debug_tree_json()
-@@ -7074,6 +7315,22 @@ impl Window {
+@@ -7074,6 +7322,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

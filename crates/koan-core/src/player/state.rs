@@ -1982,6 +1982,21 @@ impl SharedPlayerState {
         failed
     }
 
+    /// The items for `track_id` that failed as cancelled, to be given the file
+    /// that arrived after all.
+    pub fn cancelled_items(&self, track_id: i64) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter(|item| {
+                item.db_id == Some(track_id)
+                    && matches!(&item.state, ItemState::Failed(reason)
+                        if reason == crate::remote::downloads::CANCELLED)
+            })
+            .map(|item| item.id)
+            .collect()
+    }
+
     /// Every item for one of `track_ids` that failed goes back to waiting for
     /// its file, to be fetched again. Returns the tracks that had one.
     pub fn retry_failed(&self, track_ids: &[i64]) -> Vec<i64> {

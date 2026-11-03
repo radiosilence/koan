@@ -869,7 +869,7 @@ fn as_decided(now: Option<&queries::PlaylistRow>, decided: Option<&queries::Play
 }
 
 /// Playlists fetched and stored together: a few rounds of the lanes.
-const PULL_CHUNK: usize = crate::remote::lanes::LANES * 8;
+const PULL_CHUNK: usize = crate::remote::lanes::LANES * 4;
 
 /// Put the songs a server copy named that the library lacked into their
 /// places once the library has them.

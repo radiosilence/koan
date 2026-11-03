@@ -333,7 +333,18 @@ const COVER_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 /// background work (the preload). Background work takes a slot only while no
 /// page's cover is in flight, and its slots together stay under the limit.
 struct CoverSlots {
-    background: bool,
+    kind: Slot,
+}
+
+/// Whose a cover slot is.
+#[derive(Clone, Copy)]
+enum Slot {
+    /// A page's blocking fetch, under the limit.
+    Page,
+    /// Work nobody is waiting on.
+    Background,
+    /// A page's cancellable fetch, bounded by its caller.
+    Cancellable,
 }
 
 /// How long a bulk answer stops reading, between frames, while a page's
@@ -341,22 +352,31 @@ struct CoverSlots {
 /// of the downloads' client giving up on a stalled read.
 const PAGE_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The cover requests in flight: every one, and the background ones among
-/// them, which a page's fetch never waits for.
+/// The cover requests in flight: every one, the background ones among them,
+/// which a page's fetch never waits for, and the cancellable ones, which
+/// their caller bounds and which count against no limit.
 struct Flight {
     all: usize,
     background: usize,
+    cancellable: usize,
 }
 
 impl Flight {
+    /// A page's requests, which background work waits for.
     fn foreground(&self) -> usize {
         self.all - self.background
+    }
+
+    /// A page's requests counted against the cover limit.
+    fn limited(&self) -> usize {
+        self.foreground() - self.cancellable
     }
 }
 
 static COVERS_IN_FLIGHT: parking_lot::Mutex<Flight> = parking_lot::Mutex::new(Flight {
     all: 0,
     background: 0,
+    cancellable: 0,
 });
 static COVER_FREED: parking_lot::Condvar = parking_lot::Condvar::new();
 
@@ -365,15 +385,14 @@ impl CoverSlots {
         let deadline = std::time::Instant::now() + COVER_WAIT;
         let mut busy = COVERS_IN_FLIGHT.lock();
         let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
-        while busy.foreground() >= limit() {
-            if COVER_FREED.wait_until(&mut busy, deadline).timed_out()
-                && busy.foreground() >= limit()
+        while busy.limited() >= limit() {
+            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && busy.limited() >= limit()
             {
                 return Err(SubsonicError::Busy);
             }
         }
         busy.all += 1;
-        Ok(Self { background: false })
+        Ok(Self { kind: Slot::Page })
     }
 
     /// A background fetch's slot: once no page's cover is in flight and the
@@ -394,7 +413,9 @@ impl CoverSlots {
         }
         busy.all += 1;
         busy.background += 1;
-        Ok(Self { background: true })
+        Ok(Self {
+            kind: Slot::Background,
+        })
     }
 }
 
@@ -424,8 +445,10 @@ impl Drop for CoverSlots {
     fn drop(&mut self) {
         let mut busy = COVERS_IN_FLIGHT.lock();
         busy.all -= 1;
-        if self.background {
-            busy.background -= 1;
+        match self.kind {
+            Slot::Page => {}
+            Slot::Background => busy.background -= 1,
+            Slot::Cancellable => busy.cancellable -= 1,
         }
         drop(busy);
         // Every waiter: one taking a slot, and background work waiting for
@@ -435,13 +458,18 @@ impl Drop for CoverSlots {
 }
 
 /// A cover request the caller bounds itself, counted in flight so background
-/// fetches wait for it, never refused.
+/// fetches wait for it, never refused and never counted against the limit a
+/// blocking page fetch waits under.
 struct CoverInFlight;
 
 impl CoverInFlight {
     fn enter() -> CoverSlots {
-        COVERS_IN_FLIGHT.lock().all += 1;
-        CoverSlots { background: false }
+        let mut busy = COVERS_IN_FLIGHT.lock();
+        busy.all += 1;
+        busy.cancellable += 1;
+        CoverSlots {
+            kind: Slot::Cancellable,
+        }
     }
 }
 
@@ -2421,6 +2449,30 @@ mod tests {
         crate::remote::covers::resume();
         drop(page);
         assert_eq!(COVERS_IN_FLIGHT.lock().all, 0);
+    }
+
+    /// Cancellable requests, which their caller bounds, never make a
+    /// blocking fetch wait or give up.
+    #[test]
+    fn cancellable_covers_leave_the_limit_alone() {
+        let _slots = COVER_SLOT_TESTS.lock();
+        let fling: Vec<_> = (0..COVER_FETCHES * 4)
+            .map(|_| CoverInFlight::enter())
+            .collect();
+        let pages: Vec<_> = (0..COVER_FETCHES)
+            .map(|_| CoverSlots::take().expect("not counted against the cancellable"))
+            .collect();
+        assert!(
+            CoverSlots::take_background(&|| false).is_err(),
+            "background work still waits for them"
+        );
+        drop(pages);
+        drop(fling);
+        let flight = COVERS_IN_FLIGHT.lock();
+        assert_eq!(
+            (flight.all, flight.background, flight.cancellable),
+            (0, 0, 0)
+        );
     }
 
     #[test]

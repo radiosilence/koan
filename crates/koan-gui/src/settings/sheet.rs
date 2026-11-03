@@ -379,7 +379,7 @@ impl Sheets {
                     }
                 }
             })
-            .w(look.spaced(460.0))
+            .w(look.sized(460.0))
             .overflow_y_scroll()
             .gap(look.space(Space::S))
             .p(look.space(Space::L))

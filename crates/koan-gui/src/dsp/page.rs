@@ -494,7 +494,7 @@ impl Render for EqBody {
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::L))
-                .max_w(look.spaced(720.0))
+                .max_w(look.sized(720.0))
                 .mx_auto()
                 .p(look.space(Space::Xl))
                 .child(content)

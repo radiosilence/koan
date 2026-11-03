@@ -478,23 +478,27 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 }
 
 /// Whether the music of the device in view can be moved to `to` (this
-/// device with `None`): `controlled` is the device controlled, `None` while
-/// this one is in view. Both ends must play from the same library, and there
-/// must be music to move: a queue here, or another device playing or paused
-/// and in reach. Moving to the device already in view moves nothing.
+/// device with `None`). `target` is the id of the device controlled, `None`
+/// while this one is in view, and `controlled` that device as listed: a
+/// target not listed just now is out of reach, and has nothing to move from
+/// here. Both ends must play from the same library, and there must be music
+/// to move: a queue here, or another device playing or paused and in reach.
+/// Moving to the device already in view moves nothing.
 pub fn can_move_music(
     to: Option<DeviceInfo>,
+    target: Option<String>,
     controlled: Option<DeviceInfo>,
     has_queue: bool,
 ) -> bool {
-    if to.as_ref().map(|d| d.id.as_str()) == controlled.as_ref().map(|d| d.id.as_str()) {
+    if to.as_ref().map(|d| d.id.as_str()) == target.as_deref() {
         return false;
     }
     if to.as_ref().is_some_and(|d| d.problem.is_some()) {
         return false;
     }
-    match &controlled {
-        Some(source) => {
+    match (&target, &controlled) {
+        (Some(_), None) => return false,
+        (Some(_), Some(source)) => {
             if !source.same_library
                 || source.state == PlayState::Stopped
                 || source.problem.is_some()
@@ -502,8 +506,8 @@ pub fn can_move_music(
                 return false;
             }
         }
-        None if !has_queue => return false,
-        None => {}
+        (None, _) if !has_queue => return false,
+        (None, _) => {}
     }
     to.is_none_or(|d| d.same_library)
 }
@@ -1176,19 +1180,21 @@ impl KoanEngine {
         };
         // Building a client blocks (and panics inside a tokio runtime), so it
         // is made off the caller's thread.
+        // The server the client is for, read with it: the cover is kept
+        // under it even if another is signed in before it arrives.
         let client = offload::offload(|| {
             let cfg = Config::cached();
             if !cfg.remote.enabled {
                 return Ok(None);
             }
             koan_core::helpers::subsonic_client(&cfg)
-                .map(Some)
+                .map(|client| Some((client, cfg.remote.url.clone())))
                 .ok_or_else(|| KoanError::Remote {
                     message: koan_core::helpers::remote_unavailable(&cfg),
                 })
         })
         .await?;
-        let Some(client) = client else {
+        let Some((client, server)) = client else {
             return Ok(None);
         };
         let track_id = row.id;
@@ -1205,7 +1211,7 @@ impl KoanEngine {
         let answer = offload::cancellable(async move {
             let answer = client.get_cover_art_cancellable(&remote_id, size).await;
             if let Ok(data) = &answer {
-                koan_core::remote::covers::keep_later(remote_id, size, data.clone());
+                koan_core::remote::covers::keep_later(server, remote_id, size, data.clone());
             }
             answer
         })
@@ -2684,6 +2690,52 @@ impl KoanEngine {
         .await
     }
 
+    /// Move the entries named to just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, those a caller does
+    /// not list included: offline, where only the entries with a file here
+    /// are shown, a move among them leaves the rest where they are. The moved
+    /// entries keep the order they had.
+    pub async fn move_playlist_entries(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+        before: Option<i64>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                Ok(queries::move_entries(
+                    &db.conn,
+                    playlist_id,
+                    &entry_ids,
+                    before,
+                )?)
+            })
+        })
+        .await
+    }
+
+    /// Add the tracks `sources` name just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, as
+    /// `move_playlist_entries` places them. Returns how many landed.
+    pub async fn insert_into_playlist_before(
+        self: Arc<Self>,
+        playlist_id: i64,
+        sources: Vec<TrackSet>,
+        before: Option<i64>,
+    ) -> Result<u32, KoanError> {
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                let track_ids = self.resolve_sources(db, &sources)?;
+                let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)?;
+                if !added.is_empty() {
+                    queries::move_entries(&db.conn, playlist_id, &added, before)?;
+                }
+                Ok(added.len() as u32)
+            })
+        })
+        .await
+    }
+
     /// Take entries out. Returns how many went.
     pub async fn remove_from_playlist(
         self: Arc<Self>,
@@ -3086,6 +3138,31 @@ impl KoanEngine {
         offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name))).await
     }
 
+    /// Forgets the copy of `album_id`'s server cover kept on this device, so
+    /// the next ask reaches the server: what an app does with bytes that
+    /// would not decode.
+    pub async fn discard_album_cover(self: Arc<Self>, album_id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let row = queries::cover_track_for_album(&db.conn, album_id).map_err(db_err)?;
+            if let Some(remote_id) = row.and_then(|r| r.remote_id) {
+                koan_core::remote::covers::discard(&Config::cached(), &remote_id);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Forgets every cover kept from the server on this device: the person
+    /// cleared an app's artwork, or its eviction mark is too old to trust.
+    pub async fn forget_kept_covers(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(|| {
+            koan_core::remote::covers::forget(&Config::cached());
+            Ok(())
+        })
+        .await
+    }
+
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
     /// a freed id, and art cached under it would show for another record. Also
@@ -3148,8 +3225,11 @@ impl KoanEngine {
     /// once it is showing a PIN; `finish_tv_pairing` takes it, within half a
     /// minute.
     pub async fn begin_tv_pairing(self: Arc<Self>, id: String) -> Result<String, KoanError> {
+        // Taken as the call is made, so a cancel made after it, while the TV
+        // is still being found, reaches the pairing it starts.
+        let ticket = koan_core::remote::devices::tv_pairing_ticket();
         offload::offload(move || {
-            koan_core::remote::devices::begin_tv_pairing(&id)
+            koan_core::remote::devices::begin_tv_pairing(&id, ticket)
                 .map_err(|message| KoanError::Remote { message })
         })
         .await
@@ -5256,16 +5336,17 @@ impl KoanEngine {
 
     /// Stop fetching these tracks. Queue entries waiting on them fail as
     /// cancelled and are skipped until retried; a transfer running stops and
-    /// leaves no row.
+    /// leaves its row failed as cancelled, which is how it is retried.
     pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
-        offload::offload(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
+        // On the command lane, so a cancel and a retry land in the order made.
+        offload::sequenced(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
     }
 
     /// Fetch these tracks again after a failure or a cancel: queue entries
-    /// that failed for them wait again, and a track no entry wants is
-    /// fetched into the cache.
+    /// that failed for them wait again, and a track asked into the cache
+    /// that no entry wants is fetched into it again.
     pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
-        offload::offload(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
+        offload::sequenced(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
     }
 
     /// Rescans every configured library folder, saying how far it has got.
@@ -5471,11 +5552,44 @@ impl KoanEngine {
         .await
     }
 
+    /// Carry out exactly the plan previewed from `selection` (`check` with
+    /// the same pattern, folder and `move_ancillary`), then point the queue
+    /// at where the files went. Fails with a bad argument, nothing moved,
+    /// when the library has changed since the selection was read: preview
+    /// again.
+    ///
+    /// The rename and the database rows land together, and playback survives
+    /// it — a Unix rename keeps the open descriptor.
+    pub async fn organize_execute_previewed(
+        self: Arc<Self>,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base_dir: String,
+        move_ancillary: bool,
+    ) -> Result<OrganizePlan, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let result = koan_core::organize::execute_resolved(
+                &db,
+                &selection.inner,
+                &pattern,
+                Some(Path::new(&base_dir)),
+                move_ancillary,
+            )
+            .map_err(organize_err)?;
+            self.follow_moved_files(&result);
+            self.bump_library();
+            Ok(OrganizePlan::build(result, selection.requested))
+        })
+        .await
+    }
+
     /// Carry out the moves, then point the queue at where the files went.
     ///
     /// The rename and the database rows land together, and playback survives it
     /// — a Unix rename keeps the open descriptor. Destructive: run it only for
-    /// a plan the user has seen.
+    /// a plan the user has seen. The apps use `organize_execute_previewed`,
+    /// which runs the plan they showed rather than reading the library again.
     pub async fn organize_execute(
         self: Arc<Self>,
         pattern: String,
@@ -7567,7 +7681,8 @@ impl From<rusqlite::Error> for KoanError {
 /// person can be told about, not a database failure.
 fn playlist_write_err(e: koan_core::db::connection::DbError) -> KoanError {
     match e {
-        koan_core::db::connection::DbError::MissingTracks(_) => KoanError::NotFound {
+        koan_core::db::connection::DbError::MissingTracks(_)
+        | koan_core::db::connection::DbError::MissingEntry(_) => KoanError::NotFound {
             message: e.to_string(),
         },
         e => db_err(e),
@@ -8415,24 +8530,40 @@ mod move_tests {
         let phone = device("phone", true, PlayState::Playing);
         let stranger = device("stranger", false, PlayState::Playing);
         // From here: needs a queue, and a device on the same library.
-        assert!(can_move_music(Some(tv.clone()), None, true));
-        assert!(!can_move_music(Some(tv.clone()), None, false));
-        assert!(!can_move_music(Some(stranger.clone()), None, true));
+        let id = |d: &DeviceInfo| Some(d.id.clone());
+        assert!(can_move_music(Some(tv.clone()), None, None, true));
+        assert!(!can_move_music(Some(tv.clone()), None, None, false));
+        assert!(!can_move_music(Some(stranger.clone()), None, None, true));
         // Nowhere to move to while this device is in view.
-        assert!(!can_move_music(None, None, true));
+        assert!(!can_move_music(None, None, None, true));
         // From a device controlled: it must have music and share the library.
-        assert!(can_move_music(None, Some(phone.clone()), false));
-        assert!(can_move_music(Some(tv.clone()), Some(phone.clone()), false));
-        assert!(!can_move_music(None, Some(tv.clone()), true));
-        assert!(!can_move_music(None, Some(stranger), true));
+        assert!(can_move_music(None, id(&phone), Some(phone.clone()), false));
+        assert!(can_move_music(
+            Some(tv.clone()),
+            id(&phone),
+            Some(phone.clone()),
+            false
+        ));
+        assert!(!can_move_music(None, id(&tv), Some(tv.clone()), true));
+        assert!(!can_move_music(None, id(&stranger), Some(stranger), true));
         assert!(!can_move_music(
             Some(phone.clone()),
+            id(&phone),
             Some(phone.clone()),
             true
         ));
-        let mut away = tv;
+        let mut away = tv.clone();
         away.problem = Some("out of reach".into());
-        assert!(!can_move_music(Some(away), Some(phone), true));
+        assert!(!can_move_music(
+            Some(away),
+            id(&phone),
+            Some(phone.clone()),
+            true
+        ));
+        // A device controlled but not listed just now is not this one in
+        // view: nothing moves from it, and its queue here is not the music.
+        assert!(!can_move_music(None, id(&phone), None, true));
+        assert!(!can_move_music(Some(tv), id(&phone), None, true));
     }
 }
 

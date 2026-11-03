@@ -1,0 +1,1 @@
+- **Reordering a playlist offline.** In the desktop app and the Mac app, moving or dropping tracks into a playlist while some of its tracks are not on the device works, and the tracks not shown keep their places.
