@@ -4782,7 +4782,7 @@ fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
 /// `koanCovers`: the covers of many records at one size, answered from what
 /// the cover cache holds (the warm keeps every album at 300 and 600), as one
 /// stream of frames in the order the ids were given. A record whose cover is
-/// not kept, or an id that is not an album's, is answered `NOT_HELD`, and the
+/// not kept, or an id that is neither an album's nor a track's, is answered `NOT_HELD`, and the
 /// client asks `getCoverArt` for it; nothing here opens a music file or
 /// decodes an image, so a library's covers cost the server file reads alone.
 /// See docs/reference/protocol/server-extensions.md#koancovers.
@@ -4802,11 +4802,29 @@ async fn koan_covers(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
             return Err(SubsonicError::bad_param("id"));
         }
         held.covers.forget_evicted(&db.conn);
-        Ok(ids
+        // A record by its own id, or by one of its tracks': a client that
+        // synced songs alone knows a record's tracks, and a track's cover is
+        // its record's, as `getCoverArt` answers it.
+        let kinds: Vec<(String, Option<EntityKind>, i64)> = ids
             .into_iter()
-            .map(|raw| {
-                let album = match resolve_entity(&db, &raw) {
-                    Ok((Some(EntityKind::Album), id)) => Some(id),
+            .map(|raw| match resolve_entity(&db, &raw) {
+                Ok((kind, id)) => (raw, kind, id),
+                Err(_) => (raw, None, 0),
+            })
+            .collect();
+        let tracks: Vec<i64> = kinds
+            .iter()
+            .filter(|(_, kind, _)| *kind == Some(EntityKind::Song))
+            .map(|(_, _, id)| *id)
+            .collect();
+        let records = queries::album_ids_for_tracks(&db.conn, &tracks)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(kinds
+            .into_iter()
+            .map(|(raw, kind, id)| {
+                let album = match kind {
+                    Some(EntityKind::Album) => Some(id),
+                    Some(EntityKind::Song) => records.get(&id).copied(),
                     _ => None,
                 };
                 (raw, album)
@@ -11389,8 +11407,8 @@ mod tests {
         assert_eq!(after[1].1, BulkCover::NotHeld);
         assert_eq!(
             after[2].1,
-            BulkCover::NotHeld,
-            "a track's cover is not an album's entry"
+            BulkCover::Cover(made.to_vec()),
+            "a track's id is answered with its record's cover, which is what the preload sends"
         );
     }
 
