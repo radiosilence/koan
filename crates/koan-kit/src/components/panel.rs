@@ -80,7 +80,8 @@ pub fn popover_panel(points: f32, look: &Look) -> gpui_kit::Div {
 
 /// A row of a menu: its label in `control`, `ink`, after its glyph when
 /// icons are on, on `surface` under the pointer or the arrow keys. A choice
-/// that is in force is ticked; a destructive one is in `bad`.
+/// that is in force is ticked, on a faint accent (`surface` with more
+/// contrast); a destructive one is in `bad`.
 #[derive(IntoElement)]
 pub struct MenuRow {
     id: ElementId,
@@ -97,7 +98,7 @@ pub struct MenuRow {
     /// The rich row's second line, and whether it warns.
     detail: Option<(SharedString, bool)>,
     /// The rich row: its glyph large in a column of its own, the chosen row
-    /// on `surface` with its glyph in the accent.
+    /// on the choice's ground with its glyph in the accent.
     rich: bool,
     /// A small glyph after the label: how a place is reached.
     reach: Option<Icon>,
@@ -262,8 +263,8 @@ impl MenuRow {
     }
 
     /// The rich row: a place to choose, with its glyph large beside a label
-    /// and its detail, the chosen one on `surface` and its glyph in the
-    /// accent.
+    /// and its detail, the chosen one on the choice's ground and its glyph in
+    /// the accent.
     pub fn rich(mut self, rich: bool) -> Self {
         self.rich = rich;
         self
@@ -512,9 +513,17 @@ impl RenderOnce for MenuRow {
             .whitespace_nowrap()
             // The choice on the accent, faint, in every menu of choices; the
             // highlight on `surface` elsewhere.
+            // The arrow keys' highlight on the choice is the pointer's: the
+            // stronger tint. With more contrast asked for, a faint tint
+            // could vanish: the choice takes `surface`, opaque.
             .when(picked && !self.disabled, |row| {
-                row.bg(accent.opacity(PICKED))
-                    .hover(move |row| row.bg(accent.opacity(PICKED * 1.5)))
+                let (rest, lit) = if look.contrast {
+                    (surface, look.palette.hover.hsla())
+                } else {
+                    (accent.opacity(PICKED), accent.opacity(PICKED * 1.5))
+                };
+                row.bg(if self.highlighted { lit } else { rest })
+                    .hover(move |row| row.bg(lit))
             })
             .when(!picked && self.highlighted && !self.disabled, |row| {
                 row.bg(surface)
