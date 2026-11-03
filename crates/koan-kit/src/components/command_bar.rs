@@ -8,7 +8,7 @@
 //! The owner holds the query's `InputState`, decides what is found and
 //! what each key does: the bar draws what it is given.
 
-use gpui_kit::component::input::InputState;
+use crate::components::field::FieldState as InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 

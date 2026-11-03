@@ -6,7 +6,7 @@
 //! around it. The caller owns the `InputState` and listens to it: emptying
 //! the field is a change like any other.
 
-use gpui_kit::component::input::{Escape, InputState};
+use crate::components::field::{Escape, FieldState as InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -322,8 +322,8 @@ mod tests {
         cx.update(|_, cx| {
             cx.subscribe(
                 &input,
-                move |_, e: &gpui_kit::component::input::InputEvent, _| {
-                    if matches!(e, gpui_kit::component::input::InputEvent::Change) {
+                move |_, e: &crate::components::field::InputEvent, _| {
+                    if matches!(e, crate::components::field::InputEvent::Change) {
                         counted.set(counted.get() + 1);
                     }
                 },

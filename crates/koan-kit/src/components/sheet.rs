@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
+use crate::components::field::{FieldState as InputState, InputEvent};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 

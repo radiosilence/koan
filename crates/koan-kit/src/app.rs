@@ -60,5 +60,7 @@ pub mod a11y {
 /// page owns its state and listens to its events, and a field that leads a
 /// list takes the arrows and Escape from it.
 pub mod input {
-    pub use gpui_kit::component::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
+    pub use crate::components::field::{
+        Escape, FieldState as InputState, InputEvent, MoveDown, MoveUp,
+    };
 }

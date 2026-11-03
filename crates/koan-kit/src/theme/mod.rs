@@ -140,6 +140,7 @@ pub fn init(cx: &mut App) {
         watch_desktop_settings(cx);
     }
     sync_components(is_dark(cx.window_appearance()), cx);
+    crate::components::field::bind(cx);
 }
 
 /// Keeps a window drawn in its appearance: redrawn when the system's

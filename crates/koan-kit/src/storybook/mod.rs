@@ -14,7 +14,7 @@ mod playground;
 
 use std::sync::Arc;
 
-use gpui_kit::component::input::InputState;
+use crate::components::field::FieldState as InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 

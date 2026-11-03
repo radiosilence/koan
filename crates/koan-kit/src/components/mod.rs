@@ -30,7 +30,7 @@ mod details;
 mod drag;
 mod empty;
 mod fade;
-mod field;
+pub mod field;
 mod filter_field;
 mod form;
 mod heart;
