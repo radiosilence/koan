@@ -70,8 +70,12 @@ impl Shade {
             minimum.to_bits(),
             [tokens.bg.0, tokens.surface.0],
         );
+        // Kept by colour alone: the slot it is drawn through is the caller's.
         if let Some(held) = CACHE.lock().get(&key) {
-            return *held;
+            return Shade {
+                slot: self.slot,
+                ..*held
+            };
         }
         let channels = |hex: super::tokens::Hex| hex.channels().map(|v| v as f64 / 255.0);
         let bg = oklch::luminance(channels(tokens.bg));

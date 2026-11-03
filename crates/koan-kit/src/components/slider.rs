@@ -296,13 +296,13 @@ impl Slider {
         self
     }
 
-    /// What sits at either end, such as the time played and the time left.
     /// What it sets, as a screen reader names it ("seek").
     pub fn named(mut self, name: impl AsRef<str>) -> Self {
         self.name = Some(label(name));
         self
     }
 
+    /// What sits at either end, such as the time played and the time left.
     pub fn ends(mut self, low: impl Into<SharedString>, high: impl Into<SharedString>) -> Self {
         self.low = Some(low.into());
         self.high = Some(high.into());

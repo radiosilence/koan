@@ -1361,6 +1361,7 @@ impl Render for Seek {
             .and_then(|e| e.track_id)
             .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
+            .named("seek")
             .compact()
             // An arrow key moves five seconds, not a twentieth of the track.
             .when(duration > 0, |s| {
