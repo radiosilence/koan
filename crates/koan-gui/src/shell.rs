@@ -9,7 +9,7 @@
 use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
-use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
+use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, AddMusic, Back, Bigger, FocusNext, FocusPrevious, Forward, NextRegion,
@@ -66,6 +66,7 @@ pub struct Shell {
     /// once gone, so a closed panel follows no song.
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     lyrics_shown: bool,
+    lyrics_slide: crate::components::SlideState,
     /// The search box over the window, while it is open.
     _opened: Subscription,
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
@@ -178,6 +179,7 @@ impl Shell {
             before_search: None,
             lyrics: None,
             lyrics_shown: false,
+            lyrics_slide: Default::default(),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -270,11 +272,9 @@ impl Shell {
     /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
     fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
         self.lyrics_shown = !self.lyrics_shown;
-        self.lyrics = self.lyrics_shown.then(|| {
-            self.lyrics
-                .take()
-                .unwrap_or_else(|| cx.new(crate::lyrics::LyricsPanel::new))
-        });
+        if self.lyrics_shown && self.lyrics.is_none() {
+            self.lyrics = Some(cx.new(crate::lyrics::LyricsPanel::new));
+        }
         cx.notify();
     }
 
@@ -579,6 +579,10 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The width has eased to nothing: the panel goes with it.
+        if !self.lyrics_shown && self.lyrics.is_some() && self.lyrics_slide.closed() {
+            self.lyrics = None;
+        }
         let p = Paint::of(window, cx);
         let washed = theme::KoanTheme::washes_window(cx);
         // The strip above the sidebar: the traffic lights' room on macOS, a
@@ -762,14 +766,27 @@ impl Render for Shell {
                                             .h_full()
                                             .child(stage),
                                     )
-                                    .children(self.lyrics.clone().map(|lyrics| {
-                                        lyrics.cached(
-                                            StyleRefinement::default()
-                                                .w(RowMetrics::inspector(&p.look))
-                                                .h_full()
-                                                .flex_none(),
+                                    .child(
+                                        Slide::new(
+                                            "lyrics-slide",
+                                            &self.lyrics_slide,
+                                            self.lyrics_shown,
+                                            RowMetrics::inspector(&p.look),
                                         )
-                                    })),
+                                        .when_some(
+                                            self.lyrics.clone(),
+                                            |slide, lyrics| {
+                                                slide.child(
+                                                    lyrics.cached(
+                                                        StyleRefinement::default()
+                                                            .w(RowMetrics::inspector(&p.look))
+                                                            .h_full()
+                                                            .flex_none(),
+                                                    ),
+                                                )
+                                            },
+                                        ),
+                                    ),
                             )
                             .when(!washed, |d| d.child(transport())),
                     )
