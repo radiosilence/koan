@@ -65,3 +65,27 @@ pub fn title(shelf: Shelf, listing: Listing) -> &'static str {
         (Shelf::Search, Listing::Tracks) => "tracks found",
     }
 }
+
+/// What an empty listing says: a shelf's own emptiness on a "see all" page,
+/// which has no filter of its own, or for the library's browser whether its
+/// filter left nothing or there is nothing yet (`nothing`).
+pub fn empty(
+    scope: Option<Shelf>,
+    narrowed: bool,
+    nothing: &'static str,
+) -> (&'static str, &'static str) {
+    match scope {
+        Some(Shelf::Favourites) => ("nothing favourited", "a heart on anything puts it here."),
+        Some(Shelf::Recent) => ("nothing played lately", "what you play shows here."),
+        Some(Shelf::Downloaded) => (
+            "nothing downloaded",
+            "music kept on this device shows here.",
+        ),
+        Some(Shelf::Search) => ("nothing found", "try other words."),
+        None if narrowed => ("nothing matches", "try a different filter."),
+        None => (
+            nothing,
+            "add a music folder in settings, or sign in to a server.",
+        ),
+    }
+}

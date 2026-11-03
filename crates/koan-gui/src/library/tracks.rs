@@ -541,6 +541,10 @@ impl Render for TrackBrowser {
                 .set_offset(Point::default());
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no tracks yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("tracks", |shelf| {
@@ -584,20 +588,8 @@ impl Render for TrackBrowser {
         let body = if held {
             div().into_any_element()
         } else if self.total == 0 {
-            chrome::empty_state(
-                crate::theme::Icon::Track,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no tracks yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
-            )
-            .into_any_element()
+            chrome::empty_state(crate::theme::Icon::Track, empty_title, empty_detail)
+                .into_any_element()
         } else {
             // Rows past what has arrived are drawn empty, so the scroll bar
             // is the listing's length from the first page.
