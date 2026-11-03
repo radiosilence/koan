@@ -187,17 +187,35 @@ impl Track {
 }
 
 /// How long a spring takes to come within a thousandth of the distance it
-/// set off from (or of one unit, for one set off from rest at its end).
+/// set off from (or of a ten-thousandth of a unit, for one set off from its
+/// end): the first moment a bound on how far it can still be falls under
+/// that, for each regime's own motion.
 pub fn spring_length(distance: f32, velocity: f32, stiffness: f32, damping: f32) -> f32 {
-    let omega = stiffness.max(1e-3).sqrt();
-    let zeta = damping / (2.0 * omega);
-    let decay = if zeta < 1.0 { zeta * omega } else { omega * (zeta - (zeta * zeta - 1.0).sqrt()) };
-    let reach = distance.abs() + velocity.abs() / omega;
-    let epsilon = (distance.abs() * 1e-3).max(1e-4);
-    if reach <= epsilon {
-        return 0.0;
+    let (x0, v0) = (distance as f64, velocity as f64);
+    let omega = (stiffness.max(1e-3) as f64).sqrt();
+    let zeta = damping as f64 / (2.0 * omega);
+    let epsilon = (x0.abs() * 1e-3).max(1e-4);
+    // How far from its end it can be at `t`, at most.
+    let bound = |t: f64| -> f64 {
+        if zeta < 1.0 {
+            let wd = omega * (1.0 - zeta * zeta).sqrt();
+            let reach = (x0 * x0 + ((v0 + zeta * omega * x0) / wd).powi(2)).sqrt();
+            reach * (-zeta * omega * t).exp()
+        } else if zeta > 1.0 + 1e-4 {
+            let root = (zeta * zeta - 1.0).sqrt();
+            let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
+            let c1 = (v0 - r2 * x0) / (r1 - r2);
+            c1.abs() * (r1 * t).exp() + (x0 - c1).abs() * (r2 * t).exp()
+        } else {
+            (x0.abs() + (v0 + omega * x0).abs() * t) * (-omega * t).exp()
+        }
+    };
+    let step = 1.0 / 480.0;
+    let mut t = 0.0;
+    while t < 10.0 && bound(t) > epsilon {
+        t += step;
     }
-    ((reach / epsilon).ln() / decay.max(1e-3)).min(10.0)
+    t as f32
 }
 
 /// The displacement of a unit-mass spring `t` seconds after it set off from
