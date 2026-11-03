@@ -1,6 +1,6 @@
 use crate::{
     BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
+    OffMain, TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     main_queue_source, ns_string, renderer,
 };
@@ -648,6 +648,8 @@ struct MacWindowState {
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
     frame_source: Option<WindowFrameSource>,
+    // KOAN: the shaders presented from the display link's thread (#1815).
+    off_main: Arc<OffMain>,
     // KOAN: an idle window stops its display link (`step`), and the frame
     // waker starts it again, rather than waking every vsync to find nothing
     // to draw. After herdr-app's patch for gpui-pre-macos 0.3.8.
@@ -846,7 +848,7 @@ impl MacWindowState {
         };
         let data = self.native_view.as_ptr() as *mut c_void;
         self.frame_source
-            .get_or_insert_with(|| WindowFrameSource::new(data, step))
+            .get_or_insert_with(|| WindowFrameSource::new(data, step, self.off_main.clone()))
             .start(display_id)
             .log_err();
         // KOAN: running again, by whoever started it.
@@ -1106,6 +1108,7 @@ impl MacWindow {
                 woken: false,
                 idle_frames: 0,
                 parked: false,
+                off_main: OffMain::new(),
                 last_input: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -2043,12 +2046,25 @@ impl PlatformWindow for MacWindow {
     // run while the window state is locked, so they only signal; `wake_frames`
     // runs on the main queue and restarts a parked display link.
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-        let source = self.0.as_ref().lock().wake_source();
-        Some(Rc::new(move || source.merge_data(1)))
+        let (source, off_main) = {
+            let mut lock = self.0.as_ref().lock();
+            (lock.wake_source(), lock.off_main.clone())
+        };
+        Some(Rc::new(move || {
+            off_main.want();
+            source.merge_data(1)
+        }))
     }
 
     fn schedule_frame(&self) {
-        self.0.as_ref().lock().wake_source().merge_data(1);
+        let mut lock = self.0.as_ref().lock();
+        lock.off_main.want();
+        lock.wake_source().merge_data(1);
+    }
+
+    // KOAN: the display link presents shaders itself (#1815).
+    fn presents_shaders(&self) -> bool {
+        true
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
@@ -2152,7 +2168,15 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &gpui::Scene) {
         let mut this = self.0.lock();
+        // KOAN: the presenter is replaced under its lock, so the display
+        // link never presents an older frame after this one (#1815).
+        let off_main = this.off_main.clone();
+        let mut presenter = off_main.hold();
         this.renderer.draw(scene);
+        *presenter = this.renderer.present_plan().map(|plan| {
+            Arc::new(move || plan.moving() && plan.sufficient() && plan.present())
+                as Arc<dyn Fn() -> bool + Send + Sync>
+        });
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -3405,6 +3429,8 @@ extern "C" fn step(view: *mut c_void) {
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
 
+    // KOAN: this frame is the one asked for (#1815).
+    lock.off_main.took();
     if let Some(mut callback) = lock.request_frame_callback.take() {
         let (signal_at, signal_source) = lock
             .frame_source

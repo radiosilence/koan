@@ -92,6 +92,55 @@ struct DisplayLinkSubscriber {
     id: SubscriberId,
     frame_requests: DispatchRetained<DispatchSource>,
     signal: Arc<PlatformFrameSignal>,
+    off_main: Arc<OffMain>, // KOAN: #1815.
+}
+
+// KOAN: a window's shaders presented from the display link's thread (#1815).
+// While only shaders move, the display link presents the window's last
+// frame again itself, and the main thread sleeps; it is woken only for a
+// frame GPUI asked for, or when the present plan cannot show what moves.
+#[derive(Default)]
+pub struct OffMain {
+    /// GPUI asked for a frame: the display link wakes the main thread
+    /// rather than presenting here.
+    wanted: std::sync::atomic::AtomicBool,
+    /// Presents the window's last frame with its shaders as they are now,
+    /// and says whether it did; replaced by the main thread with each frame.
+    presenter: Mutex<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
+}
+
+impl OffMain {
+    pub fn new() -> Arc<Self> {
+        let off_main = Arc::new(Self::default());
+        off_main.want();
+        off_main
+    }
+
+    /// GPUI wants a frame drawn.
+    pub fn want(&self) {
+        self.wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The main thread took the wanted frame.
+    pub fn took(&self) {
+        self.wanted.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replaces the presenter: called with the window's frame drawn, while
+    /// `hold`'s guard is held, so no present of an older frame lands after it.
+    pub fn hold(&self) -> MutexGuard<'_, Option<Arc<dyn Fn() -> bool + Send + Sync>>> {
+        self.presenter.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Presents here, if no frame is wanted and the presenter can show the
+    /// next refresh. Whether it did.
+    fn present(&self) -> bool {
+        if self.wanted.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let presenter = self.hold().clone();
+        presenter.is_some_and(|present| present())
+    }
 }
 
 // SAFETY: Both fields wrapping raw pointers are refcounted handles to
@@ -160,15 +209,25 @@ unsafe extern "C" fn display_link_output_callback(
         }
     }
     let display_id = display_id as usize as CGDirectDisplayID;
-    let registry = lock_registry();
-    if let Some(entry) = registry.displays.get(&display_id) {
-        for subscriber in &entry.subscribers {
-            if let Some(signal_at) = signal_at {
-                subscriber
-                    .signal
-                    .record(signal_at, FrameRequestSource::NativeCallback);
+    // KOAN: presented here where only shaders move, outside the registry's
+    // lock, which the main thread takes to subscribe (#1815).
+    let mut here = Vec::new();
+    {
+        let registry = lock_registry();
+        if let Some(entry) = registry.displays.get(&display_id) {
+            for subscriber in &entry.subscribers {
+                if let Some(signal_at) = signal_at {
+                    subscriber
+                        .signal
+                        .record(signal_at, FrameRequestSource::NativeCallback);
+                }
+                here.push((subscriber.off_main.clone(), subscriber.frame_requests.clone()));
             }
-            subscriber.frame_requests.merge_data(1);
+        }
+    }
+    for (off_main, frame_requests) in here {
+        if !off_main.present() {
+            frame_requests.merge_data(1);
         }
     }
     0
@@ -203,6 +262,7 @@ fn frame_request_instant(
 fn subscribe(
     display_id: CGDirectDisplayID,
     frame_requests: DispatchRetained<DispatchSource>,
+    off_main: Arc<OffMain>,
     signal: Arc<PlatformFrameSignal>,
 ) -> Result<SubscriberId> {
     debug_assert_main_thread();
@@ -246,6 +306,7 @@ fn subscribe(
             id: subscriber_id,
             frame_requests,
             signal,
+            off_main,
         });
         let link_to_start = if entry.running {
             None
@@ -312,6 +373,7 @@ pub struct WindowFrameSource {
     frame_requests: DispatchRetained<DispatchSource>,
     registration: Option<(CGDirectDisplayID, SubscriberId)>,
     signal: Arc<PlatformFrameSignal>,
+    off_main: Arc<OffMain>, // KOAN: #1815.
 }
 
 /// A dispatch source that coalesces `merge_data` calls from any thread into
@@ -337,19 +399,28 @@ pub fn main_queue_source(
 }
 
 impl WindowFrameSource {
-    pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+    pub fn new(
+        data: *mut c_void,
+        callback: extern "C" fn(*mut c_void),
+        off_main: Arc<OffMain>, // KOAN: #1815.
+    ) -> Self {
         let frame_requests = main_queue_source(data, callback);
         Self {
             frame_requests,
             registration: None,
             signal: Arc::new(PlatformFrameSignal::new()),
+            off_main,
         }
     }
 
     pub fn start(&mut self, display_id: CGDirectDisplayID) -> Result<()> {
         self.stop();
-        let subscriber_id =
-            subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
+        let subscriber_id = subscribe(
+            display_id,
+            self.frame_requests.clone(),
+            self.signal.clone(),
+            self.off_main.clone(),
+        )?;
         self.registration = Some((display_id, subscriber_id));
         Ok(())
     }

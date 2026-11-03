@@ -1,8 +1,64 @@
 diff --git a/src/display_link.rs b/src/display_link.rs
-index 658b9f2..a99759d 100644
+index 658b9f2..69d631a 100644
 --- a/src/display_link.rs
 +++ b/src/display_link.rs
-@@ -123,7 +123,7 @@ fn debug_assert_main_thread() {
+@@ -92,6 +92,55 @@ struct DisplayLinkSubscriber {
+     id: SubscriberId,
+     frame_requests: DispatchRetained<DispatchSource>,
+     signal: Arc<PlatformFrameSignal>,
++    off_main: Arc<OffMain>, // KOAN: #1815.
++}
++
++// KOAN: a window's shaders presented from the display link's thread (#1815).
++// While only shaders move, the display link presents the window's last
++// frame again itself, and the main thread sleeps; it is woken only for a
++// frame GPUI asked for, or when the present plan cannot show what moves.
++#[derive(Default)]
++pub struct OffMain {
++    /// GPUI asked for a frame: the display link wakes the main thread
++    /// rather than presenting here.
++    wanted: std::sync::atomic::AtomicBool,
++    /// Presents the window's last frame with its shaders as they are now,
++    /// and says whether it did; replaced by the main thread with each frame.
++    presenter: Mutex<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
++}
++
++impl OffMain {
++    pub fn new() -> Arc<Self> {
++        let off_main = Arc::new(Self::default());
++        off_main.want();
++        off_main
++    }
++
++    /// GPUI wants a frame drawn.
++    pub fn want(&self) {
++        self.wanted.store(true, std::sync::atomic::Ordering::Relaxed);
++    }
++
++    /// The main thread took the wanted frame.
++    pub fn took(&self) {
++        self.wanted.store(false, std::sync::atomic::Ordering::Relaxed);
++    }
++
++    /// Replaces the presenter: called with the window's frame drawn, while
++    /// `hold`'s guard is held, so no present of an older frame lands after it.
++    pub fn hold(&self) -> MutexGuard<'_, Option<Arc<dyn Fn() -> bool + Send + Sync>>> {
++        self.presenter.lock().unwrap_or_else(PoisonError::into_inner)
++    }
++
++    /// Presents here, if no frame is wanted and the presenter can show the
++    /// next refresh. Whether it did.
++    fn present(&self) -> bool {
++        if self.wanted.load(std::sync::atomic::Ordering::Relaxed) {
++            return false;
++        }
++        let presenter = self.hold().clone();
++        presenter.is_some_and(|present| present())
++    }
+ }
+ 
+ // SAFETY: Both fields wrapping raw pointers are refcounted handles to
+@@ -123,7 +172,7 @@ fn debug_assert_main_thread() {
  unsafe extern "C" fn display_link_output_callback(
      _display_link_out: *mut sys::CVDisplayLink,
      current_time: *const sys::CVTimeStamp,
@@ -11,7 +67,7 @@ index 658b9f2..a99759d 100644
      _flags_in: i64,
      _flags_out: *mut i64,
      display_id: *mut c_void,
-@@ -142,6 +142,23 @@ unsafe extern "C" fn display_link_output_callback(
+@@ -142,16 +191,43 @@ unsafe extern "C" fn display_link_output_callback(
              received_at,
          )
      });
@@ -33,12 +89,59 @@ index 658b9f2..a99759d 100644
 +        }
 +    }
      let display_id = display_id as usize as CGDirectDisplayID;
-     let registry = lock_registry();
-     if let Some(entry) = registry.displays.get(&display_id) {
-@@ -297,22 +314,31 @@ pub struct WindowFrameSource {
+-    let registry = lock_registry();
+-    if let Some(entry) = registry.displays.get(&display_id) {
+-        for subscriber in &entry.subscribers {
+-            if let Some(signal_at) = signal_at {
+-                subscriber
+-                    .signal
+-                    .record(signal_at, FrameRequestSource::NativeCallback);
++    // KOAN: presented here where only shaders move, outside the registry's
++    // lock, which the main thread takes to subscribe (#1815).
++    let mut here = Vec::new();
++    {
++        let registry = lock_registry();
++        if let Some(entry) = registry.displays.get(&display_id) {
++            for subscriber in &entry.subscribers {
++                if let Some(signal_at) = signal_at {
++                    subscriber
++                        .signal
++                        .record(signal_at, FrameRequestSource::NativeCallback);
++                }
++                here.push((subscriber.off_main.clone(), subscriber.frame_requests.clone()));
+             }
+-            subscriber.frame_requests.merge_data(1);
++        }
++    }
++    for (off_main, frame_requests) in here {
++        if !off_main.present() {
++            frame_requests.merge_data(1);
+         }
+     }
+     0
+@@ -186,6 +262,7 @@ fn frame_request_instant(
+ fn subscribe(
+     display_id: CGDirectDisplayID,
+     frame_requests: DispatchRetained<DispatchSource>,
++    off_main: Arc<OffMain>,
      signal: Arc<PlatformFrameSignal>,
- }
- 
+ ) -> Result<SubscriberId> {
+     debug_assert_main_thread();
+@@ -229,6 +306,7 @@ fn subscribe(
+             id: subscriber_id,
+             frame_requests,
+             signal,
++            off_main,
+         });
+         let link_to_start = if entry.running {
+             None
+@@ -295,39 +373,63 @@ pub struct WindowFrameSource {
+     frame_requests: DispatchRetained<DispatchSource>,
+     registration: Option<(CGDirectDisplayID, SubscriberId)>,
+     signal: Arc<PlatformFrameSignal>,
++    off_main: Arc<OffMain>, // KOAN: #1815.
++}
++
 +/// A dispatch source that coalesces `merge_data` calls from any thread into
 +/// one `callback(data)` on the main queue.
 +pub fn main_queue_source(
@@ -59,10 +162,10 @@ index 658b9f2..a99759d 100644
 +        source.resume();
 +        source
 +    }
-+}
-+
+ }
+ 
  impl WindowFrameSource {
-     pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+-    pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
 -        let frame_requests = unsafe {
 -            let frame_requests = DispatchSource::new(
 -                &raw const _dispatch_source_type_data_add as *mut _,
@@ -77,11 +180,31 @@ index 658b9f2..a99759d 100644
 -            frame_requests.resume();
 -            frame_requests
 -        };
++    pub fn new(
++        data: *mut c_void,
++        callback: extern "C" fn(*mut c_void),
++        off_main: Arc<OffMain>, // KOAN: #1815.
++    ) -> Self {
 +        let frame_requests = main_queue_source(data, callback);
          Self {
              frame_requests,
              registration: None,
-@@ -328,6 +354,11 @@ impl WindowFrameSource {
+             signal: Arc::new(PlatformFrameSignal::new()),
++            off_main,
+         }
+     }
+ 
+     pub fn start(&mut self, display_id: CGDirectDisplayID) -> Result<()> {
+         self.stop();
+-        let subscriber_id =
+-            subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
++        let subscriber_id = subscribe(
++            display_id,
++            self.frame_requests.clone(),
++            self.signal.clone(),
++            self.off_main.clone(),
++        )?;
+         self.registration = Some((display_id, subscriber_id));
          Ok(())
      }
  
@@ -150,12 +273,14 @@ index 8fd2066..e22aed1 100644
      }
  
 diff --git a/src/window.rs b/src/window.rs
-index f2208d3..049c73f 100644
+index f2208d3..55d2f62 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -2,12 +2,12 @@ use crate::{
+@@ -1,13 +1,13 @@
+ use crate::{
      BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-     TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
+-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
++    OffMain, TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
      kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
 -    ns_string, renderer,
 +    main_queue_source, ns_string, renderer,
@@ -168,10 +293,12 @@ index f2208d3..049c73f 100644
  use gpui::{
      AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
      ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-@@ -648,6 +648,20 @@ struct MacWindowState {
+@@ -648,6 +648,22 @@ struct MacWindowState {
      cursor_style: CursorStyle,
      cursor_visible: Arc<AtomicBool>,
      frame_source: Option<WindowFrameSource>,
++    // KOAN: the shaders presented from the display link's thread (#1815).
++    off_main: Arc<OffMain>,
 +    // KOAN: an idle window stops its display link (`step`), and the frame
 +    // waker starts it again, rather than waking every vsync to find nothing
 +    // to draw. After herdr-app's patch for gpui-pre-macos 0.3.8.
@@ -189,7 +316,7 @@ index f2208d3..049c73f 100644
      renderer: renderer::Renderer,
      request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
      event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
-@@ -826,6 +840,8 @@ impl MacWindowState {
+@@ -826,19 +842,35 @@ impl MacWindowState {
          let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
          let Some(display_id) = display_id_for_screen(screen) else {
              // AppKit can temporarily report no screen while displays are being reconfigured.
@@ -198,8 +325,9 @@ index f2208d3..049c73f 100644
              return;
          };
          let data = self.native_view.as_ptr() as *mut c_void;
-@@ -833,12 +849,26 @@ impl MacWindowState {
-             .get_or_insert_with(|| WindowFrameSource::new(data, step))
+         self.frame_source
+-            .get_or_insert_with(|| WindowFrameSource::new(data, step))
++            .get_or_insert_with(|| WindowFrameSource::new(data, step, self.off_main.clone()))
              .start(display_id)
              .log_err();
 +        // KOAN: running again, by whoever started it.
@@ -225,7 +353,7 @@ index f2208d3..049c73f 100644
      }
  
      fn is_maximized(&self) -> bool {
-@@ -1072,6 +1102,11 @@ impl MacWindow {
+@@ -1072,6 +1104,12 @@ impl MacWindow {
                  cursor_style: CursorStyle::Arrow,
                  cursor_visible,
                  frame_source: None,
@@ -233,11 +361,12 @@ index f2208d3..049c73f 100644
 +                woken: false,
 +                idle_frames: 0,
 +                parked: false,
++                off_main: OffMain::new(),
 +                last_input: None,
                  renderer: renderer::new_renderer(
                      renderer_context,
                      native_window as *mut _,
-@@ -1369,6 +1404,12 @@ impl Drop for MacWindow {
+@@ -1369,6 +1407,12 @@ impl Drop for MacWindow {
          let window = this.native_window;
          let sheet_parent = this.sheet_parent.take();
          this.frame_source.take();
@@ -250,7 +379,7 @@ index f2208d3..049c73f 100644
          unsafe {
              let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
          }
-@@ -1997,6 +2038,19 @@ impl PlatformWindow for MacWindow {
+@@ -1997,6 +2041,32 @@ impl PlatformWindow for MacWindow {
          self.0.as_ref().lock().request_frame_callback = Some(callback);
      }
  
@@ -259,18 +388,47 @@ index f2208d3..049c73f 100644
 +    // run while the window state is locked, so they only signal; `wake_frames`
 +    // runs on the main queue and restarts a parked display link.
 +    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-+        let source = self.0.as_ref().lock().wake_source();
-+        Some(Rc::new(move || source.merge_data(1)))
++        let (source, off_main) = {
++            let mut lock = self.0.as_ref().lock();
++            (lock.wake_source(), lock.off_main.clone())
++        };
++        Some(Rc::new(move || {
++            off_main.want();
++            source.merge_data(1)
++        }))
 +    }
 +
 +    fn schedule_frame(&self) {
-+        self.0.as_ref().lock().wake_source().merge_data(1);
++        let mut lock = self.0.as_ref().lock();
++        lock.off_main.want();
++        lock.wake_source().merge_data(1);
++    }
++
++    // KOAN: the display link presents shaders itself (#1815).
++    fn presents_shaders(&self) -> bool {
++        true
 +    }
 +
      fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
          self.0.as_ref().lock().event_callback = Some(callback);
      }
-@@ -2637,6 +2691,8 @@ extern "C" fn handle_key_event(
+@@ -2098,7 +2168,15 @@ impl PlatformWindow for MacWindow {
+ 
+     fn draw(&self, scene: &gpui::Scene) {
+         let mut this = self.0.lock();
++        // KOAN: the presenter is replaced under its lock, so the display
++        // link never presents an older frame after this one (#1815).
++        let off_main = this.off_main.clone();
++        let mut presenter = off_main.hold();
+         this.renderer.draw(scene);
++        *presenter = this.renderer.present_plan().map(|plan| {
++            Arc::new(move || plan.moving() && plan.sufficient() && plan.present())
++                as Arc<dyn Fn() -> bool + Send + Sync>
++        });
+     }
+ 
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+@@ -2637,6 +2715,8 @@ extern "C" fn handle_key_event(
  ) -> Bool {
      let window_state = unsafe { get_window_state(this) };
      let mut lock = window_state.as_ref().lock();
@@ -279,7 +437,7 @@ index f2208d3..049c73f 100644
  
      let window_height = lock.content_size().height;
      let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
-@@ -2787,6 +2843,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
+@@ -2787,6 +2867,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
      let window_state = unsafe { get_window_state(this) };
      let weak_window_state = Arc::downgrade(&window_state);
      let mut lock = window_state.as_ref().lock();
@@ -288,7 +446,16 @@ index f2208d3..049c73f 100644
      let window_height = lock.content_size().height;
      let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
      match native_event_type {
-@@ -3362,7 +3420,45 @@ extern "C" fn step(view: *mut c_void) {
+@@ -3347,6 +3429,8 @@ extern "C" fn step(view: *mut c_void) {
+     let window_state = unsafe { get_window_state(&*view) };
+     let mut lock = window_state.lock();
+ 
++    // KOAN: this frame is the one asked for (#1815).
++    lock.off_main.took();
+     if let Some(mut callback) = lock.request_frame_callback.take() {
+         let (signal_at, signal_source) = lock
+             .frame_source
+@@ -3362,7 +3446,45 @@ extern "C" fn step(view: *mut c_void) {
              signal_source,
              ..Default::default()
          });

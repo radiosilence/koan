@@ -1934,10 +1934,12 @@ impl Window {
                         .log_err();
                 }
 
-                // KOAN: a live shader keeps the frames coming (#1641).
+                // KOAN: a live shader keeps the frames coming (#1641), unless
+                // the platform presents shaders itself (#1815).
                 let live = handle
                     .update(&mut cx, |_, window, _| {
-                        let live = window.rendered_frame.scene.has_live_shaders()
+                        let live = (window.rendered_frame.scene.has_live_shaders()
+                            && !window.platform_window.presents_shaders())
                             // KOAN: so does a moving colour slot (#1859).
                             || window.color_slot_moving.get();
                         if window.invalidator.is_dirty()
