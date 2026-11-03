@@ -86,6 +86,13 @@ impl RenderOnce for TransportControl {
             div().child(self.label.clone()).into_any_element()
         };
         let answers = Answerer::of(&self.id, window, cx);
+        // Shuffle or repeat turned on by a shortcut or another device rings
+        // as a click does.
+        match self.on {
+            Some(true) => answers.follow(1, Answer::Ring, look.accent.hsla(), window, cx),
+            Some(false) => answers.note(0, cx),
+            None => {}
+        }
         // A stop in the window's Tab order, which Return and Space click.
         let handle = focus(&self.id, window, cx);
         let accent = look.accent.hsla();
