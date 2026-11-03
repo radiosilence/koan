@@ -363,6 +363,11 @@ impl RenderOnce for MenuAction {
                 }
             })
             .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
+            // A screen reader's press, as a pointer's.
+            .on_a11y_action(gpui_kit::AccessibleAction::Click, {
+                let run = run.clone();
+                move |_, window, cx| run(&gpui_kit::ClickEvent::default(), window, cx)
+            })
             .on_click(move |event, window, cx| {
                 cx.stop_propagation();
                 run(event, window, cx)
@@ -421,8 +426,12 @@ impl RenderOnce for MenuRow {
                                 muted
                             })
                             .child(detail)
-                            .tooltip(move |window, cx| {
-                                super::Tooltip::view(full.clone(), window, cx)
+                            // Its whole text, for a line cut short; an empty
+                            // line has none to give.
+                            .when(!full.is_empty(), |line| {
+                                line.tooltip(move |window, cx| {
+                                    super::Tooltip::view(full.clone(), window, cx)
+                                })
                             }),
                     )
             }
