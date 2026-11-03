@@ -335,6 +335,9 @@ impl OrganizeSheet {
                     Some(ids.clone()),
                     Some(base.clone()),
                 );
+                // Escape leaves the sheet while files move, as its cancel
+                // is disabled: dropping it would stop the move part way.
+                ask::hold(true, cx);
                 sheet.update(cx, |this, cx| {
                     this.running = true;
                     // A preview still in flight is for the plan before the
@@ -347,6 +350,7 @@ impl OrganizeSheet {
                         let result = run.await;
                         this.update(cx, |this, cx| {
                             this.running = false;
+                            ask::hold(false, cx);
                             match result {
                                 // Every file went: done.
                                 Ok(done) if done.conflict_count + done.error_count == 0 => {
@@ -524,7 +528,7 @@ impl Render for OrganizeSheet {
 
         ask::wide_panel(look)
             .child(ask::head_data(
-                format!("Organise {}", self.title),
+                format!("{} {}", crate::theme::label("organise"), self.title),
                 vec![cancel.into_any_element(), go.into_any_element()],
                 look,
             ))

@@ -139,7 +139,8 @@ impl Render for ShortcutsSheet {
             .label("done")
             .on_click(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
 
-        sheet::panel(&look)
+        // Over the window as every sheet is: centred, the page dimmed.
+        let panel = sheet::panel(&look)
             .id("shortcuts-sheet")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -162,7 +163,8 @@ impl Render for ShortcutsSheet {
                         Tone::Muted,
                         &look,
                     )),
-            )
+            );
+        sheet::scrim("shortcuts-scrim", &look).child(panel)
     }
 }
 
