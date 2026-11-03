@@ -47,8 +47,11 @@ float3 koan_prism(float t, float brat) {
     return mix(c[i], c[(i + 1) % 4], smoothstep(0.0, 1.0, fract(x)));
 }
 
+// Dave Hoskins' hash: arithmetic alone, no sine to work out per pixel.
 float koan_prism_hash(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    float3 q = fract(float3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
 }
 "#
     };
@@ -73,7 +76,9 @@ fn koan_prism(t0: f32, brat: f32) -> vec3<f32> {
 }
 
 fn koan_prism_hash(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+    var q = fract(vec3<f32>(p.xyx) * 0.1031);
+    q = q + dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
 }
 "#
     };
@@ -592,7 +597,9 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     }
     // The beat's flash over the whole window. Beats come at most three a
     // second (`Prism::hear`), WCAG's limit for flashing.
-    koan_disco_blend(colour, alpha, koan_prism(time * 0.3, u[4]) * 0.5 + 0.5, beat * 0.10);
+    if (beat > 0.0) {
+        koan_disco_blend(colour, alpha, koan_prism(time * 0.3, u[4]) * 0.5 + 0.5, beat * 0.10);
+    }
     return float4(colour, clamp(alpha * u[6], 0.0, 0.85));
 }
 "#
