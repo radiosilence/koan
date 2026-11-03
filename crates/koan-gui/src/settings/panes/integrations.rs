@@ -35,7 +35,7 @@ impl IntegrationsPane {
     pub fn new(ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let token = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("ListenBrainz user token")
+                .placeholder(crate::theme::label("ListenBrainz user token"))
                 .masked(true)
         });
         let mut pane = Self {

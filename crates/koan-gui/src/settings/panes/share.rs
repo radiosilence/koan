@@ -35,7 +35,7 @@ impl ShareForm {
                      cx: &mut Context<ServerPane>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder(placeholder)
+                    .placeholder(crate::theme::label(placeholder))
                     .masked(secret)
             })
         };

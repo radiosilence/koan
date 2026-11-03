@@ -461,8 +461,12 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     ] {
         push(&mut bindings, key, action, Some(window.clone()), cx);
     }
-    let lists =
-        Rc::new(KeyBindingContextPredicate::parse("List && !Input").expect("a valid context"));
+    // Not under a menu or a question opened over the list: their keys are
+    // their own, as the bare table's are.
+    let lists = Rc::new(
+        KeyBindingContextPredicate::parse("List && !Input && !Ask && !KoanMenu")
+            .expect("a valid context"),
+    );
     for shortcut in LISTS {
         for key in shortcut.keys {
             push(

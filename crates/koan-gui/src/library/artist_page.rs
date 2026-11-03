@@ -163,7 +163,7 @@ impl ArtistPage {
             tiles: Tiles::default(),
             menu: None,
             starting: HashSet::new(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             keyed: false,
             _subscriptions: subscriptions,
@@ -1021,7 +1021,7 @@ impl super::keys::KeyedList for ArtistPage {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
         if from == to {
-            self.selection.mark(order[from]);
+            self.selection.arrow(order[from]);
         } else {
             self.selection.only(order[from]);
             self.selection.click(order[to], true, &order);
@@ -1056,7 +1056,8 @@ impl super::keys::KeyedList for ArtistPage {
         }
     }
 
-    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+    fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
             let item = self.order()[ix];
             let album = match (item, &self.record) {
@@ -1067,7 +1068,19 @@ impl super::keys::KeyedList for ArtistPage {
                     .and_then(|t| t.album_id),
                 _ => None,
             };
-            actions::keyed_target(&self.selection, item, album)
+            actions::keyed_target(
+                &self.selection,
+                item,
+                album,
+                Some(std::rc::Rc::new(move |cx: &mut App| {
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
+                })),
+            )
         });
     }
 }

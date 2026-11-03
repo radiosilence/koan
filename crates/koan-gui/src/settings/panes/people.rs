@@ -128,7 +128,8 @@ impl PeoplePane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
+        let username =
+            cx.new(|cx| InputState::new(window, cx).placeholder(crate::theme::label("Username")));
         Self {
             _subscriptions: vec![
                 cx.observe(&people, |_, _, cx| cx.notify()),

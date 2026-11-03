@@ -59,7 +59,7 @@ impl ServerPane {
                      cx: &mut Context<Self>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder(placeholder)
+                    .placeholder(crate::theme::label(placeholder))
                     .masked(secret)
                     .default_value(value)
             })

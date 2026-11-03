@@ -55,6 +55,7 @@ impl Imports {
 }
 
 /// Where a finished import's tracks go.
+#[derive(Clone, Copy)]
 enum Into {
     Queue,
     Playlist(i64),
@@ -111,6 +112,7 @@ fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut Ap
             }
             Ok(summary) => {
                 let problem = outcome(&summary);
+                let arrived = (!summary.track_ids.is_empty()).then_some(into);
                 let placed = match into {
                     _ if summary.track_ids.is_empty() => Ok(()),
                     Into::Queue => engine.add_to_queue(summary.track_ids).await.map(drop),
@@ -124,6 +126,17 @@ fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut Ap
                         .await
                         .map(drop),
                 };
+                // The row it reached answers, as music sent from a menu
+                // makes it.
+                if placed.is_ok()
+                    && let Some(into) = arrived
+                {
+                    let playlist = match into {
+                        Into::Queue => None,
+                        Into::Playlist(id) => Some(id),
+                    };
+                    cx.update(|cx| crate::library::actions::arrived(playlist, cx));
+                }
                 placed.err().map(|e| e.to_string()).or(problem)
             }
         };

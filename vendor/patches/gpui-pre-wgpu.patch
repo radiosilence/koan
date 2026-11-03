@@ -197,7 +197,7 @@ index 074d430..2538748 100644
      return out;
  }
 diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
-index f6611df..e84f959 100644
+index f6611df..329f616 100644
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
 @@ -45,6 +45,198 @@ const SUBPIXEL_SHADERS: &str = concat!(
@@ -700,7 +700,7 @@ index f6611df..e84f959 100644
      fn draw_instances(
          &self,
          instances: &InstanceBinding,
-@@ -1775,6 +2150,448 @@ impl WgpuRendererCore {
+@@ -1775,6 +2150,449 @@ impl WgpuRendererCore {
          Ok(())
      }
  
@@ -790,6 +790,7 @@ index f6611df..e84f959 100644
 +            slot_generation: 0,
 +            size: extent,
 +            layers: drawn,
++            moving: Vec::new(),
 +        };
 +        Ok(())
 +    }
@@ -1149,7 +1150,7 @@ index f6611df..e84f959 100644
      unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
          unsafe {
              std::slice::from_raw_parts(
-@@ -2400,11 +3217,33 @@ impl WgpuHeadlessRenderer {
+@@ -2400,11 +3218,33 @@ impl WgpuHeadlessRenderer {
              .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
              .view
              .clone();
@@ -1183,7 +1184,7 @@ index f6611df..e84f959 100644
      /// Copies the current render target back to the CPU. Dimensions come from the
      /// target texture itself, so the copy can never disagree with what was rendered.
      fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
-@@ -2921,4 +3760,220 @@ mod tests {
+@@ -2921,4 +3761,220 @@ mod tests {
              ]
          );
      }

@@ -86,7 +86,7 @@ use gpui_kit::{
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track,
+    ShaderProgram, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
@@ -113,10 +113,10 @@ pub mod list_actions {
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
-pub use filter_field::FilterField;
+pub use filter_field::{FilterButton, FilterField};
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
-    form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
+    form_note, form_text,
 };
 pub use heart::Heart;
 pub use inspector::{Inspector, plain_text};
@@ -141,7 +141,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popo
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
-pub use prism::{Burst, Prism, PrismFill, Sheen};
+pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;

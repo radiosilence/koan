@@ -227,7 +227,7 @@ pub fn bars(color: Hsla) -> AnyElement {
     if HANDED_OFF.load(Ordering::Relaxed) {
         return renderer_mark(color).into_any_element();
     }
-    let prism = crate::rainbow::Painted::now();
+    let prism = crate::theme::KoanTheme::prism_now();
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {

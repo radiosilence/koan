@@ -240,7 +240,7 @@ impl AlbumGrid {
             starting: HashSet::new(),
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             keyed: false,
             search,
@@ -1027,7 +1027,7 @@ impl super::keys::KeyedList for AlbumGrid {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let item = |ix: usize| Playable::Album(self.records[ix].id);
         if from == to {
-            self.selection.mark(item(from));
+            self.selection.arrow(item(from));
         } else {
             self.selection.only(item(from));
             self.selection.click(item(to), true, &self.order);
@@ -1056,9 +1056,22 @@ impl super::keys::KeyedList for AlbumGrid {
             .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
     }
 
-    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+    fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
-            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Album(self.records[ix].id),
+                None,
+                Some(std::rc::Rc::new(move |cx: &mut App| {
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
+                })),
+            )
         });
     }
 }
