@@ -69,6 +69,26 @@ fn free_slots() -> usize {
     held.len()
 }
 
+/// Waits for colours an earlier test set moving to land. The accent tests
+/// retarget against the real clock and move only the executor's, so the
+/// accent may still be settling as the next test starts, and whether colours
+/// move is one answer for the whole table.
+fn colors_at_rest() {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let now = Instant::now();
+        gpui::refresh_dynamic_colors(now);
+        if !gpui::dynamic_colors_moving(now) {
+            return;
+        }
+        assert!(
+            now < deadline,
+            "a colour an earlier test set moving never lands"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn finite(c: Rgba) -> bool {
     [c.r, c.g, c.b, c.a]
         .iter()
@@ -128,6 +148,7 @@ fn the_slot_table_survives_many_threads_and_frees_what_they_drop() {
 #[test]
 fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     let _clock = CLOCK.lock();
+    colors_at_rest();
     let uniforms = Arc::new(ShaderUniforms::new());
     uniforms.set_origin(Instant::now());
     let slots: Arc<Vec<ColorSlot>> = Arc::new(
@@ -147,6 +168,7 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
         let (uniforms, writing) = (uniforms.clone(), writing.clone());
         std::thread::spawn(move || {
             while writing.load(Ordering::Relaxed) {
+                gpui::refresh_dynamic_colors(Instant::now());
                 uniforms.take_present(Instant::now());
                 uniforms.is_live(Instant::now());
                 let values = uniforms.presented_at(present_now()).1;
@@ -205,10 +227,14 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     writing.store(false, Ordering::Relaxed);
     presenter.join().expect("the presenter does not panic");
     // Everything written has an end within 30 ms: once that is past, the
-    // shader presents once more at most and then parks.
+    // shader presents once more at most and then parks. Each present fills
+    // the colour table first, as a renderer's does.
     std::thread::sleep(Duration::from_millis(80));
     let presents = (0..5)
-        .filter(|_| uniforms.take_present(Instant::now()))
+        .filter(|_| {
+            gpui::refresh_dynamic_colors(Instant::now());
+            uniforms.take_present(Instant::now())
+        })
         .count();
     assert!(presents <= 1, "{presents} presents after everything landed");
     assert!(!uniforms.is_live(Instant::now()), "the window parks");
