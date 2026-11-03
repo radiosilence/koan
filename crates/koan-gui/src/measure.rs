@@ -16,6 +16,7 @@
 //! the end and back by the same synthetic wheel events, returns to the
 //! queue, and prints the process's footprint (macOS's `footprint`) at launch
 //! and after each stage, then quits: the memory a long browse leaves behind.
+//! `KOAN_GUI_FLING_STEP` sets the fling's speed in points per 16 ms.
 //!
 //! Each pass prints the row at the top of the list as it ends, so the
 //! numbers carry proof that the list moved. `KOAN_GUI_MEASURE_ROUTE` (a
@@ -65,6 +66,44 @@ pub fn start(cx: &mut App) {
         Ok("play-hidden") => {
             play(cx);
             cx.hide();
+        }
+        // Playing with the album grid showing, where no playing bars are.
+        Ok("play-albums") => {
+            play(cx);
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |cx| {
+                background.timer(Duration::from_secs(3)).await;
+                cx.update(|cx| {
+                    if let Some(window) = cx.windows().first() {
+                        window
+                            .update(cx, |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::platform::actions::ShowAlbums),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+                });
+            })
+            .detach();
+        }
+        // Minimised to the Dock rather than hidden: the window's own state,
+        // which the system may report differently from hiding the app.
+        Ok("play-minimised") => {
+            play(cx);
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |cx| {
+                background.timer(Duration::from_secs(5)).await;
+                cx.update(|cx| {
+                    if let Some(window) = cx.windows().first() {
+                        window
+                            .update(cx, |_, window, _| window.minimize_window())
+                            .ok();
+                    }
+                });
+            })
+            .detach();
         }
         _ => {}
     }
@@ -250,9 +289,15 @@ fn footprint() -> String {
 }
 
 fn fling(cx: &mut App) {
-    /// A fling's step: fast enough to cross 5,000 records in seconds.
-    const FLING: Pixels = px(240.);
-    const FLING_STEPS: usize = 800;
+    // A fling's step, points per 16 ms: fast enough to cross 5,000 records
+    // in seconds, or `KOAN_GUI_FLING_STEP` for a faster flick. The fling
+    // covers the same distance whatever the step.
+    let step: f32 = std::env::var("KOAN_GUI_FLING_STEP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(240.0);
+    let fling = px(step);
+    let fling_steps = (800.0 * 240.0 / step).ceil() as usize;
     let background = cx.background_executor().clone();
     cx.spawn(async move |cx| {
         let settle = |secs| background.timer(Duration::from_secs(secs));
@@ -271,8 +316,8 @@ fn fling(cx: &mut App) {
         println!("album grid: {}", footprint());
         let at = centre(window, cx);
         for (direction, pass) in [(-1.0, "end"), (1.0, "start")] {
-            for _ in 0..FLING_STEPS {
-                wheel(window, at, FLING * direction, cx);
+            for _ in 0..fling_steps {
+                wheel(window, at, fling * direction, cx);
                 background.timer(Duration::from_millis(16)).await;
             }
             settle(3).await;
