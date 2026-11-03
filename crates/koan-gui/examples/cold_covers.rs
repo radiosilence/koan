@@ -24,10 +24,12 @@ const HEIGHT: f32 = 1600.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
     koan_core::places::keep_with_config();
-    let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") else {
+    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
-    };
-    let artwork = std::path::Path::new(&config).join("artwork");
+    }
+    // A throwaway configuration keeps its artwork in its own cache
+    // directory, not beside the config.
+    let artwork = koan_core::places::cache().join("artwork");
     std::fs::remove_dir_all(&artwork).ok();
     // SAFETY: set before any other thread starts.
     unsafe {

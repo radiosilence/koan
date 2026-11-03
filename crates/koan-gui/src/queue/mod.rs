@@ -105,7 +105,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, window.scale_factor(), cx)),
             None => chip,
         }
     }
@@ -150,9 +150,9 @@ pub struct QueueView {
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
-    /// The rest of the queue can be shuffled in place: there is a rest, and
-    /// shuffle play is off (it keeps an order of its own beside the queue).
-    shufflable: bool,
+    /// Why the rest of the queue cannot be shuffled in place now, `None`
+    /// when it can (`dice_refusal`).
+    dice: Option<&'static str>,
     /// The queue items as of the last edit, which the next is told against.
     known: HashSet<String>,
     /// Items moved by a drag here, landing with the next edit.
@@ -174,11 +174,14 @@ impl QueueView {
         let subscriptions = [
             cx.observe(&playback, |this, playback, cx| {
                 let now = &playback.read(cx).0;
-                let shufflable = now.queue_shufflable && !now.shuffle;
-                if shufflable != this.shufflable {
-                    this.shufflable = shufflable;
+                let dice = dice_refusal(now);
+                if dice != this.dice {
+                    this.dice = dice;
                     cx.notify();
                 }
+                // The cursor is the playback's: it can move in an update of
+                // its own, after the queue's rows already have.
+                this.follow(cx);
             }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
@@ -232,10 +235,7 @@ impl QueueView {
             following: false,
             followed: None,
             followed_row: None,
-            shufflable: {
-                let now = &cx.global::<Mirror>().playback.read(cx).0;
-                now.queue_shufflable && !now.shuffle
-            },
+            dice: dice_refusal(&cx.global::<Mirror>().playback.read(cx).0),
             known: HashSet::new(),
             moved: Vec::new(),
             landed: HashSet::new(),
@@ -683,7 +683,7 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
@@ -1446,8 +1446,8 @@ impl QueueView {
         cx.notify();
     }
 
-    /// While following, a new playing track is brought into view; with
-    /// nothing playing there is nothing to follow.
+    /// While following, a new playing track is brought into view; with no
+    /// track under the cursor there is nothing to follow.
     fn follow(&mut self, cx: &mut Context<Self>) {
         if !self.following {
             return;
@@ -1460,9 +1460,23 @@ impl QueueView {
                     self.list.reveal(row);
                     self.followed = Some(id);
                     self.followed_row = Some(row);
+                    cx.notify();
                 }
             }
         }
+    }
+}
+
+/// Why the dice cannot shuffle the rest of the queue now, the Mac's
+/// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
+/// queue, and with nothing after the cursor there is nothing to shuffle.
+fn dice_refusal(now: &koan_ffi::NowPlaying) -> Option<&'static str> {
+    if now.shuffle {
+        Some("shuffle play is on: turn it off to shuffle the queue itself")
+    } else if !now.queue_shufflable {
+        Some("nothing after this track to shuffle")
+    } else {
+        None
     }
 }
 
@@ -1534,14 +1548,13 @@ impl QueueView {
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
+                // Refused as the Mac refuses it, and saying why.
                 ToolbarButton::new(
                     "queue-dice",
                     Icon::Reshuffle,
-                    "shuffle the rest of the queue",
+                    self.dice.unwrap_or("shuffle the rest of the queue"),
                 )
-                // As the Mac refuses it: nothing after the cursor, or shuffle
-                // play on, which keeps an order of its own.
-                .disabled(!self.shufflable)
+                .disabled(self.dice.is_some())
                 .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
             .child(
@@ -1568,7 +1581,7 @@ impl QueueView {
 }
 
 /// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
-/// read as "save" is chosen, not each time the toolbar draws.
+/// read when "save" is chosen.
 fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",
@@ -1664,11 +1677,7 @@ impl QueueView {
         count: usize,
         cx: &mut Context<Self>,
     ) {
-        let last = count
-            .checked_sub(1)
-            .and_then(|last| self.list.row_bounds(last))
-            .map(|b| b.bottom());
-        let Some(wanted) = page_drop(page.contains(&at), last, at.y, count) else {
+        let Some(wanted) = drag_over_page(&self.list, page, at, count) else {
             return;
         };
         if self.drop_at != wanted {
@@ -1678,13 +1687,38 @@ impl QueueView {
     }
 }
 
-/// Where a drag over the queue's page, outside its rows, puts the insertion
-/// point: none outside the page, the end below the last row drawn (at
-/// `last`, its bottom edge), and otherwise what the rows said, which is
-/// `None` here.
-fn page_drop(inside: bool, last: Option<Pixels>, y: Pixels, count: usize) -> Option<Option<usize>> {
+/// Where a drag over a page of `count` rows in `list` (the queue's or a
+/// playlist's), outside the rows, puts the insertion point; see
+/// `page_drop`.
+pub(crate) fn drag_over_page(
+    list: &crate::components::RowListState,
+    page: Bounds<Pixels>,
+    at: Point<Pixels>,
+    count: usize,
+) -> Option<Option<usize>> {
+    let first = list.row_bounds(0).filter(|_| count > 0).map(|b| b.top());
+    let last = count
+        .checked_sub(1)
+        .and_then(|last| list.row_bounds(last))
+        .map(|b| b.bottom());
+    page_drop(page.contains(&at), first, last, at.y, count)
+}
+
+/// Where a drag over a page, outside its rows, puts the insertion point:
+/// none outside the page, the start above the first row drawn (`first`,
+/// its top edge), the end below the last (`last`, its bottom edge), and
+/// otherwise what the rows said, which is `None` here.
+fn page_drop(
+    inside: bool,
+    first: Option<Pixels>,
+    last: Option<Pixels>,
+    y: Pixels,
+    count: usize,
+) -> Option<Option<usize>> {
     if !inside {
         Some(None)
+    } else if first.is_some_and(|top| y < top) {
+        Some(Some(0))
     } else if last.is_some_and(|bottom| y > bottom) {
         Some(Some(count))
     } else {
@@ -1820,15 +1854,21 @@ impl Render for QueueView {
 mod tests {
     use super::*;
 
-    /// Below the last row the drop is at the end, whatever row the pointer
-    /// last crossed; outside the page there is none; over the rows, theirs.
+    /// Below the last row the drop is at the end and above the first at the
+    /// start, whatever row the pointer last crossed; outside the page there
+    /// is none; over the rows, theirs.
     #[test]
-    fn the_blank_under_the_rows_is_the_end() {
+    fn the_blank_around_the_rows_is_the_start_or_the_end() {
         let at = |y: f32| Pixels::from(y);
-        assert_eq!(page_drop(true, Some(at(200.)), at(260.), 5), Some(Some(5)));
-        assert_eq!(page_drop(false, Some(at(200.)), at(260.), 5), Some(None));
-        assert_eq!(page_drop(true, Some(at(200.)), at(120.), 5), None);
-        // The last row off screen: the list fills the page, nothing is blank.
-        assert_eq!(page_drop(true, None, at(260.), 5), None);
+        let rows = (Some(at(40.)), Some(at(200.)));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(260.), 5), Some(Some(5)));
+        assert_eq!(page_drop(false, rows.0, rows.1, at(260.), 5), Some(None));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(120.), 5), None);
+        // Above the first row, under the header: the start.
+        assert_eq!(page_drop(true, rows.0, rows.1, at(20.), 5), Some(Some(0)));
+        // The first and last rows off screen: the list fills the page,
+        // nothing is blank.
+        assert_eq!(page_drop(true, None, None, at(260.), 5), None);
+        assert_eq!(page_drop(true, None, None, at(20.), 5), None);
     }
 }

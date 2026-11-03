@@ -652,10 +652,17 @@ impl Render for Menu {
                         row = row.trailing(make(window, cx));
                     }
                     for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
-                        let run = run.clone();
+                        let (run, menu) = (run.clone(), menu.clone());
                         let id = ("action", index * 8 + k);
                         let act = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
-                            run(event, window, cx)
+                            run(event, window, cx);
+                            // An action that opened a sheet or a question
+                            // has taken the keyboard: the menu makes way.
+                            menu.update(cx, |menu, cx| {
+                                if !menu.focus.contains_focused(window, cx) {
+                                    cx.emit(DismissEvent);
+                                }
+                            });
                         };
                         row = match face {
                             super::panel::ActionFace::Glyph(icon) => {
@@ -702,12 +709,16 @@ impl Render for Menu {
                             .on_hover(hovered)
                             .child(row)
                             .children(open.clone().map(|child| {
-                                // Beside the row, its first row level with it.
+                                // Beside the row, its first row level with it,
+                                // moved back inside the window where it would
+                                // run past an edge.
                                 div()
                                     .absolute()
                                     .left_full()
                                     .top(-look.space(Space::Xs))
-                                    .child(child)
+                                    .child(
+                                        anchored().snap_to_window_with_margin(px(8.)).child(child),
+                                    )
                             })),
                     )
                 }
@@ -796,21 +807,15 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                 }
                 // Where the keyboard was, given back as the menu closes: a list's
                 // keys work again after a choice or Escape.
-                let before = window.focused(cx);
                 let own = menu.focus_handle(cx);
+                let before = returns_to(&own, window, cx);
                 opener.update(cx, |open, cx| {
                     let closing = cx.subscribe_in(
                         &menu,
                         window,
                         move |open: &mut Open, _, _: &DismissEvent, window, cx| {
                             open.0 = None;
-                            // Only from the menu: a choice that put up a sheet
-                            // or opened a field keeps the keyboard where it went.
-                            let in_menu =
-                                window.focused(cx).is_none() || own.contains_focused(window, cx);
-                            if in_menu && let Some(before) = &before {
-                                window.focus(before, cx);
-                            }
+                            give_back(&own, &before, window, cx);
                             cx.notify();
                         },
                     );
@@ -864,6 +869,69 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
 }
 
 impl<E: InteractiveElement + ParentElement> KoanContextMenu for E {}
+
+/// The menu opened last and where it gives the keyboard back to.
+struct LastMenu {
+    menu: FocusHandle,
+    returns_to: Option<WeakFocusHandle>,
+}
+
+impl Global for LastMenu {}
+
+/// What takes the keyboard when a menu closes and what held it before is
+/// gone: the app's page in front, say.
+struct MenuFallback(super::choice::Run);
+
+impl Global for MenuFallback {}
+
+/// Names what takes the keyboard when a menu closes and what held it as
+/// it opened has since gone, its page left behind.
+pub fn on_menu_focus_lost(fallback: impl Fn(&mut Window, &mut App) + 'static, cx: &mut App) {
+    cx.set_global(MenuFallback(Rc::new(fallback)));
+}
+
+/// Where the keyboard goes once the menu holding `menu` closes: what held
+/// it as the menu opened, or, when that was another menu about to close
+/// under this one, what that menu would have given it back to. Held weakly:
+/// a page the menu outlives does not take the keyboard from the grave.
+fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<WeakFocusHandle> {
+    let mut before = window.focused(cx).map(|f| f.downgrade());
+    if let Some(last) = cx.try_global::<LastMenu>()
+        && window.focused(cx).as_ref() == Some(&last.menu)
+    {
+        before = last.returns_to.clone();
+    }
+    cx.set_global(LastMenu {
+        menu: menu.clone(),
+        returns_to: before.clone(),
+    });
+    before
+}
+
+/// Gives the keyboard back as a menu closes, if it is still the menu's: a
+/// choice that put up a sheet or opened a field keeps it where it went.
+/// When what held it is gone, the app's fallback takes it.
+fn give_back(
+    menu: &FocusHandle,
+    before: &Option<WeakFocusHandle>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let in_menu = window.focused(cx).is_none() || menu.contains_focused(window, cx);
+    if !in_menu {
+        return;
+    }
+    match before.as_ref().and_then(|b| b.upgrade()) {
+        Some(before) => window.focus(&before, cx),
+        // Deferred: a slot's menu closes inside its view's update, and the
+        // fallback may update that view.
+        None => {
+            if let Some(fallback) = cx.try_global::<MenuFallback>().map(|f| f.0.clone()) {
+                window.defer(cx, move |window, cx| fallback(window, cx));
+            }
+        }
+    }
+}
 
 /// Where a set of buttons keeps the menu one of them has open: the
 /// transport's sleep, output and EQ, a toolbar's menus.
@@ -962,10 +1030,17 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                 let was_open = slot(view).pressed.take() == Some(which);
                 slot(view).open = None;
                 if !was_open && let Some(menu) = build(view, window, cx) {
-                    let dismissed = cx.subscribe(&menu, move |view, _, _: &DismissEvent, cx| {
-                        slot(view).open = None;
-                        cx.notify();
-                    });
+                    let own = menu.focus_handle(cx);
+                    let before = returns_to(&own, window, cx);
+                    let dismissed = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |view, _, _: &DismissEvent, window, cx| {
+                            slot(view).open = None;
+                            give_back(&own, &before, window, cx);
+                            cx.notify();
+                        },
+                    );
                     menu.focus_handle(cx).focus(window, cx);
                     slot(view).open = Some((which, menu, dismissed));
                 }
@@ -1086,6 +1161,66 @@ mod tests {
             cx.debug_bounds("menu: Evening").is_none(),
             "the menus close once something is chosen"
         );
+    }
+
+    struct Bar {
+        slot: MenuSlot<()>,
+        focused: bool,
+    }
+
+    impl Render for Bar {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.slot.trigger(
+                    (),
+                    div()
+                        .id("trigger")
+                        .debug_selector(|| "trigger".into())
+                        .size(px(40.)),
+                    |bar: &mut Self| &mut bar.slot,
+                    |_, window, cx| {
+                        Some(Menu::build(window, cx, |menu, _, _| {
+                            menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        }))
+                    },
+                    cx,
+                ),
+            )
+        }
+    }
+
+    /// A slot's menu opened with nothing focused, closed by Escape, gives
+    /// the keyboard to the app's fallback, which may update the very view
+    /// holding the slot, as the shell's does, without it being leased.
+    #[gpui_kit::test]
+    fn a_slot_menu_with_nowhere_to_return_runs_the_fallback(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (bar, cx) = cx.add_window_view(|_, _| Bar {
+            slot: MenuSlot::default(),
+            focused: false,
+        });
+        let cx: &mut gpui_kit::VisualTestContext = cx;
+        let weak = bar.downgrade();
+        cx.update(|_, cx| {
+            on_menu_focus_lost(
+                move |_, cx| {
+                    weak.update(cx, |bar, _| bar.focused = true).ok();
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let trigger = cx.debug_bounds("trigger").expect("drawn");
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_some(), "the menu opened");
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_none(), "Escape closed it");
+        assert!(bar.read_with(cx, |bar, _| bar.focused));
     }
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {

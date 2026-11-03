@@ -125,11 +125,11 @@ pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
-    uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
+    spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
-pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };

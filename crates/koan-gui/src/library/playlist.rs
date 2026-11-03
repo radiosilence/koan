@@ -933,7 +933,7 @@ impl PlaylistPage {
         &mut self,
         row: usize,
         p: &Paint,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows.len();
@@ -955,7 +955,7 @@ impl PlaylistPage {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
@@ -1180,6 +1180,26 @@ fn row_menu(
     )
 }
 
+impl PlaylistPage {
+    /// A drag over the page that no row took: the queue's rule
+    /// (`queue::drag_over_page`) for where it lands.
+    fn drag_over_page(
+        &mut self,
+        page: Bounds<Pixels>,
+        at: Point<Pixels>,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(wanted) = crate::queue::drag_over_page(&self.list, page, at, count) else {
+            return;
+        };
+        if self.drop_at != wanted {
+            self.drop_at = wanted;
+            cx.notify();
+        }
+    }
+}
+
 impl Render for PlaylistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
@@ -1264,21 +1284,17 @@ impl Render for PlaylistPage {
                         cx,
                     )
                 }))
-                // A drag that leaves the list takes its insertion line with it.
+                // A drag that leaves the list takes its insertion line with
+                // it; in the blank around the rows it lands at the start or
+                // the end, as the queue's does.
                 .on_drag_move::<PlayableDrag>(cx.listener(
-                    |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
-                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
-                            this.drop_at = None;
-                            cx.notify();
-                        }
+                    move |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                        this.drag_over_page(e.bounds, e.event.position, count, cx)
                     },
                 ))
                 .on_drag_move::<PlaylistDrag>(cx.listener(
-                    |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
-                            this.drop_at = None;
-                            cx.notify();
-                        }
+                    move |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                        this.drag_over_page(e.bounds, e.event.position, count, cx)
                     },
                 ))
         })
