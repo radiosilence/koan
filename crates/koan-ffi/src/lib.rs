@@ -655,6 +655,16 @@ enum SessionGate {
 }
 
 impl SessionGate {
+    /// The gate once the player has applied a restore's commands, the
+    /// queue's content then being at `content`.
+    fn settled(restored: bool, content: u64) -> Self {
+        if restored {
+            SessionGate::Read
+        } else {
+            SessionGate::Unread { baseline: content }
+        }
+    }
+
     /// Whether a save may write, the queue's content being at `content`.
     fn allows(self, content: u64) -> bool {
         match self {
@@ -2845,21 +2855,7 @@ impl KoanEngine {
         *self.session_gate.lock() = SessionGate::Restoring;
         let restored = offload::sequenced(move || {
             let outcome = self.restore_blocking();
-            // Read once the player holds what was restored; read, too, when
-            // nothing was saved. Failing before any of it was sent leaves the
-            // saved session to the person's own edits.
-            let gate = match &outcome {
-                Ok(_) if self.applied(server_queue::LANDED) => SessionGate::Read,
-                Ok(_) | Err(_) => SessionGate::Unread {
-                    baseline: self.state.content_version(),
-                },
-            };
-            if let SessionGate::Unread { .. } = gate {
-                log::warn!(
-                    "session: not restored; it is saved again only once the queue is edited"
-                );
-            }
-            *self.session_gate.lock() = gate;
+            self.settle_session(outcome.is_ok());
             outcome
         })
         .await;
@@ -6883,6 +6879,44 @@ impl KoanEngine {
         Ok(())
     }
 
+    /// Opens the session gate once the player has applied everything the
+    /// restore sent it, the play mode included, whose arrival moves the
+    /// queue's content version: `Read` after a restore, `Unread` from the
+    /// content as it then stands after a failed one. Until the player
+    /// answers, the gate stays `Restoring`; past `LANDED` a thread waits on
+    /// the answer, so a slow player never leaves a baseline read too soon.
+    fn settle_session(self: &Arc<Self>, restored: bool) {
+        let (reply, answered) = crossbeam_channel::bounded(1);
+        if self.send_local(PlayerCommand::Barrier(reply)).is_err() {
+            // No player: nothing it holds can be saved over anything.
+            return;
+        }
+        let settle = |engine: &Self| {
+            let gate = SessionGate::settled(restored, engine.state.content_version());
+            if let SessionGate::Unread { .. } = gate {
+                log::warn!("session: not restored; it is saved again once the queue is edited");
+            }
+            *engine.session_gate.lock() = gate;
+        };
+        if answered.recv_timeout(server_queue::LANDED).is_ok() {
+            settle(self);
+            return;
+        }
+        let engine = Arc::downgrade(self);
+        let waiting = std::thread::Builder::new()
+            .name("koan-session-gate".into())
+            .spawn(move || {
+                if answered.recv().is_ok()
+                    && let Some(engine) = engine.upgrade()
+                {
+                    settle(&engine);
+                }
+            });
+        if let Err(e) = waiting {
+            log::warn!("session: cannot wait for the restore to land: {e}");
+        }
+    }
+
     /// Whether a save may write now: see `SessionGate`.
     fn may_save_session(&self) -> bool {
         let gate = *self.session_gate.lock();
@@ -8010,6 +8044,29 @@ mod restore_tests {
         // Half applied: never written.
         assert!(!SessionGate::Restoring.allows(9));
         assert!(SessionGate::Read.allows(4));
+    }
+
+    #[test]
+    fn a_failed_restore_after_a_play_mode_does_not_save_the_empty_queue() {
+        use koan_core::player::state::PlayMode;
+        let state = SharedPlayerState::new();
+        // The restore sent the saved mode, then failed to read the queue.
+        // The player applying the mode moves the content version; the gate
+        // is settled after it has.
+        state.set_play_mode(PlayMode {
+            shuffle: true,
+            ..PlayMode::default()
+        });
+        let gate = SessionGate::settled(false, state.content_version());
+        assert!(
+            !gate.allows(state.content_version()),
+            "an untouched queue is not written over the saved one"
+        );
+        state.add_items(Vec::new());
+        assert!(
+            gate.allows(state.content_version()),
+            "a queue the person changed is"
+        );
     }
 
     #[test]
