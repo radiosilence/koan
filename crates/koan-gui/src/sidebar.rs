@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use futures::StreamExt as _;
 use koan_ffi::Playlist;
 use koan_kit::app::*;
 
@@ -170,17 +171,21 @@ impl Sidebar {
     /// Asks for the playlists again, with the records on each one's sleeve;
     /// a newer ask replaces one in flight.
     fn reload(&mut self, cx: &mut Context<Self>) {
+        /// How many playlists' sleeves are read at once.
+        const SLEEVE_READS: usize = 8;
         let engine = engine(cx);
         let reorders = self.reorders;
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
-                    // Every playlist's sleeve read together, not one after
-                    // another.
-                    let read = futures::future::join_all(playlists.iter().map(|playlist| {
+                    // The sleeves read a few at a time, in order: each read
+                    // takes a thread and a connection of the engine's.
+                    let read: Vec<_> = futures::stream::iter(playlists.iter().map(|playlist| {
                         let (engine, id) = (engine.clone(), playlist.id);
                         async move { (id, engine.playlist_cover_album_ids(id).await) }
                     }))
+                    .buffered(SLEEVE_READS)
+                    .collect()
                     .await;
                     this.update(cx, |this, cx| {
                         if this.reorders != reorders {
@@ -530,9 +535,12 @@ impl Render for Sidebar {
                             } else {
                                 "This playlist is read-only, and can't be added to".into()
                             };
-                            let refused = why.clone();
-                            row.on_drop(move |_: &PlayableDrag, _, cx| {
-                                crate::notice::show(refused.clone(), Tone::Muted, cx)
+                            let (refused, id) = (why.clone(), playlist.id);
+                            row.on_drop(move |dragged: &PlayableDrag, _, cx| {
+                                // Its own tracks let go over it add nothing.
+                                if !dragged.is_from(id) {
+                                    crate::notice::show(refused.clone(), Tone::Muted, cx)
+                                }
                             })
                             .on_drop(
                                 move |_: &ExternalPaths, _, cx| {
