@@ -16,6 +16,9 @@ pub struct AppearancePane {
     /// text size draws every window again, and a new tint bakes the wash.
     text_size: Option<u32>,
     wash_tint: Option<u32>,
+    /// The wash's pace and turn while their sliders are dragged.
+    wash_drift: Option<u32>,
+    wash_turn: Option<u32>,
     /// A change from elsewhere: the main window's text size, another
     /// window's Settings.
     _theme: Subscription,
@@ -27,6 +30,8 @@ impl AppearancePane {
             ctx,
             text_size: None,
             wash_tint: None,
+            wash_drift: None,
+            wash_turn: None,
             _theme: cx.observe_global::<KoanTheme>(|_, cx| cx.notify()),
         }
     }
@@ -41,6 +46,21 @@ impl AppearancePane {
             .read(cx)
             .engine()
             .set_text_size(percent as u16);
+        cx.notify();
+    }
+
+    /// The wash's pace and turn as dragged, into the theme and the config.
+    fn commit_drift(&mut self, cx: &mut Context<Self>) {
+        if self.wash_drift.is_none() && self.wash_turn.is_none() {
+            return;
+        }
+        let theme = cx.global::<KoanTheme>();
+        let pace = self.wash_drift.take().unwrap_or(theme.wash_drift);
+        let turn = self.wash_turn.take().unwrap_or(theme.wash_turn);
+        KoanTheme::set_wash_drift(pace, turn, cx);
+        let engine = self.ctx.model.read(cx).engine();
+        engine.set_wash_drift(pace as u16);
+        engine.set_wash_turn(turn as u8);
         cx.notify();
     }
 
@@ -77,6 +97,8 @@ impl Render for AppearancePane {
         let (low, high) = (*TEXT_SIZES.start(), *TEXT_SIZES.end());
         let text_size = self.text_size.unwrap_or(theme.text_size);
         let wash_tint = self.wash_tint.unwrap_or(theme.wash_tint);
+        let wash_drift = self.wash_drift.unwrap_or(theme.wash_drift);
+        let wash_turn = self.wash_turn.unwrap_or(theme.wash_turn);
         let record_colours = theme.record_colours;
         let wash_window = theme.wash_window;
         let entity = cx.entity();
@@ -161,8 +183,72 @@ impl Render for AppearancePane {
                                         })
                                     }
                                 })
-                                .on_commit(move |_, _, cx| {
-                                    entity.update(cx, |pane, cx| pane.commit_wash_tint(cx))
+                                .on_commit({
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |pane, cx| pane.commit_wash_tint(cx))
+                                    }
+                                }),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+            // How the wash moves while music plays.
+            colour_rows.push(
+                Row::new(format!("Drift {wash_drift}%"))
+                    .control(
+                        div().w_full().child(
+                            Slider::new("wash-drift", wash_drift as f32 / 200.)
+                                .named("drift")
+                                .ends("still", "twice as fast")
+                                .step(0.05)
+                                .on_change({
+                                    let entity = entity.clone();
+                                    move |f, _, cx| {
+                                        let percent = snapped(*f, 0, 200, 10);
+                                        entity.update(cx, |pane, cx| {
+                                            if pane.wash_drift != Some(percent) {
+                                                pane.wash_drift = Some(percent);
+                                                cx.notify();
+                                            }
+                                        })
+                                    }
+                                })
+                                .on_commit({
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |pane, cx| pane.commit_drift(cx))
+                                    }
+                                }),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+            colour_rows.push(
+                Row::new(format!("Turn {wash_turn}°"))
+                    .control(
+                        div().w_full().child(
+                            Slider::new("wash-turn", wash_turn as f32 / 10.)
+                                .named("turn")
+                                .ends("none", "10°")
+                                .step(0.1)
+                                .on_change({
+                                    let entity = entity.clone();
+                                    move |f, _, cx| {
+                                        let degrees = snapped(*f, 0, 10, 1);
+                                        entity.update(cx, |pane, cx| {
+                                            if pane.wash_turn != Some(degrees) {
+                                                pane.wash_turn = Some(degrees);
+                                                cx.notify();
+                                            }
+                                        })
+                                    }
+                                })
+                                .on_commit({
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |pane, cx| pane.commit_drift(cx))
+                                    }
                                 }),
                         ),
                     )
