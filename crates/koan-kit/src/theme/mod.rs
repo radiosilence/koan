@@ -452,11 +452,6 @@ impl KoanTheme {
         });
     }
 
-    /// The accent the record has, once it has arrived.
-    pub fn accent_target(cx: &App) -> Accent {
-        accent_state(cx).target()
-    }
-
     pub fn set_text_size(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().text_size =
             percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());

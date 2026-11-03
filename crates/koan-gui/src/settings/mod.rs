@@ -157,13 +157,6 @@ pub fn open_server(cx: &mut App) {
         .ok();
 }
 
-/// Whether `window` is the Settings window.
-pub fn is_settings_window(window: AnyWindowHandle, cx: &App) -> bool {
-    cx.try_global::<Settings>()
-        .and_then(|settings| settings.window.as_ref())
-        .is_some_and(|(held, _)| *held == window)
-}
-
 /// What every pane reads, handed to each as it is made.
 #[derive(Clone)]
 pub struct Ctx {

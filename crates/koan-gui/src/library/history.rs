@@ -14,7 +14,6 @@ use koan_kit::app::*;
 
 use super::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
-use super::nav::Page;
 use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::tokens::Paint;
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
@@ -477,15 +476,7 @@ impl TrackList for HistoryPage {
                 }
                 cx.notify();
             }
-            RowPart::Artist(id) => self
-                .lib
-                .nav
-                .update(cx, |n, cx| n.open(Page::Artist(id), cx)),
-            RowPart::Album(id) => self.lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
-            RowPart::Heart => self
-                .lib
-                .feed
-                .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
+            part => part.follow(track, &self.lib, cx),
         }
     }
 }

@@ -278,7 +278,7 @@ impl RowMetrics {
     }
 
     /// The sidebar's width as it opens, and what a double click on its edge
-    /// restores; a drag keeps it between `sidebar_min` and `sidebar_max`.
+    /// restores; a drag keeps it between `SIDEBAR_MIN` and `SIDEBAR_MAX`.
     pub const SIDEBAR: Pixels = px(220.);
     pub const SIDEBAR_MIN: Pixels = px(180.);
     pub const SIDEBAR_MAX: Pixels = px(360.);

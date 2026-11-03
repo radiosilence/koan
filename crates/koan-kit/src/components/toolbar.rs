@@ -14,8 +14,6 @@ pub struct ToolbarMetrics;
 
 impl ToolbarMetrics {
     pub const HEIGHT: Pixels = px(TOOLBAR_HEIGHT);
-    /// A toolbar button's cell.
-    pub const BUTTON: Pixels = px(36.);
     /// From the toolbar's edges to its first and last cells.
     pub const INSET: Pixels = px(8.);
     /// Between separate items: sidebar, back and forward; select and lyrics.
