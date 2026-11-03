@@ -2932,6 +2932,17 @@ impl Window {
         self.rendered_frame.scene.quads.clone()
     }
 
+    // KOAN: the shader quads in the most recently rendered frame's scene,
+    // layer groups included, so tests can hold what draws at rest (#1741).
+    /// The number of shader quads in the most recently rendered frame's scene.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_shader_count(&self) -> usize {
+        fn count(scene: &Scene) -> usize {
+            scene.shaders.len() + scene.layer_groups.iter().map(count).sum::<usize>()
+        }
+        count(&self.rendered_frame.scene)
+    }
+
     /// Returns the underlines in the most recently rendered frame's scene.
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_underlines(&self) -> Vec<Underline> {

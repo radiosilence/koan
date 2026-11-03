@@ -1282,10 +1282,10 @@ index 6cb3387..d63fece 100644
 +
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..e94c2ce
+index 0000000..6870d25
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,832 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -1924,6 +1924,44 @@ index 0000000..e94c2ce
 +        values
 +    }
 +
++    // KOAN: (#1741) `time` grows from the origin for as long as a quad is
++    // drawn, and an f32 of days is coarser than a frame.
++    /// What the program is handed at `now`: `time` and every track's start
++    /// as seconds from the last whole hour of `time`, and a repeating
++    /// track's start moved up to its latest whole cycle, all worked out in
++    /// f64. The program reckons the same motion, to the frame, however long
++    /// the quad has been drawn; nothing stored changes, so writers on other
++    /// threads never see a base move under them. A program reading `time`
++    /// alone sees it fall back by an hour once an hour.
++    pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
++        const BASE: f64 = 3600.0;
++        let mut values = self.snapshot_at(now);
++        let t = (since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9;
++        let base = (t / BASE).floor() * BASE;
++        if base == 0.0 {
++            return (t as f32, values);
++        }
++        for k in 0..SHADER_TRACKS {
++            let at = SHADER_PLAIN + k * TRACK_FLOATS;
++            let mut track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            if track.length <= 0.0 {
++                continue;
++            }
++            let mut start = track.start as f64;
++            let period = match track.repeat {
++                TrackRepeat::Once => 0.0,
++                TrackRepeat::Loop => track.length as f64,
++                TrackRepeat::Alternate => 2.0 * track.length as f64,
++            };
++            if period > 0.0 && start < t {
++                start += ((t - start) / period).floor() * period;
++            }
++            track.start = (start - base) as f32;
++            values[at..at + TRACK_FLOATS].copy_from_slice(&track.encode());
++        }
++        ((t - base) as f32, values)
++    }
++
 +    /// Whether a track is moving at `now`.
 +    pub fn tracks_moving(&self, now: Instant) -> bool {
 +        let until = self.moving_until.load(Ordering::Relaxed);
@@ -1990,8 +2028,8 @@ index 0000000..e94c2ce
 +
 +impl ShaderInstance {
 +    pub fn of(shader: &PaintShader, now: Instant) -> Self {
-+        let time = shader.uniforms.time_at(now);
-+        let mut uniforms = shader.uniforms.snapshot_at(now);
++        // KOAN: time and tracks from a recent base (#1741).
++        let (time, mut uniforms) = shader.uniforms.present_at(now);
 +        if let Some(prepare) = shader.program.prepare {
 +            prepare(&mut uniforms, time);
 +        }
@@ -2023,6 +2061,45 @@ index 0000000..e94c2ce
 +                ],
 +                (None, None) => [0.0; 4],
 +            },
++        }
++    }
++}
++
++// KOAN: (#1741).
++#[cfg(test)]
++mod present_tests {
++    use super::*;
++    use std::time::Duration;
++
++    /// Three days on, a loop drawn since the origin is handed to the program
++    /// at the phase f64 reckons, within a millisecond's motion.
++    #[test]
++    fn a_quad_drawn_for_days_is_reckoned_to_the_frame() {
++        let uniforms = ShaderUniforms::new();
++        let origin = Instant::now();
++        uniforms.set_origin(origin);
++        uniforms.set_track(
++            0,
++            Track {
++                from: 0.0,
++                to: 1.0,
++                start: 0.0,
++                length: 1.0,
++                curve: TrackCurve::Linear,
++                repeat: TrackRepeat::Loop,
++            },
++        );
++        for offset in [0.25, 0.5, 0.75] {
++            let now = origin + Duration::from_secs_f64(3.0 * 86_400.0 + offset);
++            let (time, values) = uniforms.present_at(now);
++            let at = SHADER_PLAIN;
++            let track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            let drawn = track.at(time);
++            assert!(
++                (drawn - offset as f32).abs() < 1e-3,
++                "{offset}s into a cycle drew {drawn}"
++            );
++            assert!((0.0..3600.0).contains(&time), "time {time} kept its base");
 +        }
 +    }
 +}
@@ -2781,7 +2858,7 @@ index 5b63821..e2888a3 100644
          self.nodes_stack.last_mut()
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..ca8c456 100644
+index c559412..d78002e 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -70,9 +70,9 @@ mod prompts;
@@ -2896,7 +2973,25 @@ index c559412..ca8c456 100644
              pending_input: None,
              pending_modifier: ModifierState::default(),
              pending_input_observers: SubscriberSet::new(),
-@@ -3439,6 +3472,7 @@ impl Window {
+@@ -2899,6 +2932,17 @@ impl Window {
+         self.rendered_frame.scene.quads.clone()
+     }
+ 
++    // KOAN: the shader quads in the most recently rendered frame's scene,
++    // layer groups included, so tests can hold what draws at rest (#1741).
++    /// The number of shader quads in the most recently rendered frame's scene.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn painted_shader_count(&self) -> usize {
++        fn count(scene: &Scene) -> usize {
++            scene.shaders.len() + scene.layer_groups.iter().map(count).sum::<usize>()
++        }
++        count(&self.rendered_frame.scene)
++    }
++
+     /// Returns the underlines in the most recently rendered frame's scene.
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn painted_underlines(&self) -> Vec<Underline> {
+@@ -3439,6 +3483,7 @@ impl Window {
      /// the contents of the new [`Scene`], use [`Self::present`].
      #[profiling::function]
      pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
@@ -2904,7 +2999,7 @@ index c559412..ca8c456 100644
          // Drain every draw in profiler builds so a previous frame's
          // first-invalidation timestamp can't be attributed to this one.
          #[cfg(feature = "profiler")]
-@@ -3618,12 +3652,40 @@ impl Window {
+@@ -3618,12 +3663,40 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -2945,7 +3040,7 @@ index c559412..ca8c456 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -3913,7 +3975,15 @@ impl Window {
+@@ -3913,7 +3986,15 @@ impl Window {
              traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
  
              for deferred_draw_ix in traversal_order {
@@ -2962,7 +3057,7 @@ index c559412..ca8c456 100644
                      let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                      self.element_id_stack
                          .clone_from(&deferred_draw.element_id_stack);
-@@ -3926,12 +3996,16 @@ impl Window {
+@@ -3926,12 +4007,16 @@ impl Window {
                          deferred_draw.rem_size,
                          deferred_draw.absolute_offset,
                          deferred_draw.prepaint_range.clone(),
@@ -2979,7 +3074,7 @@ index c559412..ca8c456 100644
                      self.with_rendered_view(current_view, |window| {
                          window.with_rem_size(Some(rem_size), |window| {
                              window.with_absolute_element_offset(absolute_offset, |window| {
-@@ -3939,9 +4013,17 @@ impl Window {
+@@ -3939,9 +4024,17 @@ impl Window {
                              });
                          });
                      });
@@ -2998,7 +3093,7 @@ index c559412..ca8c456 100644
                  }
                  let prepaint_end = self.prepaint_index();
                  self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
-@@ -3985,6 +4067,11 @@ impl Window {
+@@ -3985,6 +4078,11 @@ impl Window {
                  })
              } else {
                  self.reuse_paint(deferred_draw.paint_range.clone());
@@ -3010,7 +3105,7 @@ index c559412..ca8c456 100644
              }
              let paint_end = self.paint_index();
              deferred_draw.paint_range = paint_start..paint_end;
-@@ -4058,6 +4145,7 @@ impl Window {
+@@ -4058,6 +4156,7 @@ impl Window {
                      absolute_offset: deferred_draw.absolute_offset,
                      prepaint_range: deferred_draw.prepaint_range.clone(),
                      paint_range: deferred_draw.paint_range.clone(),
@@ -3018,7 +3113,7 @@ index c559412..ca8c456 100644
                  }),
          );
      }
-@@ -4540,6 +4628,7 @@ impl Window {
+@@ -4540,6 +4639,7 @@ impl Window {
              absolute_offset,
              prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
              paint_range: PaintIndex::default()..PaintIndex::default(),
@@ -3026,7 +3121,7 @@ index c559412..ca8c456 100644
          });
      }
  
-@@ -4690,6 +4779,110 @@ impl Window {
+@@ -4690,6 +4790,110 @@ impl Window {
          }
      }
  
@@ -3137,7 +3232,7 @@ index c559412..ca8c456 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4970,12 @@ impl Window {
+@@ -4777,7 +4981,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -3151,7 +3246,7 @@ index c559412..ca8c456 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7051,6 +7249,30 @@ impl Window {
+@@ -7051,6 +7260,30 @@ impl Window {
          self.a11y.is_active()
      }
  
@@ -3182,7 +3277,7 @@ index c559412..ca8c456 100644
      /// Debug representation of the last frame's accessibility information.
      pub fn debug_a11y_tree_json(&self) -> Option<String> {
          self.a11y.debug_tree_json()
-@@ -7074,6 +7296,22 @@ impl Window {
+@@ -7074,6 +7307,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

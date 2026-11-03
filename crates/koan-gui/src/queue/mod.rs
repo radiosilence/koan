@@ -688,8 +688,9 @@ impl QueueView {
                 .id(("sleeve", row as u64))
                 .into_any_element()
         });
-        // What a track row reads beyond its item: its heart. A transfer's
-        // progress its availability mark reads each frame it is drawn.
+        // What a track row reads beyond its item: its heart, and its
+        // transfer, whose progress the availability mark's ring glides on
+        // the GPU.
         let mut favourite = None;
         let mut availability = None;
         if let Row::Track { ix, .. } = r {
@@ -1050,7 +1051,7 @@ fn row_menu(
         .item(
             MenuEntry::new("group by album")
                 .icon(Icon::Album)
-                .checked(grouped)
+                .toggled(grouped)
                 .on_click({
                     let view = view.clone();
                     move |_, window, cx| {

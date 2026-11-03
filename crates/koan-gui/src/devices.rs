@@ -118,7 +118,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             |_, _, cx| move_music(None, cx),
         );
     }
-    let mut menu = menu.min_width(Menu::PICKER_WIDTH).section("control");
+    let mut menu = menu.width(Menu::PICKER_WIDTH).section("control");
     // The system keeps the app off the local network until the person allows
     // it, and says nothing otherwise: without this the list would just be
     // short.

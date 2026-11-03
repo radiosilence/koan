@@ -17,6 +17,8 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, labe
 pub struct MenuPanel {
     children: Vec<AnyElement>,
     min_width: Option<f32>,
+    /// `min_width` is the panel's width, not only its least.
+    fixed: bool,
 }
 
 impl MenuPanel {
@@ -24,12 +26,20 @@ impl MenuPanel {
         Self {
             children: Vec::new(),
             min_width: None,
+            fixed: false,
         }
     }
 
     /// At least `points` wide, where given; 180 points otherwise.
     pub fn min_width(mut self, points: Option<f32>) -> Self {
         self.min_width = points;
+        self
+    }
+
+    /// Exactly its `min_width`, whatever its rows hold: they cut what does
+    /// not fit.
+    pub fn fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
         self
     }
 }
@@ -53,6 +63,9 @@ impl RenderOnce for MenuPanel {
             .flex()
             .flex_col()
             .min_w(look.spaced(self.min_width.unwrap_or(180.)))
+            .when(self.fixed, |panel| {
+                panel.w(look.spaced(self.min_width.unwrap_or(180.)))
+            })
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
             .border(look.hairline)
@@ -80,13 +93,16 @@ pub fn popover_panel(points: f32, look: &Look) -> gpui_kit::Div {
 
 /// A row of a menu: its label in `control`, `ink`, after its glyph when
 /// icons are on, on `surface` under the pointer or the arrow keys. A choice
-/// that is in force is ticked; a destructive one is in `bad`.
+/// that is in force is ticked, on a faint accent (`surface` with more
+/// contrast); a destructive one is in `bad`.
 #[derive(IntoElement)]
 pub struct MenuRow {
     id: ElementId,
     label: SharedString,
     icon: Option<Icon>,
     checked: Option<bool>,
+    /// Its tick is a setting's, not a choice's (`toggle`).
+    toggle: bool,
     highlighted: bool,
     destructive: bool,
     disabled: bool,
@@ -97,7 +113,7 @@ pub struct MenuRow {
     /// The rich row's second line, and whether it warns.
     detail: Option<(SharedString, bool)>,
     /// The rich row: its glyph large in a column of its own, the chosen row
-    /// on `surface` with its glyph in the accent.
+    /// on the choice's ground with its glyph in the accent.
     rich: bool,
     /// A small glyph after the label: how a place is reached.
     reach: Option<Icon>,
@@ -120,6 +136,7 @@ impl MenuRow {
             label: label(text),
             icon: None,
             checked: None,
+            toggle: false,
             highlighted: false,
             destructive: false,
             disabled: false,
@@ -230,6 +247,12 @@ impl MenuRow {
         self
     }
 
+    /// Its tick is a setting's state, not a choice: no chosen ground.
+    pub fn toggle(mut self, toggle: bool) -> Self {
+        self.toggle = toggle;
+        self
+    }
+
     /// Lit by the arrow keys, as the pointer lights it.
     pub fn highlighted(mut self, highlighted: bool) -> Self {
         self.highlighted = highlighted;
@@ -262,8 +285,8 @@ impl MenuRow {
     }
 
     /// The rich row: a place to choose, with its glyph large beside a label
-    /// and its detail, the chosen one on `surface` and its glyph in the
-    /// accent.
+    /// and its detail, the chosen one on the choice's ground and its glyph in
+    /// the accent.
     pub fn rich(mut self, rich: bool) -> Self {
         self.rich = rich;
         self
@@ -390,16 +413,20 @@ impl RenderOnce for MenuRow {
         let on_click = self.on_click;
         let chosen = self.rich && self.checked == Some(true);
         let picked = self.checked == Some(true);
+        // The chosen place's ground: a choice in force, not a setting's tick.
+        let grounded = picked && !self.toggle;
         let muted = look.palette.muted.hsla();
         let accent = look.color(Tone::Accent);
         let (label, detail, reach) = (self.label, self.detail, self.reach);
         let spoken = label.clone();
         let described = detail.as_ref().map(|(d, _)| d.clone());
+        // A name too long for a fixed panel is cut, not let widen it.
         let name = div()
             .flex()
             .items_center()
+            .min_w_0()
             .gap(look.space(Space::Xs))
-            .child(label)
+            .child(div().min_w_0().truncate().child(label))
             .children(reach.map(|icon| KoanIcon::new(icon).role(TypeRole::Fine).color(muted)));
         // One line of detail, as wide as `DETAIL_WIDTH`; what does not fit
         // is in its tooltip.
@@ -435,7 +462,7 @@ impl RenderOnce for MenuRow {
                             }),
                     )
             }
-            None => div().relative().flex_1().child(name),
+            None => div().relative().flex_1().min_w_0().child(name),
         };
         let rich = self.rich;
         // The row's slots: its actions, then its tick when it is the choice.
@@ -510,16 +537,26 @@ impl RenderOnce for MenuRow {
             )
             .text_color(color)
             .whitespace_nowrap()
-            // The choice on the accent, faint, in every menu of choices; the
-            // highlight on `surface` elsewhere.
-            .when(picked && !self.disabled, |row| {
-                row.bg(accent.opacity(PICKED))
-                    .hover(move |row| row.bg(accent.opacity(PICKED * 1.5)))
+            // The choice on the accent, faint, in every menu of choices, a
+            // disabled one too (an EQ preset edited), which only does not
+            // light; a setting's tick takes none. The arrow keys' highlight
+            // on the choice is the pointer's, the stronger tint. With more
+            // contrast asked for, a faint tint could vanish: the choice takes
+            // `surface`, opaque. The highlight on `surface` elsewhere.
+            .when(grounded, |row| {
+                let (rest, lit) = if look.contrast {
+                    (surface, look.palette.hover.hsla())
+                } else {
+                    (accent.opacity(PICKED), accent.opacity(PICKED * 1.5))
+                };
+                let live = !self.disabled;
+                row.bg(if self.highlighted && live { lit } else { rest })
+                    .when(live, |row| row.hover(move |row| row.bg(lit)))
             })
-            .when(!picked && self.highlighted && !self.disabled, |row| {
+            .when(!grounded && self.highlighted && !self.disabled, |row| {
                 row.bg(surface)
             })
-            .when(!picked && !self.disabled, |row| {
+            .when(!grounded && !self.disabled, |row| {
                 row.hover(move |row| row.bg(surface))
             })
             .children(self.icon.filter(|_| look.icons || rich).map(|icon| {
