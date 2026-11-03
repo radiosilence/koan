@@ -13,9 +13,9 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use koan_ffi::KoanEngine;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::AppContext;
+use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic keys, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, Keystroke, px, size};
@@ -102,7 +102,7 @@ fn key(
     window: AnyWindowHandle,
     stroke: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let keystroke = Keystroke::parse(stroke)?;
+    let keystroke = Keystroke::parse(stroke).map_err(|e| e.to_string())?;
     cx.update_window(window, |_, window, cx| {
         window.dispatch_keystroke(keystroke, cx);
     })?;
