@@ -440,7 +440,7 @@ fn allowed(enabled: bool, reachable: bool) -> bool {
     enabled
         && reachable
         && !CONSTRAINED.load(Ordering::Relaxed)
-        && !STOPPED.load(Ordering::Relaxed)
+        && !stopped()
         && crate::quiet::awake()
 }
 
