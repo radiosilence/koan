@@ -366,34 +366,16 @@ impl PlaylistPage {
         });
     }
 
-    /// Offline, entries with no file here are not listed: a place among the
-    /// rows shown is not one among the playlist's entries, and a reorder of
-    /// the rows shown would send the rest to the end.
-    fn partial(&self) -> bool {
-        self.playlist
-            .as_ref()
-            .is_some_and(|p| p.track_count as usize > self.items.len())
-    }
-
     /// Where `dragged` would land if let go over a row, which the insertion
     /// line shows.
     fn lands(&self, dragged: &PlayableDrag) -> Lands {
         let id = self.id;
-        let own = dragged.origin.as_ref().is_some_and(|o| o.playlist == id);
-        if own && self.partial() {
-            return Lands::Nowhere(
-                "not reordered: some of this playlist's tracks are not on this device",
-            );
-        }
         let itself = dragged
             .sets
             .iter()
             .any(|s| matches!(s, koan_runtime::TrackSet::Playlist { id: p } if *p == id));
         if itself {
             return Lands::Nowhere("a playlist cannot be added to itself");
-        }
-        if !own && self.partial() {
-            return Lands::End;
         }
         Lands::Row
     }
@@ -412,9 +394,11 @@ impl PlaylistPage {
                 crate::notice::show(why, crate::theme::Tone::Muted, cx);
                 return;
             }
-            Lands::End | Lands::Row => {}
+            Lands::Row => {}
         }
-        let partial = self.partial();
+        // Places are named by entry, never by index: offline, entries with
+        // no file here are not listed, and the engine moves the rows shown
+        // among all of them.
         match dragged.origin.as_ref().filter(|o| o.playlist == id) {
             Some(origin) => {
                 let moving: Vec<String> = origin.entries.iter().map(i64::to_string).collect();
@@ -425,22 +409,32 @@ impl PlaylistPage {
                 };
                 let order: Vec<String> =
                     self.items.iter().map(|i| i.queue_item_id.clone()).collect();
-                let moved = rows::reordered(&order, &moving, &target, after);
-                if moved == order {
+                if rows::reordered(&order, &moving, &target, after) == order {
                     return;
                 }
-                let ids: Vec<i64> = moved.iter().filter_map(|id| id.parse().ok()).collect();
-                command(cx, "reorder playlist", move |e| e.reorder_playlist(id, ids));
+                // Before the target, or after it: before the first row
+                // following it that stays.
+                let at = order.iter().position(|o| *o == target);
+                let before = match (after, at) {
+                    (false, _) => Some(target.as_str()),
+                    (true, Some(at)) => order[at + 1..]
+                        .iter()
+                        .find(|o| !moving.contains(o))
+                        .map(String::as_str),
+                    (true, None) => None,
+                }
+                .and_then(|o| o.parse::<i64>().ok());
+                let entries = origin.entries.to_vec();
+                command(cx, "reorder playlist", move |e| {
+                    e.move_playlist_entries(id, entries, before)
+                });
             }
             None => {
-                let at = if partial {
-                    self.playlist.as_ref().map_or(0, |p| p.track_count as usize)
-                } else {
-                    rows::position(&self.rows, dest, self.items.len())
-                } as u32;
+                let at = rows::position(&self.rows, dest, self.items.len());
+                let before = self.items.get(at).and_then(|i| i.playlist_entry_id);
                 let sets = dragged.sets.to_vec();
                 command(cx, "add to playlist", move |e| {
-                    e.insert_into_playlist(id, sets, at)
+                    e.insert_into_playlist_before(id, sets, before)
                 });
             }
         }
@@ -1054,7 +1048,6 @@ impl PlaylistPage {
             let lower = position.y > bounds.center().y;
             let at = match lands {
                 Lands::Row => Some(rows::insertion_point(row, lower)),
-                Lands::End => Some(count),
                 Lands::Nowhere(_) => None,
             };
             if this.drop_at != at {
@@ -1408,6 +1401,5 @@ mod tests {
 #[derive(Clone, Copy)]
 enum Lands {
     Row,
-    End,
     Nowhere(&'static str),
 }

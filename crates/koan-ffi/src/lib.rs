@@ -1240,6 +1240,38 @@ impl KoanEngine {
         self.0.clone().playlist_undo_shuffles(playlist_id).await
     }
 
+    /// Move the entries named to just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, those a caller does
+    /// not list included: offline, where only the entries with a file here
+    /// are shown, a move among them leaves the rest where they are. The moved
+    /// entries keep the order they had.
+    pub async fn move_playlist_entries(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+        before: Option<i64>,
+    ) -> Result<(), KoanError> {
+        self.0
+            .clone()
+            .move_playlist_entries(playlist_id, entry_ids, before)
+            .await
+    }
+
+    /// Add the tracks `sources` name just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, as
+    /// `move_playlist_entries` places them. Returns how many landed.
+    pub async fn insert_into_playlist_before(
+        self: Arc<Self>,
+        playlist_id: i64,
+        sources: Vec<TrackSet>,
+        before: Option<i64>,
+    ) -> Result<u32, KoanError> {
+        self.0
+            .clone()
+            .insert_into_playlist_before(playlist_id, sources, before)
+            .await
+    }
+
     /// Where the playlists sit in the sidebar, in the order given, sent on to
     /// a server that keeps the account's order (`koanPlaylistOrder`). On the
     /// command lane with the edits, so two drags land in the order they were

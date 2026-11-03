@@ -598,6 +598,50 @@ pub fn reorder_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<
     })
 }
 
+/// `order` with the entries `moving` names lifted out and put back, in the
+/// order they had, just before `before`: at the end when `before` is `None`
+/// or is not in `order`, and before the first entry after it that stays
+/// when it is itself moving. Every other entry keeps its place, so a caller
+/// that lists only some of the entries (offline, those with a file here)
+/// moves them among the rest without disturbing what it does not show.
+pub fn spliced(order: &[i64], moving: &[i64], before: Option<i64>) -> Vec<i64> {
+    let lifted: HashSet<i64> = moving.iter().copied().collect();
+    let moved: Vec<i64> = order
+        .iter()
+        .copied()
+        .filter(|e| lifted.contains(e))
+        .collect();
+    let mut kept: Vec<i64> = order
+        .iter()
+        .copied()
+        .filter(|e| !lifted.contains(e))
+        .collect();
+    let at = before
+        .and_then(|b| order.iter().position(|e| *e == b))
+        .and_then(|from| order[from..].iter().find(|e| !lifted.contains(e)))
+        .and_then(|anchor| kept.iter().position(|e| e == anchor))
+        .unwrap_or(kept.len());
+    kept.splice(at..at, moved);
+    kept
+}
+
+/// Moves the entries `moving` names to just before the entry `before` (the
+/// end when `None`), among all of the playlist's entries: see `spliced`.
+pub fn move_entries(
+    conn: &Connection,
+    id: i64,
+    moving: &[i64],
+    before: Option<i64>,
+) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        let order: Vec<i64> = playlist_entries(conn, id)?
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        reorder_entries(conn, id, &spliced(&order, moving, before))
+    })
+}
+
 /// Drop entries by id. Everything after them closes up.
 pub fn remove_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<usize, DbError> {
     super::atomically(conn, || {
@@ -925,6 +969,38 @@ fn touch(conn: &Connection, id: i64) -> Result<(), DbError> {
         params![id],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod splice_tests {
+    use super::spliced;
+
+    #[test]
+    fn moved_entries_land_before_the_anchor_in_their_order() {
+        let order = [1, 2, 3, 4, 5];
+        assert_eq!(spliced(&order, &[4, 2], Some(1)), [2, 4, 1, 3, 5]);
+        assert_eq!(spliced(&order, &[1], None), [2, 3, 4, 5, 1]);
+        assert_eq!(
+            spliced(&order, &[1], Some(99)),
+            [2, 3, 4, 5, 1],
+            "an unknown anchor is the end"
+        );
+    }
+
+    /// The caller saw 1, 3 and 5 (2 and 4 have no file here) and dragged 5
+    /// before 3: the hidden entries keep their places.
+    #[test]
+    fn hidden_entries_keep_their_places() {
+        assert_eq!(spliced(&[1, 2, 3, 4, 5], &[5], Some(3)), [1, 2, 5, 3, 4]);
+    }
+
+    /// An anchor that is itself moving means the first entry after it that
+    /// stays.
+    #[test]
+    fn an_anchor_among_the_moved_is_the_next_that_stays() {
+        assert_eq!(spliced(&[1, 2, 3, 4], &[2, 3], Some(2)), [1, 2, 3, 4]);
+        assert_eq!(spliced(&[1, 2, 3, 4], &[3, 4], Some(3)), [1, 2, 3, 4]);
+    }
 }
 
 #[cfg(test)]
