@@ -46,8 +46,8 @@ impl Render for Frames {
         let cell = |code: f32, heading: f32, t: f32| {
             let animated = Animated::new();
             animated.set_all(0, &[code, heading]);
-            animated.set_color(2, hsla(0.0, 0.0, 0.92, 1.0));
-            animated.set_all(6, &[SPILL * scale]);
+            animated.set_all(2, &[SPILL * scale]);
+            animated.set_color(4, hsla(0.0, 0.0, 0.92, 1.0));
             animated.set_color(8, hsla(0.92, 0.75, 0.62, 1.0));
             animated.set_all(12, &[SIDE * scale]);
             // The answer's time, and the same on a quick-out curve.

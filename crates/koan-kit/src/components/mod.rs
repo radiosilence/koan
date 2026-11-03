@@ -12,6 +12,9 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod program;
+mod slot;
+mod track;
 pub(crate) use animated::curve;
 mod answer;
 mod arrive;
@@ -83,14 +86,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Task, TrackCurve, Window, canvas, div, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Task, Window, canvas, div, px,
 };
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track, WeakAnimated,
+    ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
 pub use arrive::{Arrival, arriving};
@@ -107,6 +110,8 @@ pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
+pub use slot::{ColorSlot, install as install_color_slots, present_now};
+pub use track::{TrackCurve, spring_length, track_at};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{

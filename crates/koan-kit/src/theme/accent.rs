@@ -506,7 +506,7 @@ mod tests {
     /// through the hues between, never through grey.
     #[test]
     fn slots_mix_the_accent_in_oklab() {
-        use gpui::{ColorSlot, Track, TrackCurve, TrackRepeat};
+        use crate::components::{ColorSlot, Repeat as TrackRepeat, Track, TrackCurve};
         let mint = Accent::MINT.dark;
         let blue = Accent::of(Some([0.1, 0.2, 0.9])).dark;
         let slot = ColorSlot::claim(mint.rgba()).expect("a free slot");

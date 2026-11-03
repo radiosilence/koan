@@ -12,11 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    ColorSlot, Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba, ShaderUniforms,
-    Styled, TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, point, present_now, px,
+    Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba, ShaderUniforms, Styled,
+    TestAppContext, Window, div, point, px,
 };
 use koan_kit::components::{
-    Animated, AnimatedQuad, Ease, Repeat, ShaderProgram, Toolbar, ToolbarButton,
+    Animated, AnimatedQuad, ColorSlot, Ease, Repeat, Repeat as TrackRepeat, SHADER_PLAIN,
+    ShaderProgram, TRACK_FLOATS, Toolbar, ToolbarButton, Track, TrackCurve, present_now,
 };
 use koan_kit::theme::{self, Accent, Icon, KoanTheme, Look, Motion};
 use parking_lot::Mutex;
@@ -146,9 +147,9 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
         let (uniforms, writing) = (uniforms.clone(), writing.clone());
         std::thread::spawn(move || {
             while writing.load(Ordering::Relaxed) {
-                uniforms.take_present();
-                uniforms.is_live();
-                let values = uniforms.snapshot_at(present_now());
+                uniforms.take_present(Instant::now());
+                uniforms.is_live(Instant::now());
+                let values = uniforms.presented_at(present_now()).1;
                 assert!(values.iter().all(|v| v.is_finite()), "{values:?}");
             }
         })
@@ -157,30 +158,33 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     for _ in 0..20_000 {
         match rng.below(4) {
             0 => {
-                let index = rng.below(13);
+                let block = rng.below(4);
                 let color = if rng.below(2) == 0 && !slots.is_empty() {
                     slots[rng.below(slots.len())].hsla(rng.unit())
                 } else {
                     Hsla::from(rgba(&mut rng))
                 };
-                uniforms.set_color(index, color);
+                uniforms.set_color(block, color);
             }
             1 => {
                 uniforms.set(rng.below(16), rng.unit());
             }
             2 => {
-                let start = uniforms.time_at(present_now());
-                uniforms.set_track(
-                    rng.below(8),
-                    Track {
-                        from: rng.unit(),
-                        to: rng.unit(),
-                        start,
-                        length: rng.unit() * 0.03,
-                        curve: curve(&mut rng),
-                        repeat: TrackRepeat::Once,
-                    },
-                );
+                let start = uniforms.time_at(present_now()) as f32;
+                let track = Track {
+                    from: rng.unit(),
+                    to: rng.unit(),
+                    start,
+                    length: rng.unit() * 0.03,
+                    curve: curve(&mut rng),
+                    repeat: TrackRepeat::Once,
+                };
+                let base = SHADER_PLAIN + rng.below(8) * TRACK_FLOATS;
+                uniforms.publish(|| {
+                    for (i, value) in track.encode().into_iter().enumerate() {
+                        uniforms.set(base + i, value);
+                    }
+                });
             }
             _ => {
                 let slot = &slots[rng.below(slots.len())];
@@ -203,9 +207,11 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     // Everything written has an end within 30 ms: once that is past, the
     // shader presents once more at most and then parks.
     std::thread::sleep(Duration::from_millis(80));
-    let presents = (0..5).filter(|_| uniforms.take_present()).count();
+    let presents = (0..5)
+        .filter(|_| uniforms.take_present(Instant::now()))
+        .count();
     assert!(presents <= 1, "{presents} presents after everything landed");
-    assert!(!uniforms.is_live(), "the window parks");
+    assert!(!uniforms.is_live(Instant::now()), "the window parks");
 }
 
 #[test]
@@ -360,6 +366,13 @@ impl Render for Painted {
     }
 }
 
+/// The accent as the next present shows it: the colour table filled by the
+/// kit's colour source, as a window presenting fills it, then read back.
+fn shown_accent(window: &Window, cx: &gpui::App) -> Rgba {
+    gpui::refresh_dynamic_colors(present_now());
+    Rgba::from(Look::of(window, cx).accent.hsla())
+}
+
 fn accent(rng: &mut Rng) -> Accent {
     Accent::of(Some([
         rng.unit() as f64,
@@ -382,7 +395,7 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
         cx.update(|_, cx| KoanTheme::set_accent(last, true, cx));
         if i % 25 == 0 {
             cx.run_until_parked();
-            let shown = cx.update(|window, cx| Rgba::from(Look::of(window, cx).accent.hsla()));
+            let shown = cx.update(|window, cx| shown_accent(window, cx));
             assert!(finite(shown), "{shown:?}");
         }
     }
@@ -390,7 +403,7 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
     std::thread::sleep(Motion::DISSOLVE + Duration::from_millis(100));
     let (shown, target) = cx.update(|window, cx| {
         let look = Look::of(window, cx);
-        (Rgba::from(look.accent.hsla()), look.accent.rgba())
+        (shown_accent(window, cx), look.accent.rgba())
     });
     for (a, b) in [shown.r, shown.g, shown.b]
         .into_iter()
@@ -418,7 +431,7 @@ fn reduce_motion_mid_settle_lands_the_accent(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (shown, target) = cx.update(|window, cx| {
         let look = Look::of(window, cx);
-        (Rgba::from(look.accent.hsla()), look.accent.rgba())
+        (shown_accent(window, cx), look.accent.rgba())
     });
     for (a, b) in [shown.r, shown.g, shown.b]
         .into_iter()
@@ -650,8 +663,8 @@ fn a_present_never_waits_on_a_writer() {
     let _clock = CLOCK.lock();
     let uniforms = Arc::new(ShaderUniforms::new());
     uniforms.set(0, 1.0);
-    assert_eq!(uniforms.present_at(present_now()).1[0], 1.0);
-    uniforms.take_present();
+    assert_eq!(uniforms.presented_at(present_now()).1[0], 1.0);
+    uniforms.take_present(Instant::now());
 
     let (entered, inside) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
@@ -667,7 +680,7 @@ fn a_present_never_waits_on_a_writer() {
     };
     inside.recv().unwrap();
     let started = Instant::now();
-    let (_, values) = uniforms.present_at(present_now());
+    let (_, values) = uniforms.presented_at(present_now());
     assert!(
         started.elapsed() < Duration::from_millis(50),
         "the present waited {:?} on the writer",
@@ -680,18 +693,21 @@ fn a_present_never_waits_on_a_writer() {
     // A shader at rest: nothing moves it, so only the stale present keeps
     // the window refreshing, whatever the writer wakes.
     assert!(
-        uniforms.is_live(),
+        uniforms.is_live(Instant::now()),
         "a stale present keeps the frames coming"
     );
-    assert!(uniforms.take_present(), "the next refresh presents again");
+    assert!(
+        uniforms.take_present(Instant::now()),
+        "the next refresh presents again"
+    );
     release.send(()).unwrap();
     writer.join().unwrap();
     // No wake follows the release: the refresh the stale present keeps
     // coming shows what was written, and then the shader rests.
-    assert!(uniforms.is_live());
-    assert!(uniforms.take_present());
-    assert_eq!(uniforms.present_at(present_now()).1[0], 2.0);
-    uniforms.take_present();
-    assert!(!uniforms.is_live(), "whole again: at rest");
-    assert!(!uniforms.take_present());
+    assert!(uniforms.is_live(Instant::now()));
+    assert!(uniforms.take_present(Instant::now()));
+    assert_eq!(uniforms.presented_at(present_now()).1[0], 2.0);
+    uniforms.take_present(Instant::now());
+    assert!(!uniforms.is_live(Instant::now()), "whole again: at rest");
+    assert!(!uniforms.take_present(Instant::now()));
 }

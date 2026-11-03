@@ -9,7 +9,7 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 ## Crates
 
 ```
-GPUI (vendor/gpui-pre*)  ->  koan-kit  ->  koan-gui
+GPUI (radiosilence/zed, gpui-koan-*)  ->  koan-kit  ->  koan-gui
 ```
 
 koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates, and every component from itself: the text field, the window's root (`Root`) and focus trap (`focus_trap`), the scrollbar (`Scrollbar`) and the panels controls open (`opens_panel`).
@@ -246,7 +246,7 @@ progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engin
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
 - `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
-The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
+The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (the fork's shader quad commit describes the layering).
 
 ### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
 
@@ -366,7 +366,7 @@ A node's id must be unique among its siblings with ids, or GPUI's tree builder a
 | `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
 | `Banner`'s message, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
 
-A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
+A disabled control is reported as disabled (`aria_disabled`, from koan's fork of GPUI) and drops its actions. Live regions are `aria_live`, also the fork's. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
 
 What only a reader reads, a row's spoken line, its place and its reveal, is worked out only while one is attached (`Window::is_a11y_active`; koan-gui's `Paint::a11y`), since a list's rows are made again at every scroll frame.
 

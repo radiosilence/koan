@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor"]
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates/koan-gui", "crates/koan-kit", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]
@@ -11,6 +10,12 @@ repository = "https://github.com/radiosilence/koan"
 license = "MIT"
 
 [workspace.dependencies]
+# GPUI from koan's fork of Zed (radiosilence/zed, branch `koan`): Zed's GPUI
+# with koan's commits, each proposed upstream, published as gpui-koan-*.
+# Pinned to a revision; the library names stay Zed's (`gpui`,
+# `gpui_platform`).
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "be4e2f457ae24e8d434c16dc146f62cdfb653937" }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "be4e2f457ae24e8d434c16dc146f62cdfb653937" }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
@@ -47,14 +52,3 @@ debug = "line-tables-only"
 opt-level = 3
 debug-assertions = false
 overflow-checks = false
-
-[patch.crates-io]
-# Our copies of GPUI's crates, patched until the patches are taken upstream
-# (every change marked KOAN:; vendor/README.md lists them): an idle window
-# stops waking every refresh (#1609), a shader primitive whose uniforms
-# are read as each frame is presented (#1641).
-gpui-pre = { path = "vendor/gpui-pre" }
-gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
-gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
-gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
-gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
