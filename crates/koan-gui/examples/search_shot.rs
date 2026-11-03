@@ -1,6 +1,7 @@
 //! The search box over the window, drawn offscreen against a throwaway
 //! library: the box opened as ⌘K opens it, a query typed, and a PNG of the
-//! window with nothing lit and another after ↓, dark and light. For checking
+//! window with nothing lit and another after ↓, dark and light, in a window
+//! of ordinary size and a small one. For checking
 //! that each kind is capped, that the rows stay inside the panel and that
 //! the keys at its foot match what Return does.
 //!
@@ -14,13 +15,14 @@ use std::time::Duration;
 
 use koan_ffi::KoanEngine;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
-use koan_kit::app::{AppContext, Entity};
+use koan_kit::app::AppContext;
 // GPUI's start-up, headless rendering and synthetic keys, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, Keystroke, px, size};
 
-const WIDTH: f32 = 1200.0;
-const HEIGHT: f32 = 750.0;
+/// An ordinary window and a small one, where the list must scroll inside
+/// the panel.
+const SIZES: [(&str, f32, f32); 2] = [("large", 1200.0, 800.0), ("small", 800.0, 600.0)];
 
 fn main() -> Result<(), Box<dyn Error>> {
     koan_core::places::keep_with_config();
@@ -52,39 +54,44 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_gui::library::bind_keys(cx);
         koan_gui::platform::actions::register(&engine, cx);
     });
-    let mut shell = None;
-    let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
-        let made = cx.new(|cx| Shell::new(window, cx));
-        shell = Some(made.clone());
-        let root = cx.new(|cx| WindowRoot::new(made, window, cx));
-        cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
-    })?;
-    let window: AnyWindowHandle = window.into();
-    let _shell: Entity<Shell> = shell.ok_or("the shell was not made")?;
-    cx.allow_parking();
-    settle(&mut cx, window)?;
-
-    for dark in [true, false] {
-        let look = if dark { "dark" } else { "light" };
-        cx.update_window(window, |_, window, cx| {
-            theme::pin_appearance(Some(dark), window, cx);
-            window.dispatch_action(Box::new(koan_gui::platform::actions::Search), cx);
+    for (name, width, height) in SIZES {
+        let window = cx.open_window(size(px(width), px(height)), |window, cx| {
+            let shell = cx.new(|cx| Shell::new(window, cx));
+            let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
+            cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
         })?;
+        let window: AnyWindowHandle = window.into();
+        cx.allow_parking();
         settle(&mut cx, window)?;
-        for c in query.chars() {
-            key(&mut cx, window, &c.to_string())?;
+        for dark in [true, false] {
+            let look = if dark { "dark" } else { "light" };
+            cx.update_window(window, |_, window, cx| {
+                theme::pin_appearance(Some(dark), window, cx);
+                window.dispatch_action(Box::new(koan_gui::platform::actions::Search), cx);
+            })?;
+            settle(&mut cx, window)?;
+            for c in query.chars() {
+                key(&mut cx, window, &c.to_string())?;
+            }
+            settle(&mut cx, window)?;
+            cx.capture_screenshot(window)?
+                .save(out.join(format!("search-{name}-{look}.png")))?;
+            key(&mut cx, window, "down")?;
+            settle(&mut cx, window)?;
+            cx.capture_screenshot(window)?
+                .save(out.join(format!("search-{name}-lit-{look}.png")))?;
+            // Down to the last row, "All results…", scrolled into view.
+            for _ in 0..20 {
+                key(&mut cx, window, "down")?;
+            }
+            settle(&mut cx, window)?;
+            cx.capture_screenshot(window)?
+                .save(out.join(format!("search-{name}-last-{look}.png")))?;
+            // Escape twice: the query emptied, then the box closed.
+            key(&mut cx, window, "escape")?;
+            key(&mut cx, window, "escape")?;
+            settle(&mut cx, window)?;
         }
-        settle(&mut cx, window)?;
-        cx.capture_screenshot(window)?
-            .save(out.join(format!("search-{look}.png")))?;
-        key(&mut cx, window, "down")?;
-        settle(&mut cx, window)?;
-        cx.capture_screenshot(window)?
-            .save(out.join(format!("search-lit-{look}.png")))?;
-        // Escape twice: the query emptied, then the box closed.
-        key(&mut cx, window, "escape")?;
-        key(&mut cx, window, "escape")?;
-        settle(&mut cx, window)?;
     }
     println!("PNGs in {}", out.display());
     Ok(())

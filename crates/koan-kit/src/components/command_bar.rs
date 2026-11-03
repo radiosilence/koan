@@ -154,8 +154,10 @@ impl RenderOnce for CommandBar {
                 }))
                 .into_any_element()
         };
+        // Opaque, so nothing of the list shows through it.
         let foot = div()
             .flex_none()
+            .bg(p.bg.hsla())
             .flex()
             .flex_wrap()
             .items_center()
@@ -191,7 +193,10 @@ impl RenderOnce for CommandBar {
                     Some(label("search")),
                 )
                 .w(look.spaced(Self::WIDTH))
-                .max_h(relative(0.7))
+                // What the window has below the panel's top, less a margin:
+                // in a small window the list scrolls between the query and
+                // the keys rather than running past them.
+                .max_h(height * (1.0 - Self::TOP) - look.space(Space::Xl))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
