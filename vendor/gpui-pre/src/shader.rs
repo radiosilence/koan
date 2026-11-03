@@ -722,7 +722,6 @@ impl ShaderUniforms {
         });
         let mut values = values;
         for (index, slot) in colors.into_iter().enumerate() {
-            let slot = slot.load(Ordering::Relaxed);
             if slot != 0 {
                 let rgba = crate::color_slot_rgba_at(slot as usize - 1, values[index + 3], now);
                 values[index..index + 4].copy_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
