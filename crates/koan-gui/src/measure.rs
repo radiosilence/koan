@@ -51,6 +51,9 @@ pub fn start(cx: &mut App) {
         // The album grid flung to its end and back, then the queue, with the
         // process's footprint read at each stage.
         Ok("fling") => fling(cx),
+        // The pointer rested along the toolbar and the transport's controls,
+        // printing where a tooltip was drawn.
+        Ok("tooltips") => tooltips(cx),
         // Starts playback and leaves the app to run, for its CPU use to be
         // read from outside while it plays with nobody touching it.
         Ok("play") => play(cx),
@@ -179,6 +182,51 @@ fn scroll(cx: &mut App) {
             }
         }
         frame_times(window, cx);
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+fn tooltips(cx: &mut App) {
+    let background = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        background.timer(Duration::from_secs(3)).await;
+        let Some(window) = cx.update(|cx| cx.windows().first().copied()) else {
+            return;
+        };
+        let size = window
+            .update(cx, |_, window, _| window.viewport_size())
+            .unwrap_or_default();
+        let toolbar = crate::components::ToolbarMetrics::HEIGHT / 2.;
+        let transport = size.height - crate::transport::HEIGHT / 2.;
+        for (row, y) in [("toolbar", toolbar), ("transport", transport)] {
+            let mut shown = Vec::new();
+            let mut x = px(4.);
+            while x < size.width {
+                let before = crate::components::TOOLTIPS_DRAWN.load(Ordering::Relaxed);
+                window
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_event(
+                            PlatformInput::MouseMove(MouseMoveEvent {
+                                position: point(x, y),
+                                pressed_button: None,
+                                modifiers: Modifiers::default(),
+                            }),
+                            cx,
+                        );
+                    })
+                    .ok();
+                background.timer(Duration::from_millis(800)).await;
+                if crate::components::TOOLTIPS_DRAWN.load(Ordering::Relaxed) > before {
+                    shown.push(f32::from(x) as u32);
+                }
+                x += px(12.);
+            }
+            println!(
+                "{row} at y {}: tooltips drawn at x {shown:?}",
+                f32::from(y) as u32
+            );
+        }
         cx.update(|cx| cx.quit());
     })
     .detach();

@@ -121,7 +121,7 @@ pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "profiler"))]
 #[doc(hidden)]
 pub use panel::TOOLTIPS_DRAWN;
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
