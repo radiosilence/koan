@@ -15,7 +15,7 @@ use koan_kit::components::{Animated, AnimatedQuad, GLYPH};
 use koan_kit::theme;
 
 /// The answers, as the program numbers them, and which way a nudge goes.
-const ROWS: [(f32, f32, &str); 11] = [
+const ROWS: [(f32, f32, &str); 15] = [
     (10.0, 1.0, "heart fills"),
     (11.0, 1.0, "heart empties"),
     (12.0, 1.0, "play to pause"),
@@ -27,6 +27,10 @@ const ROWS: [(f32, f32, &str); 11] = [
     (18.0, 1.0, "repeat one off"),
     (19.0, 1.0, "next"),
     (19.0, -1.0, "previous"),
+    (20.0, 1.0, "tick in"),
+    (21.0, 1.0, "tick out"),
+    (22.0, 1.0, "copy to tick"),
+    (23.0, 1.0, "tick to copy"),
 ];
 /// The moments drawn, as a share of the answer's run.
 const MOMENTS: [f32; 7] = [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9];

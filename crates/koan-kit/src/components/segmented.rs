@@ -56,6 +56,13 @@ impl RenderOnce for Segmented {
         let count = self.options.len();
         let accent = look.accent.hsla();
         let name = self.name.clone().or_else(|| super::spoken_id(&self.id));
+        // The option chosen before, so the new one draws its mark in from
+        // the side the last stood on, as if the mark had moved across.
+        let was = window.use_keyed_state(super::child(&self.id, "was"), cx, |_, _| selected);
+        let before = *was.read(cx);
+        if before != selected {
+            was.update(cx, |w, _| *w = selected);
+        }
         let mut row = accessible(div().id(self.id.clone()), gpui::Role::RadioGroup, name)
             .relative()
             .flex()
@@ -66,10 +73,11 @@ impl RenderOnce for Segmented {
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
             let answers = super::Answerer::of(&key, window, cx);
             let chosen = index == selected;
-            // The option coming to be chosen draws its mark in from its
-            // leading edge, by click or by the arrows alike.
+            // The option coming to be chosen draws its mark in from the side
+            // the last choice stood, by click or by the arrows alike.
             if chosen {
-                answers.follow(1, super::Answer::Sweep, accent, window, cx);
+                let from_leading = before <= index;
+                answers.follow(1, super::Answer::Slide(from_leading), accent, window, cx);
             } else {
                 answers.note(0, cx);
             }
