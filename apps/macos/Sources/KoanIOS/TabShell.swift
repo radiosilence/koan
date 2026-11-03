@@ -906,8 +906,11 @@ private struct BannerInset: ViewModifier {
     func body(content: Content) -> some View {
         #if os(iOS)
         content.safeAreaInset(edge: .top, spacing: 0) {
-            ServerBanner(signIn: signIn)
-                .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
+            VStack(spacing: 0) {
+                ServerBanner(signIn: signIn)
+                OutputWaitBanner()
+            }
+            .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
         }
         #else
         content

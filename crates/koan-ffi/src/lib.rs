@@ -36,7 +36,7 @@ use koan_runtime::{
     FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite, InviteTo, KoanError, LibraryFolder,
     LyricLine, Lyrics, MixerEncoding, MixerFormat, MoveResult, NearbyServer, NewApiKey,
     NewAppPassword, NowPlaying, OrganizeEntry, OrganizePattern, OrganizePlan, OutputChoice,
-    OutputInfo, OutputsInfo, PairingCode, PairingInfo, PairingLink, Placement, PlanOutcome,
+    OutputInfo, OutputWait, OutputsInfo, PairingCode, PairingInfo, PairingLink, Placement, PlanOutcome,
     PlayHistoryEntry, PlayState, Playlist, PlaylistEntry, PlaylistExport, QrCode, QueueItem,
     QueueLock, RebuildSummary, RecentlyPlayed, ReleaseSection, RendererInfo, RendererOutput,
     RepeatMode, RunRole, ScanSummary, ScrobblingConnection, SearchKind, ServerAccount,
@@ -538,6 +538,19 @@ impl KoanEngine {
 
     pub async fn stop(self: Arc<Self>) -> Result<(), KoanError> {
         self.0.clone().stop().await
+    }
+
+    /// Ask the output again while it is still opening (`output_wait`). Once
+    /// an attempt is stuck, another is refused until it returns.
+    pub async fn retry_output_open(self: Arc<Self>) -> Result<(), KoanError> {
+        self.0.clone().retry_output_open().await
+    }
+
+    /// Stop waiting for the output: a device that would not open gives way
+    /// to the system's default for this run; waiting on the default, playback
+    /// stops.
+    pub async fn cancel_output_open(self: Arc<Self>) -> Result<(), KoanError> {
+        self.0.clone().cancel_output_open().await
     }
 
     /// Space-bar behaviour: pause when playing, resume otherwise.
@@ -2865,7 +2878,7 @@ mod serve {
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
-        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputsInfo, PairingCode,
+        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputWait, OutputsInfo, PairingCode,
         PairingInfo, PairingLink, Placement, PlanOutcome, PlayHistoryEntry, PlayState, Playlist,
         PlaylistEntry, PlaylistExport, QrCode, QueueItem, QueueLock, RebuildSummary,
         RecentlyPlayed, ReleaseSection, RendererInfo, RendererOutput, RepeatMode, RunRole,
@@ -3033,7 +3046,7 @@ mod state {
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
-        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputsInfo, PairingCode,
+        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputWait, OutputsInfo, PairingCode,
         PairingInfo, PairingLink, Placement, PlanOutcome, PlayHistoryEntry, PlayState, Playlist,
         PlaylistEntry, PlaylistExport, QrCode, QueueItem, QueueLock, RebuildSummary,
         RecentlyPlayed, ReleaseSection, RendererInfo, RendererOutput, RepeatMode, RunRole,
@@ -3203,7 +3216,7 @@ mod types {
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
-        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputsInfo, PairingCode,
+        OrganizePattern, OrganizePlan, OutputChoice, OutputInfo, OutputWait, OutputsInfo, PairingCode,
         PairingInfo, PairingLink, Placement, PlanOutcome, PlayHistoryEntry, PlayState, Playlist,
         PlaylistEntry, PlaylistExport, QrCode, QueueItem, QueueLock, RebuildSummary,
         RecentlyPlayed, ReleaseSection, RendererInfo, RendererOutput, RepeatMode, RunRole,
@@ -3508,6 +3521,17 @@ mod types {
         /// Why the last track asked for did not start, until one does: the
         /// output failing to open, a file that does not decode.
         pub start_failure: Option<String>,
+        /// The output has been opening for a while and nothing plays until
+        /// it does: a busy audio system or a device waking. Offer
+        /// `retry_output_open` and `cancel_output_open`.
+        pub output_wait: Option<OutputWait>,
+    }
+
+    /// An output the player is still waiting for.
+    #[uniffi::remote(Record)]
+    pub struct OutputWait {
+        /// The device asked for, or `None` for the system's default.
+        pub device: Option<String>,
     }
 
     /// A sleep timer to set: stop after a while, or at the end of the track or

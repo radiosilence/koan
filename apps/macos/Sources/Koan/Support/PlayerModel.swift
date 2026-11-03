@@ -195,6 +195,10 @@ final class PlayerModel {
         attempt { try await self.engine.togglePlayPause() }
     }
     func pause() { attempt { try await self.engine.pause() } }
+    /// Ask the output again while it is still opening (`NowPlaying.outputWait`).
+    func retryOutput() { attempt { try await self.engine.retryOutputOpen() } }
+    /// Stop waiting for the output: the system's default instead, or stopped.
+    func cancelOutputWait() { attempt { try await self.engine.cancelOutputOpen() } }
     func resume() {
         guard resolving == nil else { return }
         attempt { try await self.engine.resume() }

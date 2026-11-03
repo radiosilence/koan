@@ -534,6 +534,19 @@ pub struct NowPlaying {
     /// Why the last track asked for did not start, until one does: the
     /// output failing to open, a file that does not decode.
     pub start_failure: Option<String>,
+    /// The output has been opening for a while
+    /// (`koan_core::player::state::OUTPUT_WAIT_NOTE`) and nothing plays
+    /// until it does: a busy audio system or a device waking. Asking again
+    /// (`retry_output_open`) or giving up on it (`cancel_output_open`) is the
+    /// listener's choice.
+    pub output_wait: Option<OutputWait>,
+}
+
+/// An output the player is still waiting for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputWait {
+    /// The device asked for, or `None` for the system's default.
+    pub device: Option<String>,
 }
 
 /// A sleep timer to set: stop after a while, or at the end of the track or

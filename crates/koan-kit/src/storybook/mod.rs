@@ -987,6 +987,10 @@ impl StoryContent {
                     Tone::Bad,
                 )
                 .into_any_element(),
+                Banner::new(Icon::Speaker, "Waiting for USB DAC…", Tone::Muted)
+                    .action("retry", |_, _, _| {})
+                    .action("cancel", |_, _, _| {})
+                    .into_any_element(),
                 SectionHeader::new("Status line").into_any_element(),
                 StatusLine::new("Signed in as james.", Tone::Muted, Some(Icon::Success))
                     .into_any_element(),

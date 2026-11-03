@@ -1502,7 +1502,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake = FakeRenderer::start(sink, gapless, true);
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2306,7 +2306,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2462,7 +2462,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2645,7 +2645,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2840,7 +2840,7 @@ mod tests {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             let fake = FakeRenderer::start(WAV, rng.coin(), true);
             let mut player = Player::new();
-            player.backend = Box::new(crate::player::tests::StuckBackend {
+            player.backend = Arc::new(crate::player::tests::StuckBackend {
                 rate: 8_000.0,
                 asked: Default::default(),
                 starts: Default::default(),
@@ -3338,7 +3338,7 @@ mod tests {
         let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
         r.player.use_renderer(None);
         let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        r.player.backend = Box::new(crate::player::tests::StuckBackend {
+        r.player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: starts.clone(),

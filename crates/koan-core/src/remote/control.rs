@@ -791,6 +791,9 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         | PlayerCommand::RetryDownloads(_)
         | PlayerCommand::SignedOut
         | PlayerCommand::DecodeFinished(_)
+        | PlayerCommand::OutputOpened(_)
+        | PlayerCommand::RetryOutput
+        | PlayerCommand::CancelOutput
         | PlayerCommand::TrackQueued
         | PlayerCommand::SetOutputDevice(_)
         | PlayerCommand::ClearOutputDevice

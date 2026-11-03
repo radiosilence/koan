@@ -39,6 +39,8 @@ pub struct Shell {
     transport: Entity<Transport>,
     /// What is wrong with the server, across the top of every page.
     banner: Entity<crate::server_banner::ServerBanner>,
+    /// The output this device is still waiting for, once it has waited a while.
+    output_wait: Entity<crate::output_wait::OutputWaitBanner>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
     library: Option<Entity<LibraryStage>>,
@@ -153,6 +155,7 @@ impl Shell {
             sidebar,
             transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             banner: cx.new(crate::server_banner::ServerBanner::new),
+            output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             nav,
             focus: cx.focus_handle(),
             queue,
@@ -744,6 +747,7 @@ impl Render for Shell {
                             .flex_col()
                             .child(self.toolbar(window, cx))
                             .child(self.banner.clone())
+                            .child(self.output_wait.clone())
                             .child(
                                 div()
                                     .flex_1()

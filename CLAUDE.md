@@ -196,7 +196,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI), `VizLevels` (the spectrum as three bands, for callers that poll often and draw little), `BarHeights` (a playing indicator's bars from them, each band against its own recent loudest; koan-ffi exports it for every app) |
 | `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS. Its spectrum, VU and loudness show what the listener hears: fed after ReplayGain and DSP, and scaled by the gain the output last applied (`fade::heard_gain`: the pause fade, a sleep timer, mute) |
 | `audio/streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
-| `player/mod.rs` | `Player` struct, command loop (`run()`), `start_playback()`, `update_playback_state()` |
+| `player/mod.rs` | `Player` struct, command loop (`run()`), `start_playback()`, `update_playback_state()`. The output opens on a `koan-output-open` thread (`spawn_open`, `open_output`) while the session waits as `Transport::Opening` and commands go on changing it; see ARCHITECTURE |
 | `player/commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
 | `player/state.rs` | `SharedPlayerState`, `Playlist`, `PlaylistItem`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()` |
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
@@ -306,6 +306,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `transport.rs` | The transport bar, its names linked to their pages, and the seek slider, whose anchor is handed to the slider's `Glide` so the GPU moves the fill each present, and whose times follow the engine's whole seconds (`ClockStream`), with no timer of its own; the control, output, sleep and EQ menus. The output menu searches for renderers as it opens and refills as they answer |
 | `devices.rs` | Play on: the control menu (this device, the account's and the network's), move here, and what became of a move; `can_move_music` in koan-runtime decides where music can go |
 | `tv_wake.rs` | Pairing an Apple TV to be woken from the account's devices, as the Mac's `TvWake`: the TV shows a code, this device types it; "stop waking" in Play on undoes it |
+| `output_wait.rs` | The line across the top of every page while this device's output is still opening after two seconds (`NowPlaying::output_wait`), with retry and cancel |
 | `server_banner.rs` | The line across the top of every page while the server cannot be used (`ServerStanding`), redrawn only when the standing changes; Sign In opens Settings on the server |
 | `organize.rs` | Organise: the sheet over the window for a pick's files, a pattern previewed as typed (`OrganizeSelection::generate`) and checked against the disk once typing rests, every destination listed, a confirmation with the counts before `organize_execute` |
 | `notice.rs` | The one line at the sidebar's foot the app says something in: a move's outcome, a command another device did not take (the Connection slice's `command_notice`) |

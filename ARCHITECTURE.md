@@ -257,6 +257,18 @@ With a profile for the renderer (named by its UDN, `Renderer::device_name`) the 
 
 **Pause** stops the engine but decode continues filling the ring buffer. Resume is instant — no re-buffering.
 
+### Opening the output
+
+Opening an output can wait on the audio system indefinitely: CoreAudio's `AudioComponentInstanceNew` and IO proc creation block while `coreaudiod` is busy or a USB DAC wakes, and ALSA, AAudio and iOS's session have their own stalls. The player thread never makes those calls. `try_open_session` starts nothing until the output exists: it builds a `Pending` (the item, the position, playing or paused, the stream it probed) and asks `spawn_open` for an output keyed by device, rate, channels and depth (`OpenKey`). A thread named `koan-output-open` runs `open_output` (resolve the device, switch its rate, make the unit over a fresh ring) and sends the result back as `PlayerCommand::OutputOpened`, tagged with a ticket.
+
+Meanwhile the transport is `Opening` and the command loop runs as usual. Pause and resume set the pending run, a seek moves its position, a skip or queue edit replaces the pending track (the open in flight continues, and a format it does not fit is asked for again when it lands), and stop drops it. The player publishes the pending track and run as it would a loaded one; `playhead_moving` is false while `SharedPlayerState::output_opening` is set, so clients do not count the playhead on. When the answer arrives with the current ticket, `start_session` starts the decoder at the pending position into the prepared ring and starts the engine if the pending run is playing. Gapless transitions never reach this path: the decoder runs on into the next track on the same ring and engine.
+
+An answer for an older ticket is dropped with its output. An open that is still in flight when its session is stopped is kept (`prepared`) for the next session with the same key. A stuck open cannot be cancelled, only abandoned, so `open_threads` counts the threads still running and at most one abandoned one is allowed: `RetryOutput` is refused while an earlier abandoned attempt has not returned, and `CancelOutput` then stops rather than open another. Cancel otherwise falls back to the system's default for the rest of the run, leaving the configured device as it is; waiting on the default, it stops.
+
+The runtime puts `NowPlaying::output_wait` in the Playback slice once an open has run for `OUTPUT_WAIT_NOTE` (two seconds), waking the state thread for that moment, and the apps show it with Retry and Cancel. The rate the output settled at is still published as the output rate, and a rate switch the device refuses is logged and shown as a resampled format rather than hidden.
+
+Tests run the player without its command loop, so `open_inline` (on under `cfg(test)`) opens on the player thread; the tests for this path turn it off and hand `OutputOpened` to the player themselves.
+
 ## Queue & playlist
 
 All queue entries get a `QueueItemId` (UUIDv7, time-ordered). Every operation uses IDs, not indices — handles duplicate tracks correctly and survives reordering.

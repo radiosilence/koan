@@ -34,7 +34,7 @@ use koan_core::db::queries::{self, PersistedQueueItem};
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
+    OUTPUT_WAIT_NOTE, PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
 };
 use koan_core::remote::client::SubsonicError;
 use koan_core::remote::profile;
@@ -1334,6 +1334,18 @@ impl KoanEngine {
 
     pub async fn stop(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::Stop)).await
+    }
+
+    /// Ask this device's output again while it is still opening
+    /// (`NowPlaying::output_wait`).
+    pub async fn retry_output_open(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send_local(PlayerCommand::RetryOutput)).await
+    }
+
+    /// Stop waiting for this device's output: the system's default in place
+    /// of a device that would not open, or stopped.
+    pub async fn cancel_output_open(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send_local(PlayerCommand::CancelOutput)).await
     }
 
     /// Space-bar behaviour: pause when playing, resume otherwise.
@@ -6144,6 +6156,17 @@ impl KoanEngine {
                         (Some(a), Some(b)) => Some(a.min(b)),
                         (a, b) => a.or(b),
                     };
+                    // An output still opening is said once it has taken long
+                    // enough to be worth saying: woken for that too.
+                    let note_at = engine
+                        .state
+                        .output_opening()
+                        .map(|o| o.since + OUTPUT_WAIT_NOTE)
+                        .filter(|at| *at > Instant::now());
+                    let held_until = match (held_until, note_at) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
@@ -6402,6 +6425,7 @@ impl KoanEngine {
                 sleep: st.sleep.map(Into::into),
                 sleep_fading: st.sleep_fading,
                 start_failure: None,
+                output_wait: None,
             },
         });
         out.publish(StateSlice::Playhead {
@@ -6997,6 +7021,11 @@ impl KoanEngine {
             sleep: self.state.sleep().map(Into::into),
             sleep_fading: self.state.sleep_fading(),
             start_failure: self.state.start_failure(),
+            output_wait: self
+                .state
+                .output_opening()
+                .filter(|o| o.since.elapsed() >= OUTPUT_WAIT_NOTE)
+                .map(|o| OutputWait { device: o.device }),
         }
     }
 
@@ -8666,6 +8695,7 @@ mod clock_end_tests {
                 sleep: None,
                 sleep_fading: false,
                 start_failure: None,
+                output_wait: None,
             },
         });
     }
