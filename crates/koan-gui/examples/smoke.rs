@@ -184,7 +184,7 @@ fn throwaway() -> Result<(), Box<dyn Error>> {
         return Err("the configuration has no library: run `just gui-library`".into());
     }
     for folder in &config.library.folders {
-        if !folder.join(".seed.flac").exists() {
+        if !folder.join(".koan-generated").exists() {
             return Err(format!(
                 "{} is not a library `just gui-library` generated",
                 folder.display()
