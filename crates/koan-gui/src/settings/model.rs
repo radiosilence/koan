@@ -13,7 +13,7 @@ use std::time::Duration;
 use std::rc::Rc;
 
 use koan_ffi::{KoanEngine, KoanError, Settings};
-use koan_kit::app::{Context, SharedString, Subscription, Task};
+use koan_kit::app::{App, Context, SharedString, Subscription, Task};
 
 use crate::mirror::{Mirror, Slice};
 
