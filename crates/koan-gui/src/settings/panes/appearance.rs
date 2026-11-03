@@ -10,6 +10,10 @@ use koan_kit::app::*;
 use crate::settings::Ctx;
 use crate::settings::form::{Row, page, section};
 
+/// The sliders' ends, in characters: the longest word among them ("twice as
+/// fast"), so the pane's rails start and stop level with each other.
+const ENDS: usize = 13;
+
 pub struct AppearancePane {
     ctx: Ctx,
     /// A slider's value while it is dragged, applied when let go: a new
@@ -105,6 +109,7 @@ impl Render for AppearancePane {
 
         let size_slider = Slider::new("text-size", fraction(text_size, low, high))
             .ends(format!("{low}%"), format!("{high}%"))
+            .ends_width(ENDS)
             .step(TEXT_SIZE_STEP as f32 / (high - low) as f32)
             .on_change({
                 let entity = entity.clone();
@@ -170,6 +175,7 @@ impl Render for AppearancePane {
                         div().w_full().child(
                             Slider::new("wash-tint", wash_tint as f32 / 100.)
                                 .ends("full colour", "held")
+                                .ends_width(ENDS)
                                 .step(0.05)
                                 .on_change({
                                     let entity = entity.clone();
@@ -201,6 +207,7 @@ impl Render for AppearancePane {
                             Slider::new("wash-drift", wash_drift as f32 / 200.)
                                 .named("drift")
                                 .ends("still", "twice as fast")
+                                .ends_width(ENDS)
                                 .step(0.05)
                                 .on_change({
                                     let entity = entity.clone();
@@ -231,6 +238,7 @@ impl Render for AppearancePane {
                             Slider::new("wash-turn", wash_turn as f32 / 10.)
                                 .named("turn")
                                 .ends("none", "10°")
+                                .ends_width(ENDS)
                                 .step(0.1)
                                 .on_change({
                                     let entity = entity.clone();

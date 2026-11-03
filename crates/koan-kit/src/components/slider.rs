@@ -5,7 +5,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, font, px,
 };
 
 use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
@@ -22,6 +22,9 @@ pub struct Slider {
     value: f32,
     low: Option<SharedString>,
     high: Option<SharedString>,
+    /// The ends' slots, in characters of their face, so sliders one above
+    /// another share one rail.
+    ends_width: Option<usize>,
     step: f32,
     disabled: bool,
     /// The desktop's density: a 20-point rail, as the Mac's seek bar has.
@@ -252,6 +255,7 @@ impl Slider {
             value: value.clamp(0.0, 1.0),
             low: None,
             high: None,
+            ends_width: None,
             name: None,
             step: 0.05,
             disabled: false,
@@ -297,6 +301,15 @@ impl Slider {
     pub fn ends(mut self, low: impl Into<SharedString>, high: impl Into<SharedString>) -> Self {
         self.low = Some(low.into());
         self.high = Some(high.into());
+        self
+    }
+
+    /// Both ends in slots `chars` characters wide, the low one's word at
+    /// the slot's start and the high one's at its end: the sliders of a
+    /// form, given the same width, start and stop their rails level with
+    /// each other however long their words.
+    pub fn ends_width(mut self, chars: usize) -> Self {
+        self.ends_width = Some(chars);
         self
     }
 
@@ -548,10 +561,24 @@ impl RenderOnce for Slider {
                 )
             });
 
-        let end = |text: Option<SharedString>| {
+        // The face is monospaced: a slot is so many of its characters.
+        let slot = self.ends_width.map(|chars| {
+            let text = window.text_system();
+            let face = text.resolve_font(&font(crate::theme::FONT_FAMILY));
+            let size = look.font_size(TypeRole::Fine);
+            let advance = text
+                .advance(face, size, '0')
+                .map(|a| a.width)
+                .unwrap_or(size * 0.6);
+            advance * chars as f32
+        });
+        let end = |text: Option<SharedString>, high: bool| {
             text.map(|text| {
                 div()
                     .flex_none()
+                    .when_some(slot, |d, slot| {
+                        d.w(slot).flex().when(high, |d| d.justify_end())
+                    })
                     .text_role(TypeRole::Fine, &look)
                     .text_color(look.palette.muted.hsla())
                     .child(text)
@@ -616,9 +643,9 @@ impl RenderOnce for Slider {
                 });
         }
         slider
-            .children(end(self.low))
+            .children(end(self.low, false))
             .child(rail)
-            .children(end(self.high))
+            .children(end(self.high, true))
             .children(ring(&handle, &look, window))
     }
 }

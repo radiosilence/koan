@@ -1,0 +1,1 @@
+- **Settings → Appearance's sliders line up.** Their rails start and stop level with each other whatever the words at their ends. An empty page's sentence of detail no longer leaves a single word on its last line.
