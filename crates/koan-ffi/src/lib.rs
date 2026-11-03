@@ -639,6 +639,32 @@ pub struct VizStream {
     inner: tokio::sync::Mutex<Following>,
 }
 
+/// Whether this run may write its queue over the saved session. A save
+/// before the session was read back would put whatever the player holds in
+/// its place: nothing, or a restore half applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionGate {
+    /// Not read yet, or reading it failed. A queue the person has changed
+    /// since (its content moved from `baseline`) is theirs to keep, and is
+    /// saved; until then nothing is.
+    Unread { baseline: u64 },
+    /// Being read and sent to the player: nothing is saved.
+    Restoring,
+    /// Read and applied, or there was none: every save writes.
+    Read,
+}
+
+impl SessionGate {
+    /// Whether a save may write, the queue's content being at `content`.
+    fn allows(self, content: u64) -> bool {
+        match self {
+            SessionGate::Read => true,
+            SessionGate::Restoring => false,
+            SessionGate::Unread { baseline } => content != baseline,
+        }
+    }
+}
+
 struct Following {
     local: tokio::sync::watch::Receiver<u64>,
     /// Display frames while the controlled device's bars move.
@@ -745,6 +771,8 @@ pub struct KoanEngine {
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
+    /// Whether this run may write over the saved session: see `SessionGate`.
+    session_gate: parking_lot::Mutex<SessionGate>,
     /// Whose saved session this engine reads and writes: its device's files
     /// prefix (`LinkIdentity::files`). Another device on the same config
     /// directory keeps a session of its own.
@@ -2689,6 +2717,9 @@ impl KoanEngine {
     pub async fn save_session(self: Arc<Self>) -> Result<(), KoanError> {
         use std::sync::atomic::Ordering;
         offload::offload(move || {
+            if !self.may_save_session() {
+                return Ok(());
+            }
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
@@ -2735,7 +2766,13 @@ impl KoanEngine {
     /// second of playback rather than the whole session. `save_session` still
     /// runs when the queue changes and on quit.
     pub async fn save_position(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || self.write_position(&*self.db()?)).await
+        offload::offload(move || {
+            if !self.may_save_session() {
+                return Ok(());
+            }
+            self.write_position(&*self.db()?)
+        })
+        .await
     }
 
     /// Whether this device keeps its queue in the account's play queue on the
@@ -2805,56 +2842,25 @@ impl KoanEngine {
         // place: see `server_queue`.
         let engine = Arc::downgrade(&self);
         let restoring = self.clone();
+        *self.session_gate.lock() = SessionGate::Restoring;
         let restored = offload::sequenced(move || {
-            let db = self.db()?;
-            // Before the queue and whether there is one: the mode is the
-            // player's, and a shuffled queue's play order is drawn as it
-            // arrives, from the rows not marked played.
-            let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
-            self.send_local(PlayerCommand::RestorePlayMode(mode))?;
-            let Some(saved) =
-                queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
-            else {
-                return Ok(0);
+            let outcome = self.restore_blocking();
+            // Read once the player holds what was restored; read, too, when
+            // nothing was saved. Failing before any of it was sent leaves the
+            // saved session to the person's own edits.
+            let gate = match &outcome {
+                Ok(_) if self.applied(server_queue::LANDED) => SessionGate::Read,
+                Ok(_) | Err(_) => SessionGate::Unread {
+                    baseline: self.state.content_version(),
+                },
             };
-
-            // Controlling another device, as the last run left it: this one's
-            // queue comes back, but not playing over that device's.
-            let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
-
-            let items = restore_items(&db, &saved.items);
-            if items.is_empty() {
-                return Ok(0);
+            if let SessionGate::Unread { .. } = gate {
+                log::warn!(
+                    "session: not restored; it is saved again only once the queue is edited"
+                );
             }
-
-            let count = items.len() as u32;
-            // Found among the saved items, not the restored ones: re-resolving
-            // can give an item a new path, and `restore_items` keeps one item
-            // per saved entry, in order.
-            let cursor = saved
-                .cursor_path
-                .as_ref()
-                .and_then(|cp| saved.items.iter().position(|i| &i.path == cp))
-                .and_then(|ix| items.get(ix))
-                .map(|i| i.id);
-
-            self.send_local(PlayerCommand::AddToPlaylist(items))?;
-
-            if let Some(id) = cursor {
-                // The player waits for a track still downloading, and opens it
-                // at the position once it can.
-                if saved.position_ms > 0 || resume {
-                    self.send_local(PlayerCommand::Cue {
-                        id,
-                        position_ms: saved.position_ms,
-                        play: resume,
-                    })?;
-                } else {
-                    self.state.set_cursor(Some(id));
-                }
-            }
-
-            Ok(count)
+            *self.session_gate.lock() = gate;
+            outcome
         })
         .await;
         if Config::cached().remote.play_queue {
@@ -2873,6 +2879,58 @@ impl KoanEngine {
         } else {
             restored
         }
+    }
+
+    /// `restore_session`'s reading and sending, on the command lane.
+    fn restore_blocking(&self) -> Result<u32, KoanError> {
+        let db = self.db()?;
+        // Before the queue and whether there is one: the mode is the
+        // player's, and a shuffled queue's play order is drawn as it
+        // arrives, from the rows not marked played.
+        let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
+        self.send_local(PlayerCommand::RestorePlayMode(mode))?;
+        let Some(saved) = queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
+        else {
+            return Ok(0);
+        };
+
+        // Controlling another device, as the last run left it: this one's
+        // queue comes back, but not playing over that device's.
+        let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
+
+        let items = restore_items(&db, &saved.items);
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        let count = items.len() as u32;
+        // Found among the saved items, not the restored ones: re-resolving
+        // can give an item a new path, and `restore_items` keeps one item
+        // per saved entry, in order.
+        let cursor = saved
+            .cursor_path
+            .as_ref()
+            .and_then(|cp| saved.items.iter().position(|i| &i.path == cp))
+            .and_then(|ix| items.get(ix))
+            .map(|i| i.id);
+
+        self.send_local(PlayerCommand::AddToPlaylist(items))?;
+
+        if let Some(id) = cursor {
+            // The player waits for a track still downloading, and opens it
+            // at the position once it can.
+            if saved.position_ms > 0 || resume {
+                self.send_local(PlayerCommand::Cue {
+                    id,
+                    position_ms: saved.position_ms,
+                    play: resume,
+                })?;
+            } else {
+                self.state.set_cursor(Some(id));
+            }
+        }
+
+        Ok(count)
     }
 
     // --- Output device -----------------------------------------------------
@@ -6549,6 +6607,9 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
+            session_gate: parking_lot::Mutex::new(SessionGate::Unread {
+                baseline: state.content_version(),
+            }),
             session: identity.files,
             remote_seek: Default::default(),
             playlist_history: Default::default(),
@@ -6820,6 +6881,12 @@ impl KoanEngine {
             self.bump_library();
         }
         Ok(())
+    }
+
+    /// Whether a save may write now: see `SessionGate`.
+    fn may_save_session(&self) -> bool {
+        let gate = *self.session_gate.lock();
+        gate.allows(self.state.content_version())
     }
 
     /// Wait until the player has applied and published every command sent to
@@ -7932,6 +7999,17 @@ mod restore_tests {
             uid: None,
             played: None,
         }
+    }
+
+    #[test]
+    fn a_session_is_saved_once_read_or_once_the_queue_is_the_persons() {
+        // Before the restore, an untouched queue would replace the saved one.
+        assert!(!SessionGate::Unread { baseline: 4 }.allows(4));
+        // A queue built since (the restore failed, or never ran) is saved.
+        assert!(SessionGate::Unread { baseline: 4 }.allows(5));
+        // Half applied: never written.
+        assert!(!SessionGate::Restoring.allows(9));
+        assert!(SessionGate::Read.allows(4));
     }
 
     #[test]
