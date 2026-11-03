@@ -397,6 +397,10 @@ impl Render for WindowRoot {
                 MIRROR_BALL_RIGHT + MIRROR_BALL / 2.0,
                 MIRROR_BALL_TOP + MIRROR_BALL / 2.0,
             );
+            self.prism.window(
+                f32::from(self.viewport.width),
+                f32::from(self.viewport.height),
+            );
             look
         });
         let layer = |quad: AnyElement| div().absolute().size_full().child(quad);

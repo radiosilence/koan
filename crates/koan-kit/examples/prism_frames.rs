@@ -15,7 +15,8 @@ use gpui::*;
 use koan_kit::components::Prism;
 use koan_kit::theme;
 
-const FRAMES: usize = 120;
+const FRAMES: usize = 300;
+const ROUNDS: usize = 10;
 const WIDTH: f32 = 1550.0;
 const HEIGHT: f32 = 900.0;
 
@@ -96,9 +97,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let prism = Prism::new();
     prism.style(true, false, 2.0);
     prism.ball_at(60.0, 88.0);
+    prism.window(WIDTH, HEIGHT);
     prism.run(true);
     prism.hold_bands([0.7, 0.5, 0.4]);
-    for layers in [
+    let all = [
         Layers::Nothing,
         Layers::Wash,
         Layers::Disco,
@@ -106,7 +108,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Layers::Pulse,
         Layers::Ball,
         Layers::All,
-    ] {
+    ];
+    let mut windows = Vec::new();
+    for layers in all {
         let window: AnyWindowHandle = cx
             .open_window(size(px(WIDTH), px(HEIGHT)), {
                 let prism = prism.clone();
@@ -114,35 +118,56 @@ fn main() -> Result<(), Box<dyn Error>> {
             })?
             .into();
         cx.run_until_parked();
-        let scale = cx.update_window(window, |_, window, _| window.scale_factor())?;
         // Warm: the programs compile on their first draw.
         for _ in 0..5 {
             cx.capture_screenshot(window)?;
         }
-        gpui::take_gpu_times();
-        gpui::gpu_timing(true);
-        for _ in 0..FRAMES {
-            // A beat now and then, as music would bring.
-            prism.hear([0.9, 0.6, 0.5], Duration::from_millis(33));
-            cx.capture_screenshot(window)?;
+        windows.push(window);
+    }
+    let scale = cx.update_window(windows[0], |_, window, _| window.scale_factor())?;
+    // Rounds through every layer in turn, so a change in the GPU's clock
+    // or load falls on all of them alike.
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); all.len()];
+    let mut lit = vec![0usize; all.len()];
+    for round in 0..ROUNDS {
+        for (k, window) in windows.iter().enumerate() {
+            gpui::take_gpu_times();
+            gpui::gpu_timing(true);
+            for frame in 0..FRAMES / ROUNDS {
+                // A beat now and then, as music would bring.
+                prism.hear([0.9, 0.6, 0.5], Duration::from_millis(33));
+                let shot = cx.capture_screenshot(*window)?;
+                // What the layers drew, once: pixels off the window's ground.
+                if round == ROUNDS - 1 && frame == 0 {
+                    lit[k] = shot
+                        .pixels()
+                        .filter(|p| p.0[..3].iter().any(|c| c.abs_diff(0x10) > 8))
+                        .count();
+                }
+            }
+            gpui::gpu_timing(false);
+            times[k].extend(gpui::take_gpu_times().iter().map(|s| s * 1e3));
         }
-        gpui::gpu_timing(false);
-        let mut ms: Vec<f64> = gpui::take_gpu_times().iter().map(|s| s * 1e3).collect();
+    }
+    println!(
+        "{}x{} px, {} frames each",
+        (WIDTH * scale) as u32,
+        (HEIGHT * scale) as u32,
+        FRAMES
+    );
+    for (k, layers) in all.iter().enumerate() {
+        let ms = &mut times[k];
         ms.sort_by(f64::total_cmp);
         if ms.is_empty() {
             println!("{layers:?}: no GPU times (not Metal?)");
             continue;
         }
         println!(
-            "{layers:?} at {}x{} px: GPU p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms ({} frames)",
-            (WIDTH * scale) as u32,
-            (HEIGHT * scale) as u32,
-            percentile(&ms, 0.5),
-            percentile(&ms, 0.95),
-            ms[ms.len() - 1],
-            ms.len()
+            "{layers:?}: GPU p50 {:.2} ms, p95 {:.2} ms; {} pixels lit",
+            percentile(ms, 0.5),
+            percentile(ms, 0.95),
+            lit[k]
         );
-        cx.update_window(window, |_, window, _| window.remove_window())?;
     }
     Ok(())
 }
