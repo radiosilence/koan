@@ -68,28 +68,35 @@ struct OutputWaitBanner: View {
         @Environment(PlayerModel.self) private var player
         let wait: OutputWait
 
+        private var title: String {
+            let device = wait.device ?? "the system's output"
+            return wait.stuck
+                ? "Waiting for \(device). An earlier attempt is still stuck."
+                : "Waiting for \(device)…"
+        }
+
         var body: some View {
-                HStack(spacing: 12) {
-                    KoanLabel(
-                        wait.device.map { "Waiting for \($0)…" } ?? "Waiting for the system's output…",
-                        icon: Icon.speaker
-                    )
+            HStack(spacing: 12) {
+                KoanLabel(title, icon: Icon.speaker)
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(2)
-                    Spacer(minLength: 0)
+                Spacer(minLength: 0)
+                // Refused while an earlier attempt is stuck: said instead.
+                if !wait.stuck {
                     Button("Retry") { player.retryOutput() }
-                    Button("Cancel") { player.cancelOutputWait() }
                 }
-                .font(.role(.fine, system: .callout))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
-                #if os(tvOS)
-                .koanMaterial(.regularMaterial)
-                #else
-                .koanMaterial(.bar)
-                #endif
-                .transition(.opacity)
+                Button("Cancel") { player.cancelOutputWait() }
+            }
+            .font(.role(.fine, system: .callout))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            #if os(tvOS)
+            .koanMaterial(.regularMaterial)
+            #else
+            .koanMaterial(.bar)
+            #endif
+            .transition(.opacity)
         }
     }
 }

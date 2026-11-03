@@ -390,9 +390,12 @@ impl Player {
         {
             return;
         }
-        let carry = self
-            .session()
-            .map(|s| (s.track.id, self.shared_state.position_ms(), s.run));
+        let carry = match &self.transport {
+            Transport::Opening(pending) => Some((pending.id, pending.position_ms, pending.start)),
+            _ => self
+                .session()
+                .map(|s| (s.track.id, self.shared_state.position_ms(), s.run)),
+        };
         log::info!(
             "upnp: switching output{} to {}",
             carry.map_or(String::new(), |(_, at, run)| format!(
@@ -409,6 +412,11 @@ impl Player {
         );
 
         self.stop_engine();
+        // A session still waiting for the local output goes with it; the
+        // open lands with nobody waiting and is kept or dropped as any is.
+        if matches!(self.transport, Transport::Opening(_)) {
+            self.transport = Transport::Idle;
+        }
         self.leave_renderer();
 
         if let Some(connection) = connection {

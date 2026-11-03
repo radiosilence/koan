@@ -7025,7 +7025,10 @@ impl KoanEngine {
                 .state
                 .output_opening()
                 .filter(|o| o.since.elapsed() >= OUTPUT_WAIT_NOTE)
-                .map(|o| OutputWait { device: o.device }),
+                .map(|o| OutputWait {
+                    device: o.device,
+                    stuck: o.stuck,
+                }),
         }
     }
 

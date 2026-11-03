@@ -825,9 +825,6 @@ pub struct QueueReading {
     pub error: Option<String>,
 }
 
-/// Shared player state — atomics for lock-free reads from UI thread.
-///
-/// The engine writes these, the UI reads them. No mutexes in the hot path.
 /// An output opening for the player off its thread: the device asked for
 /// (`None`, the system's default) and since when. While one is, the playhead
 /// stands still, and a front end says what it waits for once it has waited a
@@ -836,11 +833,17 @@ pub struct QueueReading {
 pub struct OutputOpening {
     pub device: Option<String>,
     pub since: std::time::Instant,
+    /// An earlier attempt is still stuck in the audio system, so asking
+    /// again is refused until it returns.
+    pub stuck: bool,
 }
 
 /// How long an output may take to open before the front ends say so.
 pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Shared player state — atomics for lock-free reads from UI thread.
+///
+/// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
     /// The output opening, while one is (`OutputOpening`).
@@ -1053,7 +1056,6 @@ impl SharedPlayerState {
         self.transport() == (PlaybackState::Stopped, false)
     }
 
-    /// Publish the playback state and the wait together.
     /// The output opening, while one is.
     pub fn output_opening(&self) -> Option<OutputOpening> {
         self.output_opening.lock().clone()
@@ -1068,6 +1070,7 @@ impl SharedPlayerState {
         }
     }
 
+    /// Publish the playback state and the wait together.
     pub fn set_transport(&self, state: PlaybackState, waiting: bool) {
         let bits = state as u8 | if waiting { WAITING } else { 0 };
         if self.state.swap(bits, Ordering::AcqRel) != bits {

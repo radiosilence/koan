@@ -3532,6 +3532,9 @@ mod types {
     pub struct OutputWait {
         /// The device asked for, or `None` for the system's default.
         pub device: Option<String>,
+        /// An earlier attempt is still stuck in the audio system, so
+        /// `retry_output_open` is refused until it returns.
+        pub stuck: bool,
     }
 
     /// A sleep timer to set: stop after a while, or at the end of the track or

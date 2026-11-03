@@ -40,14 +40,27 @@ impl Render for OutputWaitBanner {
         let Some(wait) = &self.wait else {
             return div().into_any_element();
         };
-        let message = match &wait.device {
-            Some(device) => format!("Waiting for {device}…"),
-            None => "Waiting for the system's output…".to_owned(),
+        let device = match &wait.device {
+            Some(device) => device.as_str(),
+            None => "the system's output",
         };
-        Banner::new(Icon::Speaker, message, Tone::Muted)
-            .action("retry", |_, _, cx| {
+        // Asking again is refused while an earlier attempt is stuck in the
+        // audio system: said instead of offered.
+        let (message, retry) = if wait.stuck {
+            (
+                format!("Waiting for {device}. An earlier attempt is still stuck."),
+                false,
+            )
+        } else {
+            (format!("Waiting for {device}…"), true)
+        };
+        let mut banner = Banner::new(Icon::Speaker, message, Tone::Muted);
+        if retry {
+            banner = banner.action("retry", |_, _, cx| {
                 crate::engine::command(cx, "retry the output", |e| e.retry_output_open())
-            })
+            });
+        }
+        banner
             .action("cancel", |_, _, cx| {
                 crate::engine::command(cx, "stop waiting for the output", |e| {
                     e.cancel_output_open()
