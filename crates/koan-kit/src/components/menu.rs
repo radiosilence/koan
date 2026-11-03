@@ -713,6 +713,17 @@ impl Render for Menu {
                     .highlighted(highlighted)
                     .destructive(item.destructive)
                     .disabled(item.disabled || item.run.is_none());
+                    // The tick follows the row by what it is (its words, and
+                    // which of rows of those words), as the highlight does
+                    // through a refill, not by its place.
+                    let nth = self.entries[..index]
+                        .iter()
+                        .filter(|e| e.label() == Some(&item.label))
+                        .count();
+                    row = row.tick_key(ElementId::NamedInteger(
+                        format!("tick:{}", item.label).into(),
+                        nth as u64,
+                    ));
                     if let Some(checked) = item.checked {
                         row = row.checked(checked).toggle(item.toggle);
                     }

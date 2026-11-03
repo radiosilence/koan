@@ -1,0 +1,1 @@
+- **A menu refilling keeps its ticks still.** A row moved by a menu filling in place (renderers found as the output menu opens) no longer draws its tick in again as if newly chosen.
