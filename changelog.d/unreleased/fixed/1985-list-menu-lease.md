@@ -1,0 +1,1 @@
+- **Library pages no longer crash as they open.** The list menu reads the keyboard cursor from the page as it draws, not by reading the page mid-draw.
