@@ -2,8 +2,8 @@
 //! throwaway library, playing, the pointer moving over every page while the
 //! window redraws, the wheel scrolling it, and the page changing under the
 //! pointer, with the rainbow on for the pages. Exits non-zero on a panic
-//! anywhere in the process, which is what
-//! it is for: crashes that only drawing, hovering and playing reach.
+//! anywhere in the process, which is what it is for: crashes that only
+//! drawing, hovering and playing reach.
 //!
 //! Headless, as `walk` is: no window is shown and nothing on the screen is
 //! read. It refuses to run without a throwaway `KOAN_CONFIG_DIR`. A library
