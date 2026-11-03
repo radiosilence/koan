@@ -6,11 +6,21 @@
 //! (`appearance.rainbow`). A Charli XCX track brings it out for itself one
 //! time in four, in brat's lime, and puts it away when the next track starts.
 //!
-//! Off, it costs nothing. On, its one timer, the accent's step every two
-//! seconds, runs only while a window of the app is in front and motion is
-//! allowed (neither Reduce Motion nor Low Power), and stops or starts as
-//! those change.
+//! On, it also goes out on the GPU (koan-kit's `prism`): each window's root
+//! lays a layer over the wash that flows with the analyser's bands, a pulse
+//! at the edges on the beat and a mirror ball; the playing bars become
+//! ribbons, the seek bar a rainbow trail, the tile under the pointer and the
+//! playing title shimmer; confetti flies when it comes out and from a heart
+//! as it is favourited, and a sweep of colour crosses the window when the
+//! record changes.
+//!
+//! Off, it costs nothing: no quad of it is mounted and the analyser is not
+//! read for it. On, its one timer, the accent's step every two seconds, and
+//! the prism's clock run only while a window of the app is in front and
+//! motion is allowed (neither Reduce Motion nor Low Power), and stop or
+//! start as those change.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use koan_ffi::QueueItem;
@@ -80,6 +90,43 @@ impl Global for Rainbow {}
 pub struct Painted(pub Option<bool>);
 
 impl Global for Painted {}
+
+impl Painted {
+    /// Whether the rainbow is drawn, and in brat's palette.
+    pub fn palette(cx: &App) -> Option<bool> {
+        cx.try_global::<Painted>().and_then(|p| p.0)
+    }
+
+    /// The same, for elements built where the app is not to hand, such as
+    /// the playing bars inside a row: they are drawn again as the accent
+    /// moves, which it does whenever this does.
+    pub fn now() -> Option<bool> {
+        match PAINTED.load(Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// `Painted` as a number: 0 off, 1 the palette, 2 brat's.
+static PAINTED: AtomicU8 = AtomicU8::new(0);
+
+/// Moves each time something is worth confetti: the window in front throws
+/// it from the pointer.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub struct Celebration(pub u64);
+
+impl Global for Celebration {}
+
+/// Confetti from the pointer in the window in front, while the rainbow is
+/// drawn: a heart just favourited.
+pub fn celebrate(cx: &mut App) {
+    if Rainbow::drawn(cx) {
+        let next = cx.try_global::<Celebration>().map_or(1, |c| c.0 + 1);
+        cx.set_global(Celebration(next));
+    }
+}
 
 impl Rainbow {
     /// Whether the rainbow is drawn: switched on, or brought out by a track.
@@ -321,7 +368,16 @@ fn refresh(cx: &mut App) {
         r.for_track && !r.on
     }));
     if cx.try_global::<Painted>() != Some(&painted) {
+        PAINTED.store(
+            match painted.0 {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            },
+            Ordering::Relaxed,
+        );
         cx.set_global(painted);
+        KoanTheme::set_prism(painted.0, cx);
     }
 }
 

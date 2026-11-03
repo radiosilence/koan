@@ -1,0 +1,1 @@
+- **The seek bar's times follow the engine's clock.** The engine wakes the time label at each whole second of playback; the app keeps no timer of its own, and nothing runs while paused or hidden.

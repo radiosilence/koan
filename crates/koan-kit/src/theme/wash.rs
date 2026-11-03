@@ -564,6 +564,9 @@ pub struct Wash {
     /// The drift's clock: its phase is the time since, never a frame count,
     /// so frames the system skips (an occluded window) cost no motion.
     epoch: Instant,
+    /// The pace the drift was last drawn at: a change moves the epoch so the
+    /// drift carries on from where it stood.
+    pace: f32,
     hold: u32,
     /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
@@ -583,6 +586,7 @@ impl Wash {
             wanted: false,
             amplitude: Ramp::still(0.0),
             epoch: now,
+            pace: 1.0,
             hold: 100,
             released: Vec::new(),
             rest: None,
@@ -818,7 +822,8 @@ impl Render for Wash {
         }
 
         let shown = self.current.is_some() || self.previous.is_some();
-        let target = if self.wanted && shown && KoanTheme::motion_allowed(cx) {
+        let paced = cx.global::<KoanTheme>().wash_drift > 0;
+        let target = if self.wanted && shown && paced && KoanTheme::motion_allowed(cx) {
             1.0
         } else {
             0.0
@@ -918,11 +923,22 @@ impl Wash {
             self.amplitude.write(&shader, 0);
             opacity.write(&shader, 1);
             if drifting {
-                let half = Duration::from_secs_f32(TRAVEL_PERIOD / 2.0);
+                // The person's pace and turn (Settings → Appearance).
+                let theme = cx.global::<KoanTheme>();
+                let pace = theme.wash_drift.max(1) as f32 / 100.0;
+                if pace != self.pace {
+                    // The phase (now - epoch) * pace stays where it was.
+                    let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+                    let kept = since * self.pace as f64 / pace as f64;
+                    self.epoch = now - Duration::from_secs_f64(kept);
+                    self.pace = pace;
+                }
+                let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
+                let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
-                    (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD),
-                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD),
-                    (4, -TURN, TURN, self.epoch, TURN_PERIOD),
+                    (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
+                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD / pace),
+                    (4, -turn, turn, self.epoch, TURN_PERIOD / pace),
                 ] {
                     shader.segment(
                         k,

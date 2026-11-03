@@ -629,6 +629,48 @@ impl Drop for KoanEngine {
     }
 }
 
+/// The playhead at each whole second of playback, from the engine
+/// (`KoanEngine::clock_stream`): what a time shown on screen moves on, with no
+/// timer of the client's own.
+#[derive(uniffi::Object)]
+pub struct ClockStream {
+    state: Weak<state::EngineState>,
+    moves: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+}
+
+#[uniffi::export]
+impl ClockStream {
+    /// The playhead, in milliseconds, at its next whole second while it
+    /// plays, or as soon as it is anchored afresh (a seek, a pause, the next
+    /// track). Waits through a pause. `None` once the engine is gone.
+    pub async fn next(&self) -> Option<u64> {
+        let mut moves = self.moves.lock().await;
+        moves.borrow_and_update();
+        let anchor = self.state.upgrade()?.anchor();
+        match anchor {
+            Some(anchor) if anchor.playing => {
+                let now = std::time::Instant::now();
+                let wait = 1000 - anchor.reckoning(now) % 1000;
+                tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_millis(wait)) => {
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                    moved = moves.changed() => {
+                        moved.ok()?;
+                        let anchor = self.state.upgrade()?.anchor()?;
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                }
+            }
+            _ => {
+                moves.changed().await.ok()?;
+                let anchor = self.state.upgrade()?.anchor()?;
+                Some(anchor.reckoning(std::time::Instant::now()))
+            }
+        }
+    }
+}
+
 /// How high a playing indicator's bars stand, from the levels a `VizStream`
 /// delivers: koan-core's reading (`BarHeights`), each band against its own
 /// recent loudest, so every app draws the same bars.
@@ -1390,6 +1432,16 @@ impl KoanEngine {
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
         VizStream::new(&self.viz)
+    }
+
+    /// The playhead's whole seconds as it plays, for a client that shows the
+    /// time: the engine wakes it at each, and while paused or with no
+    /// subscriber nothing runs.
+    pub fn clock_stream(&self) -> Arc<ClockStream> {
+        Arc::new(ClockStream {
+            state: Arc::downgrade(&self.out),
+            moves: tokio::sync::Mutex::new(self.out.anchor_moves()),
+        })
     }
 
     /// Follow the spectrum as keyframes, for a client that draws the bars
@@ -4518,6 +4570,22 @@ impl KoanEngine {
         save_appearance("wash_tint", move |cfg| cfg.appearance.wash_tint = percent);
     }
 
+    /// How fast the kōan theme's wash drifts, in percent of its own pace (see
+    /// `appearance.wash_drift`). Saved in the background; the app redraws
+    /// from its own copy.
+    pub fn set_wash_drift(&self, percent: u16) {
+        let percent = percent.min(200);
+        save_appearance("wash_drift", move |cfg| cfg.appearance.wash_drift = percent);
+    }
+
+    /// How far the kōan theme's wash turns as it drifts, in degrees (see
+    /// `appearance.wash_turn`). Saved in the background; the app redraws from
+    /// its own copy.
+    pub fn set_wash_turn(&self, degrees: u8) {
+        let degrees = u16::from(degrees.min(10));
+        save_appearance("wash_turn", move |cfg| cfg.appearance.wash_turn = degrees);
+    }
+
     /// Wait for every setting still being saved to land. For the app to call as
     /// it quits, since a change made just before would otherwise go with the
     /// process: the theme, which takes effect on the next launch, most of all.
@@ -4543,6 +4611,8 @@ impl KoanEngine {
             rainbow: cfg.appearance.rainbow,
             text_size: cfg.appearance.text_size,
             wash_tint: cfg.appearance.wash_tint.min(100) as u8,
+            wash_drift: cfg.appearance.wash_drift.min(200),
+            wash_turn: cfg.appearance.wash_turn.min(10) as u8,
         }
     }
 

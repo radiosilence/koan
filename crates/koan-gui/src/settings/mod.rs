@@ -72,6 +72,7 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         cx.update(|cx| {
             KoanTheme::set_record_colours(saved.record_colours, cx);
             KoanTheme::set_wash_tint(u32::from(saved.wash_tint), cx);
+            KoanTheme::set_wash_drift(u32::from(saved.wash_drift), u32::from(saved.wash_turn), cx);
             KoanTheme::set_wash_window(saved.wash_window, cx);
             cx.global_mut::<KoanTheme>().icons = saved.icons;
             KoanTheme::set_text_size(u32::from(saved.text_size), cx);
