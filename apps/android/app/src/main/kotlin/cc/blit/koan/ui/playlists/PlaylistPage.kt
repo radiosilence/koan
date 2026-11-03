@@ -230,8 +230,12 @@ private fun PlaylistList(
         }
         if (arranged.map { it.entryId } == latest.map { it.entryId }) return
         order = arranged
+        // Named by the entry it now sits before, not by the order shown:
+        // offline the page lists only the entries with a file here, and a
+        // whole order would send the rest to the end.
+        val before = arranged.getOrNull(arranged.indexOfFirst { it.entryId == moved } + 1)?.entryId
         // A failed write brings no new entries, so nothing else would undo the move shown.
-        edits.reorder(playlist.id, arranged.map { it.entryId }) { if (dragging == null) order = latest }
+        edits.move(playlist.id, listOf(moved), before) { if (dragging == null) order = latest }
     }
 
     // Told apart by the handle's interactions, as `onDragStopped` is called for
