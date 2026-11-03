@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
+use koan_runtime::{Album, AlbumOnDevice};
 
 use super::actions;
 use super::covers::Sleeve;

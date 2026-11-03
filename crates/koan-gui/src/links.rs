@@ -2,8 +2,8 @@
 //! credited artist to the artist. Underlined under the pointer, as the
 //! theme's link button; a name with no page is plain text.
 
-use koan_ffi::CreditPart;
 use koan_kit::app::*;
+use koan_runtime::CreditPart;
 
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -50,6 +50,16 @@ pub fn credit(
         .iter()
         .enumerate()
         .map(|(ix, credited)| {
+            // Between several names every name is linked: an unlinked part
+            // is a join (" & ", ", "), which keeps its width while the names
+            // either side give way.
+            if parts.len() > 1 && credited.artist_id.is_none() {
+                return div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(credited.text.clone())
+                    .into_any_element();
+            }
             link(
                 id(ix),
                 credited.text.clone(),

@@ -1080,6 +1080,10 @@ impl SharedPlayerState {
         let since = seek.at.elapsed();
         if since >= SEEK_PATIENCE {
             *pending = None;
+            drop(pending);
+            // The playhead read from the timeline again is news to every
+            // front end that drew the seek's.
+            crate::signal::engine_changed().bump();
             return None;
         }
         Some(if seek.moving {
@@ -1087,6 +1091,19 @@ impl SharedPlayerState {
         } else {
             seek.position_ms
         })
+    }
+
+    /// When a seek on its way to the player lapses if the player has not
+    /// taken it, for a front end that publishes the playhead to wait no
+    /// longer than that. One already lapsed is let go here, with the change
+    /// signal, so the deadline returned is never past.
+    pub fn seek_deadline(&self) -> Option<std::time::Instant> {
+        let at = (*self.pending_seek.lock())?.at;
+        if at.elapsed() >= SEEK_PATIENCE {
+            self.pending_seek();
+            return None;
+        }
+        Some(at + SEEK_PATIENCE)
     }
 
     /// Where a seek to `position_ms` lands: held inside what has arrived of
@@ -1963,6 +1980,21 @@ impl SharedPlayerState {
             self.bump_version();
         }
         failed
+    }
+
+    /// The items for `track_id` that failed as cancelled, to be given the file
+    /// that arrived after all.
+    pub fn cancelled_items(&self, track_id: i64) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter(|item| {
+                item.db_id == Some(track_id)
+                    && matches!(&item.state, ItemState::Failed(reason)
+                        if reason == crate::remote::downloads::CANCELLED)
+            })
+            .map(|item| item.id)
+            .collect()
     }
 
     /// Every item for one of `track_ids` that failed goes back to waiting for

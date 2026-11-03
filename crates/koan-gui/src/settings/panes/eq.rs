@@ -1,8 +1,8 @@
 //! EQ: what the output in use plays, and the way into the EQ window, where
 //! profiles are imported, made and chosen for each device.
 
-use koan_ffi::DspOverview;
 use koan_kit::app::*;
+use koan_runtime::DspOverview;
 
 use crate::components::{Button, ButtonKind};
 use crate::mirror::Mirror;

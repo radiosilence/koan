@@ -10,6 +10,8 @@
 //! and the quad leaves the scene when it ends, so a control at rest, or off
 //! screen, costs nothing. Under Reduce Motion nothing is drawn.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
@@ -209,19 +211,48 @@ struct State {
 /// A control's answers, taken as the control is drawn and moved into its
 /// handlers: keyed state found again from a handler would not be the
 /// control's own.
+///
+/// The state is made only when something is answered or followed: a button
+/// at rest, or scrolled past in a long list, holds an empty cell in its
+/// element state and nothing else, no entity and no observer. The view that
+/// drew the control is told directly when an answer starts and ends.
 #[derive(Clone)]
-pub struct Answerer(Entity<State>);
+pub struct Answerer {
+    cell: Rc<RefCell<Option<Entity<State>>>>,
+    view: EntityId,
+}
 
 impl Answerer {
     /// The answers of the control `id`.
-    pub fn of(id: &ElementId, window: &mut Window, cx: &mut App) -> Self {
-        Self(window.use_keyed_state(child(id, "answer"), cx, |_, _| State::default()))
+    pub fn of(id: &ElementId, window: &mut Window, _: &mut App) -> Self {
+        let view = window.current_view();
+        let cell = window.with_global_id(child(id, "answer"), |global_id, window| {
+            window.with_element_state(
+                global_id,
+                |cell: Option<Rc<RefCell<Option<Entity<State>>>>>, _| {
+                    let cell = cell.unwrap_or_default();
+                    (cell.clone(), cell)
+                },
+            )
+        });
+        Self { cell, view }
+    }
+
+    /// The state, made the first time it is needed.
+    fn state(&self, cx: &mut App) -> Entity<State> {
+        if let Some(state) = self.cell.borrow().as_ref() {
+            return state.clone();
+        }
+        let state = cx.new(|_| State::default());
+        *self.cell.borrow_mut() = Some(state.clone());
+        state
     }
 
     /// Starts `answer` in `color`, from the control's own handler. Nothing
     /// happens under Reduce Motion or where the renderer draws no shaders.
     pub fn start(&self, answer: Answer, color: Hsla, cx: &mut App) {
-        self.0.update(cx, |s, _| s.own = Some(Instant::now()));
+        self.state(cx)
+            .update(cx, |s, _| s.own = Some(Instant::now()));
         self.run(answer, color, cx);
     }
 
@@ -230,7 +261,8 @@ impl Answerer {
         if !SHADED || !KoanTheme::motion_allowed(cx) {
             return;
         }
-        self.0.update(cx, |s, cx| {
+        let (view, cell) = (self.view, self.cell.clone());
+        self.state(cx).update(cx, |s, cx| {
             s.animated.set_all(0, &[answer.code(), answer.heading()]);
             s.animated.set_color(2, color);
             let at = Animated::now();
@@ -241,15 +273,21 @@ impl Answerer {
             s.live = Some(answer);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
-                // The quad leaves the scene once the answer has run.
-                this.update(cx, |s, cx| {
-                    s.live = None;
-                    cx.notify();
-                })
-                .ok();
+                // The quad leaves the scene once the answer has run, and a
+                // control that follows nothing lets its state go with it.
+                let follows = this
+                    .update(cx, |s, _| {
+                        s.live = None;
+                        s.seen.is_some()
+                    })
+                    .unwrap_or(true);
+                if !follows {
+                    cell.borrow_mut().take();
+                }
+                cx.update(|cx| cx.notify(view));
             }));
-            cx.notify();
         });
+        cx.notify(view);
     }
 
     /// Answers a change the control is told of rather than one done to it
@@ -274,7 +312,7 @@ impl Answerer {
     /// way into (an option becoming the chosen one), passed while it stands
     /// in the other, so the next move in answers.
     pub fn note(&self, mark: u64, cx: &mut App) {
-        self.0.update(cx, |s, _| s.seen = Some(mark));
+        self.state(cx).update(cx, |s, _| s.seen = Some(mark));
     }
 
     /// As `follow`, for something whose appearing is the news (a notice):
@@ -299,14 +337,14 @@ impl Answerer {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let s = self.0.read(cx);
-        let seen = s.seen;
+        let state = self.state(cx);
+        let seen = state.read(cx).seen;
         if seen == Some(mark) {
             return;
         }
         // The change the control's own handler just answered, once; any
         // other change, however soon after, is answered.
-        let answered = self.0.update(cx, |s, _| {
+        let answered = state.update(cx, |s, _| {
             s.seen = Some(mark);
             s.own
                 .take()
@@ -320,19 +358,23 @@ impl Answerer {
 
     /// Whether an answer is being drawn.
     pub fn live(&self, cx: &App) -> bool {
-        self.0.read(cx).live.is_some()
+        self.cell
+            .borrow()
+            .as_ref()
+            .is_some_and(|s| s.read(cx).live.is_some())
     }
 
     /// The mark last followed or noted.
     pub(crate) fn seen(&self, cx: &App) -> Option<u64> {
-        self.0.read(cx).seen
+        self.cell.borrow().as_ref().and_then(|s| s.read(cx).seen)
     }
 
     /// The answer being drawn, as a quad over the control and a little past
     /// it, for the control to add as its last child; nothing at rest. The
     /// control is `relative`.
     pub fn layer(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let s = self.0.read(cx);
+        let state = self.cell.borrow().clone()?;
+        let s = state.read(cx);
         let answer = s.live?;
         let look = crate::theme::Look::of(window, cx);
         let spill = look.spaced(answer.spill());
@@ -416,7 +458,13 @@ mod tests {
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
         let own = |view: &Entity<Two>, cx: &mut VisualTestContext| {
-            view.update(cx, |two, cx| two.answers[0].0.read(cx).own.is_some())
+            view.update(cx, |two, cx| {
+                two.answers[0]
+                    .cell
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|s| s.read(cx).own.is_some())
+            })
         };
         view.update(cx, |two, cx| two.answers[0].start(Answer::Burst, red(), cx));
         assert!(own(&view, cx), "the handler's answer is noted");

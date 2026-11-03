@@ -30,10 +30,10 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{DspStarter, DspTuningEntry, KoanEngine};
 use koan_gui::dsp::{Dsp, EqPage, profile::ProfilePage};
 use koan_gui::theme;
 use koan_kit::app::{AppContext, Bounds};
+use koan_runtime::{DspStarter, DspTuningEntry, KoanEngine};
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, WindowBounds, WindowOptions, px, size};
 
@@ -105,7 +105,7 @@ fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
     block(
         engine
             .clone()
-            .dsp_set_role(hd600.clone(), koan_ffi::DspRole::Correction),
+            .dsp_set_role(hd600.clone(), koan_runtime::DspRole::Correction),
     )?;
     block(
         engine
@@ -150,6 +150,7 @@ fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     throwaway()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let window_mode = args.iter().any(|a| a == "--window");

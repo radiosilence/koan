@@ -19,10 +19,10 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::{AppContext, Entity, Modifiers, MouseMoveEvent, ScrollEvent};
+use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic input, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{
@@ -38,6 +38,7 @@ const HEIGHT: f32 = 750.0;
 const BUDGET: Duration = Duration::from_secs(600);
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     // SAFETY: set before any other thread starts.
     unsafe {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
@@ -91,7 +92,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // The queue playing, the pointer sweeping it, for the churn's length;
     // each pass seeks back, pauses and resumes. The tracks are 0.2 s, so
-    // playing moves through them all the while.
+    // playing moves through them all the while. There is no null output: the
+    // player opens the real device, and while the audio daemon is slow to
+    // answer that open, the first seek waits behind it (#2016) and this
+    // phase draws only a pass or two however long it is given.
     let playing = |cx: &mut HeadlessAppContext| {
         cx.update(|cx| {
             let mirror = cx.global::<koan_gui::mirror::Mirror>().playback.clone();

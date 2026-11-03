@@ -4,8 +4,9 @@
 //! ranges into a frame that is gone.
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, Entity, IntoElement, ParentElement, Render,
-    StyleRefinement, Styled, TestAppContext, Window, div, px,
+    AnyWindowHandle, AppContext as _, Context, Entity, InteractiveElement, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement, StyleRefinement, Styled, TestAppContext,
+    Window, div, px,
 };
 
 /// A cached view showing a line of text, counting its renders.
@@ -67,8 +68,12 @@ fn draw(window: AnyWindowHandle, cx: &mut TestAppContext) {
         .expect("draw window");
 }
 
-#[gpui_kit::test]
-fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext) {
+/// The leaves' render counts.
+fn renders(leaves: &[Entity<Leaf>; 2], cx: &mut TestAppContext) -> (usize, usize) {
+    cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
+}
+
+fn board(cx: &mut TestAppContext) -> ([Entity<Leaf>; 2], gpui_kit::WindowHandle<Root>) {
     let leaves = [
         cx.new(|_| Leaf {
             text: "left",
@@ -82,17 +87,18 @@ fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext
     let parent = cx.new(|_| Parent {
         leaves: leaves.clone(),
     });
-    let root = cx.add_window(|_, _| Root {
-        lines: 4,
-        parent: parent.clone(),
-    });
-    let window: AnyWindowHandle = root.into();
+    let root = cx.add_window(|_, _| Root { lines: 4, parent });
+    (leaves, root)
+}
 
-    draw(window, cx);
-    let renders = |cx: &mut TestAppContext| {
-        cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
-    };
-    assert_eq!(renders(cx), (1, 1));
+/// Frames come as the app's do: each change ends in one drawn frame (the
+/// test platform draws a dirty window as an update finishes), and nothing
+/// draws a frame with nothing changed.
+#[gpui_kit::test]
+fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext) {
+    let (leaves, root) = board(cx);
+    cx.run_until_parked();
+    assert_eq!(renders(&leaves, cx), (1, 1));
 
     // The root draws again with fewer lines of its own: the parent is reused
     // whole, carrying both leaves' state into this frame without moving the
@@ -102,22 +108,106 @@ fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext
         cx.notify();
     })
     .expect("update root");
-    draw(window, cx);
-    assert_eq!(renders(cx), (1, 1), "the parent is reused whole");
+    assert_eq!(renders(&leaves, cx), (1, 1), "the parent is reused whole");
 
     // One leaf changes, so the parent draws again. The other leaf's ranges
     // index the first frame, which is gone: it must be drawn afresh rather
     // than reused, which panicked in `reuse_layouts`.
     leaves[0].update(cx, |_, cx| cx.notify());
-    draw(window, cx);
-    assert_eq!(renders(cx), (2, 2));
+    assert_eq!(renders(&leaves, cx), (2, 2));
 
-    // The changed leaf draws again on each change; whatever frames the
-    // harness draws between, nothing reuses a range from a frame that is
-    // gone.
+    // In the next frame the untouched leaf was drawn in the frame before, so
+    // it is reused: a change that redraws everything fails here.
     leaves[0].update(cx, |_, cx| cx.notify());
-    draw(window, cx);
-    assert_eq!(renders(cx).0, 3);
+    assert_eq!(renders(&leaves, cx), (3, 2));
+    leaves[0].update(cx, |_, cx| cx.notify());
+    assert_eq!(renders(&leaves, cx), (4, 2));
+}
+
+/// A leaf that names itself to a screen reader.
+struct Named(&'static str);
+
+impl Render for Named {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id(self.0)
+            .role(gpui_kit::Role::Button)
+            .aria_label(self.0)
+            .size_full()
+            .child(self.0)
+    }
+}
+
+struct NamedParent([Entity<Named>; 2]);
+
+impl Render for NamedParent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().flex().children(self.0.iter().map(|leaf| {
+            leaf.clone()
+                .cached(StyleRefinement::default().w(px(100.)).h(px(20.)))
+        }))
+    }
+}
+
+struct NamedRoot {
+    lines: usize,
+    parent: Entity<NamedParent>,
+}
+
+impl Render for NamedRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .relative()
+            .children((0..self.lines).map(|i| div().h(px(20.)).child(format!("line {i}"))))
+            .child(
+                div().absolute().top(px(400.)).left_0().child(
+                    self.parent
+                        .clone()
+                        .cached(StyleRefinement::default().w(px(200.)).h(px(20.))),
+                ),
+            )
+    }
+}
+
+/// A cached view reused whole stays in the accessibility tree, and so do
+/// the cached views inside it, carried or reused on their own.
+#[gpui_kit::test]
+fn reused_views_stay_in_the_accessibility_tree(cx: &mut TestAppContext) {
+    let named = [cx.new(|_| Named("play")), cx.new(|_| Named("next"))];
+    let parent = cx.new(|_| NamedParent(named.clone()));
+    let root = cx.add_window(|_, _| NamedRoot { lines: 2, parent });
+    root.update(cx, |_, window, _| window.set_a11y_active_for_test(true))
+        .expect("activate a11y");
+    let tree = |cx: &mut TestAppContext| {
+        root.update(cx, |_, window, _| {
+            window.debug_a11y_tree_json().unwrap_or_default()
+        })
+        .expect("read tree")
+    };
+    let both = |json: &str| json.contains("\"play\"") && json.contains("\"next\"");
+
+    // Drawn once with the tree built.
+    root.update(cx, |root, _, cx| {
+        root.lines = 3;
+        cx.notify();
+    })
+    .expect("update root");
+    assert!(both(&tree(cx)), "drawn: {}", tree(cx));
+
+    // The parent reused whole.
+    root.update(cx, |root, _, cx| {
+        root.lines = 1;
+        cx.notify();
+    })
+    .expect("update root");
+    assert!(both(&tree(cx)), "parent reused: {}", tree(cx));
+
+    // One leaf redrawn, its sibling carried, then reused.
+    for _ in 0..2 {
+        named[0].update(cx, |_, cx| cx.notify());
+        assert!(both(&tree(cx)), "a leaf redrawn: {}", tree(cx));
+    }
 }
 
 /// A cached group of cached leaves, for the churn below.

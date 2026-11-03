@@ -1,0 +1,1 @@
+- **Fixed widths at the Mac's sizes.** The EQ page's width, Settings' number fields, the account sheet, its field and the QR codes stand at the Mac's sizes at the default text size, about 7 % wider than they had become, and grow with the text.

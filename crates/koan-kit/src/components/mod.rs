@@ -556,8 +556,12 @@ pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> S
         .child(fill)
 }
 
-/// A fill under a control, in `color`, faded with `transition`.
+/// A fill under a control, in `color`, faded with `transition`. Out, and
+/// not fading, it is nothing: a control at rest puts no quad in the scene.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
+    if transition.at(0, Animated::now()) <= 0.0 && !transition.moving() {
+        return gpui_kit::Empty.into_any_element();
+    }
     if !SHADED {
         let amount = transition.at(0, Animated::now());
         return div()

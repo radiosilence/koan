@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use futures::StreamExt as _;
-use koan_ffi::Playlist;
 use koan_kit::app::*;
+use koan_runtime::Playlist;
 
 use crate::components::{
     Button, ButtonKind, CoverArt, DropTarget, INSERTION, KoanContextMenu, ListCursor, Menu,
@@ -330,8 +330,8 @@ fn playlist_menu(menu: Menu, playlist: &Playlist, nav: &Entity<Navigator>) -> Me
         move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
             command(cx, "play playlist", move |e| {
                 e.queue(
-                    vec![koan_ffi::TrackSet::Playlist { id }],
-                    koan_ffi::Placement::Replace {
+                    vec![koan_runtime::TrackSet::Playlist { id }],
+                    koan_runtime::Placement::Replace {
                         start_at: None,
                         shuffled,
                     },
@@ -375,7 +375,7 @@ fn playlist_menu(menu: Menu, playlist: &Playlist, nav: &Entity<Navigator>) -> Me
 }
 
 /// How many transfers are yet to settle.
-fn running(transfers: &[koan_ffi::Transfer]) -> usize {
+fn running(transfers: &[koan_runtime::Transfer]) -> usize {
     transfers.iter().filter(|t| !t.state.is_settled()).count()
 }
 
@@ -456,7 +456,7 @@ impl Render for Sidebar {
                         this.drop_playlist = None;
                         let sets = dragged.as_library().sets.to_vec();
                         command(cx, "queue a playlist", move |e| {
-                            e.queue(sets, koan_ffi::Placement::Append)
+                            e.queue(sets, koan_runtime::Placement::Append)
                         });
                     }))
                     .accept(cx.listener(|_, paths: &ExternalPaths, _, cx| {
@@ -465,7 +465,7 @@ impl Render for Sidebar {
                     .accept(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
                         let sets = dragged.sets.to_vec();
                         command(cx, "queue from the library", move |e| {
-                            e.queue(sets, koan_ffi::Placement::Append)
+                            e.queue(sets, koan_runtime::Placement::Append)
                         });
                     })),
             )
@@ -589,18 +589,22 @@ impl Render for Sidebar {
                                         )
                                     }
                                 }))
-                                .accept(cx.listener({
-                                    let id = playlist.id;
-                                    move |_, dragged: &PlayableDrag, _, cx| {
-                                        if dragged.is_from(id) {
-                                            return;
+                                // Its own tracks let go over it add nothing.
+                                .accept_if(
+                                    {
+                                        let id = playlist.id;
+                                        move |dragged: &PlayableDrag| !dragged.is_from(id)
+                                    },
+                                    cx.listener({
+                                        let id = playlist.id;
+                                        move |_, dragged: &PlayableDrag, _, cx| {
+                                            let sets = dragged.sets.to_vec();
+                                            command(cx, "add to playlist", move |e| {
+                                                e.add_to_playlist(id, sets)
+                                            });
                                         }
-                                        let sets = dragged.sets.to_vec();
-                                        command(cx, "add to playlist", move |e| {
-                                            e.add_to_playlist(id, sets)
-                                        });
-                                    }
-                                }))
+                                    }),
+                                )
                         })
                         .on_drop(cx.listener(
                             move |this, dragged: &PlaylistDrag, _, cx| {
@@ -761,6 +765,7 @@ impl Sidebar {
                 keys.iter()
                     .flatten()
                     .map(|key| (*key, Priority::Ahead(0.0))),
+                cx,
             );
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let sleeves = keys

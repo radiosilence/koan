@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use koan_ffi::{
+use koan_kit::app::{App, AppContext, Entity, Global};
+use koan_runtime::{
     ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo,
     QueueItem, QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer,
     TransferFigure,
 };
-use koan_kit::app::{App, AppContext, Entity, Global};
 
 use crate::queue::rows::{self, Row};
 
@@ -289,6 +289,9 @@ impl Mirror {
         };
         let stream = engine.observe();
         let held = mirror.clone();
+        // Whether the app is still there: the engine can outlive it, as in
+        // the benches, which open one engine for several apps.
+        let app = mirror.playback.downgrade();
         let background = cx.background_executor().clone();
         cx.spawn(async move |cx| {
             loop {
@@ -306,6 +309,9 @@ impl Mirror {
                     })
                     .await;
                 let Some(batch) = batch else { break };
+                if app.upgrade().is_none() {
+                    break;
+                }
                 let replaced = cx.update(|cx| held.apply(batch, cx));
                 if !replaced.is_empty() {
                     background.spawn(async move { drop(replaced) }).detach();
@@ -460,7 +466,7 @@ impl From<StateSlice> for Prepared {
 
 fn idle() -> NowPlaying {
     NowPlaying {
-        state: koan_ffi::PlayState::Stopped,
+        state: koan_runtime::PlayState::Stopped,
         waiting: false,
         position_ms: 0,
         duration_ms: 0,
@@ -469,7 +475,7 @@ fn idle() -> NowPlaying {
         format: None,
         playlist_version: 0,
         shuffle: false,
-        repeat_mode: koan_ffi::RepeatMode::Off,
+        repeat_mode: koan_runtime::RepeatMode::Off,
         undo_shuffles: 0,
         queue_shufflable: false,
         sleep: None,

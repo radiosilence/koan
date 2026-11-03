@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
+use koan_runtime::{Artist, BrowseFilter};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -432,6 +432,10 @@ impl Render for ArtistBrowser {
                 .set_offset(Point::default());
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no artists yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("artists", |shelf| {
@@ -446,20 +450,8 @@ impl Render for ArtistBrowser {
         let body = if held {
             div().into_any_element()
         } else if self.artists.is_empty() {
-            chrome::empty_state(
-                crate::theme::Icon::Artist,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no artists yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
-            )
-            .into_any_element()
+            chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
+                .into_any_element()
         } else {
             crate::components::uniform_list(
                 "artists",
