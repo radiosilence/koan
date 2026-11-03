@@ -279,11 +279,14 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .when_some(focus, |d, focus| d.track_focus(&focus))
             // Escape puts it away as its cancel does, once nothing inside it
             // (a field, a menu) has taken the key for its own.
-            .on_key_down(|e: &KeyDownEvent, _, cx| {
-                if e.keystroke.key == "escape" {
-                    cx.stop_propagation();
-                    if !asking(cx).read(cx).held {
-                        close(cx);
+            .on_key_down({
+                let host = asking.clone();
+                move |e: &KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        if !host.read(cx).held {
+                            close(cx);
+                        }
                     }
                 }
             })
