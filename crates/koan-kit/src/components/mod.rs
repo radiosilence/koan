@@ -93,7 +93,7 @@ use gpui::{
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track, WeakAnimated,
+    ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
@@ -111,7 +111,7 @@ pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 pub use slot::{ColorSlot, install as install_color_slots, present_now};
-pub use track::{TrackCurve, track_at};
+pub use track::{TrackCurve, spring_length, track_at};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
