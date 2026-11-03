@@ -91,7 +91,7 @@ pub fn start(
     restored: impl Future<Output = Option<u32>> + 'static,
     cx: &mut App,
 ) {
-    cx.set_global(MainWindow::default());
+    cx.set_global(MainWindowSlot::default());
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
@@ -138,12 +138,12 @@ pub fn start(
 /// decided whether to open it: nothing opens it again before that, or a
 /// file opened at launch would open a second.
 #[derive(Default)]
-struct MainWindow {
+struct MainWindowSlot {
     handle: Option<AnyWindowHandle>,
     ready: bool,
 }
 
-impl Global for MainWindow {}
+impl Global for MainWindowSlot {}
 
 /// Resolves once the mirror's queue holds `rows` rows, woken by the queue
 /// changing rather than by looking.
@@ -174,7 +174,7 @@ fn rows_arrived(
 /// it did: before launching has decided about the window, it leaves that to
 /// launching.
 pub fn show_window(cx: &mut App) -> bool {
-    if !cx.try_global::<MainWindow>().is_some_and(|m| m.ready) {
+    if !cx.try_global::<MainWindowSlot>().is_some_and(|m| m.ready) {
         return false;
     }
     if let Some(window) = main_window(cx) {
@@ -197,7 +197,7 @@ pub fn show_window(cx: &mut App) -> bool {
 
 /// The main window, while it is open. Settings, EQ and About are not it.
 pub fn main_window(cx: &App) -> Option<AnyWindowHandle> {
-    let handle = cx.try_global::<MainWindow>()?.handle?;
+    let handle = cx.try_global::<MainWindowSlot>()?.handle?;
     cx.windows().contains(&handle).then_some(handle)
 }
 
@@ -218,7 +218,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
         async {}
     })
     .detach();
-    cx.global_mut::<MainWindow>().ready = true;
+    cx.global_mut::<MainWindowSlot>().ready = true;
     if show {
         open_window(saved, cx);
     } else {
@@ -254,7 +254,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             cx.new(|cx| WindowRoot::new(shell, window, cx))
         });
     match opened {
-        Ok(handle) => cx.global_mut::<MainWindow>().handle = Some(handle),
+        Ok(handle) => cx.global_mut::<MainWindowSlot>().handle = Some(handle),
         Err(e) => {
             log::error!("the window did not open: {e}");
             cx.quit();

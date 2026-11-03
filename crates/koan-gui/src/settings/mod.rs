@@ -181,8 +181,6 @@ pub struct SettingsWindow {
     /// account is an admin's, and so whether there is a People tab at all.
     people: Option<Entity<panes::people::People>>,
     people_for: Option<String>,
-    /// Pressed on the strip along the top, to move the window on the next
-    /// move: a click alone is not a drag.
     _people: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }

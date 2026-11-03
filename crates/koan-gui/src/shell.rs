@@ -48,7 +48,6 @@ pub struct Shell {
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
     /// The kōan menu, drawn in the window where there is no menu bar.
     koan_menu: crate::components::MenuSlot<()>,
-    /// The toolbar was pressed and the next move drags the window.
     /// Whether the sidebar shows, and how wide; kept with the window's
     /// bounds.
     sidebar_shown: bool,
