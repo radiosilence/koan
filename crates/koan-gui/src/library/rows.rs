@@ -116,15 +116,18 @@ pub struct RowState {
 pub enum Reveal {
     Rows(crate::components::RowListState, usize),
     Uniform(crate::components::UniformListScrollHandle, usize, usize),
+    /// An item of a `list` of mixed items, as the artist page's.
+    List(crate::components::ListState, usize),
 }
 
 impl Reveal {
-    fn run(&self) {
+    pub fn run(&self) {
         match self {
             Reveal::Rows(list, ix) => list.reveal_around(*ix),
             Reveal::Uniform(handle, ix, count) => {
                 crate::components::reveal_around(handle, *ix, *count)
             }
+            Reveal::List(list, ix) => crate::components::reveal_around_list(list, *ix),
         }
     }
 }
