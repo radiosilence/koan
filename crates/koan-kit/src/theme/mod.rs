@@ -624,6 +624,12 @@ impl Look {
         px(points * self.scale.space)
     }
 
+    /// A width that holds text, in points at 100 %, grown with the text
+    /// size rather than the spacing.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.scale.size)
+    }
+
     pub fn font_size(&self, role: TypeRole) -> Pixels {
         px(self.points(role))
     }

@@ -9,10 +9,6 @@ use std::time::Duration;
 
 use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::point;
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -58,7 +54,7 @@ pub struct ArtistBrowser {
     loading: Option<(Query, u64)>,
     request: u64,
     _load: Option<Task<()>>,
-    scroll: UniformListScrollHandle,
+    scroll: crate::components::UniformListScrollHandle,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
     /// What the list's context menu acts on: the row last right-clicked.
@@ -84,7 +80,7 @@ impl ArtistBrowser {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(Pixels::ZERO, -y));
+                .set_offset(crate::components::offset_down(y));
         }
     }
 
@@ -157,7 +153,7 @@ impl ArtistBrowser {
             loading: None,
             request: 0,
             _load: None,
-            scroll: UniformListScrollHandle::new(),
+            scroll: crate::components::UniformListScrollHandle::new(),
             selection: Selection::default(),
             pick: None,
             menu: None,
@@ -458,7 +454,7 @@ impl Render for ArtistBrowser {
             )
             .into_any_element()
         } else {
-            uniform_list(
+            crate::components::uniform_list(
                 "artists",
                 self.artists.len(),
                 cx.processor(|this, range: Range<usize>, window, cx| {
@@ -501,8 +497,7 @@ impl Render for ArtistBrowser {
                 .pt(p.look.spaced(10.0))
                 .relative()
                 .child(body)
-                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                .child(crate::components::list_scrollbar(&self.scroll)),
         )
     }
 }

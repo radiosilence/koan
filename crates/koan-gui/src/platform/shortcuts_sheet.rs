@@ -8,9 +8,8 @@
 //!
 //! Built from koan-kit's sheet: its panel, head and body, keys as badges.
 
+use koan_kit::app::platform::OperatingSystem;
 use koan_kit::app::*;
-// which platform's key names to print, which koan-kit does not decide.
-use koan_kit::raw::OperatingSystem;
 
 use crate::components::{Badge, Button, ButtonKind, sheet};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};

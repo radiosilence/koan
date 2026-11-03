@@ -26,6 +26,13 @@ pub fn panel(look: &Look) -> Stateful<Div> {
         .border_color(look.palette.rule.hsla())
 }
 
+/// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
+/// sheet drawn by its owner rather than presented through `present`.
+pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement {
+    use gpui_kit::base::FocusTrapElement as _;
+    panel.focus_trap("sheet-trap", focus)
+}
+
 /// A sheet that holds a list to pick from (the picker): wider than a
 /// question's, and tall from the start, so the list growing as it is
 /// typed into moves nothing.

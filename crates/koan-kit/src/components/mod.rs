@@ -103,7 +103,7 @@ pub mod list_actions {
 }
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{FieldState, InputEvent, TextField};
+pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
@@ -122,11 +122,11 @@ pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
-pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
+pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, title_text};
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use panel::TOOLTIPS_DRAWN;
-pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
+pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
@@ -151,12 +151,15 @@ pub use tabs::{StatusLine, TabStrip};
 pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
-    Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
-    ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
+    Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
+    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS, opens_panel,
 };
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
-pub use window::SecondaryWindow;
+pub use window::{
+    MainWindow, SecondaryWindow, close_button, draws_decorations, moves_window, over_sheets,
+    over_window, window_buttons,
+};
 
 use crate::theme::{Look, MARK, Motion};
 
