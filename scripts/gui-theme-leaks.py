@@ -52,6 +52,20 @@ def raw_names(text: str) -> int:
     return total
 
 
+# A glob takes every name at once and would count as none.
+GLOB = re.compile(r"\bkoan_kit::raw::(?:\w+::)*(?:\*|\{[^}]*\*[^}]*\})")
+
+
+def globbed() -> list[str]:
+    """Raw imports by glob, which name nothing the count could see."""
+    found = []
+    for path in sorted(SRC.rglob("*.rs")):
+        for i, line in enumerate(path.read_text().splitlines()):
+            if GLOB.search(line):
+                found.append(f"{path.relative_to(SRC.parent)}:{i + 1}")
+    return found
+
+
 def unreasoned() -> list[str]:
     """Raw uses with no comment on the line above, or on their own line."""
     missing = []
@@ -125,6 +139,11 @@ def report(lines: list[str]) -> int:
 
 
 def main() -> int:
+    globs = globbed()
+    if globs:
+        print("koan_kit::raw imported by glob; name what is taken, so the count sees it:")
+        print("  " + "\n  ".join(globs))
+        return report([f"raw glob import: {g}" for g in globs])
     missing = unreasoned()
     if missing:
         print("koan_kit::raw used without a comment above it saying why koan-kit cannot cover it:")

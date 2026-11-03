@@ -174,14 +174,36 @@ pub fn install(cx: &mut App) {
     refresh(cx);
 }
 
-/// Every key pressed in the app's windows, whatever took it (a list's arrows
-/// included), against `CODE`; `then` runs when it has been typed. Typing in
-/// a field is typing, and a key held with Control, Option, Command or Fn is
-/// a shortcut: neither is part of a code, and either starts it over. Shift
-/// is not: a capital B is still B.
+/// How much of the code is in before the keys it goes on with are held back
+/// from the app: every arrow, since ↑ ↑ ↓ ↓ ← → ← → is ordinary use of a
+/// list or a grid and always moves it. Only B and A, once the arrows are in,
+/// do nothing else.
+const HOLD: usize = 8;
+
+/// How much of the code `recent` ends in: the longest of its ends that the
+/// code starts with.
+fn matched(recent: &[String]) -> usize {
+    (0..=recent.len().min(CODE.len()))
+        .rev()
+        .find(|&n| {
+            recent[recent.len() - n..]
+                .iter()
+                .map(String::as_str)
+                .eq(CODE[..n].iter().copied())
+        })
+        .unwrap_or(0)
+}
+
+/// Every key pressed in the app's windows, before anything takes it,
+/// against `CODE`; `then` runs when it has been typed. Once its arrows are
+/// in (`HOLD`), B and A are kept from the app, so a hotkey on either does
+/// not run; a key that breaks it goes through as usual.
+/// Typing in a field is typing, and a key held with Control, Option, Command
+/// or Fn is a shortcut: neither is part of a code, and either starts it
+/// over. Shift is not: a capital B is still B.
 fn listen(then: fn(&mut App), cx: &mut App) -> Subscription {
     let recent = std::cell::RefCell::new(Vec::<String>::new());
-    cx.observe_keystrokes(move |event, _, cx| {
+    cx.intercept_keystrokes(move |event, _, cx| {
         let typing = event.context_stack.iter().any(|c| c.contains("Input"));
         let m = &event.keystroke.modifiers;
         let mut recent = recent.borrow_mut();
@@ -189,14 +211,18 @@ fn listen(then: fn(&mut App), cx: &mut App) -> Subscription {
             recent.clear();
             return;
         }
+        let before = recent.len();
         recent.push(event.keystroke.key.to_lowercase());
-        if recent.len() > CODE.len() {
-            recent.remove(0);
-        }
-        if recent.iter().map(String::as_str).eq(CODE) {
+        let now = matched(&recent);
+        let keep = recent.len() - now;
+        recent.drain(..keep);
+        if now == CODE.len() {
             recent.clear();
             drop(recent);
+            cx.stop_propagation();
             then(cx);
+        } else if before >= HOLD && now == before + 1 {
+            cx.stop_propagation();
         }
     })
 }
@@ -316,19 +342,31 @@ mod tests {
     /// page and the queue does: its actions take the arrows.
     struct Page(FocusHandle);
 
+    /// The arrows the page's list took.
+    static MOVED: AtomicUsize = AtomicUsize::new(0);
+    /// The B presses a hotkey on it took.
+    static BOUND: AtomicUsize = AtomicUsize::new(0);
+
     impl Render for Page {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .key_context("Library List")
                 .track_focus(&self.0)
-                .on_action(|_: &list::Up, _, _| {})
-                .on_action(|_: &list::Down, _, _| {})
+                .on_action(|_: &list::Up, _, _| {
+                    MOVED.fetch_add(1, Ordering::SeqCst);
+                })
+                .on_action(|_: &list::Down, _, _| {
+                    MOVED.fetch_add(1, Ordering::SeqCst);
+                })
+                .on_action(|_: &list::Pick, _, _| {
+                    BOUND.fetch_add(1, Ordering::SeqCst);
+                })
                 .size_full()
         }
     }
 
-    /// The code is heard while a list holds the keyboard and takes the
-    /// arrows, with B and A typed as capitals too.
+    /// The code is heard while a list holds the keyboard, with B and A typed
+    /// as capitals too, and holds back the arrows that carry it on.
     // GPUI's test harness: a window driven with simulated input.
     #[koan_kit::raw::test]
     fn the_code_is_heard_over_a_list(cx: &mut TestAppContext) {
@@ -338,6 +376,7 @@ mod tests {
             cx.bind_keys([
                 KeyBinding::new("up", list::Up, Some("List")),
                 KeyBinding::new("down", list::Down, Some("List")),
+                KeyBinding::new("b", list::Pick, Some("List")),
             ]);
             listen(
                 |_| {
@@ -354,6 +393,19 @@ mod tests {
         });
         cx.simulate_keystrokes("up up down down left right left right b a");
         assert_eq!(TYPED.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            MOVED.load(Ordering::SeqCst),
+            4,
+            "every arrow of the code moves the list"
+        );
+        assert_eq!(
+            BOUND.load(Ordering::SeqCst),
+            0,
+            "B, after the arrows, is held for the code"
+        );
+        cx.simulate_keystrokes("b");
+        assert_eq!(BOUND.load(Ordering::SeqCst), 1, "B alone is the hotkey");
+        cx.simulate_keystrokes("escape");
         cx.simulate_keystrokes("up up down down left right left right shift-b shift-a");
         assert_eq!(TYPED.load(Ordering::SeqCst), 2);
         cx.simulate_keystrokes("up up down down left cmd-right left right b a");

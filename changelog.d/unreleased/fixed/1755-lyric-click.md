@@ -1,0 +1,1 @@
+- **Clicking a lyric line moves its emphasis once.** The line clicked takes the emphasis at once and keeps it while the seek lands, rather than flicking back to the old line.

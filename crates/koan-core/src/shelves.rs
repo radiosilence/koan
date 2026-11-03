@@ -207,6 +207,21 @@ impl Summary {
     }
 }
 
+/// How many of each kind a summary holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sizes {
+    pub artists: u32,
+    pub albums: u32,
+    pub tracks: u32,
+}
+
+/// What a shelf page shows before "See all".
+pub const PREVIEW: Sizes = Sizes {
+    artists: PREVIEW_ARTISTS,
+    albums: PREVIEW_ALBUMS,
+    tracks: PREVIEW_TRACKS,
+};
+
 /// What a shelf page shows: the head of each of the shelf's listings, narrowed
 /// to what can play here when `on_device` (offline).
 pub fn summary(
@@ -215,6 +230,19 @@ pub fn summary(
     user: i64,
     now: i64,
     on_device: bool,
+) -> Result<Summary, DbError> {
+    summary_of(conn, shelf, user, now, on_device, PREVIEW)
+}
+
+/// The head of each of the shelf's listings, `sizes` long: deeper than a
+/// page's preview where something is picked from it, as a search box is.
+pub fn summary_of(
+    conn: &rusqlite::Connection,
+    shelf: Shelf,
+    user: i64,
+    now: i64,
+    on_device: bool,
+    sizes: Sizes,
 ) -> Result<Summary, DbError> {
     let mut artists = shelf.artists(user, now);
     let mut albums = shelf.albums(user, now);
@@ -227,7 +255,7 @@ pub fn summary(
             preview: queries::list_artists(
                 conn,
                 &ArtistQuery {
-                    limit: Some(PREVIEW_ARTISTS),
+                    limit: Some(sizes.artists),
                     without_track_counts: true,
                     ..artists
                 },
@@ -238,14 +266,14 @@ pub fn summary(
             preview: queries::list_albums(
                 conn,
                 &AlbumQuery {
-                    limit: Some(PREVIEW_ALBUMS),
+                    limit: Some(sizes.albums),
                     ..albums
                 },
             )?,
             total: queries::count_albums(conn, &albums)?,
         },
         tracks: Section {
-            preview: tracks.page(conn, PREVIEW_TRACKS, 0)?,
+            preview: tracks.page(conn, sizes.tracks, 0)?,
             total: tracks.count(conn)?,
         },
     })

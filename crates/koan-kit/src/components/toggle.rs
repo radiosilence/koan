@@ -6,7 +6,9 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, answers_click, child, fade, focus, ring, toggled};
+use super::{
+    Answer, Answerer, Handler, accessible, answers_click, child, fade, focus, ring, toggled,
+};
 use crate::theme::{
     DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
@@ -51,6 +53,7 @@ impl RenderOnce for Toggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
+        let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
         let edge = fade(
             child(&self.id, "edge"),
@@ -105,7 +108,8 @@ impl RenderOnce for Toggle {
                                         .color(look.palette.bg.hsla()),
                                 )
                             }),
-                    ),
+                    )
+                    .children(answers.layer(window, cx)),
             );
         if self.disabled {
             row = row.opacity(DISABLED_OPACITY);
@@ -114,12 +118,23 @@ impl RenderOnce for Toggle {
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
-                Arc::new(move |_, window, cx| on_change(&!checked, window, cx))
+                let answers = answers.clone();
+                Arc::new(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                })
             };
             row = answers_click(row, flip)
                 .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
+                .on_click(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                });
         }
         row.children(ring(&handle, &look, window))
     }
@@ -166,6 +181,7 @@ impl RenderOnce for IconToggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
+        let answers = Answerer::of(&self.id, window, cx);
         let color = fade(
             child(&self.id, "on"),
             self.checked,
@@ -192,30 +208,43 @@ impl RenderOnce for IconToggle {
             .min_w(HIT)
             .min_h(HIT)
             .tooltip(move |window, cx| super::Tooltip::view(label.clone(), window, cx))
+            // The glyph centred as every toolbar button's is; the on-mark
+            // drawn under it, outside the layout, so it lifts nothing.
             .child(
                 div()
-                    .pb(px(5.0))
-                    .border_b(look.hairline)
-                    .border_color(underline)
+                    .relative()
                     .child(
                         KoanIcon::new(self.icon)
                             .role(TypeRole::Control)
                             .color(color),
-                    ),
+                    )
+                    .child(on_mark(underline, &look))
+                    .children(answers.layer(window, cx)),
             );
         if self.disabled {
             toggle = toggle.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
-            let checked = self.checked;
+            let (checked, accent) = (self.checked, look.accent.hsla());
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
-                Arc::new(move |_, window, cx| on_change(&!checked, window, cx))
+                let answers = answers.clone();
+                Arc::new(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                })
             };
             toggle = answers_click(toggle, flip)
                 .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
+                .on_click(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                });
         }
         toggle.children(ring(&handle, &look, window))
     }
@@ -228,4 +257,17 @@ fn switch(
     checked: bool,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
+}
+
+/// The accent hairline a toggle shows while on, 5 points under its glyph
+/// and as wide as it: positioned outside the layout, so a toggle's glyph sits
+/// where every other glyph in its row does.
+pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom(px(-5.0) - look.hairline)
+        .h(look.hairline)
+        .bg(color)
 }

@@ -1,0 +1,1 @@
+- **A shelf's "see all" draws once.** The album, artist and track browsers no longer show the listing kept from an earlier visit under another filter before the shelf's own arrives.

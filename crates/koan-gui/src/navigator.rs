@@ -29,6 +29,27 @@ pub enum Route {
     Playlist(i64),
     Album(i64),
     Artist(i64),
+    /// A shelf's "see all": the album, artist or track browser with the
+    /// shelf as its own filter, leaving the library browser's as it was.
+    Shelved(Shelf, Listing),
+}
+
+/// A shelf, as a route names it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Shelf {
+    Favourites,
+    Recent,
+    Downloaded,
+    /// The sidebar's search, for its query as it stands.
+    Search,
+}
+
+/// Which of the library's listings a shelf's "see all" opens.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Listing {
+    Albums,
+    Artists,
+    Tracks,
 }
 
 impl Route {

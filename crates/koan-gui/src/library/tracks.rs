@@ -23,6 +23,7 @@ use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::navigator::{Listing, Shelf};
 
 const PAGE: u32 = 1000;
 const TYPING: Duration = Duration::from_millis(80);
@@ -47,6 +48,11 @@ pub struct TrackBrowser {
     /// state rather than staying held, so the query can still be changed.
     failed: bool,
     lib: Lib,
+    /// A shelf's "see all": the shelf's filter and order in place of the
+    /// shared ones, and no controls to change them.
+    scope: Option<Shelf>,
+    /// The route the browser is on, for its place in the navigator.
+    page: Page,
     tracks: Vec<Track>,
     total: u64,
     loaded: Option<(Query, u64)>,
@@ -92,11 +98,24 @@ impl TrackBrowser {
     }
 
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::scoped(lib, None, window, cx)
+    }
+
+    /// The browser narrowed to `scope`'s shelf, or the library's own.
+    pub fn scoped(
+        lib: Lib,
+        scope: Option<Shelf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let page = scope.map_or(Page::Tracks, |shelf| Page::Shelved(shelf, Listing::Tracks));
         let id = cx.entity_id();
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            // A search's own listing follows its query.
+            cx.observe(&lib.search, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
@@ -111,7 +130,8 @@ impl TrackBrowser {
             }),
             cx.on_release(move |this, cx| {
                 // Only a whole listing: one still being read is read afresh.
-                if this.tracks.len() as u64 == this.total
+                if this.scope.is_none()
+                    && this.tracks.len() as u64 == this.total
                     && let Some(loaded) = this.loaded.take()
                 {
                     this.lib.kept.put(KeptTracks {
@@ -123,21 +143,27 @@ impl TrackBrowser {
                 let offset = -this.scroll.0.borrow().base_handle.offset().y;
                 this.lib
                     .nav
-                    .update(cx, |nav, _| nav.remember_offset(Page::Tracks, offset));
+                    .update(cx, |nav, _| nav.remember_offset(page, offset));
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Tracks, cx);
-        let restore = lib.nav.read(cx).offset(Page::Tracks);
+        let rewinds = lib.nav.read(cx).rewinds(page, cx);
+        let restore = lib.nav.read(cx).offset(page);
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter tracks", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), false, window, cx));
-        let (tracks, total, loaded) = match lib.kept.take::<KeptTracks>() {
+        let (tracks, total, loaded) = match scope
+            .is_none()
+            .then(|| lib.kept.take::<KeptTracks>())
+            .flatten()
+        {
             Some(k) => (k.tracks, k.total, Some(k.loaded)),
             None => (Vec::new(), 0, None),
         };
         let mut this = Self {
             lib,
+            scope,
+            page,
             tracks,
             total,
             loaded,
@@ -166,11 +192,31 @@ impl TrackBrowser {
         if this.loaded.is_some() {
             this.restore_scroll();
         }
+        // A listing kept from a visit under another query (a shelf's "see
+        // all" changed the filter) is not drawn: the page waits for its own,
+        // as a first visit does, rather than drawing the old rows and
+        // swapping them.
+        if this
+            .loaded
+            .as_ref()
+            .is_some_and(|(q, _)| *q != this.query(cx))
+        {
+            this.tracks = Default::default();
+            this.total = 0;
+            this.loaded = None;
+        }
         this.reload(cx);
         this
     }
 
     fn query(&self, cx: &App) -> Query {
+        if let Some(shelf) = self.scope {
+            return Query {
+                search: super::scope::search(shelf, &self.lib, cx),
+                filter: super::scope::filter(shelf),
+                sort: super::scope::track_sort(shelf),
+            };
+        }
         let browse = self.lib.browse.read(cx);
         Query {
             search: browse.search(),
@@ -481,7 +527,7 @@ impl Render for TrackBrowser {
         }) {
             window.request_animation_frame();
         }
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks, cx);
+        let rewinds = self.lib.nav.read(cx).rewinds(self.page, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll
@@ -493,7 +539,9 @@ impl Render for TrackBrowser {
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
-            "tracks",
+            self.scope.map_or("tracks", |shelf| {
+                super::scope::title(shelf, Listing::Tracks)
+            }),
             chrome::count(self.total, "track", "tracks"),
             div(),
         );
@@ -571,8 +619,13 @@ impl Render for TrackBrowser {
             .into_any_element()
         };
         self.keyed = self.focus.is_focused(window);
-        let page = super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        let page = actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         );
         page.on_action(cx.listener(Self::select_all))
@@ -582,7 +635,7 @@ impl Render for TrackBrowser {
             .flex_col()
             .typeset(p, Type::Body, p.ink)
             .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
+            .child(
                 div()
                     .id("track-list")
                     .flex_1()
@@ -592,10 +645,7 @@ impl Render for TrackBrowser {
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(crate::components::list_scrollbar(&self.scroll)),
-                cx.weak_entity(),
-                window,
-                cx,
-            ))
+            )
     }
 }
 
@@ -629,11 +679,18 @@ impl super::keys::KeyedList for TrackBrowser {
 
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         self.scroll
-            .scroll_to_item(ix, crate::components::ScrollStrategy::Top);
+            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let ids = self.tracks.iter().map(|t| t.id).collect();
         actions::play_list(&self.lib, ids, ix, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let track = &self.tracks[ix];
+            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+        });
     }
 }

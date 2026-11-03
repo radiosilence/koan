@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..477d2bb 100644
+index 862e62a..91388e4 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -126,6 +126,22 @@ pub struct MetalRenderer {
@@ -215,7 +215,7 @@ index 862e62a..477d2bb 100644
          command_encoder.set_vertex_buffer(
              ShadowInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -941,6 +1050,295 @@ impl MetalRenderer {
+@@ -941,6 +1050,310 @@ impl MetalRenderer {
          );
      }
  
@@ -242,19 +242,15 @@ index 862e62a..477d2bb 100644
 +        if self.compose_pipelines.is_none() {
 +            self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
 +        }
-+        // KOAN: a layer drawing with a colour slot that moves, or was
-+        // written since the layers were drawn, is drawn again (#1859).
++        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
++        // while one of its slots moves, when the table was written since it
++        // was drawn, and once more after its slots stop, so the last value
++        // lands; the other layers are kept.
++        let now = gpui::present_now();
 +        let slot_generation = gpui::color_slots_generation();
-+        let slots_moved = plan.layers.iter().any(|layer| {
-+            !layer.color_slots.is_empty()
-+                && (self.shader_layers.slot_generation != slot_generation
-+                    || layer.color_slots_moving(gpui::present_now()))
-+        });
-+        if slots_moved
-+            || !self
-+                .shader_layers
-+                .holds(scene.generation, width, height)
-+        {
++        let held = self.shader_layers.holds(scene.generation, width, height)
++            && self.shader_layers.layers.len() == plan.layers.len();
++        if !held {
 +            let mut pool = self.shader_layers.take(width, height);
 +            let mut drawn = Vec::with_capacity(plan.layers.len());
 +            for (k, layer) in plan.layers.iter().enumerate() {
@@ -284,7 +280,26 @@ index 862e62a..477d2bb 100644
 +                width,
 +                height,
 +                layers: drawn,
++                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
 +            };
++        } else {
++            let written = self.shader_layers.slot_generation != slot_generation;
++            for (k, layer) in plan.layers.iter().enumerate() {
++                if layer.color_slots.is_empty() {
++                    continue;
++                }
++                let moving = layer.color_slots_moving(now);
++                let was_moving = std::mem::replace(&mut self.shader_layers.moving[k], moving);
++                if !(written || moving || was_moving) {
++                    continue;
++                }
++                if let Some(target) = self.shader_layers.layers[k].clone() {
++                    // After the last compose that read it: the same queue.
++                    self.render_frame(layer, &target, viewport_size, k > 0)?
++                        .commit();
++                }
++            }
++            self.shader_layers.slot_generation = slot_generation;
 +        }
 +        let pipelines = self
 +            .compose_pipelines
@@ -511,7 +526,7 @@ index 862e62a..477d2bb 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -953,6 +1351,12 @@ impl MetalRenderer {
+@@ -953,6 +1366,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
@@ -524,7 +539,7 @@ index 862e62a..477d2bb 100644
          command_encoder.set_vertex_buffer(
              QuadInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1066,6 +1470,12 @@ impl MetalRenderer {
+@@ -1066,6 +1485,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
@@ -537,7 +552,7 @@ index 862e62a..477d2bb 100644
          command_encoder.set_vertex_buffer(
              UnderlineInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1116,6 +1526,12 @@ impl MetalRenderer {
+@@ -1116,6 +1541,12 @@ impl MetalRenderer {
              DevicePixels(texture.height() as i32),
          );
          command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
@@ -550,7 +565,7 @@ index 862e62a..477d2bb 100644
          command_encoder.set_vertex_buffer(
              SpriteInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1486,8 +1902,274 @@ struct InstanceBindings {
+@@ -1486,8 +1917,277 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
@@ -571,6 +586,9 @@ index 862e62a..477d2bb 100644
 +    width: u64,
 +    height: u64,
 +    layers: Vec<Option<metal::Texture>>,
++    /// KOAN: whether each layer's colour slots were moving when it was
++    /// last drawn (#1859).
++    moving: Vec<bool>,
 +}
 +
 +impl ShaderLayerTextures {
@@ -595,8 +613,8 @@ index 862e62a..477d2bb 100644
 +    fn release(&mut self) {
 +        *self = Self::default();
 +    }
- }
- 
++}
++
 +// KOAN: where a frame's shader instances are, whether written with the whole
 +// scene or alone for a compose (#1641).
 +trait HasShaders {
@@ -734,8 +752,8 @@ index 862e62a..477d2bb 100644
 +        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
 +    }
 +    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
-+}
-+
+ }
+ 
 +// Track `k` of the uniforms at `time`.
 +float koan_track(constant float *u, uint k, float time) {
 +    constant float *t = u + 16 + k * 8;
@@ -825,7 +843,7 @@ index 862e62a..477d2bb 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2181,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2199,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -856,7 +874,7 @@ index 862e62a..477d2bb 100644
      })
  }
  
-@@ -1799,4 +2505,287 @@ mod tests {
+@@ -1799,4 +2523,287 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
@@ -1145,14 +1163,14 @@ index 862e62a..477d2bb 100644
 +    }
  }
 diff --git a/src/shaders.metal b/src/shaders.metal
-index 2b52bb9..63c4292 100644
+index 2b52bb9..7db62d9 100644
 --- a/src/shaders.metal
 +++ b/src/shaders.metal
 @@ -4,6 +4,7 @@
  using namespace metal;
  
  float4 hsla_to_rgba(Hsla hsla);
-+float4 koan_rgba(Hsla hsla, constant float *slots);
++float4 koan_rgba(Hsla hsla, constant float *slots);  // KOAN: colour slots (#1859).
  float3 srgb_to_linear(float3 color);
  float3 linear_to_srgb(float3 color);
  float4 srgb_to_oklab(float4 color);
@@ -1162,7 +1180,7 @@ index 2b52bb9..63c4292 100644
                                      constant Size_DevicePixels *viewport_size
 -                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
 +                                    [[buffer(QuadInputIndex_ViewportSize)]],
-+                                    constant float *koan_slots [[buffer(20)]]) {
++                                    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
    float2 unit_vertex = unit_vertices[unit_vertex_id];
    Quad quad = quads[quad_id];
    float4 device_position =
@@ -1170,7 +1188,7 @@ index 2b52bb9..63c4292 100644
    float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                   quad.content_mask.bounds);
 -  float4 border_color = hsla_to_rgba(quad.border_color);
-+  float4 border_color = koan_rgba(quad.border_color, koan_slots);
++  float4 border_color = koan_rgba(quad.border_color, koan_slots);  // KOAN: colour slots (#1859).
  
    GradientColor gradient = prepare_fill_color(
      quad.background.tag,
@@ -1179,7 +1197,7 @@ index 2b52bb9..63c4292 100644
      quad.background.colors[1].color
    );
 +  if (quad.background.tag != 1 && quad.background.solid.h >= 2.0) {
-+    gradient.solid = koan_rgba(quad.background.solid, koan_slots);
++    gradient.solid = koan_rgba(quad.background.solid, koan_slots);  // KOAN: colour slots (#1859).
 +  }
  
    return QuadVertexOutput{
@@ -1190,7 +1208,7 @@ index 2b52bb9..63c4292 100644
      constant Size_DevicePixels *viewport_size
 -    [[buffer(ShadowInputIndex_ViewportSize)]]) {
 +    [[buffer(ShadowInputIndex_ViewportSize)]],
-+    constant float *koan_slots [[buffer(20)]]) {
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
    float2 unit_vertex = unit_vertices[unit_vertex_id];
    Shadow shadow = shadows[shadow_id];
  
@@ -1199,7 +1217,7 @@ index 2b52bb9..63c4292 100644
    float4 clip_distance =
        distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
 -  float4 color = hsla_to_rgba(shadow.color);
-+  float4 color = koan_rgba(shadow.color, koan_slots);
++  float4 color = koan_rgba(shadow.color, koan_slots);  // KOAN: colour slots (#1859).
  
    return ShadowVertexOutput{
        device_position,
@@ -1209,7 +1227,7 @@ index 2b52bb9..63c4292 100644
      constant Size_DevicePixels *viewport_size
 -    [[buffer(ShadowInputIndex_ViewportSize)]]) {
 +    [[buffer(ShadowInputIndex_ViewportSize)]],
-+    constant float *koan_slots [[buffer(20)]]) {
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
    float2 unit_vertex = unit_vertices[unit_vertex_id];
    Underline underline = underlines[underline_id];
    float4 device_position =
@@ -1217,7 +1235,7 @@ index 2b52bb9..63c4292 100644
    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                   underline.content_mask.bounds);
 -  float4 color = hsla_to_rgba(underline.color);
-+  float4 color = koan_rgba(underline.color, koan_slots);
++  float4 color = koan_rgba(underline.color, koan_slots);  // KOAN: colour slots (#1859).
    return UnderlineVertexOutput{
        device_position,
        color,
@@ -1227,7 +1245,7 @@ index 2b52bb9..63c4292 100644
      constant Size_DevicePixels *atlas_size
 -    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
 +    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
-+    constant float *koan_slots [[buffer(20)]]) {
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
    float2 unit_vertex = unit_vertices[unit_vertex_id];
    MonochromeSprite sprite = sprites[sprite_id];
    float4 device_position =
@@ -1236,11 +1254,11 @@ index 2b52bb9..63c4292 100644
                                                   sprite.content_mask.bounds, sprite.transformation);
    float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
 -  float4 color = hsla_to_rgba(sprite.color);
-+  float4 color = koan_rgba(sprite.color, koan_slots);
++  float4 color = koan_rgba(sprite.color, koan_slots);  // KOAN: colour slots (#1859).
    return MonochromeSpriteVertexOutput{
        device_position,
        tile_position,
-@@ -1277,3 +1285,84 @@ float4 fill_color(Background background,
+@@ -1277,3 +1285,91 @@ float4 fill_color(Background background,
  
    return color;
  }
@@ -1276,6 +1294,13 @@ index 2b52bb9..63c4292 100644
 +  if (z < 1.0) {
 +    float wd = w * sqrt(1.0 - z * z);
 +    return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
++  }
++  if (z > 1.0001) {
++    float root = sqrt(z * z - 1.0);
++    float r1 = -w * (z - root);
++    float r2 = -w * (z + root);
++    float c1 = (v0 - r2 * x0) / (r1 - r2);
++    return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
 +  }
 +  return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 +}

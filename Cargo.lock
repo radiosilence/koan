@@ -5461,7 +5461,6 @@ dependencies = [
 name = "koan-gui"
 version = "0.69.6"
 dependencies = [
- "block2 0.6.2",
  "chrono",
  "criterion",
  "ctrlc",
