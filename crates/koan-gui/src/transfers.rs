@@ -55,19 +55,6 @@ pub fn progress(track: i64, cx: &App) -> Option<f32> {
     })
 }
 
-/// How often a moving transfer's ring or reach is presented: its share grows
-/// a few pixels a second at most. The ring's and the slider's programs leave
-/// `PACE_TICK` unread (the slider's only behind a thumb the reach never
-/// draws).
-const TRANSFER_PACE: Duration = Duration::from_millis(100);
-
-/// A glide for a transfer, paced (`TRANSFER_PACE`).
-fn paced() -> Glide {
-    let glide = Glide::new();
-    glide.set_pace(Some(TRANSFER_PACE));
-    glide
-}
-
 /// Each transfer's glides, by track.
 pub struct Transfers {
     glides: HashMap<i64, Entry>,
@@ -95,7 +82,7 @@ impl Entry {
     fn new() -> Self {
         Self {
             rings: Vec::new(),
-            reach: paced(),
+            reach: Glide::new(),
             last: None,
             reported: false,
         }
@@ -141,7 +128,7 @@ pub fn install(cx: &mut App) {
 /// its first report.
 fn ring(track: i64, rgba: [f32; 4], cx: &mut App) -> Glide {
     let Some(handle) = cx.try_global::<TransfersHandle>().cloned() else {
-        let unknown = paced();
+        let unknown = Glide::new();
         unknown.set_unknown();
         return unknown;
     };
@@ -152,7 +139,7 @@ fn ring(track: i64, rgba: [f32; 4], cx: &mut App) -> Glide {
             return glide.clone();
         }
         // A new colour starts where the last report left the others.
-        let glide = paced();
+        let glide = Glide::new();
         match entry.last {
             Some(last) => last.apply(&glide),
             None => glide.set_unknown(),

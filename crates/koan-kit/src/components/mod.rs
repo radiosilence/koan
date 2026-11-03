@@ -74,7 +74,7 @@ use gpui_kit::{
     Styled, Window, canvas, div, px,
 };
 
-pub use animated::{Animated, AnimatedQuad, PACE_TICK, SHADED, SHADER_UNIFORMS, ShaderProgram};
+pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;

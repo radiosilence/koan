@@ -1,1 +1,0 @@
-- **The desktop app uses about half the CPU while playing.** The seek bar moves a pixel at a time instead of redrawing at every refresh, the playing bars move at most thirty times a second, and the wash drifts on a slower clock.
