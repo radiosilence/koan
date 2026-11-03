@@ -1,0 +1,1 @@
+- **Lyrics and the artwork viewer.** Clicking a synced line lands on that line rather than a millisecond before it, which left the line above lit, and resizing the window with a cover open no longer refetches and decodes it at every step.

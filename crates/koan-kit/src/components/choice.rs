@@ -193,15 +193,19 @@ pub fn menu(
                             })
                         }
                     })
-                    // Escape closes it, heard while it is drawn.
+                    // Escape closes it, heard while it is drawn: first, on the
+                    // way in, and no further, so the sheet it sits in or the
+                    // field beside it does not take the same key.
                     .child(
                         canvas(
                             |_, _, _| (),
                             move |_, _, window, _| {
                                 let close = close.clone();
                                 window.on_key_event(move |e: &KeyDownEvent, phase, _, cx| {
-                                    if phase == DispatchPhase::Bubble && e.keystroke.key == "escape"
+                                    if phase == DispatchPhase::Capture
+                                        && e.keystroke.key == "escape"
                                     {
+                                        cx.stop_propagation();
                                         close.update(cx, |o, cx| {
                                             *o = false;
                                             cx.notify();

@@ -1,0 +1,1 @@
+- **The desktop app builds again.** The settings model imports a type it names.
