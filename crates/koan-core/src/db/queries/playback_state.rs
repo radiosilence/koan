@@ -214,6 +214,27 @@ pub fn has_saved_queue(conn: &Connection, device: &str) -> rusqlite::Result<bool
     )
 }
 
+/// Gives `to` the saved session `from` kept, where `to` has none of its
+/// own: the queue, where it was up to and the play mode. What `to` has is
+/// left alone. The desktop app's handover (`link::hand_over`).
+pub fn adopt_session(conn: &Connection, from: &str, to: &str) -> rusqlite::Result<()> {
+    super::atomically(conn, || {
+        conn.execute(
+            "INSERT OR IGNORE INTO playback_state (device, queue_json, updated_at)
+             SELECT ?2, queue_json, updated_at FROM playback_state WHERE device = ?1",
+            [from, to],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO playback_position
+                 (device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
+             SELECT ?2, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at
+               FROM playback_position WHERE device = ?1",
+            [from, to],
+        )?;
+        Ok(())
+    })
+}
+
 /// Clear `device`'s saved queue and where it was up to. The play mode stays:
 /// it is the player's, not the queue's.
 pub fn clear_playback_state(conn: &Connection, device: &str) -> rusqlite::Result<()> {

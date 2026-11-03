@@ -960,22 +960,40 @@ impl KoanEngine {
     pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
         offload::offload(|| {
             init_logging();
-            let identity = koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
-                // Each says what to do about it: the words every front end
-                // shows.
-                let message = if e.kind() == std::io::ErrorKind::WouldBlock {
-                    "another kōan desktop app is running on this configuration. Quit it, or \
-                     use that one."
-                        .to_string()
-                } else {
-                    format!(
-                        "could not take this device's lock in {}: {e}. Check that the folder \
-                         exists and can be written.",
-                        koan_core::places::runtime().display()
+            let (identity, handover) =
+                koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+                    // Each says what to do about it: the words every front
+                    // end shows.
+                    let message = if e.kind() == std::io::ErrorKind::WouldBlock {
+                        "kōan is already running on this configuration: another kōan desktop \
+                         app, or the macOS app, whose place this one takes. Quit it, then open \
+                         this one again."
+                            .to_string()
+                    } else {
+                        format!(
+                            "could not take this device's lock in {}: {e}. Check that the \
+                             folder exists and can be written.",
+                            koan_core::config::config_dir().display()
+                        )
+                    };
+                    KoanError::Refused { message }
+                })?;
+            // The session the desktop app kept as a device of its own, where
+            // the machine's app has none: a machine that only ran the desktop
+            // app picks up where it left off.
+            let db_path = koan_core::config::db_path();
+            if handover.now && db_path.exists() {
+                let db = koan_core::db::connection::Database::open(&db_path);
+                if let Ok(db) = db
+                    && let Err(e) = koan_core::db::queries::adopt_session(
+                        &db.conn,
+                        koan_core::remote::link::LinkIdentity::DESKTOP_FILES,
+                        identity.files,
                     )
-                };
-                KoanError::Refused { message }
-            })?;
+                {
+                    log::warn!("handover: the desktop app's session: {e}");
+                }
+            }
             Self::build(None, identity)
         })
         .await
@@ -1088,7 +1106,13 @@ impl KoanEngine {
         offload::offload(move || {
             // Before the identity, which logs when it cannot keep the id.
             init_logging();
-            let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
+            let identity = koan_core::remote::link::LinkIdentity::native_app(device_name.clone())
+                .map_err(|e| KoanError::Refused {
+                message: format!(
+                    "could not take this device's lock in {}: {e}.",
+                    koan_core::config::config_dir().display()
+                ),
+            })?;
             Self::build(device_name, identity)
         })
         .await

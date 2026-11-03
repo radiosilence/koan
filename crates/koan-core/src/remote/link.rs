@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::os::fd::RawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -940,18 +940,16 @@ impl LinkIdentity {
     pub const APP_FILES: &'static str = "";
     /// The terminal UI's `files`.
     pub const TERMINAL_FILES: &'static str = "terminal-";
-    /// The desktop app's `files`.
+    /// The desktop app's `files` before 0.70, when it was a device of its
+    /// own; read once, by the handover.
     pub const DESKTOP_FILES: &'static str = "desktop-";
+    /// The macOS app's `files` once the desktop app has taken its place.
+    pub const LEGACY_FILES: &'static str = "legacy-";
 
-    /// Where this device's files live: the desktop app's in its state
-    /// directory (`places::state`), which is runtime state rather than
-    /// configuration; everyone else's in the config directory.
+    /// Where this device's files live: the config directory, the desktop
+    /// app's included now that it is the machine's app.
     pub fn home(&self) -> std::path::PathBuf {
-        if self.files == Self::DESKTOP_FILES {
-            crate::places::state()
-        } else {
-            config::config_dir()
-        }
+        config::config_dir()
     }
 
     /// This machine, named `name` or else by its hostname.
@@ -1000,19 +998,43 @@ impl LinkIdentity {
         Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD, &dir, &dir).ok()
     }
 
-    /// The desktop app on this machine, kept apart from the native app and
-    /// the terminal UI as `terminal` is. An error of kind `WouldBlock` while
-    /// another desktop app on this config directory is that device; any other
-    /// when its lock cannot be made at all.
-    pub fn desktop() -> std::io::Result<Self> {
+    /// The desktop app on this machine: from 0.70 the machine's own app,
+    /// which takes the native app's place. It is this device under the
+    /// app's files, id and saved session in the config directory, holding
+    /// the app's lock there (`APP_LOCK`) for as long as it runs. The first
+    /// launch on a configuration hands the device over (`hand_over`).
+    ///
+    /// An error of kind `WouldBlock` while something holds that lock: another
+    /// desktop app, or the macOS app on a configuration not yet handed over,
+    /// which would otherwise run as the same device unawares. Any other when
+    /// the lock cannot be made at all.
+    pub fn desktop() -> std::io::Result<(Self, Handover)> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app(
-            Self::DESKTOP_FILES,
-            "desktop",
-            &HELD,
-            &crate::places::state(),
-            &crate::places::runtime(),
-        )
+        let dir = config::config_dir();
+        hold(&HELD, &dir, APP_LOCK)?;
+        let handover = hand_over(&dir, &crate::places::state());
+        Ok((Self::this_device(None), handover))
+    }
+
+    /// The native app on this machine: the device itself, as before 0.70,
+    /// until the desktop app has taken its place on this configuration
+    /// (`TAKEN_OVER`). On a Mac it then runs as a device of its own beside
+    /// the desktop app, named "(legacy)", so both can run and say which is
+    /// which. While it is the device it holds the app's lock, so a desktop
+    /// app opened meanwhile refuses rather than taking the device from under
+    /// it. Everywhere else it is `this_device`.
+    pub fn native_app(name: Option<String>) -> std::io::Result<Self> {
+        if !cfg!(target_os = "macos") {
+            return Ok(Self::this_device(name));
+        }
+        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        static LEGACY: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        let dir = config::config_dir();
+        if dir.join(TAKEN_OVER).exists() {
+            return Self::beside_app(Self::LEGACY_FILES, "legacy", &LEGACY, &dir, &dir);
+        }
+        hold(&HELD, &dir, APP_LOCK)?;
+        Ok(Self::this_device(name))
     }
 
     /// A device of its own on this config directory: its files carry
@@ -1026,17 +1048,8 @@ impl LinkIdentity {
         dir: &std::path::Path,
         locks: &std::path::Path,
     ) -> std::io::Result<Self> {
-        if held.get().is_none() {
-            std::fs::create_dir_all(dir)?;
-            std::fs::create_dir_all(locks)?;
-            let lock = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(locks.join(format!("{files}device.lock")))?;
-            lock.try_lock().map_err(std::io::Error::from)?;
-            let _ = held.set(lock);
-        }
+        std::fs::create_dir_all(dir)?;
+        hold(held, locks, &format!("{files}device.lock"))?;
         let app = Self::this_device(None);
         Ok(Self {
             name: format!("{} ({kind})", app.name),
@@ -1045,6 +1058,103 @@ impl LinkIdentity {
             ..app
         })
     }
+}
+
+/// The lock the machine's app holds in the config directory while it runs:
+/// the macOS app before the handover, the desktop app after it.
+pub const APP_LOCK: &str = "device.lock";
+/// Left in the config directory once the desktop app has taken the native
+/// app's place there. Holds the id the desktop app went by before, if it had
+/// one, which the server may still list.
+pub const TAKEN_OVER: &str = "desktop-took-over";
+
+/// Takes `name` in `dir` for the process's life, or `WouldBlock` while
+/// another process holds it. The system lets go however the process ends.
+fn hold(
+    held: &'static std::sync::OnceLock<std::fs::File>,
+    dir: &std::path::Path,
+    name: &str,
+) -> std::io::Result<()> {
+    if held.get().is_some() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(name))?;
+    lock.try_lock().map_err(std::io::Error::from)?;
+    let _ = held.set(lock);
+    Ok(())
+}
+
+/// What the desktop app's first launch on a configuration took over.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Handover {
+    /// This launch handed the device over: the desktop app is the machine's
+    /// app on this configuration from now on.
+    pub now: bool,
+    /// The id the desktop app went by as a device of its own, when it was
+    /// not kept: the server may still list it, as a device that never comes
+    /// back.
+    pub retired: Option<String>,
+}
+
+/// The desktop app takes the native app's place in `config`, once: what it
+/// kept as a device of its own in `state` before 0.70 moves under the app's
+/// names where the native app has none (its id, its devices), so a machine
+/// that only ran the desktop app keeps being the device it was, and one the
+/// macOS app ran on keeps the Mac's id, history and pairings. The saved
+/// session, kept in the library by files prefix, is the caller's to move
+/// (`queries::adopt_session`). Leaves `TAKEN_OVER` behind.
+pub fn hand_over(config: &Path, state: &Path) -> Handover {
+    let marker = config.join(TAKEN_OVER);
+    if marker.exists() {
+        return Handover::default();
+    }
+    let desktop = LinkIdentity::DESKTOP_FILES;
+    let read = |path: PathBuf| {
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    let desktop_id = read(state.join(format!("{desktop}device-id")));
+    let app_id = read(config.join("device-id"));
+    let mut retired = None;
+    match (&app_id, &desktop_id) {
+        // Only the desktop app ran here: it keeps its own id, as the app.
+        (None, Some(id)) => {
+            if let Err(e) = std::fs::write(config.join("device-id"), id) {
+                log::warn!("handover: keeping the desktop app's id: {e}");
+            }
+        }
+        // The macOS app ran here too: the Mac's id stands, and the desktop
+        // app's own retires.
+        (Some(_), Some(id)) => retired = Some(id.clone()),
+        _ => {}
+    }
+    let devices = config.join("devices.json");
+    let desktop_devices = state.join(format!("{desktop}devices.json"));
+    if !devices.exists() && desktop_devices.exists() {
+        if let Err(e) = std::fs::copy(&desktop_devices, &devices) {
+            log::warn!("handover: the devices the desktop app knew: {e}");
+        }
+    }
+    if let Err(e) = std::fs::write(&marker, retired.as_deref().unwrap_or_default()) {
+        log::warn!("handover: marking {}: {e}", marker.display());
+    }
+    log::info!(
+        "handover: the desktop app is this machine's app on {}{}",
+        config.display(),
+        if app_id.is_some() {
+            ", as the Mac it was"
+        } else {
+            ""
+        }
+    );
+    Handover { now: true, retired }
 }
 
 /// What this device offers whatever controls it: who it is, what it is doing,
@@ -1711,6 +1821,81 @@ fn percent_encode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A machine that only ran the desktop app: it keeps its own id and the
+    /// devices it knew, now as the machine's app, and nothing retires.
+    #[test]
+    fn the_handover_keeps_the_desktop_apps_id_where_no_app_ran() {
+        let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        std::fs::write(state.path().join("desktop-device-id"), "desk\n").unwrap();
+        std::fs::write(state.path().join("desktop-devices.json"), "[]").unwrap();
+        let handover = hand_over(config.path(), state.path());
+        assert_eq!(
+            handover,
+            Handover {
+                now: true,
+                retired: None
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(config.path().join("device-id")).unwrap(),
+            "desk"
+        );
+        assert!(config.path().join("devices.json").exists());
+        assert!(config.path().join(TAKEN_OVER).exists());
+        assert_eq!(
+            hand_over(config.path(), state.path()),
+            Handover::default(),
+            "once per configuration"
+        );
+    }
+
+    /// A Mac the macOS app ran on: the Mac's id and devices stand, and the
+    /// desktop app's own id retires.
+    #[test]
+    fn the_handover_keeps_the_macs_id_where_the_app_ran() {
+        let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        std::fs::write(config.path().join("device-id"), "mac").unwrap();
+        std::fs::write(config.path().join("devices.json"), "[\"mac\"]").unwrap();
+        std::fs::write(state.path().join("desktop-device-id"), "desk").unwrap();
+        std::fs::write(state.path().join("desktop-devices.json"), "[]").unwrap();
+        let handover = hand_over(config.path(), state.path());
+        assert_eq!(
+            handover,
+            Handover {
+                now: true,
+                retired: Some("desk".into())
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(config.path().join("device-id")).unwrap(),
+            "mac"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config.path().join("devices.json")).unwrap(),
+            "[\"mac\"]"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config.path().join(TAKEN_OVER)).unwrap(),
+            "desk"
+        );
+    }
+
+    /// A fresh configuration: nothing to carry, and it is marked so the
+    /// macOS app opened later knows its place.
+    #[test]
+    fn the_handover_on_a_fresh_configuration_only_marks_it() {
+        let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        assert_eq!(
+            hand_over(config.path(), state.path()),
+            Handover {
+                now: true,
+                retired: None
+            }
+        );
+        assert!(!config.path().join("device-id").exists());
+        assert!(config.path().join(TAKEN_OVER).exists());
+    }
     #[test]
     fn a_claim_waits_for_its_own_server() {
         use super::{CLAIMS, take_claims};
