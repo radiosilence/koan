@@ -65,6 +65,9 @@ fn main() {
         }
     }
     std::fs::remove_file(seed).ok();
+    // What `examples/smoke.rs` looks for before it plays a library: one this
+    // made, silent, and nobody's music.
+    std::fs::write(dir.join(".koan-generated"), "").expect("marker");
     println!(
         "{} tracks in {albums} records under {}",
         albums * tracks,

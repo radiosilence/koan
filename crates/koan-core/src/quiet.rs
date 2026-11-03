@@ -110,6 +110,9 @@ fn update(f: impl FnOnce(&mut State)) {
         crate::remote::nearby::reconfigure();
     }
     if before.awake != now.awake {
+        // Background cover work waiting for a slot stops as the app goes
+        // quiet.
+        crate::remote::client::wake_cover_waiters();
         if now.awake {
             log::info!("quiet: awake");
             crate::remote::offline::woke();

@@ -15,6 +15,7 @@ use crate::theme::{KoanStyled, Look, Tone, TypeRole};
 pub struct Badge {
     text: SharedString,
     accent: bool,
+    key: Option<ElementId>,
 }
 
 impl Badge {
@@ -22,7 +23,17 @@ impl Badge {
         Self {
             text: text.into(),
             accent: false,
+            key: None,
         }
+    }
+
+    /// Tells it from badges saying the same beside it in rows that have no
+    /// id of their own (each layer's role, each shortcut's keys): what its
+    /// node in the accessibility tree is known by, which is otherwise its
+    /// text, and must not be shared.
+    pub fn key(mut self, key: impl Into<ElementId>) -> Self {
+        self.key = Some(key.into());
+        self
     }
 
     pub fn accent(mut self, accent: bool) -> Self {
@@ -40,20 +51,19 @@ impl RenderOnce for Badge {
             (look.palette.ink.hsla(), look.palette.rule.hsla())
         };
         // A label to a screen reader, named by its text.
-        super::accessible(
-            div().id(ElementId::Name(format!("badge-{}", self.text).into())),
-            gpui_kit::Role::Label,
-            Some(self.text.clone()),
-        )
-        .flex_none()
-        .px(px(7.0))
-        .py(px(2.0))
-        .border(look.hairline)
-        .border_color(outline)
-        .text_role(TypeRole::Fine, &look)
-        .text_color(text)
-        .whitespace_nowrap()
-        .child(self.text)
+        let id = self
+            .key
+            .unwrap_or_else(|| ElementId::Name(format!("badge-{}", self.text).into()));
+        super::accessible(div().id(id), gpui_kit::Role::Label, Some(self.text.clone()))
+            .flex_none()
+            .px(px(7.0))
+            .py(px(2.0))
+            .border(look.hairline)
+            .border_color(outline)
+            .text_role(TypeRole::Fine, &look)
+            .text_color(text)
+            .whitespace_nowrap()
+            .child(self.text)
     }
 }
 

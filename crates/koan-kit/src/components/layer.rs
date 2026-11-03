@@ -59,6 +59,14 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 pub struct AnimatedLayer {
     child: AnyElement,
     animated: Animated,
+    program: &'static ShaderProgram,
+    /// Composed by the program at rest too, not only while it moves.
+    always: bool,
+    /// What it shows is information, so its tracks move under Reduce Motion.
+    informative: bool,
+    /// Writes the uniforms that depend on where it is painted, given its
+    /// bounds and the window's scale, each time it paints.
+    placed: Option<Box<dyn Fn(Bounds<Pixels>, f32)>>,
 }
 
 impl AnimatedLayer {
@@ -67,7 +75,35 @@ impl AnimatedLayer {
         Self {
             child: child.into_any_element(),
             animated: animated.clone(),
+            program: &LAYER,
+            always: false,
+            informative: false,
+            placed: None,
         }
+    }
+
+    /// Composed by `program` rather than `LAYER`, at rest as well as in
+    /// motion: a layer whose look is its program's (the lyrics' opacities
+    /// and edges).
+    pub fn program(mut self, program: &'static ShaderProgram) -> Self {
+        self.program = program;
+        self.always = true;
+        self
+    }
+
+    /// Its motion says something (which line is sung): under Reduce Motion
+    /// its tracks still move, as their owner sets them.
+    pub fn informative(mut self) -> Self {
+        self.informative = true;
+        self
+    }
+
+    /// `placed` writes the uniforms that follow where the layer is painted,
+    /// with its bounds and the window's scale, each paint: a scroll that
+    /// moves what is inside it.
+    pub fn placed(mut self, placed: impl Fn(Bounds<Pixels>, f32) + 'static) -> Self {
+        self.placed = Some(Box::new(placed));
+        self
     }
 }
 
@@ -110,7 +146,7 @@ impl Element for AnimatedLayer {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.animated.attach(true, window, cx);
+        self.animated.attach(!self.informative, window, cx);
         self.child.prepaint(window, cx);
     }
 
@@ -126,13 +162,16 @@ impl Element for AnimatedLayer {
     ) {
         // A layer only while it moves: settled, it is painted as it stands,
         // with no texture of its own.
-        if !self.animated.moving() {
+        if !self.always && !self.animated.moving() {
             self.child.paint(window, cx);
             return;
         }
+        if let Some(placed) = &self.placed {
+            placed(bounds, window.scale_factor());
+        }
         let child = &mut self.child;
         self.animated
-            .paint_layer(&LAYER, bounds, window, cx, |window, cx| {
+            .paint_layer(self.program, bounds, window, cx, |window, cx| {
                 child.paint(window, cx)
             });
         // Its view drawn again once it settles, which paints it with no

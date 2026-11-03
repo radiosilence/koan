@@ -328,15 +328,21 @@ pub fn set_cover_fetch_limit(limit: usize) {
 /// screen ask again, since a failed fetch is not remembered as no art.
 const COVER_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// A slot among [`COVER_FETCHES`], given back when dropped. Background
-/// fetches (the preload) take slots too, so a page scrolling beside the
-/// preload never has more than the limit in flight between them.
+/// A slot among [`COVER_FETCHES`], given back when dropped. A page's fetches
+/// are counted against the limit among themselves and never wait for
+/// background work (the preload). Background work takes a slot only while no
+/// page's cover is in flight, and its slots together stay under the limit.
 struct CoverSlots {
     background: bool,
 }
 
-/// The cover requests in flight: every one, against the limit, and the
-/// background ones among them, which a page's fetch never waits for.
+/// How long a bulk answer stops reading, between frames, while a page's
+/// covers are in flight: long enough for a page's fetches to finish, short
+/// of the downloads' client giving up on a stalled read.
+const PAGE_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The cover requests in flight: every one, and the background ones among
+/// them, which a page's fetch never waits for.
 struct Flight {
     all: usize,
     background: usize,
@@ -359,8 +365,10 @@ impl CoverSlots {
         let deadline = std::time::Instant::now() + COVER_WAIT;
         let mut busy = COVERS_IN_FLIGHT.lock();
         let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
-        while busy.all >= limit() {
-            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && busy.all >= limit() {
+        while busy.foreground() >= limit() {
+            if COVER_FREED.wait_until(&mut busy, deadline).timed_out()
+                && busy.foreground() >= limit()
+            {
                 return Err(SubsonicError::Busy);
             }
         }
@@ -369,26 +377,47 @@ impl CoverSlots {
     }
 
     /// A background fetch's slot: once no page's cover is in flight and the
-    /// limit has room, however long that takes.
-    fn take_background() -> Self {
+    /// background slots have room. `Busy` as soon as `go_on` says the work
+    /// should stop, which it is asked each time a slot frees and each time
+    /// what it reads changes (`wake_cover_waiters`).
+    fn take_background(go_on: &dyn Fn() -> bool) -> Result<Self, SubsonicError> {
         let mut busy = COVERS_IN_FLIGHT.lock();
         let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
-        while busy.foreground() > 0 || busy.all >= limit() {
+        loop {
+            if !go_on() {
+                return Err(SubsonicError::Busy);
+            }
+            if busy.foreground() == 0 && busy.background < limit() {
+                break;
+            }
             COVER_FREED.wait(&mut busy);
         }
         busy.all += 1;
         busy.background += 1;
-        Self { background: true }
+        Ok(Self { background: true })
     }
 }
 
-/// Waits until no page's cover request is in flight: what background work
-/// does before each of its own, so a page's covers never queue behind it.
-pub fn wait_for_idle_covers() {
+/// Waits while a page's cover is in flight, up to `most`, for as long as
+/// `go_on` holds: what a background stream does between frames, so a page's
+/// covers have the connection to themselves.
+fn give_way_to_pages(most: std::time::Duration, go_on: &dyn Fn() -> bool) {
+    let deadline = std::time::Instant::now() + most;
     let mut busy = COVERS_IN_FLIGHT.lock();
-    while busy.foreground() > 0 {
-        COVER_FREED.wait(&mut busy);
+    while busy.foreground() > 0 && go_on() {
+        if COVER_FREED.wait_until(&mut busy, deadline).timed_out() {
+            break;
+        }
     }
+}
+
+/// Something background cover work asks before going on changed (the
+/// preload stopped, the app went quiet, the network became constrained, the
+/// configuration was written): every waiter looks again. Taken under the
+/// lock, so a waiter between its check and its wait still hears it.
+pub fn wake_cover_waiters() {
+    drop(COVERS_IN_FLIGHT.lock());
+    COVER_FREED.notify_all();
 }
 
 impl Drop for CoverSlots {
@@ -539,15 +568,17 @@ impl SubsonicClient {
     }
 
     /// `get_cover_art` for work nobody is waiting on (the preload): it waits
-    /// for no page's cover to be in flight and for a slot under the limit,
-    /// then counts as background, so several run at once without waiting
-    /// for each other, and a page's covers never wait for them.
+    /// for no page's cover to be in flight and for a background slot, then
+    /// counts as background, so several run at once without waiting for
+    /// each other, and a page's covers never wait for them. `Busy` when
+    /// `go_on` stops the wait.
     pub fn get_cover_art_background(
         &self,
         id: &str,
         size: Option<u32>,
+        go_on: &dyn Fn() -> bool,
     ) -> Result<Vec<u8>, SubsonicError> {
-        let _slot = CoverSlots::take_background();
+        let _slot = CoverSlots::take_background(go_on)?;
         self.cover_blocking(id, size)
     }
 
@@ -556,13 +587,18 @@ impl SubsonicClient {
     /// answers whether to read on: `false` stops there and drops the rest of
     /// the answer unread. Only for a
     /// server that offers the extension. Ids past `covers::BULK_MAX` are an
-    /// error on the server's side; the caller asks in chunks.
+    /// error on the server's side; the caller asks in chunks. Background
+    /// work: it takes a background slot as `get_cover_art_background` does,
+    /// and stops reading between frames while a page's covers are in
+    /// flight. `go_on` ends either wait.
     pub fn get_covers(
         &self,
         ids: &[String],
         size: u32,
+        go_on: &dyn Fn() -> bool,
         each: &mut dyn FnMut(String, crate::remote::covers::BulkCover<Vec<u8>>) -> bool,
     ) -> Result<(), SubsonicError> {
+        let _slot = CoverSlots::take_background(go_on)?;
         let url = format!("{}/rest/koanCovers", self.base_url());
         let mut form: Vec<(String, String)> = self.auth_params()?.into_iter().collect();
         form.push(("size".into(), cover_bucket(size).to_string()));
@@ -596,6 +632,7 @@ impl SubsonicClient {
             if !each(id, cover) {
                 break;
             }
+            give_way_to_pages(PAGE_PAUSE, go_on);
         }
         Ok(())
     }
@@ -2329,13 +2366,14 @@ mod tests {
     /// takes a slot under the same limit; background fetches do not wait
     /// for each other, and a page's fetch never waits for them.
     #[test]
-    fn background_cover_fetches_share_the_limit_and_give_way() {
+    fn background_cover_fetches_give_way_to_pages() {
         let _slots = COVER_SLOT_TESTS.lock();
+        let go_on = || true;
         let page = CoverSlots::take().unwrap();
         let (sent, taken) = crossbeam_channel::bounded(1);
         std::thread::scope(|s| {
             s.spawn(|| {
-                let slot = CoverSlots::take_background();
+                let slot = CoverSlots::take_background(&go_on).unwrap();
                 sent.send(()).unwrap();
                 drop(slot);
             });
@@ -2346,14 +2384,16 @@ mod tests {
             drop(page);
             taken.recv_timeout(Duration::from_secs(2)).unwrap();
         });
-        // Background slots together stay under the limit, and a page's fetch
-        // takes the room that is left without waiting for them to finish.
-        let background: Vec<_> = (0..COVER_FETCHES - 1)
-            .map(|_| CoverSlots::take_background())
+        // Background slots together stay under the limit, and a page's
+        // fetches have the whole limit beside them.
+        let background: Vec<_> = (0..COVER_FETCHES)
+            .map(|_| CoverSlots::take_background(&go_on).unwrap())
             .collect();
-        let page = CoverSlots::take().expect("a page's fetch takes the last slot");
+        let pages: Vec<_> = (0..COVER_FETCHES)
+            .map(|_| CoverSlots::take().expect("a page never waits for the preload"))
+            .collect();
         assert!(matches!(CoverSlots::take(), Err(SubsonicError::Busy)));
-        drop(page);
+        drop(pages);
         drop(background);
         let flight = COVERS_IN_FLIGHT.lock();
         assert_eq!(
@@ -2361,6 +2401,26 @@ mod tests {
             (0, 0),
             "every slot given back"
         );
+    }
+
+    /// A background wait ends once the preload is stopped, though no slot
+    /// frees: `stop` wakes it.
+    #[test]
+    fn stopping_the_preload_ends_a_background_wait() {
+        let _slots = COVER_SLOT_TESTS.lock();
+        let page = CoverSlots::take().unwrap();
+        let go_on = || !crate::remote::covers::stopped();
+        std::thread::scope(|s| {
+            let waiting = s.spawn(|| CoverSlots::take_background(&go_on).map(drop));
+            std::thread::sleep(Duration::from_millis(50));
+            crate::remote::covers::stop();
+            let started = Instant::now();
+            assert!(matches!(waiting.join().unwrap(), Err(SubsonicError::Busy)));
+            assert!(started.elapsed() < Duration::from_secs(1));
+        });
+        crate::remote::covers::resume();
+        drop(page);
+        assert_eq!(COVERS_IN_FLIGHT.lock().all, 0);
     }
 
     #[test]
