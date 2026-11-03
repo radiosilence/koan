@@ -49,6 +49,9 @@ pub struct Sidebar {
     /// The faces not yet in memory at the last render: a sleeve landing
     /// redraws the sidebar only when it is one of these.
     pending: std::collections::HashSet<Key>,
+    /// The faces held at the last render: one evicted or trimmed since is a
+    /// texture gone from under the cached view, which draws again.
+    held: std::collections::HashSet<Key>,
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
@@ -85,6 +88,7 @@ impl Sidebar {
             loading: None,
             covers: None,
             pending: Default::default(),
+            held: Default::default(),
             importing: 0,
             drop_playlist: None,
             reorders: 0,
@@ -154,7 +158,9 @@ impl Sidebar {
             [
                 cx.observe(&covers, |this, covers, cx| {
                     let covers = covers.read(cx);
-                    if this.pending.iter().any(|key| covers.has(*key)) {
+                    if this.pending.iter().any(|key| covers.has(*key))
+                        || this.held.iter().any(|key| !covers.has(*key))
+                    {
                         cx.notify();
                     }
                 }),
@@ -728,7 +734,7 @@ impl Sidebar {
             .collect();
         // Below whatever a page shows: the sidebar's faces are small and
         // there are few, but a page's sleeves on screen come first.
-        let (sleeves, more, pending) = covers.update(cx, |c, cx| {
+        let (sleeves, more, faces) = covers.update(cx, |c, cx| {
             c.request(
                 owner,
                 keys.iter()
@@ -740,15 +746,10 @@ impl Sidebar {
                 .iter()
                 .map(|keys| keys.iter().map(|key| c.sleeve(*key)).collect())
                 .collect();
-            let pending = keys
-                .iter()
-                .flatten()
-                .filter(|k| !c.has(**k))
-                .copied()
-                .collect();
-            (sleeves, more, pending)
+            let faces = keys.iter().flatten().copied().partition(|k| c.has(*k));
+            (sleeves, more, faces)
         });
-        self.pending = pending;
+        (self.held, self.pending) = faces;
         if more {
             window.request_animation_frame();
         }
