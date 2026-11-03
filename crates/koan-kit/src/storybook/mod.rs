@@ -216,8 +216,10 @@ impl StoryContent {
                 .highlight(|text| {
                     let marks: Vec<usize> = text.match_indices('%').map(|(i, _)| i).collect();
                     marks
-                        .chunks_exact(2)
-                        .map(|pair| (pair[0]..pair[1] + 1, Tone::Accent))
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|[open, close]| (*open..close + 1, Tone::Accent))
                         .collect()
                 })
         });

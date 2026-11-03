@@ -86,12 +86,14 @@ impl gpui_kit::Element for FieldElement {
         cx: &mut App,
     ) -> (LayoutId, ()) {
         let rows = self.state.read(cx).rows;
-        let mut style = Style::default();
         // The row's width, from nothing: the text scrolls, so a field never
         // holds a row open.
-        style.flex_grow = 1.0;
-        style.flex_shrink = 1.0;
-        style.flex_basis = px(0.0).into();
+        let mut style = Style {
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            flex_basis: px(0.0).into(),
+            ..Style::default()
+        };
         style.min_size.width = px(0.0).into();
         style.size.height = (window.line_height() * rows as f32).into();
         (window.request_layout(style, [], cx), ())

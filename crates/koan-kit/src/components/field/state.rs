@@ -328,7 +328,7 @@ impl FieldState {
         }
         self.text[..offset]
             .unicode_word_indices()
-            .last()
+            .next_back()
             .map_or_else(|| self.line_start(offset), |(i, _)| i)
             .max(self.line_start(offset))
     }
@@ -391,7 +391,7 @@ impl FieldState {
             .x_for_index(self.to_drawn(offset) - self.lines[line].start);
         let shaped = &self.lines[target];
         let drawn = shaped.start + shaped.shaped.closest_index_for_x(x);
-        Some(self.from_drawn(drawn))
+        Some(self.drawn_to_text(drawn))
     }
 
     /// Which drawn line holds `offset`.
@@ -424,7 +424,7 @@ impl FieldState {
     }
 
     /// An offset in the drawn text as an offset in the text.
-    pub(super) fn from_drawn(&self, drawn: usize) -> usize {
+    pub(super) fn drawn_to_text(&self, drawn: usize) -> usize {
         if self.masked {
             let chars = drawn / '•'.len_utf8();
             self.text
@@ -449,7 +449,7 @@ impl FieldState {
         };
         let line = &self.lines[row.min(self.lines.len() - 1)];
         let drawn = line.start + line.shaped.closest_index_for_x(local.x.max(px(0.0)));
-        self.from_drawn(drawn)
+        self.drawn_to_text(drawn)
     }
 
     // ── Moving and selecting ────────────────────────────────────────────
@@ -996,7 +996,7 @@ impl EntityInputHandler for FieldState {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let range = self.from_utf16_range(&range);
+        let range = self.utf16_range_to_text(&range);
         actual.replace(self.to_utf16_range(&range));
         Some(self.text[range].to_string())
     }
@@ -1019,7 +1019,7 @@ impl EntityInputHandler for FieldState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selected = self.from_utf16_range(&range);
+        self.selected = self.utf16_range_to_text(&range);
         self.reversed = false;
         self.moved(window, cx);
     }
@@ -1050,7 +1050,7 @@ impl EntityInputHandler for FieldState {
         cx: &mut Context<Self>,
     ) {
         let range = range
-            .map(|range| self.from_utf16_range(&range))
+            .map(|range| self.utf16_range_to_text(&range))
             .or(self.marked.clone())
             .unwrap_or(self.selected.clone());
         // What the keyboard types joins the typing before it; a word an
@@ -1074,7 +1074,7 @@ impl EntityInputHandler for FieldState {
         cx: &mut Context<Self>,
     ) {
         let range = range
-            .map(|range| self.from_utf16_range(&range))
+            .map(|range| self.utf16_range_to_text(&range))
             .or(self.marked.clone())
             .unwrap_or(self.selected.clone());
         if self.read_only {
@@ -1091,7 +1091,9 @@ impl EntityInputHandler for FieldState {
         let len16 = text.encode_utf16().count();
         self.selected = selected
             .map(|s| {
-                self.from_utf16_range(&(start16 + s.start.min(len16)..start16 + s.end.min(len16)))
+                self.utf16_range_to_text(
+                    &(start16 + s.start.min(len16)..start16 + s.end.min(len16)),
+                )
             })
             .unwrap_or(range.start + text.len()..range.start + text.len());
         self.reversed = false;
@@ -1105,7 +1107,7 @@ impl EntityInputHandler for FieldState {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let range = self.from_utf16_range(&range);
+        let range = self.utf16_range_to_text(&range);
         let bounds = self.bounds?;
         let line = self.line_of(range.start)?;
         let shaped = &self.lines[line];
@@ -1140,7 +1142,7 @@ impl FieldState {
             .count()
     }
 
-    fn from_utf16(&self, offset: usize) -> usize {
+    fn utf16_to_text(&self, offset: usize) -> usize {
         let mut utf16 = 0;
         for (i, c) in self.text.char_indices() {
             if utf16 >= offset {
@@ -1155,8 +1157,8 @@ impl FieldState {
         self.to_utf16(range.start)..self.to_utf16(range.end)
     }
 
-    fn from_utf16_range(&self, range: &Range<usize>) -> Range<usize> {
-        self.from_utf16(range.start)..self.from_utf16(range.end)
+    fn utf16_range_to_text(&self, range: &Range<usize>) -> Range<usize> {
+        self.utf16_to_text(range.start)..self.utf16_to_text(range.end)
     }
 
     /// The selection in characters, for a screen reader, as the text
