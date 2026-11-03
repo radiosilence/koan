@@ -1,0 +1,1 @@
+- **`just gui-smoke` runs the desktop app as it is used.** Headless against a muted generated library, it plays, seeks and pauses while the pointer sweeps every page in both appearances, and fails on a panic, a hang or a queue that never advances: crashes no compile or unit test reaches.
