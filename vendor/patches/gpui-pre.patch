@@ -191,10 +191,10 @@ index 7890ed3..60a11e5 100644
  features = ["enumn"]
 diff --git b/src/color_slots.rs b/src/color_slots.rs
 new file mode 100644
-index 0000000..23c2c1a
+index 0000000..df9fef2
 --- /dev/null
 +++ b/src/color_slots.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,253 @@
 +// KOAN: colours that move on the GPU (#1859).
 +//
 +// A colour slot is one entry of an app-wide table of moving colours: a
@@ -392,14 +392,17 @@ index 0000000..23c2c1a
 +        }
 +    }
 +
++    /// Whether the set names no slot.
 +    pub fn is_empty(&self) -> bool {
 +        self.0.iter().all(|word| *word == 0)
 +    }
 +
++    /// Names no slot.
 +    pub fn clear(&mut self) {
 +        *self.0 = [0; COLOR_SLOTS.div_ceil(64)];
 +    }
 +
++    /// Adds every slot `other` names.
 +    pub fn extend(&mut self, other: &Self) {
 +        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
 +            *a |= *b;
