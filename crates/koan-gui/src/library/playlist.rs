@@ -124,6 +124,7 @@ impl PlaylistPage {
         let mirror = cx.global::<Mirror>();
         let (library, playback) = (mirror.library.clone(), mirror.playback.clone());
         let row_covers = cx.global::<CoversHandle>().0.clone();
+        let owner = cx.entity_id();
         let subscriptions = vec![
             // An edit here, a sync, another device: the playlist is read again.
             cx.observe(&library, |this, _, cx| this.load(cx)),
@@ -142,6 +143,10 @@ impl PlaylistPage {
             cx.observe(&row_covers, |_, _, cx| cx.notify()),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |_, _, cx| cx.notify()),
+            // The header's sleeves are asked for by this page: let go with it.
+            cx.on_release(move |this, cx| {
+                this.lib.covers.update(cx, |c, cx| c.release(owner, cx));
+            }),
             // The playing row and the header's play are in the accent.
             theme::observe_accent(cx),
         ];
