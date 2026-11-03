@@ -467,6 +467,34 @@ jobs:
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets
 
+  # The app run as it is used, headless: playing, seeking and hovering every
+  # page against a muted generated library (`just gui-smoke`). Catches the
+  # crashes no compile or unit test reaches.
+  gui-smoke:
+    name: GUI smoke (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.gui_mac == 'true'
+    timeout-minutes: 60
+    concurrency:
+      group: gui-smoke-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: gui-smoke
+          cache-on-failure: true
+      # just runs the recipe; ffmpeg makes the generated library's silent seed.
+      - run: brew install just ffmpeg
+      - run: just gui-smoke
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -835,7 +863,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
     if: always()
     steps:
       - env:
