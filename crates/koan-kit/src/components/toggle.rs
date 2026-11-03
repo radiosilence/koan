@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -119,7 +119,7 @@ impl RenderOnce for Toggle {
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let flip: Handler<gpui_kit::ClickEvent> = {
+            let flip: Handler<gpui::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
                 Arc::new(move |_, window, cx| {
@@ -230,7 +230,7 @@ impl RenderOnce for IconToggle {
         } else if let Some(on_change) = self.on_change {
             let (checked, accent) = (self.checked, look.accent.hsla());
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let flip: Handler<gpui_kit::ClickEvent> = {
+            let flip: Handler<gpui::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
                 Arc::new(move |_, window, cx| {
@@ -256,17 +256,17 @@ impl RenderOnce for IconToggle {
 
 /// A toggle as a screen reader meets it: a switch, named, on or off.
 fn switch(
-    element: gpui_kit::Stateful<gpui_kit::Div>,
+    element: gpui::Stateful<gpui::Div>,
     name: SharedString,
     checked: bool,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
+) -> gpui::Stateful<gpui::Div> {
+    accessible(element, gpui::Role::Switch, Some(name)).aria_toggled(toggled(checked))
 }
 
 /// The accent hairline a toggle shows while on, 5 points under its glyph
 /// and as wide as it: positioned outside the layout, so a toggle's glyph sits
 /// where every other glyph in its row does.
-pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
+pub(crate) fn on_mark(color: gpui::Hsla, look: &Look) -> gpui::Div {
     div()
         .absolute()
         .left_0()

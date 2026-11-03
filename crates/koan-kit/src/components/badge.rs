@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -54,7 +54,7 @@ impl RenderOnce for Badge {
         let id = self
             .key
             .unwrap_or_else(|| ElementId::Name(format!("badge-{}", self.text).into()));
-        super::accessible(div().id(id), gpui_kit::Role::Label, Some(self.text.clone()))
+        super::accessible(div().id(id), gpui::Role::Label, Some(self.text.clone()))
             .flex_none()
             .px(px(7.0))
             .py(px(2.0))

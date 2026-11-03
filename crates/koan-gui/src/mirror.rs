@@ -66,7 +66,9 @@ impl Playhead {
 #[derive(Default)]
 pub struct Queue {
     /// The rows as last sent whole, each with its status as it was then.
-    pub base: Vec<QueueItem>,
+    /// Shared, so a regroup hands it to the background executor without
+    /// copying fifty thousand rows on the main thread.
+    pub base: Arc<Vec<QueueItem>>,
     /// `base` with the latest patch applied: what a row reads now.
     pub items: Vec<QueueItem>,
     pub version: u64,
@@ -104,7 +106,7 @@ impl Queue {
         let track_rows = track_rows(&rows, &items);
         Self {
             items: items.clone(),
-            base: items,
+            base: Arc::new(items),
             version,
             whole: 0,
             at,
@@ -256,10 +258,9 @@ pub struct Mirror {
 impl Global for Mirror {}
 
 impl Mirror {
-    /// Starts following the engine. The loop ends when the engine goes, since
-    /// the stream holds it weakly and answers `None` then.
-    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
-        let mirror = Self {
+    /// Every slice as it stands before the engine says anything.
+    pub fn empty(cx: &mut App) -> Self {
+        Self {
             playback: cx.new(|_| Playback(idle())),
             playhead: cx.new(|_| Playhead {
                 position_ms: 0,
@@ -284,7 +285,13 @@ impl Mirror {
             devices: cx.new(|_| Slice(Devices::default())),
             connection: cx.new(|_| Slice(None)),
             renderers: cx.new(|_| Slice(Renderers::default())),
-        };
+        }
+    }
+
+    /// Starts following the engine. The loop ends when the engine goes, since
+    /// the stream holds it weakly and answers `None` then.
+    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
+        let mirror = Self::empty(cx);
         let stream = engine.observe();
         let held = mirror.clone();
         // Whether the app is still there: the engine can outlive it, as in
@@ -479,5 +486,80 @@ fn idle() -> NowPlaying {
         sleep: None,
         sleep_fading: false,
         start_failure: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::prelude::v1::test;
+
+    use koan_kit::app::test::TestAppContext;
+    use koan_runtime::{EntryStatus, QueueItem, RunRole};
+
+    use super::*;
+
+    /// A queue of `n` rows, ten to a record, with words the length a library's
+    /// are, so a clone costs what it would.
+    fn items(n: usize) -> Vec<QueueItem> {
+        (0..n)
+            .map(|i| QueueItem {
+                queue_item_id: format!("0190a3f2-7c4e-7b9a-8d1e-{i:012}"),
+                track_id: Some(i as i64),
+                album_id: Some((i / 10) as i64),
+                artist_id: Some(1),
+                album_artist_id: Some(1),
+                title: format!("A track title of some length {i}"),
+                artist: "An Artist Name".into(),
+                album_artist: "An Artist Name".into(),
+                artist_credit: Vec::new(),
+                album_artist_credit: Vec::new(),
+                credit_differs: false,
+                run: if i % 10 == 0 {
+                    RunRole::Opens
+                } else {
+                    RunRole::Continues
+                },
+                album: format!("A record title {}", i / 10),
+                year: Some("1999".into()),
+                codec: Some("FLAC".into()),
+                track_number: Some((i % 10) as i64 + 1),
+                disc: Some(1),
+                duration_ms: Some(240_000),
+                status: EntryStatus::Queued,
+                playlist_entry_id: None,
+                failure_reason: None,
+                on_server: false,
+                on_disk: true,
+            })
+            .collect()
+    }
+
+    /// What a regroup of 50,000 rows costs the main thread: the hand-off,
+    /// not the layout, which is the background executor's.
+    #[koan_kit::app::test::test]
+    fn a_regroup_hands_the_queue_off_at_no_cost(cx: &mut TestAppContext) {
+        let queue = cx.update(|cx| cx.new(|_| Queue::prepare(items(50_000), 1)));
+        let mut spent = Vec::new();
+        for i in 0..10 {
+            let took = cx.update(|cx| {
+                let start = std::time::Instant::now();
+                regroup(&queue, i % 2 == 0, cx);
+                start.elapsed()
+            });
+            spent.push(took);
+            cx.run_until_parked();
+        }
+        spent.sort();
+        println!(
+            "regroup of 50,000 rows, main thread: median {:?}, most {:?}",
+            spent[spent.len() / 2],
+            spent[spent.len() - 1]
+        );
+        // Copying the rows took about 9 ms here in a debug build; handing
+        // them off takes microseconds.
+        assert!(
+            spent[spent.len() / 2] < std::time::Duration::from_millis(1),
+            "the main thread copied the queue"
+        );
     }
 }

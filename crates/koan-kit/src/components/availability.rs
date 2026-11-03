@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::{
+use gpui::{
     AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     StatefulInteractiveElement, Styled, Window, div,
 };

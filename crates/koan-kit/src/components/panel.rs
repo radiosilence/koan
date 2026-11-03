@@ -1,8 +1,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     AnyElement, AnyView, App, AppContext, ClickEvent, Context, ElementId, InteractiveElement,
     IntoElement, ParentElement, Pixels, Render, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, anchored, deferred, div, px,
@@ -60,7 +60,7 @@ impl ParentElement for MenuPanel {
 impl RenderOnce for MenuPanel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        super::accessible(div().id("menu-panel"), gpui_kit::Role::Menu, None)
+        super::accessible(div().id("menu-panel"), gpui::Role::Menu, None)
             .flex()
             .flex_col()
             .min_w(look.spaced(self.min_width.unwrap_or(180.)))
@@ -78,7 +78,7 @@ impl RenderOnce for MenuPanel {
 /// The theme's popover holding controls rather than a menu's rows (a
 /// browser's filters): the menu panel's ground and hairline, `points` wide at
 /// 100 %, its content `m` in from the edge and `s` apart.
-pub fn popover_panel(points: f32, look: &Look) -> gpui_kit::Div {
+pub fn popover_panel(points: f32, look: &Look) -> gpui::Div {
     div()
         .w(look.spaced(points))
         .p(look.space(Space::M))
@@ -434,7 +434,7 @@ impl RenderOnce for MenuAction {
             ActionFace::Text(text) => format!("{text}: {}", self.help).into(),
             ActionFace::Glyph(_) => self.help.clone(),
         };
-        super::accessible(div().id(self.id), gpui_kit::Role::Button, Some(name))
+        super::accessible(div().id(self.id), gpui::Role::Button, Some(name))
             .flex()
             .items_center()
             .justify_center()
@@ -463,9 +463,9 @@ impl RenderOnce for MenuAction {
             })
             .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
             // A screen reader's press, as a pointer's.
-            .on_a11y_action(gpui_kit::AccessibleAction::Click, {
+            .on_a11y_action(gpui::AccessibleAction::Click, {
                 let run = run.clone();
-                move |_, window, cx| run(&gpui_kit::ClickEvent::default(), window, cx)
+                move |_, window, cx| run(&gpui::ClickEvent::default(), window, cx)
             })
             .on_click(move |event, window, cx| {
                 cx.stop_propagation();
@@ -613,9 +613,9 @@ impl RenderOnce for MenuRow {
         // A menu item to a screen reader, a checkbox item where it ticks,
         // with its second line as its description.
         let role = if self.checked.is_some() {
-            gpui_kit::Role::MenuItemCheckBox
+            gpui::Role::MenuItemCheckBox
         } else {
-            gpui_kit::Role::MenuItem
+            gpui::Role::MenuItem
         };
         let row = super::accessible(div().id(self.id), role, Some(spoken))
             .aria_disabled(self.disabled)
@@ -730,7 +730,7 @@ impl RenderOnce for MenuRow {
                     .relative()
                     .flex_none()
                     .ml(look.space(Space::M))
-                    .size(gpui_kit::px(crate::theme::icons::side(tick)))
+                    .size(gpui::px(crate::theme::icons::side(tick)))
                     .when(checked, |cell| {
                         cell.child(KoanIcon::new(Icon::Check).points(tick).color(ticked))
                     })

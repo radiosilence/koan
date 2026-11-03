@@ -5,13 +5,13 @@
 //! guessed at from their kind, which sizes the scrollbar from the first
 //! frame.
 
+use gpui::*;
 use gpui_kit::base::Scrollbar;
-use gpui_kit::*;
 
 use super::{RowKind, RowMetrics};
 
 /// A place in the list: the row at the top and how far into it.
-pub use gpui_kit::ListOffset as RowOffset;
+pub use gpui::ListOffset as RowOffset;
 
 /// The list's place and measurements, kept by the page across frames.
 #[derive(Clone)]
@@ -109,7 +109,7 @@ impl RowList {
 
 impl RenderOnce for RowList {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        super::accessible(div().id("row-list"), gpui_kit::Role::List, self.name)
+        super::accessible(div().id("row-list"), gpui::Role::List, self.name)
             .relative()
             .size_full()
             .child(list(self.state.0.clone(), self.row).size_full())
