@@ -636,6 +636,7 @@ impl StoryContent {
                         .overflow_hidden()
                         .child(overlay(prism.wash().size_full().into_any_element()))
                         .child(overlay(prism.disco().size_full().into_any_element()))
+                        .child(overlay(prism.party().size_full().into_any_element()))
                         .child(overlay(prism.pulse().size_full().into_any_element()))
                         .child(
                             div()

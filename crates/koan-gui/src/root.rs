@@ -339,6 +339,7 @@ impl Render for WindowRoot {
             .when_some(prism, |root, look| {
                 let side = look.spaced(MIRROR_BALL);
                 root.child(layer(self.prism.disco().size_full().into_any_element()))
+                    .child(layer(self.prism.party().size_full().into_any_element()))
                     .child(layer(self.prism.pulse().size_full().into_any_element()))
                     .child(
                         div()
