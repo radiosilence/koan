@@ -1,0 +1,1 @@
+- **Text draws again on macOS.** Since GPUI moved to koan's fork, the app drew no text: the fork's macOS text system is a feature koan now turns on.
