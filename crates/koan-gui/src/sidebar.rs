@@ -67,7 +67,7 @@ pub struct Sidebar {
     cursor: ListCursor,
     /// Transfers queued or running, counted beside "downloads" while any are.
     running: usize,
-    _subscriptions: [Subscription; 6],
+    _subscriptions: [Subscription; 7],
 }
 
 impl Sidebar {

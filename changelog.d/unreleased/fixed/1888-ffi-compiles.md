@@ -1,0 +1,1 @@
+- **The engine builds again.** The session gate reads its baseline before the player state moves into the engine.
