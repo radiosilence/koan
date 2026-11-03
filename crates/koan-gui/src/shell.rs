@@ -80,7 +80,7 @@ pub struct Shell {
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     /// What had the keyboard when the search box opened, which has it back
     /// when the box closes.
-    before_search: Option<FocusHandle>,
+    before_search: Option<(FocusHandle, Route)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
@@ -279,16 +279,23 @@ impl Shell {
         // The sidebar's field opened the box by taking the keyboard: given
         // it back, it would open the box again, so the page has it instead.
         let field = self.sidebar.read(cx).search_focus(cx);
-        self.before_search = window.focused(cx).filter(|f| field.as_ref() != Some(f));
+        let route = self.nav.read(cx).current();
+        self.before_search = window
+            .focused(cx)
+            .filter(|f| field.as_ref() != Some(f))
+            .map(|f| (f, route));
         let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
             &bar,
             window,
             |this, _, _: &crate::search::bar::Dismissed, window, cx| {
                 this.search_bar = None;
-                this.arrived_at = this.nav.read(cx).current();
-                match this.before_search.take() {
-                    Some(before) => {
+                let route = this.nav.read(cx).current();
+                this.arrived_at = route;
+                // Back where the keyboard was, unless the box opened a page:
+                // then that page has it.
+                match this.before_search.take().filter(|(_, at)| *at == route) {
+                    Some((before, _)) => {
                         window.focus(&before, cx);
                         cx.notify();
                     }

@@ -315,28 +315,32 @@ impl SearchBar {
                     .items
                     .len();
                 if queued > 0 {
-                    // Asked over the window, the box gone.
+                    // Asked over the window once the box is gone and the
+                    // shell has given the keyboard back, so the question
+                    // returns it there.
                     cx.emit(Dismissed);
-                    crate::components::sheet::confirm(
-                        crate::components::sheet::Confirm {
-                            title: "replace the queue".into(),
-                            verb: "replace".into(),
-                            destructive: true,
-                            lines: vec![
+                    window.defer(cx, move |window, cx| {
+                        crate::components::sheet::confirm(
+                            crate::components::sheet::Confirm {
+                                title: "replace the queue".into(),
+                                verb: "replace".into(),
+                                destructive: true,
+                                lines: vec![
                                 format!(
                                     "{} come off the queue, and what you picked takes its place.",
                                     crate::library::chrome::count(queued as u64, "track", "tracks")
                                 )
                                 .into(),
                             ],
-                            note: Some(
-                                "Add to queue keeps the queue and puts these after it.".into(),
-                            ),
-                        },
-                        window,
-                        cx,
-                        replace,
-                    );
+                                note: Some(
+                                    "Add to queue keeps the queue and puts these after it.".into(),
+                                ),
+                            },
+                            window,
+                            cx,
+                            replace,
+                        );
+                    });
                     return;
                 }
                 replace(cx);
