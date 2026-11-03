@@ -721,6 +721,20 @@ pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
     cx.observe(&feed, |_, _, cx| cx.notify())
 }
 
+/// `observe_accent`, drawing the view again only while `draws` says it
+/// shows the accent: a tile, which draws it only while its record plays.
+pub fn observe_accent_when<V: 'static>(
+    cx: &mut Context<V>,
+    draws: impl Fn(&V) -> bool + 'static,
+) -> Subscription {
+    let feed = cx.global::<AccentHandle>().0.clone();
+    cx.observe(&feed, move |view, _, cx| {
+        if draws(view) {
+            cx.notify();
+        }
+    })
+}
+
 /// `observe_accent`, running `then` as the accent moves: for a view whose
 /// cached children draw it too and are not views of their own making.
 pub fn observe_accent_then<V: 'static>(

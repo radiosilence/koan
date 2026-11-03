@@ -43,6 +43,8 @@ A group's texture is the visible part of the composing shader's bounds (its boun
 
 Each group is drawn again when a frame is drawn, and at a present only when `Scene::layer_group_stale` says so: while a shader in it is live or a colour slot it draws with moves, once more after they stop so the last value lands, when the colour slot table was written since (a held write, as under Reduce Motion), and when a group nested in it was drawn again. A group at rest costs its compose alone. koan-kit's layers let a group go once it has settled, so content at rest draws in the window's scene as it would without one. `a_group_at_rest_matches_its_content` in `metal_renderer.rs`, and `wgpu_a_group_at_rest_matches_its_content` in `wgpu_renderer.rs` on Linux, check that a group at the identity pose gives the pixels its content does ungrouped; the scene-side tests are in `layer_group_tests`.
 
+A program may name a `prepare`, run once a present on the CPU with its own copy of the uniforms and `time`: values the same for every pixel are worked out there (`track_at` evaluates a track as `koan_track` does) rather than once per pixel (#2034). The Metal renderer also keeps each command buffer's GPU time while `gpu_timing(true)`, for measuring headlessly (`take_gpu_times`; koan-kit's `prism_frames` example).
+
 `time` is reckoned at the present clock (`present_now`): now plus the lead the platform reports between encoding a frame and its showing (on macOS, the display link's output time), so motion does not jitter with encode latency, and the app's retarget reads the same clock.
 
 ### Cached views redrawn alone (#1815)
