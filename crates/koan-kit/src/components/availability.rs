@@ -109,6 +109,18 @@ impl RenderOnce for AvailabilityMark {
             }
         };
         let help = self.state.as_ref().and_then(Availability::help);
+        // The file arriving here, seen while the mark shows: a download
+        // finishing rings once as its ring gives way to the kept mark.
+        let kept = matches!(self.state, Some(Availability::Stored { on_disk: true, .. }));
+        let answer = self.id.as_ref().and_then(|id| {
+            let answers = super::Answerer::of(id, window, cx);
+            if kept {
+                answers.follow(1, super::Answer::Ring, look.accent.hsla(), window, cx);
+            } else {
+                answers.note(0, cx);
+            }
+            answers.layer(window, cx)
+        });
         let inner = self.state.map(|state| match state {
             Availability::Pending => mark(Icon::Downloads, "next", accent),
             Availability::Queued => mark(Icon::Downloads, "queued", muted),
@@ -136,7 +148,7 @@ impl RenderOnce for AvailabilityMark {
             .flex()
             .justify_end()
             .text_role(TypeRole::Fine, &look)
-            .children(inner);
+            .child(div().relative().children(inner).children(answer));
         match (self.id, help) {
             (Some(id), Some(help)) => mark
                 .id(id)
