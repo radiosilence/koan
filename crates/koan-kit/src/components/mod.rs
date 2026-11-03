@@ -230,6 +230,18 @@ pub(crate) fn focus(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusH
         .clone()
 }
 
+/// A control's name for a screen reader where its owner gave none: its id
+/// read as words ("wash-tint" as "wash tint"), so no slider or choice is met
+/// unnamed. An id that is not a name gives none.
+pub(crate) fn spoken_id(id: &ElementId) -> Option<SharedString> {
+    match id {
+        ElementId::Name(name) | ElementId::NamedInteger(name, _) => {
+            Some(name.replace(['-', '_'], " ").into())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
     ElementId::NamedChild(Arc::new(id.clone()), SharedString::new_static(name))
 }
