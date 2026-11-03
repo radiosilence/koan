@@ -69,16 +69,27 @@ fn under(base: Option<PathBuf>) -> PathBuf {
 /// For a tool run against a throwaway `KOAN_CONFIG_DIR` (the GUI's examples
 /// and benches): keeps its runtime places in `places` inside that directory,
 /// unless `KOAN_PLACES_DIR` already says where, so deleting the throwaway
-/// deletes them too. Does nothing without a `KOAN_CONFIG_DIR`. Call it first
-/// in `main`, before any thread starts: it sets an environment variable.
+/// deletes them too. Does nothing without a `KOAN_CONFIG_DIR`, or with one
+/// naming the platform's own configuration, whose places stay where the
+/// installed apps keep them. Call it first in `main`, before any thread
+/// starts: it sets an environment variable.
 pub fn keep_with_config() {
     if std::env::var_os("KOAN_PLACES_DIR").is_some() {
         return;
     }
-    if let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") {
+    let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") else {
+        return;
+    };
+    if let Some(places) = places_with(Path::new(&config), &config::platform_config_dir()) {
         // SAFETY: documented as called before any other thread starts.
-        unsafe { std::env::set_var("KOAN_PLACES_DIR", PathBuf::from(config).join("places")) };
+        unsafe { std::env::set_var("KOAN_PLACES_DIR", places) };
     }
+}
+
+/// Where `keep_with_config` keeps a configuration's places: inside it, unless
+/// it is the platform's own.
+fn places_with(config: &Path, platform: &Path) -> Option<PathBuf> {
+    (key_for(config, platform) != DEFAULT).then(|| config.join("places"))
 }
 
 /// `KOAN_PLACES_DIR`'s `kind` directory, where it is set.
@@ -163,6 +174,17 @@ pub fn drop_old_lock(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_throwaway_configuration_keeps_its_places_with_it() {
+        let platform = tempfile::tempdir().unwrap();
+        let throwaway = tempfile::tempdir().unwrap();
+        assert_eq!(places_with(platform.path(), platform.path()), None);
+        assert_eq!(
+            places_with(throwaway.path(), platform.path()),
+            Some(throwaway.path().join("places"))
+        );
+    }
 
     #[test]
     fn the_platform_directory_is_the_default_and_others_are_apart() {
