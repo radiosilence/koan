@@ -390,11 +390,7 @@ impl ShareForm {
         );
         rows.push(
             Row::new("Port")
-                .control(
-                    div()
-                        .w(look.sized(120.0))
-                        .child(TextField::new(&self.port)),
-                )
+                .control(div().w(look.sized(120.0)).child(TextField::new(&self.port)))
                 .into_any_element(),
         );
         section(

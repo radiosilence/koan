@@ -488,8 +488,8 @@ fn idle() -> NowPlaying {
 mod tests {
     use core::prelude::v1::test;
 
-    use koan_ffi::{EntryStatus, QueueItem, RunRole};
     use koan_kit::app::test::TestAppContext;
+    use koan_runtime::{EntryStatus, QueueItem, RunRole};
 
     use super::*;
 
