@@ -103,7 +103,7 @@ pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
-pub use command_bar::{CommandBar, CommandSection};
+pub use command_bar::{CommandBar, CommandResults, CommandSection};
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};

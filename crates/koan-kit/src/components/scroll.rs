@@ -4,6 +4,7 @@
 //! lays a `Scrollbar` over itself the same way.
 
 use super::Scrollbar;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::child;
@@ -14,6 +15,7 @@ pub struct ScrollArea {
     content: Content,
     reveal: Option<usize>,
     follow: Option<super::CursorSpot>,
+    shrinks: bool,
 }
 
 enum Content {
@@ -29,6 +31,7 @@ impl ScrollArea {
             content: Content::Column(Box::new(content)),
             reveal: None,
             follow: None,
+            shrinks: false,
         }
     }
 
@@ -40,7 +43,17 @@ impl ScrollArea {
             content: Content::Items(items),
             reveal: None,
             follow: None,
+            shrinks: false,
         }
+    }
+
+    /// In a flex column whose height is only capped (a panel with a
+    /// `max_h`): takes the room the column has left rather than its
+    /// content's height, so it scrolls within the cap instead of being
+    /// clipped by it.
+    pub fn shrinks(mut self) -> Self {
+        self.shrinks = true;
+        self
     }
 
     /// Scrolls item `ix` into view when it changes, and leaves the scroll
@@ -81,6 +94,7 @@ impl RenderOnce for ScrollArea {
         let scrolled = div()
             .id(self.id)
             .size_full()
+            .when(self.shrinks, |d| d.flex_1().min_h_0())
             .overflow_y_scroll()
             .track_scroll(&handle);
         // After the content, so its cursor has been laid out this frame.
@@ -114,6 +128,7 @@ impl RenderOnce for ScrollArea {
         div()
             .relative()
             .size_full()
+            .when(self.shrinks, |d| d.flex_1().min_h_0().flex().flex_col())
             .child(match self.content {
                 Content::Column(column) => scrolled.child(*column),
                 // Each item at its own height: a column taller than the

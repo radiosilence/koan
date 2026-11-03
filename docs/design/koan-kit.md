@@ -136,7 +136,7 @@ TableRow::new(id, RowKind::Art)
 
 ### CommandBar (Arc's and Dia's command bars)
 
-`CommandBar::new(id, &input).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top, results in headed groups of `SuggestionRow`s with the lit one kept in view, and along its foot what each key does. The owner holds the query and decides what is found and what each key does.
+`CommandBar::new(id, field).results(CommandResults::new(id).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…)).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top (`CommandBar::field(&input)`), results in headed groups of `SuggestionRow`s with the lit one kept in view, scrolling between the query and the keys when the panel is short, and along its foot what each key does. The owner holds the query and decides what is found and what each key does. The field and the results are passed apart so the owner can draw each in a cached view of its own: a keystroke then draws the field alone, and the results only when an answer lands, however many rows and sleeves they hold.
 
 ### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
 
