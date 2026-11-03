@@ -536,7 +536,7 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
-        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None));
+        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None, None));
     }
 }
 

@@ -140,7 +140,7 @@ pub fn field(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputState> {
-    let placeholder = SharedString::from(placeholder.to_owned());
+    let placeholder = crate::theme::label(placeholder);
     cx.new(|cx| {
         InputState::new(window, cx)
             .placeholder(placeholder)
