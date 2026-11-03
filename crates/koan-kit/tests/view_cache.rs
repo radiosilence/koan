@@ -3,7 +3,7 @@
 //! is drawn afresh the next time that ancestor is drawn, never reusing
 //! ranges into a frame that is gone.
 
-use gpui_kit::{
+use gpui::{
     AnyWindowHandle, AppContext as _, Context, Entity, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, StyleRefinement, Styled, TestAppContext,
     Window, div, px,
@@ -73,7 +73,7 @@ fn renders(leaves: &[Entity<Leaf>; 2], cx: &mut TestAppContext) -> (usize, usize
     cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
 }
 
-fn board(cx: &mut TestAppContext) -> ([Entity<Leaf>; 2], gpui_kit::WindowHandle<Root>) {
+fn board(cx: &mut TestAppContext) -> ([Entity<Leaf>; 2], gpui::WindowHandle<Root>) {
     let leaves = [
         cx.new(|_| Leaf {
             text: "left",
@@ -94,7 +94,7 @@ fn board(cx: &mut TestAppContext) -> ([Entity<Leaf>; 2], gpui_kit::WindowHandle<
 /// Frames come as the app's do: each change ends in one drawn frame (the
 /// test platform draws a dirty window as an update finishes), and nothing
 /// draws a frame with nothing changed.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext) {
     let (leaves, root) = board(cx);
     cx.run_until_parked();
@@ -131,7 +131,7 @@ impl Render for Named {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .id(self.0)
-            .role(gpui_kit::Role::Button)
+            .role(gpui::Role::Button)
             .aria_label(self.0)
             .size_full()
             .child(self.0)
@@ -172,7 +172,7 @@ impl Render for NamedRoot {
 
 /// A cached view reused whole stays in the accessibility tree, and so do
 /// the cached views inside it, carried or reused on their own.
-#[gpui_kit::test]
+#[gpui::test]
 fn reused_views_stay_in_the_accessibility_tree(cx: &mut TestAppContext) {
     let named = [cx.new(|_| Named("play")), cx.new(|_| Named("next"))];
     let parent = cx.new(|_| NamedParent(named.clone()));
@@ -252,7 +252,7 @@ impl Render for Board {
 /// the page notifying in any order, a frame drawn after each, as the pointer
 /// crossing controls redraws them while their siblings stay cached. Every
 /// frame must draw without reusing a range from a frame that is gone.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_hover_storm_across_cached_views_draws_every_frame(cx: &mut TestAppContext) {
     const GROUPS: usize = 6;
     const LEAVES: usize = 5;

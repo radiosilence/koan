@@ -37,10 +37,10 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui_kit::*;
+use gpui::*;
 use parking_lot::Mutex;
 
-pub use gpui_kit::{
+pub use gpui::{
     SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS, ShaderProgram, Track, TrackCurve,
     TrackRepeat as Repeat,
 };
@@ -142,7 +142,7 @@ impl Animated {
     /// The clock tracks are reckoned in: when a frame made now reaches the
     /// screen. What a retarget samples a moving value at.
     pub fn now() -> Instant {
-        gpui_kit::present_now()
+        gpui::present_now()
     }
 
     /// Where track `k` stands at `at`, as the program draws it.
@@ -196,7 +196,7 @@ impl Animated {
                         damping,
                         velocity,
                     },
-                    gpui_kit::spring_length(from - to, velocity, stiffness, damping),
+                    gpui::spring_length(from - to, velocity, stiffness, damping),
                 )
             }
             ease => (curve(ease), length.as_secs_f32()),
@@ -236,7 +236,7 @@ impl Animated {
                     damping,
                     velocity: 0.0,
                 },
-                gpui_kit::spring_length(from - to, 0.0, stiffness, damping),
+                gpui::spring_length(from - to, 0.0, stiffness, damping),
             ),
             ease => (curve(ease), length.as_secs_f32()),
         };

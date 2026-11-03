@@ -20,14 +20,14 @@ pub mod wash;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use gpui_kit::{
+use gpui::{
     App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
     Subscription, Task, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};
 /// A colour as the theme hands it out, for passing a role's colour along.
-pub use gpui_kit::Hsla;
+pub use gpui::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
     DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
@@ -122,7 +122,7 @@ const FACES: [&[u8]; 3] = [
 /// Registers Geist Mono, sets the theme global, reads the system's motion,
 /// contrast, transparency and text size settings and
 /// dresses gpui-component's own theme (which the text field draws with) in
-/// the tokens. Call after `gpui_kit::init`.
+/// the tokens. Call after `gpui::init`.
 pub fn init(cx: &mut App) {
     cx.text_system()
         .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())

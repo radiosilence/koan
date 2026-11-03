@@ -78,7 +78,7 @@ mod window;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui_kit::{
+use gpui::{
     AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
     Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
@@ -169,7 +169,8 @@ pub use toolbar::{
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{
-    MainWindow, SecondaryWindow, close_button, draws_decorations, moves_window, window_buttons,
+    MainWindow, SecondaryWindow, close_button, draws_decorations, host, moves_window,
+    window_buttons,
 };
 
 use crate::theme::{Look, MARK, Motion};
@@ -560,7 +561,7 @@ pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> S
 /// not fading, it is nothing: a control at rest puts no quad in the scene.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if transition.at(0, Animated::now()) <= 0.0 && !transition.moving() {
-        return gpui_kit::Empty.into_any_element();
+        return gpui::Empty.into_any_element();
     }
     if !SHADED {
         let amount = transition.at(0, Animated::now());
@@ -584,7 +585,7 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
 /// nothing otherwise. See docs/design/koan-kit.md, "Accessibility".
 pub(crate) fn accessible<E: StatefulInteractiveElement>(
     element: E,
-    role: gpui_kit::Role,
+    role: gpui::Role,
     name: Option<SharedString>,
 ) -> E {
     let element = element.role(role);
@@ -620,35 +621,35 @@ pub(crate) fn announced<E: StatefulInteractiveElement>(
     accessible(
         element,
         if alarm {
-            gpui_kit::Role::Alert
+            gpui::Role::Alert
         } else {
-            gpui_kit::Role::Status
+            gpui::Role::Status
         },
         Some(text.clone()),
     )
     .aria_value(text)
     .aria_live(if alarm {
-        gpui_kit::accesskit::Live::Assertive
+        gpui::accesskit::Live::Assertive
     } else {
-        gpui_kit::accesskit::Live::Polite
+        gpui::accesskit::Live::Polite
     })
 }
 
 /// A checked state as AccessKit has it.
-pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
+pub(crate) fn toggled(on: bool) -> gpui::Toggled {
     if on {
-        gpui_kit::Toggled::True
+        gpui::Toggled::True
     } else {
-        gpui_kit::Toggled::False
+        gpui::Toggled::False
     }
 }
 
 /// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
-    handler: Handler<gpui_kit::ClickEvent>,
+    handler: Handler<gpui::ClickEvent>,
 ) -> E {
-    element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
-        handler(&gpui_kit::ClickEvent::default(), window, cx)
+    element.on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+        handler(&gpui::ClickEvent::default(), window, cx)
     })
 }

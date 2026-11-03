@@ -5,7 +5,7 @@
 //! The content is laid out and painted as it would be unwrapped, so it takes
 //! the pointer where it stands; only how it shows moves.
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Animated, Ease, Repeat, ShaderProgram};
 use crate::theme::{KoanTheme, Motion};

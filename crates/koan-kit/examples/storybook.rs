@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui_kit::{AppContext, HeadlessAppContext, px, size};
+use gpui::{AppContext, HeadlessAppContext, px, size};
 use koan_kit::storybook::{Story, Storybook};
 use koan_kit::theme;
 
@@ -23,14 +23,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = PathBuf::from(args.next().unwrap_or_else(|| "target/storybook".into()));
     let only = args.next();
     std::fs::create_dir_all(&dir)?;
-    let text_system = gpui_kit::platform::current_platform(true).text_system();
+    let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
-        gpui_kit::platform::current_headless_renderer,
+        gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
 
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
             let view = cx.new(|cx| Storybook::new(window, cx));
             book = Some(view.clone());
-            cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+            koan_kit::components::host(view, window, cx)
         })?;
         let book = book.expect("the window's view was built");
         cx.update_window(window.into(), |_, window, cx| {

@@ -1,4 +1,4 @@
-use gpui_kit::{
+use gpui::{
     App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
     div, px,
 };
@@ -43,15 +43,15 @@ impl RenderOnce for EmptyState {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         // A group to a screen reader, named by what it says.
-        let spoken: gpui_kit::SharedString = match &self.detail {
+        let spoken: gpui::SharedString = match &self.detail {
             Some(detail) => format!("{}. {detail}", self.title).into(),
             None => self.title.clone(),
         };
         super::accessible(
-            div().id(gpui_kit::ElementId::Name(
+            div().id(gpui::ElementId::Name(
                 format!("empty-{}", self.title).into(),
             )),
-            gpui_kit::Role::Group,
+            gpui::Role::Group,
             Some(spoken),
         )
         .size_full()

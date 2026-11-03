@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Answer, Answerer, Handler, Tooltip, accessible, answers_click, focus, ring, toggled};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
@@ -124,7 +124,7 @@ impl RenderOnce for TransportControl {
         super::track(
             accessible(
                 div().id(self.id.clone()),
-                gpui_kit::Role::Button,
+                gpui::Role::Button,
                 Some(self.help.clone()),
             ),
             &pointer,

@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind, Tooltip, accessible, child, focus, ring};
 use crate::theme::{Icon, KoanStyled, Look, TypeRole, label};
@@ -163,7 +163,7 @@ impl RenderOnce for CopyText {
         let name: SharedString = format!("{help}: {value}").into();
         // GPUI turns Enter and Space on the focused value into a click; the
         // ring stands outside the text, which clips.
-        accessible(div().id(self.id), gpui_kit::Role::Button, Some(name))
+        accessible(div().id(self.id), gpui::Role::Button, Some(name))
             .relative()
             .flex()
             .min_w_0()
@@ -196,7 +196,7 @@ impl RenderOnce for CopyText {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
@@ -214,10 +214,10 @@ mod tests {
     }
 
     /// A click puts the value on the clipboard and says so for a moment.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_copy_lands_on_the_clipboard_and_says_so(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|_, _| Page);

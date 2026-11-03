@@ -1,9 +1,9 @@
 //! The storybook's pages for containers and moving parts: collections,
 //! tables and lists, panels and sheets, motion and drag.
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{

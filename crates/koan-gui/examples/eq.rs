@@ -188,15 +188,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 koan_gui::app::install(&engine, cx);
                 let dsp = Dsp::new(engine.clone(), cx);
                 let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT)), cx);
-                // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-                koan_kit::raw::open_window(
+                cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
-                    cx,
                     move |window, cx| {
-                        cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx))
+                        let page =
+                            cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
+                        koan_kit::components::host(page, window, cx)
                     },
                 )
                 .expect("the EQ window opens");
@@ -297,8 +297,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Some(view) = view {
                 sheets.update(cx, |s, cx| s.view(view, cx));
             }
-            // gpui-component's focus and click extensions, for the shell's own handling.
-            cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
+            koan_kit::components::host(page, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(dark), window, cx)
@@ -340,8 +339,7 @@ fn drag(
         });
         graph = Some(view.read(cx).graph());
         sheets.update(cx, |s, cx| s.view(view, cx));
-        // gpui-component's focus and click extensions, for the shell's own handling.
-        cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
+        koan_kit::components::host(page, window, cx)
     })?;
     let graph = graph.expect("the profile page has a graph");
     cx.allow_parking();

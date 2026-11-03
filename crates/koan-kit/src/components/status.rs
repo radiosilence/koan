@@ -2,8 +2,8 @@
 //! with its glyph, and figures about what it holds, under a faint rule. The
 //! block decides its own inset, so it lines up with the rows above it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};
 

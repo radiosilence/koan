@@ -4,8 +4,8 @@
 //! dimmed. There is no close button on a picture: the owner closes it on a
 //! click anywhere and on Escape, which it listens for on the viewer.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Cover, CoverArt};
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
@@ -79,7 +79,7 @@ impl RenderOnce for Viewer {
                 .child(text)
         };
         // A dialog to a screen reader, named by its record.
-        super::accessible(self.base, gpui_kit::Role::Dialog, Some(self.title.clone()))
+        super::accessible(self.base, gpui::Role::Dialog, Some(self.title.clone()))
             .absolute()
             .inset_0()
             .flex()

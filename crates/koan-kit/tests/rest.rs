@@ -2,7 +2,7 @@
 //! no shader quad in the scene, so a frame presented for something else
 //! (the playing bars, a sleeve arriving) pays for none of them.
 
-use gpui_kit::{
+use gpui::{
     Context, IntoElement, Modifiers, ParentElement, Render, Styled, TestAppContext,
     VisualTestContext, Window, div, point, px,
 };
@@ -36,10 +36,10 @@ fn shaders(cx: &mut VisualTestContext) -> usize {
     cx.update(|window, _| window.painted_shader_count())
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn controls_at_rest_draw_no_shader(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Page);

@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let made = cx.new(|cx| Shell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
-        cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
+        koan_kit::components::host(root, window, cx)
     })?;
     let shell = shell.expect("the window made its shell");
     let window: AnyWindowHandle = window.into();

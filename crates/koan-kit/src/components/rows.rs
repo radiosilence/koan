@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, Interactivity, IntoElement,
     ParentElement, RenderOnce, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
     div,
@@ -39,7 +39,7 @@ pub struct NavRow {
 }
 
 /// A drop a row takes, attached as the row draws so the drop answers.
-type Accept = Box<dyn FnOnce(Stateful<Div>, super::Answerer, gpui_kit::Hsla) -> Stateful<Div>>;
+type Accept = Box<dyn FnOnce(Stateful<Div>, super::Answerer, gpui::Hsla) -> Stateful<Div>>;
 
 impl InteractiveElement for NavRow {
     fn interactivity(&mut self) -> &mut Interactivity {
@@ -201,7 +201,7 @@ impl RenderOnce for NavRow {
             .child(self.label);
         let selected = self.selected;
         // A link to a screen reader: to its place, selected where it is.
-        accessible(base, gpui_kit::Role::Link, Some(name))
+        accessible(base, gpui::Role::Link, Some(name))
             .aria_selected(selected)
             .group(NAV_ROW)
             .relative()
@@ -306,7 +306,7 @@ impl RenderOnce for NavHeading {
             div().id(ElementId::Name(
                 format!("nav-heading-{}", self.title).into(),
             )),
-            gpui_kit::Role::Heading,
+            gpui::Role::Heading,
             Some(self.title.clone()),
         )
         .aria_level(2)

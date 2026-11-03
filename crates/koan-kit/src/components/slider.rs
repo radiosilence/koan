@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, font, px,
@@ -541,7 +541,7 @@ impl RenderOnce for Slider {
                     div()
                         .absolute()
                         .left_0()
-                        .w(gpui_kit::relative(reach.value().clamp(0.0, 1.0)))
+                        .w(gpui::relative(reach.value().clamp(0.0, 1.0)))
                         .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                         .h(HAIRLINE)
                         .bg(rule),
@@ -576,7 +576,7 @@ impl RenderOnce for Slider {
                     div()
                         .absolute()
                         .left_0()
-                        .w(gpui_kit::relative(value))
+                        .w(gpui::relative(value))
                         .top(px((f32::from(height) - FILL) / 2.0))
                         .h(px(FILL))
                         .bg(look.accent.hsla()),
@@ -586,7 +586,7 @@ impl RenderOnce for Slider {
                 rail.child(
                     div()
                         .absolute()
-                        .left(gpui_kit::relative(value))
+                        .left(gpui::relative(value))
                         .ml(px(-THUMB / 2.0))
                         .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
@@ -653,7 +653,7 @@ impl RenderOnce for Slider {
         // value at the low end where there is one (the time played).
         let mut slider = accessible(
             div().id(self.id.clone()),
-            gpui_kit::Role::Slider,
+            gpui::Role::Slider,
             self.name.clone().or_else(|| super::spoken_id(&self.id)),
         )
         .aria_disabled(self.disabled)
@@ -672,8 +672,8 @@ impl RenderOnce for Slider {
             let (down, key) = (on_change.clone(), on_change);
             let key_commit = self.on_commit;
             for (action, by) in [
-                (gpui_kit::AccessibleAction::Increment, self.step),
-                (gpui_kit::AccessibleAction::Decrement, -self.step),
+                (gpui::AccessibleAction::Increment, self.step),
+                (gpui::AccessibleAction::Decrement, -self.step),
             ] {
                 let (set, commit) = (key.clone(), key_commit.clone());
                 slider = slider.on_a11y_action(action, move |_, window, cx| {
@@ -720,7 +720,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::{
+    use gpui::{
         AnyWindowHandle, AppContext, Context, Entity, Modifiers, MouseDownEvent, PlatformInput,
         Render, StyleRefinement, TestAppContext, point,
     };
@@ -918,10 +918,10 @@ mod tests {
     /// A drag moves the slider and redraws its owner alone: the page around
     /// it replays. It ends when the button is let go, or, where the release
     /// never reached the window, at the next press.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_drag_redraws_only_the_slider(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let renders = Rc::new(Cell::new(0));
