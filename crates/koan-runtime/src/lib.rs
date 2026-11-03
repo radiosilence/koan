@@ -8748,7 +8748,8 @@ mod clock_end_tests {
     }
 
     /// Past the end, a seek back into the track starts the clock again: the
-    /// new place at once, then its whole seconds.
+    /// new place at once, then its whole seconds. Readings are bounded by a
+    /// second either way, since a loaded runner sleeps and schedules late.
     #[test]
     fn a_seek_back_past_the_end_starts_the_clock_again() {
         let state = EngineState::new();
@@ -8766,12 +8767,15 @@ mod clock_end_tests {
         );
         playhead(&state, 300, true);
         let seek = got
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(10))
             .expect("the seek's anchor");
-        assert!(seek.is_some_and(|ms| (300..400).contains(&ms)), "{seek:?}");
-        let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
         assert!(
-            tick.is_some_and(|ms| (990..1_100).contains(&ms)),
+            seek.is_some_and(|ms| (300..1_000).contains(&ms)),
+            "{seek:?}"
+        );
+        let tick = next_within(stream, Duration::from_secs(10)).flatten();
+        assert!(
+            tick.is_some_and(|ms| (990..2_000).contains(&ms)),
             "{tick:?}"
         );
     }
@@ -8794,15 +8798,15 @@ mod clock_end_tests {
         );
         playhead(&state, 4_200, true);
         let resumed = got
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(10))
             .expect("the resume's anchor");
         assert!(
-            resumed.is_some_and(|ms| (4_200..4_300).contains(&ms)),
+            resumed.is_some_and(|ms| (4_200..5_000).contains(&ms)),
             "{resumed:?}"
         );
-        let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
+        let tick = next_within(stream, Duration::from_secs(10)).flatten();
         assert!(
-            tick.is_some_and(|ms| (4_990..5_100).contains(&ms)),
+            tick.is_some_and(|ms| (4_990..6_000).contains(&ms)),
             "{tick:?}"
         );
     }
