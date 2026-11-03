@@ -30,6 +30,8 @@ pub enum Anchored {
         features: bool,
     },
     Track(i64),
+    /// The biography at the page's end.
+    About,
 }
 
 /// A heading on a page, by what it heads rather than where it falls, since

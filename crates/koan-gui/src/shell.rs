@@ -12,10 +12,9 @@ use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
-    NextRegion, PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
-    help,
+    self, ActualSize, AddMusic, Back, Bigger, FocusNext, FocusPrevious, Forward, NextRegion,
+    PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue,
+    ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -81,6 +80,19 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // A menu closing after what held the keyboard went (its page left
+        // behind) gives it to the page showing.
+        let (shell, here) = (cx.weak_entity(), window.window_handle());
+        crate::components::on_menu_focus_lost(
+            move |window, cx| {
+                if window.window_handle() == here {
+                    shell
+                        .update(cx, |shell, cx| shell.focus_page(window, cx))
+                        .ok();
+                }
+            },
+            cx,
+        );
         let nav = cx.new(|_| Navigator::default());
         // A measuring run can open on the page it measures.
         #[cfg(feature = "profiler")]
@@ -411,12 +423,7 @@ impl Shell {
 
     /// Asks before forgetting every cover kept on this device, saying how
     /// many and how much, then fetches what is on screen again.
-    fn clear_artwork(
-        &mut self,
-        _: &ClearArtworkCache,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn clear_artwork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(covers) = self.library.as_ref().map(|l| l.read(cx).covers()) else {
             return;
         };
@@ -650,7 +657,6 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
-            .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))

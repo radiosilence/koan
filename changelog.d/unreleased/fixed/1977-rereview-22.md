@@ -1,0 +1,1 @@
+- **Playlist sync and the cover preload after a sync.** A playlist pushed from this device while a sync was fetching it is no longer overwritten by the server's older copy, and the cover preload starts as soon as the library is in rather than after the EQ profiles sync.

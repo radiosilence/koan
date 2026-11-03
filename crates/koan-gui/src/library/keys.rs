@@ -211,7 +211,8 @@ mod tests {
         assert_eq!(line_below(&lines, 1, 1), 5);
         assert_eq!(line_below(&lines, 5, 1), 6, "a track a line");
         assert_eq!(line_below(&lines, 7, 1), 7, "held at the end");
-        assert_eq!(line_below(&lines, 6, -2), 4);
+        assert_eq!(line_below(&lines, 6, -1), 4, "the short row, its column");
+        assert_eq!(line_below(&lines, 6, -2), 0, "the top row, its column");
         assert_eq!(line_below(&lines, 2, -1), 2, "held at the top");
         assert_eq!(line_below(&lines, 99, 1), 99, "outside every line");
     }
