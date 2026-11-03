@@ -438,7 +438,9 @@ pub fn follow_edit(
 /// side's change is judged against its own record: the server's `changed`
 /// against the stamp it had at the last sync, the local `changed_at` against
 /// the one that sync covered. Only one side moved: that side wins. Both moved:
-/// last writer wins on `changed`. Neither: nothing is fetched at all.
+/// last writer wins on `changed`. Neither: nothing is fetched at all. A pull
+/// whose local copy is edited or pushed between the decision and the store
+/// is left for the next sync to weigh again.
 ///
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
@@ -533,7 +535,7 @@ pub fn reconcile_playlists(
     for chunk in pulls.chunks(FETCHING * 4) {
         let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
         for ((summary, local), full) in chunk.iter().zip(fetched) {
-            let (summary, local) = (*summary, local.clone());
+            let (summary, local) = (*summary, local.as_ref());
             let full = match full {
                 Ok(full) => full,
                 Err(e) => {
@@ -565,16 +567,23 @@ pub fn reconcile_playlists(
             // All of it or none: a copy renamed but not refilled, or refilled but
             // not marked synced, would push back as an edit nobody made.
             let stored = queries::atomically(&db.conn, || {
-                // Edited here, or made here from another listing, since it was
+                // Edited here, made here from another listing, or pushed (which
+                // moves the synced stamp, not the revision) since it was
                 // decided to pull it: the next sync weighs it again rather than
                 // writing over the edit.
                 let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-                if now.as_ref().map(|p| (p.id, p.revision))
-                    != local.as_ref().map(|p| (p.id, p.revision))
-                {
+                let seen = |p: &queries::PlaylistRow| {
+                    (
+                        p.id,
+                        p.revision,
+                        p.synced_revision,
+                        p.remote_changed.clone(),
+                    )
+                };
+                if now.as_ref().map(seen) != local.map(seen) {
                     return Ok(false);
                 }
-                let id = match &local {
+                let id = match local {
                     Some(local) => local.id,
                     None => queries::create_playlist(
                         &db.conn,

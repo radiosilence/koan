@@ -18,7 +18,8 @@ pub struct Synced {
 }
 
 /// The steps a sync runs once the library is walked, timed: what the apps
-/// show as its last phase, with the library's own closing steps.
+/// show as its last phase. The library's own closing steps are timed in
+/// `SyncResult::finishing`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AfterLibrary {
     pub favourites: std::time::Duration,
