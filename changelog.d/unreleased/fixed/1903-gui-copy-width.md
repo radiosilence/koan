@@ -1,0 +1,1 @@
+- **Copy buttons keep their width** in the desktop app while they say "copied", so the buttons beside them stay put.
