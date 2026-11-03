@@ -2163,6 +2163,36 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    // KOAN: (#2021) the app changed the text or the selection itself, as a
+    // click elsewhere in a field: an input method's composition no longer
+    // stands where it was, so AppKit is told to discard it, as an
+    // NSTextView does.
+    fn text_input_state_changed(&self, change: gpui::TextInputStateChange) {
+        if !matches!(
+            change,
+            gpui::TextInputStateChange::ContentChanged
+                | gpui::TextInputStateChange::SelectionChanged
+        ) {
+            return;
+        }
+        // This window's own context: the current one is the key window's,
+        // which a field changed in a window behind it must not touch.
+        let this = self.0.lock();
+        let view = this.native_view;
+        let closed = this.closed.clone();
+        this.foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, || unsafe {
+                    let input_context: *mut AnyObject = msg_send![view.as_ptr(), inputContext];
+                    if input_context.is_null() {
+                        return;
+                    }
+                    let _: () = msg_send![input_context, discardMarkedText];
+                })
+            })
+            .detach()
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().foreground_executor.clone();
         executor

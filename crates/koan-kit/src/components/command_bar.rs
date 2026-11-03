@@ -8,9 +8,9 @@
 //! The owner holds the query's `InputState`, decides what is found and
 //! what each key does: the bar draws what it is given.
 
+use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::InputState;
 
 use super::{ScrollArea, SuggestionHeading, SuggestionRow, TextField, sheet};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -198,6 +198,7 @@ impl RenderOnce for CommandBar {
                     .child(
                         div().flex_1().min_w_0().child(
                             TextField::new(&self.input)
+                                .label(label("search"))
                                 .bare()
                                 .role(TypeRole::TitleSmall),
                         ),

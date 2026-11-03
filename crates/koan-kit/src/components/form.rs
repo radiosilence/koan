@@ -177,7 +177,7 @@ impl RenderOnce for FormRow {
                     .pr(look.space(Space::M))
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.palette.ink.hsla())
-                    .child(self.label),
+                    .child(self.label.clone()),
             )
             .child(
                 div()
@@ -194,7 +194,10 @@ impl RenderOnce for FormRow {
                             .text_color(look.palette.muted.hsla())
                             .child(value)
                     }))
-                    .children(self.control),
+                    .children(
+                        self.control
+                            .map(|control| super::field::labelled(self.label.clone(), control)),
+                    ),
             )
     }
 }

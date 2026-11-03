@@ -30,7 +30,7 @@ mod details;
 mod drag;
 mod empty;
 mod fade;
-mod field;
+pub mod field;
 mod filter_field;
 mod form;
 mod heart;
@@ -112,7 +112,7 @@ pub mod list_actions {
 }
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
+pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
 pub use filter_field::{FilterButton, FilterField};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
