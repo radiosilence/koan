@@ -174,6 +174,7 @@ impl RenderOnce for Heart {
                     .children(answers.layer(window, cx)),
             )
             .when_some(self.on_click, move |d, handler| {
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     let answer = if on { Answer::Close } else { Answer::Burst };
                     answers.start(answer, accent, cx);
