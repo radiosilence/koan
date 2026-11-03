@@ -1515,9 +1515,10 @@ jobs:
 
             uninstall quit: "cc.blit.koan.desktop"
 
-            # The library and its config are shared with the terminal UI.
+            # The desktop app's own state, caches and preferences only:
+            # ~/.config/koan holds the library, config and keys the command
+            # line, terminal UI and server share, and stays.
             zap trash: [
-              "~/.config/koan",
               "~/Library/Application Support/koan",
               "~/Library/Caches/koan",
               "~/Library/Preferences/cc.blit.koan.desktop.plist",
