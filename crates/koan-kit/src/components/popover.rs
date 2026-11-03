@@ -128,3 +128,99 @@ impl RenderOnce for OpensPanel {
         div().id(self.id).relative().child(trigger).children(panel)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::components::TextTrigger;
+    // `gpui::*` brings GPUI's `test` attribute, which would expand its own
+    // `#[test]` into itself.
+    use core::prelude::v1::test;
+
+    struct Page {
+        focus: FocusHandle,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .id("before")
+                        .track_focus(&self.focus)
+                        .debug_selector(|| "outside".into())
+                        .size(px(40.0)),
+                )
+                .child(opens_panel(
+                    "genre",
+                    TextTrigger::new("genre-trigger", "any genre"),
+                    |_, _, _| {
+                        div()
+                            .debug_selector(|| "panel".into())
+                            .size(px(80.0))
+                            .into_any_element()
+                    },
+                ))
+        }
+    }
+
+    fn page(cx: &mut TestAppContext) -> (FocusHandle, &mut VisualTestContext) {
+        cx.update(crate::theme::init);
+        let (page, cx) = cx.add_window_view(|_, cx| Page {
+            focus: cx.focus_handle(),
+        });
+        let focus = page.read_with(cx, |p, _| p.focus.clone());
+        cx.update(|window, cx| window.focus(&focus, cx));
+        cx.run_until_parked();
+        (focus, cx)
+    }
+
+    fn press(cx: &mut VisualTestContext, selector: &'static str) {
+        let at = cx.debug_bounds(selector).expect("drawn").center();
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    fn trigger(cx: &mut VisualTestContext) {
+        let at = cx
+            .debug_bounds("outside")
+            .expect("drawn")
+            .bottom_left()
+            + point(px(4.0), px(8.0));
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    /// The trigger opens the panel and the keyboard goes into it; Escape
+    /// closes it and gives the keyboard back.
+    #[gpui::test]
+    fn escape_closes_the_panel_and_gives_the_keyboard_back(cx: &mut TestAppContext) {
+        let (focus, cx) = page(cx);
+        trigger(cx);
+        assert!(cx.debug_bounds("panel").is_some(), "the panel opens");
+        assert!(!cx.update(|window, _| focus.is_focused(window)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("panel").is_none(), "Escape closes it");
+        assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
+
+    /// A press outside closes the panel; the trigger pressed again while it
+    /// shows closes it rather than opening it afresh.
+    #[gpui::test]
+    fn a_press_outside_or_the_trigger_closes_the_panel(cx: &mut TestAppContext) {
+        let (_, cx) = page(cx);
+        trigger(cx);
+        press(cx, "outside");
+        assert!(cx.debug_bounds("panel").is_none(), "a press outside closes it");
+        trigger(cx);
+        assert!(cx.debug_bounds("panel").is_some());
+        trigger(cx);
+        assert!(cx.debug_bounds("panel").is_none(), "the trigger closes it");
+    }
+}

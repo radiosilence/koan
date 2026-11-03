@@ -16,7 +16,7 @@ use crate::components::{
     SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text,
     name_line, plain_text, table_list,
 };
-use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
+use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What the components on these pages hold.
 pub struct State {
@@ -241,6 +241,27 @@ impl StoryContent {
             Story::Lists => {
                 let ink = look.palette.ink.hsla();
                 vec![
+                    SectionHeader::new(
+                        "The scrollbar: shown as it scrolls or under the pointer, faded out after a rest",
+                    )
+                    .into_any_element(),
+                    div()
+                        .w(look.spaced(260.0))
+                        .h(look.spaced(160.0))
+                        .border(look.hairline)
+                        .border_color(look.palette.rule.hsla())
+                        .child(crate::components::ScrollArea::new(
+                            "story-scrollbar",
+                            div().flex().flex_col().children((1..=40).map(|n| {
+                                div()
+                                    .px(look.space(Space::M))
+                                    .py(look.space(Space::Xs))
+                                    .text_role(TypeRole::Body, look)
+                                    .text_color(look.palette.ink.hsla())
+                                    .child(format!("Track {n}"))
+                            })),
+                        ))
+                        .into_any_element(),
                     SectionHeader::new("Navigation headings and notes").into_any_element(),
                     div()
                         .w(look.spaced(240.0))

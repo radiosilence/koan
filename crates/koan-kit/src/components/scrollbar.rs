@@ -401,3 +401,103 @@ fn scroll_to<S: ScrollSource>(source: &S, top: Pixels, track: Bounds<Pixels>, le
     let offset = source.offset();
     source.set_offset(point(offset.x, -(source.max_offset() * share)));
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+
+    use super::*;
+    // `gpui::*` brings GPUI's `test` attribute, which would expand its own
+    // `#[test]` into itself.
+    use core::prelude::v1::test;
+
+    struct Page {
+        scroll: ScrollHandle,
+        rows: usize,
+        pressed: Rc<Cell<u32>>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let pressed = self.pressed.clone();
+            div()
+                .id("page")
+                .relative()
+                .size(px(200.0))
+                .debug_selector(|| "page".into())
+                .child(
+                    div()
+                        .id("content")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                            pressed.set(pressed.get() + 1)
+                        })
+                        .children((0..self.rows).map(|i| div().id(i).h(px(20.0)).w_full())),
+                )
+                .child(Scrollbar::vertical(&self.scroll))
+        }
+    }
+
+    fn page(rows: usize, cx: &mut TestAppContext) -> (Entity<Page>, &mut VisualTestContext) {
+        cx.update(crate::theme::init);
+        let (page, cx) = cx.add_window_view(|_, _| Page {
+            scroll: ScrollHandle::new(),
+            rows,
+            pressed: Rc::new(Cell::new(0)),
+        });
+        cx.run_until_parked();
+        (page, cx)
+    }
+
+    fn offset(page: &Entity<Page>, cx: &mut VisualTestContext) -> Pixels {
+        page.read_with(cx, |p, _| -p.scroll.offset().y)
+    }
+
+    /// A press on the edge brings the thumb there, a drag moves it, and
+    /// neither reaches the content beneath; the content scrolls with it.
+    #[gpui::test]
+    fn the_thumb_is_pressed_and_dragged(cx: &mut TestAppContext) {
+        let (page, cx) = page(50, cx);
+        let bounds = cx.debug_bounds("page").expect("drawn");
+        let edge = bounds.right() - px(4.0);
+        let max = page.read_with(cx, |p, _| p.scroll.max_offset().y);
+        assert!(max > px(0.0));
+        cx.simulate_mouse_down(
+            point(edge, bounds.bottom() - px(4.0)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert_eq!(offset(&page, cx), max, "pressed at the foot: the end");
+        cx.simulate_mouse_move(
+            point(edge, bounds.top() - px(40.0)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert_eq!(offset(&page, cx), px(0.0), "dragged past the top: the start");
+        cx.simulate_mouse_up(
+            point(edge, bounds.top()),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert_eq!(page.read_with(cx, |p, _| p.pressed.get()), 0);
+    }
+
+    /// Content that fits has no bar: its edge is the content's.
+    #[gpui::test]
+    fn content_that_fits_has_no_bar(cx: &mut TestAppContext) {
+        let (page, cx) = page(3, cx);
+        let bounds = cx.debug_bounds("page").expect("drawn");
+        let at = point(bounds.right() - px(4.0), bounds.top() + px(10.0));
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(page.read_with(cx, |p, _| p.pressed.get()), 1);
+    }
+}
