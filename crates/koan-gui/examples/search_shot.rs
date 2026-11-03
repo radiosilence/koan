@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let window = cx.open_window(size(px(width), px(height)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
-            cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
+            koan_kit::components::host(root, window, cx)
         })?;
         let window: AnyWindowHandle = window.into();
         cx.allow_parking();
