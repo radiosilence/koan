@@ -11255,7 +11255,11 @@ mod tests {
             std::thread::scope(|scope| {
                 for _ in 0..6 {
                     scope.spawn(|| {
-                        while let Some(id) = next.lock().next() {
+                        loop {
+                            // Taken and let go before the request: held through it,
+                            // the workers would ask one at a time.
+                            let taken = next.lock().next();
+                            let Some(id) = taken else { break };
                             client.get_cover_art_background(id, Some(600)).unwrap();
                         }
                     });

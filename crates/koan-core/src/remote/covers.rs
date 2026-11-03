@@ -659,7 +659,11 @@ mod tests {
                             )
                         });
                         let client = mine.as_ref().unwrap_or(&client);
-                        while let Some(id) = next.lock().next() {
+                        loop {
+                            // Taken and let go before the request: held through it,
+                            // the workers would ask one at a time.
+                            let taken = next.lock().next();
+                            let Some(id) = taken else { break };
                             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                             most.fetch_max(now, Ordering::SeqCst);
                             client
