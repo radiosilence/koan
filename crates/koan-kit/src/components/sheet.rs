@@ -77,6 +77,8 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .flex_col()
         .gap(look.space(Space::S))
         .px(look.space(Space::L))
+        // A step off the head's rule, as most sheets set it for themselves.
+        .pt(look.space(Space::M))
         .pb(look.space(Space::L))
         // Shrinks below its content inside the panel's height, and scrolls.
         .min_h_0()

@@ -219,7 +219,8 @@ fn role(dsp: &Entity<Dsp>, ask: RoleAsk, look: &Look, cx: &App) -> AnyElement {
                     "Corrects and adds taste in one, as presets named for a sound do, like Qudelix's “Lush”.",
                 ))
                 .child(choice("role-tuning", DspRole::Tuning, "Tuning", "Taste on top of a correction: more bass, a darker treble."))
-                .child(later)
+                // At its own width, on the text's edge, as the choices are.
+                .child(div().flex().child(later))
                 .child(note(
                     if many {
                         "Decide later: they're kept as tunings, and you can change each one's role on its page."

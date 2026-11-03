@@ -184,7 +184,10 @@ pub fn section(
             d.child(crate::components::SectionHeader::new(t))
         })
         .children(rows)
-        .when_some(footer, |d, f| d.child(note(f, Tone::Muted, look)))
+        // The section's note stands a step off its rows, as a form's does.
+        .when_some(footer, |d, f| {
+            d.child(note(f, Tone::Muted, look).mt(look.space(Space::S)))
+        })
 }
 
 /// A row a click acts on: what it is, a line beneath, and what trails, lit

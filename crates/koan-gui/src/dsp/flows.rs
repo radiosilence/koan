@@ -757,7 +757,9 @@ impl MeasurementFlow {
                 section(
                     Some("Where to get one"),
                     vec![
-                        Button::new("learn-squig", ButtonKind::Link).label("squig.link").on_click(|_, _, cx| cx.open_url("https://squig.link")).into_any_element(),
+                        // At its own width, on the text's edge: a link in a
+                        // column is otherwise stretched and its word centred.
+                        div().flex().child(Button::new("learn-squig", ButtonKind::Link).label("squig.link").on_click(|_, _, cx| cx.open_url("https://squig.link"))).into_any_element(),
                         note("Search for your headphones on the next page: kōan looks through the reviewers' squig.link sites. Or save their frequency response as a file from one. REW and most measurement tools export one too.", Tone::Muted, &look).into_any_element(),
                     ],
                     None,
@@ -771,9 +773,15 @@ impl MeasurementFlow {
                     &look,
                 )
                 .into_any_element(),
-                Button::new("learn-more", ButtonKind::Link)
-                    .label("Learn more about headphone EQ")
-                    .on_click(|_, _, cx| cx.open_url("https://koan.rocks/docs/headphone-eq/"))
+                div()
+                    .flex()
+                    .child(
+                        Button::new("learn-more", ButtonKind::Link)
+                            .label("Learn more about headphone EQ")
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://koan.rocks/docs/headphone-eq/")
+                            }),
+                    )
                     .into_any_element(),
             ],
             Step::File => {
