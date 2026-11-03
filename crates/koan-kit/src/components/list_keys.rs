@@ -103,6 +103,13 @@ impl ListCursor {
         }
     }
 
+    /// A click put the cursor on `at`: the keys carry on from there, and a
+    /// ⇧ pick extends from it.
+    pub fn place(&mut self, at: usize) {
+        self.at = Some(at);
+        self.anchor = Some(at);
+    }
+
     /// A list changed under the cursor: held within its new length, or
     /// cleared when it is empty.
     pub fn clamp(&mut self, len: usize) {

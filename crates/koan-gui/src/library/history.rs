@@ -78,6 +78,8 @@ pub struct HistoryPage {
     menu_plays: Vec<i64>,
     /// The keyboard's place among the plays.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     focus: FocusHandle,
@@ -112,6 +114,7 @@ impl HistoryPage {
             menu: None,
             menu_plays: Vec::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             focus: cx.focus_handle(),
             search,
@@ -324,7 +327,7 @@ impl HistoryPage {
                     drag,
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
-                    cursor: self.keyed && self.cursor.at == Some(ix),
+                    cursor: (self.keyed && self.cursor.at == Some(ix)).then(|| self.spot.clone()),
                     place: Some((ix, self.entries.len())),
                     reveal: p.a11y.then(|| Reveal::Rows(self.list.clone(), i)),
                 };
@@ -346,6 +349,10 @@ impl HistoryPage {
 impl super::keys::KeyedList for HistoryPage {
     fn cursor(&mut self) -> &mut crate::components::ListCursor {
         &mut self.cursor
+    }
+
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
     }
 
     fn len(&self) -> usize {
@@ -433,6 +440,10 @@ impl actions::Menus for HistoryPage {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for HistoryPage {
@@ -453,8 +464,7 @@ impl TrackList for HistoryPage {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.place(index);
                 let id = self.entries[index].id;
                 let m = event.modifiers();
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
@@ -608,9 +618,13 @@ impl Render for HistoryPage {
             }
         }))
         .child(PageFrame::new(header).body(body))
-        .koan_context_menu("history-menu", window, cx, move |menu, window, cx| {
-            row_menu(menu, &view, window, cx)
-        })
+        .koan_context_menu_at(
+            "history-menu",
+            Some(self.spot.clone()),
+            window,
+            cx,
+            move |menu, window, cx| row_menu(menu, &view, window, cx),
+        )
     }
 }
 

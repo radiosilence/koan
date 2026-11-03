@@ -65,6 +65,8 @@ pub struct TrackBrowser {
     scroll: UniformListScrollHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     /// The rows on screen as of the last frame.
@@ -174,6 +176,7 @@ impl TrackBrowser {
             _load: None,
             scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             visible: 0..0,
             selection: Selection::default(),
@@ -413,7 +416,7 @@ impl TrackBrowser {
             transfer: feed.transfers.get(&id).copied(),
             drag,
             note: None,
-            cursor: self.keyed && self.cursor.at == Some(index),
+            cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             kind: crate::components::RowKind::Art,
             place: Some((index, self.total as usize)),
             reveal: p
@@ -453,6 +456,10 @@ impl actions::Menus for TrackBrowser {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for TrackBrowser {
@@ -473,8 +480,7 @@ impl TrackList for TrackBrowser {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.place(index);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -650,6 +656,10 @@ impl Focusable for TrackBrowser {
 impl super::keys::KeyedList for TrackBrowser {
     fn cursor(&mut self) -> &mut crate::components::ListCursor {
         &mut self.cursor
+    }
+
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
     }
 
     fn len(&self) -> usize {

@@ -131,10 +131,10 @@ pub struct ShelfPage {
     /// The keyboard's place on the page, in `order`: the artists, the
     /// records, then the tracks.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The page holds the keyboard, as of the last frame.
     keyed: bool,
-    /// What the keys last moved to, for the collection to scroll to.
-    revealed: Option<usize>,
     /// The tile grid as of the last frame, for the keys.
     grid: Option<TileGrid>,
     _subscriptions: Vec<Subscription>,
@@ -188,8 +188,8 @@ impl ShelfPage {
             aimed: Vec::new(),
             focus: cx.focus_handle(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
-            revealed: None,
             grid: None,
             _subscriptions: subscriptions,
         };
@@ -323,22 +323,6 @@ impl ShelfPage {
         lines
     }
 
-    /// Where the collection should scroll for the keys: the section, and
-    /// the item within it.
-    fn reveal_in(&self, section: usize) -> Option<usize> {
-        let s = self.summary.as_ref()?;
-        let at = self.revealed?;
-        let bounds = [
-            0,
-            s.artists.len(),
-            s.artists.len() + s.albums.len(),
-            usize::MAX,
-        ];
-        (bounds[section]..bounds[section + 1])
-            .contains(&at)
-            .then(|| at - bounds[section])
-    }
-
     fn pick(&mut self) -> Option<PlayableDrag> {
         if !self.selection.is_active() || self.selection.picked().is_empty() {
             return None;
@@ -437,7 +421,7 @@ impl ShelfPage {
                 if selecting {
                     pill = pill.ticking(self.selection.contains(item));
                 }
-                pill = pill.cursor(self.on(index));
+                pill = pill.cursor(self.on(index)).spot(&self.spot);
                 pill.on_click(super::listen(
                     view.clone(),
                     move |this: &mut Self, e: &ClickEvent, window, cx| {
@@ -511,7 +495,7 @@ impl ShelfPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
-                cursor: self.on(s.artists.len() + ix),
+                cursor: (self.on(s.artists.len() + ix)).then(|| self.spot.clone()),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -553,7 +537,8 @@ impl ShelfPage {
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
                 note: None,
-                cursor: self.on(s.artists.len() + s.albums.len() + index),
+                cursor: (self.on(s.artists.len() + s.albums.len() + index))
+                    .then(|| self.spot.clone()),
                 kind: RowKind::Art,
                 place: Some((index, s.tracks.len())),
                 reveal: None,
@@ -623,6 +608,10 @@ impl actions::Menus for ShelfPage {
 
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
+    }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
     }
 }
 
@@ -754,8 +743,7 @@ impl ShelfPage {
     /// The keyboard carries on from the item clicked.
     fn place(&mut self, item: Playable, order: &[Playable]) {
         if let Some(at) = order.iter().position(|p| *p == item) {
-            self.cursor.at = Some(at);
-            self.cursor.anchor = Some(at);
+            self.cursor.place(at);
         }
     }
 }
@@ -763,6 +751,10 @@ impl ShelfPage {
 impl super::keys::KeyedList for ShelfPage {
     fn cursor(&mut self) -> &mut crate::components::ListCursor {
         &mut self.cursor
+    }
+
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
     }
 
     fn len(&self) -> usize {
@@ -779,28 +771,14 @@ impl super::keys::KeyedList for ShelfPage {
     /// From the pills down to the first record; within the records, the
     /// same column; a track row is one.
     fn below(&self, at: usize, rows: isize) -> usize {
-        let lines = self.lines();
-        let Some(line) = lines.iter().position(|range| range.contains(&at)) else {
-            return at;
-        };
-        let column = at - lines[line].start;
-        let to = line
-            .saturating_add_signed(rows)
-            .min(lines.len().saturating_sub(1));
-        let range = &lines[to];
-        (range.start + column).min(range.end.saturating_sub(1))
+        super::keys::line_below(&self.lines(), at, rows)
     }
 
     /// One thing is marked without starting a pick, so the tiles and pills
     /// still act on a click. A range starts one.
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
-        if from == to {
-            self.selection.mark(order[from]);
-        } else {
-            self.selection.only(order[from]);
-            self.selection.click(order[to], true, &order);
-        }
+        super::keys::mark_range(&mut self.selection, &order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
@@ -808,9 +786,8 @@ impl super::keys::KeyedList for ShelfPage {
         self.selection.click(order[ix], false, &order);
     }
 
-    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
-        self.revealed = Some(ix);
-    }
+    /// The collection follows the cursor's spot, told by the keys.
+    fn reveal(&mut self, _: usize, _: &mut Context<Self>) {}
 
     /// Return opens an artist or a record, and plays the tracks from a
     /// track, as a double click does.
@@ -880,23 +857,18 @@ impl Render for ShelfPage {
         if let Some(s) = self.summary.clone() {
             header = header.detail(counts(&s));
             let artists = self.heading("artists", s.artist_total, Listing::Artists, cx);
-            collection = collection.section(
-                CollectionSection::pills(artists, self.pills(&s, cx)).reveal(self.reveal_in(0)),
-            );
+            collection = collection.section(CollectionSection::pills(artists, self.pills(&s, cx)));
             if let Some(grid) = grid {
                 self.aim(p, grid, scale, cx);
                 let albums = self.heading("albums", s.album_total, Listing::Albums, cx);
                 let tiles = self.tiles(&s, grid, scale, cx);
-                collection = collection.section(
-                    CollectionSection::tiles(albums, grid, tiles).reveal(self.reveal_in(1)),
-                );
+                collection = collection.section(CollectionSection::tiles(albums, grid, tiles));
             }
             let tracks = self.heading("tracks", s.track_total, Listing::Tracks, cx);
             let rows = self.rows(p, &s, window, cx);
-            collection =
-                collection.section(CollectionSection::rows(tracks, rows).reveal(self.reveal_in(2)));
+            collection = collection.section(CollectionSection::rows(tracks, rows));
         }
-        let collection = collection.header(header);
+        let collection = collection.header(header).follow(&self.spot);
 
         actions::list_menu(
             super::keys::keyed(
