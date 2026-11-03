@@ -655,9 +655,7 @@ impl Render for SearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // A cached view is as big as its style says, whatever it draws: the
         // field one line of its type, the results the room under the query.
-        let line = Paint::of(window, cx)
-            .look
-            .line_height(crate::theme::TypeRole::TitleSmall);
+        let line = CommandBar::field_height(window, cx);
         let bar = CommandBar::new(
             "search-bar",
             self.field

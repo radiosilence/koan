@@ -57,6 +57,11 @@ impl CommandBar {
             .role(TypeRole::TitleSmall)
     }
 
+    /// How tall the field is: what a view drawing it, cached, is sized to.
+    pub fn field_height(window: &Window, cx: &App) -> Pixels {
+        Look::of(window, cx).line_height(TypeRole::TitleSmall)
+    }
+
     /// What was found and the keys' foot, as `CommandResults` draws them,
     /// or a view drawing them, cached in the room under the query
     /// (`flex_1`, `min_h_0`, `w_full`).
