@@ -247,7 +247,8 @@ impl DownloadQueue {
 
     /// Stop fetching these tracks, as the person asked. What is waiting is
     /// dropped and what is running is left for its worker to withdraw, which
-    /// leaves no row. Every queue entry that wanted one fails as cancelled,
+    /// leaves its row failed as cancelled, to retry it by. Every queue entry
+    /// that wanted one fails as cancelled,
     /// so the playlist's next sync does not fetch it again and the player
     /// skips it, until it is retried.
     pub fn cancel(&self, track_ids: &[i64]) {
@@ -280,18 +281,19 @@ impl DownloadQueue {
 
     /// Fetch these tracks again: the queue entries that failed for them go
     /// back to waiting, which the playlist's next sync fetches, and a track
-    /// no entry waits on is fetched into the cache, as it was wanted before.
-    /// Their settled rows are dropped; a new transfer lists its own.
+    /// that was asked into the cache, and that no entry waits on, is fetched
+    /// into it again. A track neither is left alone: retrying is not asking
+    /// to keep it. Their settled rows are dropped; a new transfer lists its
+    /// own.
     pub fn retry(&self, track_ids: &[i64]) {
         if track_ids.is_empty() {
             return;
         }
         let store = self.inner.state.downloads();
-        store.forget_settled(track_ids);
+        let pinned = store.forget_settled(track_ids);
         let waiting = self.inner.state.retry_failed(track_ids);
-        let cache: Vec<i64> = track_ids
-            .iter()
-            .copied()
+        let cache: Vec<i64> = pinned
+            .into_iter()
             .filter(|track| !waiting.contains(track))
             .collect();
         self.cache(cache);
