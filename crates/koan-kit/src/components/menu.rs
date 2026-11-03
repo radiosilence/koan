@@ -34,7 +34,7 @@ pub struct MenuEntry {
     keys: Option<SharedString>,
     run: Option<Run>,
     stays_open: bool,
-    actions: Vec<(Icon, SharedString, bool, Run)>,
+    actions: Vec<(super::panel::ActionFace, SharedString, bool, Run)>,
 }
 
 impl MenuEntry {
@@ -68,7 +68,30 @@ impl MenuEntry {
         help: impl Into<SharedString>,
         run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.actions.push((icon, help.into(), false, Rc::new(run)));
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
+        self
+    }
+
+    /// An action of a word or two, quiet as the glyphs are: "move here". As
+    /// a row's last action it takes the last slot, which every row then
+    /// keeps as wide.
+    pub fn text_action(
+        mut self,
+        text: impl Into<SharedString>,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((
+            super::panel::ActionFace::Text(text.into()),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
         self
     }
 
@@ -81,7 +104,12 @@ impl MenuEntry {
         lit: bool,
         run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.actions.push((icon, help.into(), lit, Rc::new(run)));
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            lit,
+            Rc::new(run),
+        ));
         self
     }
 
@@ -489,11 +517,24 @@ impl Render for Menu {
         let look = Look::of(window, cx);
         let menu = cx.entity();
         let mut panel = MenuPanel::new();
+        // Every row keeps as many slots as the fullest needs; the last is
+        // wide when any row's last action is words, and a choice's tick then
+        // counts as that slot's.
+        let filled = |item: &MenuEntry| item.trailing.len() + item.actions.len();
+        let last_wide = self.entries.iter().any(|entry| match entry {
+            Entry::Item(item) => matches!(
+                item.actions.last(),
+                Some((super::panel::ActionFace::Text(_), ..))
+            ),
+            _ => false,
+        });
         let slots = self
             .entries
             .iter()
             .map(|entry| match entry {
-                Entry::Item(item) => item.trailing.len() + item.actions.len(),
+                Entry::Item(item) => {
+                    filled(item) + usize::from(last_wide && item.checked == Some(true))
+                }
                 _ => 0,
             })
             .max()
@@ -563,17 +604,22 @@ impl Render for Menu {
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
                     }
-                    for (k, (icon, help, lit, run)) in item.actions.iter().enumerate() {
+                    for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
                         let run = run.clone();
-                        row = row.lit_action(
-                            ("action", index * 8 + k),
-                            *icon,
-                            help.clone(),
-                            *lit,
-                            move |event, window, cx| run(event, window, cx),
-                        );
+                        let id = ("action", index * 8 + k);
+                        let act = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            run(event, window, cx)
+                        };
+                        row = match face {
+                            super::panel::ActionFace::Glyph(icon) => {
+                                row.lit_action(id, *icon, help.clone(), *lit, act)
+                            }
+                            super::panel::ActionFace::Text(text) => {
+                                row.text_action(id, text.clone(), help.clone(), act)
+                            }
+                        };
                     }
-                    row = row.slots(slots);
+                    row = row.slots(slots, last_wide);
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }

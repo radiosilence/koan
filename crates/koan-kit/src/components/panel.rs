@@ -96,6 +96,8 @@ pub struct MenuRow {
     /// How many slots the rows around it keep at their ends, so every row's
     /// buttons line up whether or not its slots are filled.
     slots: usize,
+    /// The last slot holds words on some row of the menu, so it is wide.
+    last_wide: bool,
     /// The keys that do the same, at the row's end in `muted`.
     keys: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
@@ -117,6 +119,7 @@ impl MenuRow {
             reach: None,
             trailing: Vec::new(),
             slots: 0,
+            last_wide: false,
             keys: None,
             on_click: None,
         }
@@ -124,8 +127,13 @@ impl MenuRow {
 
     /// Keep `slots` slots at the row's end, its own buttons in the last of
     /// them: the most any row of its menu has.
-    pub fn slots(mut self, slots: usize) -> Self {
+    ///
+    /// `last_wide` when some row's last action is words, which a choice's
+    /// tick then shares the last slot with: what is chosen is not moved to,
+    /// so a row has one or the other.
+    pub fn slots(mut self, slots: usize, last_wide: bool) -> Self {
         self.slots = slots;
+        self.last_wide = last_wide;
         self
     }
 
@@ -143,6 +151,23 @@ impl MenuRow {
         self.lit_action(id, icon, help, false, run)
     }
 
+    /// An action of a word or two, quiet as the glyphs are: "move here".
+    pub fn text_action(
+        self,
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.trailing(MenuAction {
+            id: id.into(),
+            face: ActionFace::Text(text.into()),
+            help: help.into(),
+            lit: false,
+            run: Arc::new(run),
+        })
+    }
+
     /// `action`, its glyph in the accent while `lit`.
     pub fn lit_action(
         self,
@@ -154,7 +179,7 @@ impl MenuRow {
     ) -> Self {
         self.trailing(MenuAction {
             id: id.into(),
-            icon,
+            face: ActionFace::Glyph(icon),
             help: help.into(),
             lit,
             run: Arc::new(run),
@@ -260,15 +285,24 @@ const DETAIL_WIDTH: f32 = 260.0;
 #[derive(IntoElement)]
 struct MenuAction {
     id: ElementId,
-    icon: Icon,
+    face: ActionFace,
     help: SharedString,
     lit: bool,
     run: Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
 }
 
+/// What an action shows: a glyph, or a word or two where a glyph would not
+/// say it ("move here").
+pub enum ActionFace {
+    Glyph(Icon),
+    Text(SharedString),
+}
+
 impl MenuAction {
     /// A slot's width, in points.
     const SLOT: f32 = 28.0;
+    /// The last slot's width where a row's last action is words.
+    const TEXT_SLOT: f32 = 84.0;
 }
 
 impl RenderOnce for MenuAction {
@@ -283,18 +317,27 @@ impl RenderOnce for MenuAction {
         .flex()
         .items_center()
         .justify_center()
-        .size(look.spaced(MenuAction::SLOT))
+        .h(look.spaced(MenuAction::SLOT))
         .cursor_pointer()
         .hover(|button| button.bg(look.palette.hover.hsla()))
-        .child(
-            KoanIcon::new(self.icon)
-                .role(TypeRole::Control)
-                .color(if self.lit {
-                    look.color(Tone::Accent)
-                } else {
-                    look.palette.muted.hsla()
-                }),
-        )
+        .map(|button| {
+            let color = if self.lit {
+                look.color(Tone::Accent)
+            } else {
+                look.palette.muted.hsla()
+            };
+            match self.face {
+                ActionFace::Glyph(icon) => button
+                    .w(look.spaced(MenuAction::SLOT))
+                    .child(KoanIcon::new(icon).role(TypeRole::Control).color(color)),
+                ActionFace::Text(text) => button
+                    .px(look.space(Space::S))
+                    .text_role(TypeRole::Meta, &look)
+                    .text_color(color)
+                    .whitespace_nowrap()
+                    .child(text),
+            }
+        })
         .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
         .on_click(move |event, window, cx| {
             cx.stop_propagation();
@@ -361,6 +404,26 @@ impl RenderOnce for MenuRow {
             None => div().relative().flex_1().child(name),
         };
         let rich = self.rich;
+        // The row's slots: its actions, then its tick when it is the choice.
+        let last_wide = self.last_wide;
+        let mut filled: Vec<Option<AnyElement>> = self.trailing.into_iter().map(Some).collect();
+        // The tick shares the last slot where that slot holds words ("move
+        // here"): what is chosen is never moved to, so the two never meet.
+        // Beside glyphs every row may carry, it keeps its own column.
+        let shares = self.slots > 0 && last_wide;
+        if shares && self.checked == Some(true) && !self.disabled {
+            filled.push(Some(
+                KoanIcon::new(Icon::Check)
+                    .points(tick)
+                    .color(accent)
+                    .into_any_element(),
+            ));
+        }
+        let slotted = if self.slots > 0 {
+            self.slots.max(filled.len())
+        } else {
+            filled.len()
+        };
         // A menu item to a screen reader, a checkbox item where it ticks,
         // with its second line as its description.
         let role = if self.checked.is_some() {
@@ -417,22 +480,25 @@ impl RenderOnce for MenuRow {
                 }
             }))
             .child(text)
-            // Empty slots first, so the filled ones sit at the end, level
-            // with the same slots on every other row.
-            .children((self.trailing.len()..self.slots).map(|_| {
-                div()
+            // Filled from the end, so a row's last action, or its tick, sits
+            // level with every other row's; empty slots keep the room.
+            .children((0..slotted).map(|slot| {
+                let last = slot + 1 == slotted;
+                let cell = div()
                     .relative()
                     .flex_none()
-                    .w(look.spaced(MenuAction::SLOT))
-            }))
-            .children(self.trailing.into_iter().map(|t| {
-                div()
-                    .relative()
-                    .flex_none()
-                    .min_w(look.spaced(MenuAction::SLOT))
                     .flex()
-                    .justify_center()
-                    .child(t)
+                    .when(last, |cell| cell.justify_end())
+                    .when(!last, |cell| cell.justify_center())
+                    .w(look.spaced(if last && last_wide {
+                        MenuAction::TEXT_SLOT
+                    } else {
+                        MenuAction::SLOT
+                    }));
+                match slot.checked_sub(slotted - filled.len()) {
+                    Some(i) => cell.children(filled[i].take()),
+                    None => cell,
+                }
             }))
             .children(self.keys.map(|keys| {
                 div()
@@ -443,15 +509,16 @@ impl RenderOnce for MenuRow {
                     .child(keys)
             }))
             // The tick at the row's end, after `m`, as the Mac's menus put
-            // it; its room is kept on every row of a set of choices.
-            .children(self.checked.map(|checked| {
+            // it; its room is kept on every row of a set of choices. In a
+            // menu with slots it is in the last of them instead.
+            .children(self.checked.filter(|_| !shares).map(|checked| {
                 div()
                     .relative()
                     .flex_none()
                     .ml(look.space(Space::M))
                     .size(gpui_kit::px(crate::theme::icons::side(tick)))
                     .when(checked, |cell| {
-                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(color))
+                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(accent))
                     })
             }))
             .when(self.opens, |row| {
