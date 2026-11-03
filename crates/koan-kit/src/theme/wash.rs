@@ -564,6 +564,9 @@ pub struct Wash {
     /// The drift's clock: its phase is the time since, never a frame count,
     /// so frames the system skips (an occluded window) cost no motion.
     epoch: Instant,
+    /// The pace the drift was last drawn at: a change moves the epoch so the
+    /// drift carries on from where it stood.
+    pace: f32,
     hold: u32,
     /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
@@ -583,6 +586,7 @@ impl Wash {
             wanted: false,
             amplitude: Ramp::still(0.0),
             epoch: now,
+            pace: 1.0,
             hold: 100,
             released: Vec::new(),
             rest: None,
@@ -922,6 +926,13 @@ impl Wash {
                 // The person's pace and turn (Settings → Appearance).
                 let theme = cx.global::<KoanTheme>();
                 let pace = theme.wash_drift.max(1) as f32 / 100.0;
+                if pace != self.pace {
+                    // The phase (now - epoch) * pace stays where it was.
+                    let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+                    let kept = since * self.pace as f64 / pace as f64;
+                    self.epoch = now - Duration::from_secs_f64(kept);
+                    self.pace = pace;
+                }
                 let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
                 let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
