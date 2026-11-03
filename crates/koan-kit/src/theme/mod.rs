@@ -210,19 +210,25 @@ fn set_system_display(
     cx.refresh_windows();
 }
 
+/// Whether GNOME's text scaling factor is already in the window's scale:
+/// GNOME on X11, where gnome-settings-daemon folds it into `Xft.dpi`, which
+/// GPUI scales an X11 window by. Other desktops on X11 (XFCE, Cinnamon,
+/// MATE) leave `Xft.dpi` alone, and Wayland never folds it in.
+#[cfg(target_os = "linux")]
+fn text_scaled_by_dpi() -> bool {
+    let x11 =
+        std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some();
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")));
+    x11 && gnome
+}
+
 /// High contrast and GNOME's text scaling factor, through the desktop
 /// portal's settings, and again whenever the portal says either changed.
 /// A desktop without the portal, or without either key, leaves both as
-/// they are. On X11 the text scaling factor is already in the window's
-/// scale: GNOME folds it into `Xft.dpi`, which GPUI scales the window by,
-/// so applying the portal's too would scale text twice.
-/// Whether the app runs on X11, as GPUI chooses: no Wayland display to
-/// attach to, and an X one.
-#[cfg(target_os = "linux")]
-fn on_x11() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some()
-}
-
+/// they are. Where the factor is already in the window's scale
+/// (`text_scaled_by_dpi`), applying the portal's too would scale text twice,
+/// so it is left out.
 #[cfg(target_os = "linux")]
 fn watch_desktop_settings(cx: &mut App) {
     use ashpd::desktop::settings::{Contrast, Settings};
@@ -240,7 +246,7 @@ fn watch_desktop_settings(cx: &mut App) {
             return;
         };
         let contrast = settings.contrast().await.ok().map(|c| c == Contrast::High);
-        let scaled_by_dpi = on_x11();
+        let scaled_by_dpi = text_scaled_by_dpi();
         let text = settings
             .read::<f64>(INTERFACE, SCALING)
             .await

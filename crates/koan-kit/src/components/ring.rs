@@ -191,15 +191,17 @@ impl RenderOnce for ProgressRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
-        if let Some(glide) = self.glide.filter(|_| SHADED) {
+        // Under Reduce Motion an unknown amount is the still arc drawn
+        // below, the glide's turn left as it is for when motion returns; a
+        // known share is information and still glides.
+        let moving = crate::theme::KoanTheme::motion_allowed(cx);
+        let still_unknown = self.glide.as_ref().is_some_and(|g| g.unknown()) && !moving;
+        if let Some(glide) = self.glide.filter(|_| SHADED && !still_unknown) {
             let color = self.color;
             return canvas(
                 move |_, window, cx| {
                     glide.0.set_color(8, color);
-                    // The turn of an unknown amount is decorative, so under
-                    // Reduce Motion it stands as a still arc; a known share
-                    // is information and still glides.
-                    glide.0.attach(glide.unknown(), window, cx);
+                    glide.0.attach(false, window, cx);
                     glide
                 },
                 |bounds, glide, window, _| glide.0.paint(&RING, None, bounds, window),
@@ -209,9 +211,9 @@ impl RenderOnce for ProgressRing {
             .into_any_element();
         }
         let ring = dots(side);
-        let (progress, color) = (self.progress, self.color);
+        let progress = self.progress.filter(|_| !still_unknown);
+        let color = self.color;
         // With Reduce Motion an unknown amount is a still arc.
-        let moving = crate::theme::KoanTheme::motion_allowed(cx);
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
