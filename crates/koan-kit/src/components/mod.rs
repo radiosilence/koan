@@ -687,9 +687,10 @@ pub use popover::{Selectable, opens_panel};
 pub use root::Root;
 pub use scrollbar::{ScrollSource, Scrollbar};
 
-/// The window root's keys, bound once by `theme::init`.
+/// The window root's and the panels' keys, bound once by `theme::init`.
 pub(crate) fn bind_root(cx: &mut gpui::App) {
     root::bind(cx);
+    popover::bind(cx);
 }
 
 #[cfg(test)]

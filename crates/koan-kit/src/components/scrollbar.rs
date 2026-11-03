@@ -277,7 +277,8 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             size(width, length),
         );
         Prepaint {
-            hitbox: Some(window.insert_hitbox(track, HitboxBehavior::BlockMouse)),
+            // The content behind still takes the wheel and the trackpad.
+            hitbox: Some(window.insert_hitbox(track, HitboxBehavior::BlockMouseExceptScroll)),
             thumb: Some(thumb),
             track,
             bar,
@@ -364,30 +365,40 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             cx.notify(view);
         });
 
-        if bar.borrow().grab.is_some() {
-            let (held, source) = (bar.clone(), self.source.clone());
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                if phase != DispatchPhase::Capture {
-                    return;
-                }
-                let Some(grab) = held.borrow().grab else {
-                    return;
-                };
-                scroll_to(&source, event.position.y - grab, track, thumb.size.height);
-                cx.notify(view);
-            });
-            let (held, source) = (bar.clone(), self.source.clone());
-            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
-                    return;
-                }
-                if held.borrow_mut().grab.take().is_some() {
-                    source.end_drag();
-                    Bar::rest(&held, view, cx);
-                    cx.notify(view);
-                }
-            });
-        }
+        // Held, the thumb follows the pointer anywhere in the window. A move
+        // without the button, or the release, lets it go: a press and
+        // release within one frame, which drew no listener for the move,
+        // ends here as well.
+        let (held, source) = (bar.clone(), self.source.clone());
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Capture {
+                return;
+            }
+            let Some(grab) = held.borrow().grab else {
+                return;
+            };
+            if event.pressed_button != Some(MouseButton::Left) {
+                release(&held, &source, view, cx);
+                return;
+            }
+            scroll_to(&source, event.position.y - grab, track, thumb.size.height);
+            cx.notify(view);
+        });
+        let (held, source) = (bar.clone(), self.source.clone());
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
+                release(&held, &source, view, cx);
+            }
+        });
+    }
+}
+
+/// Lets go of the thumb, if held.
+fn release<S: ScrollSource>(bar: &Rc<RefCell<Bar>>, source: &S, view: EntityId, cx: &mut App) {
+    if bar.borrow_mut().grab.take().is_some() {
+        source.end_drag();
+        Bar::rest(bar, view, cx);
+        cx.notify(view);
     }
 }
 
@@ -491,6 +502,41 @@ mod tests {
         );
         cx.run_until_parked();
         assert_eq!(page.read_with(cx, |p, _| p.pressed.get()), 0);
+    }
+
+    /// A press and release within one frame lets go: a move after it, with
+    /// no button, does not scroll.
+    #[gpui::test]
+    fn a_tap_on_the_edge_lets_go(cx: &mut TestAppContext) {
+        let (page, cx) = page(50, cx);
+        let bounds = cx.debug_bounds("page").expect("drawn");
+        let edge = bounds.right() - px(4.0);
+        let at = point(edge, bounds.center().y);
+        cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+        let tapped = offset(&page, cx);
+        cx.simulate_mouse_move(point(edge, bounds.bottom()), None, Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            offset(&page, cx),
+            tapped,
+            "a move after the tap is the pointer's own"
+        );
+    }
+
+    /// The wheel over the bar's edge scrolls the content behind it.
+    #[gpui::test]
+    fn the_wheel_over_the_edge_scrolls(cx: &mut TestAppContext) {
+        let (page, cx) = page(50, cx);
+        let bounds = cx.debug_bounds("page").expect("drawn");
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(bounds.right() - px(4.0), bounds.center().y),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-60.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert!(offset(&page, cx) > px(0.0), "the content scrolled");
     }
 
     /// Content that fits has no bar: its edge is the content's.
