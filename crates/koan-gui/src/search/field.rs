@@ -76,8 +76,15 @@ impl SearchField {
                 cx.notify();
             }),
             // A new answer redraws the panel, and the lit line starts again.
-            cx.observe(&search, |this, _, cx| {
+            // One query: the field shows what the search holds, whoever
+            // typed it (the box over the window, or here).
+            cx.observe_in(&search, window, |this, search, window, cx| {
                 this.lit = None;
+                let query = search.read(cx).query().to_string();
+                if this.input.read(cx).value().trim() != query {
+                    this.input
+                        .update(cx, |input, cx| input.set_value(query, window, cx));
+                }
                 cx.notify();
             }),
             // A sleeve landing redraws the field only while the panel shows.
@@ -97,6 +104,10 @@ impl SearchField {
             aimed: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.input.read(cx).focus_handle(cx)
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {

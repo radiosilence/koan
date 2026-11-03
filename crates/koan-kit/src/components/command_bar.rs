@@ -111,7 +111,15 @@ impl RenderOnce for CommandBar {
                 .flex_1()
                 .min_h_0()
                 .pb(look.space(Space::Xs))
-                .child(ScrollArea::items(super::child(&self.id, "rows"), items).reveal(reveal))
+                .child(
+                    // The results, a list box for a screen reader.
+                    super::accessible(
+                        div().id(super::child(&self.id, "list")).size_full(),
+                        gpui_kit::Role::ListBox,
+                        Some(label("results")),
+                    )
+                    .child(ScrollArea::items(super::child(&self.id, "rows"), items).reveal(reveal)),
+                )
                 .into_any_element()
         } else {
             div()
@@ -153,41 +161,50 @@ impl RenderOnce for CommandBar {
                 })
             })
             .child(
-                div()
-                    .id(super::child(&self.id, "bar"))
-                    .w(look.spaced(Self::WIDTH))
-                    .max_h(relative(0.7))
-                    .flex()
-                    .flex_col()
-                    .bg(p.bg.hsla())
-                    .border(look.hairline)
-                    .border_color(p.rule.hsla())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(look.space(Space::M))
-                            .px(look.space(Space::L))
-                            .py(look.space(Space::M))
-                            .when(found, |d| {
-                                d.border_b(look.hairline).border_color(p.rule.hsla())
-                            })
-                            .child(
-                                KoanIcon::new(Icon::Search)
-                                    .role(TypeRole::TitleSmall)
-                                    .tone(Tone::Muted),
-                            )
-                            .child(
-                                div().flex_1().min_w_0().child(
-                                    TextField::new(&self.input)
-                                        .bare()
-                                        .role(TypeRole::TitleSmall),
-                                ),
-                            ),
+                // A dialog to a screen reader, holding the query and its
+                // results.
+                super::accessible(
+                    div().id(super::child(&self.id, "bar")),
+                    gpui_kit::Role::Dialog,
+                    Some(label("search")),
+                )
+                .w(look.spaced(Self::WIDTH))
+                .max_h(relative(0.7))
+                .flex()
+                .flex_col()
+                .bg(p.bg.hsla())
+                .border(look.hairline)
+                .border_color(p.rule.hsla())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    super::accessible(
+                        div().id(super::child(&self.id, "query")),
+                        gpui_kit::Role::ComboBox,
+                        Some(label("search")),
                     )
-                    .child(body)
-                    .child(foot),
+                    .flex()
+                    .items_center()
+                    .gap(look.space(Space::M))
+                    .px(look.space(Space::L))
+                    .py(look.space(Space::M))
+                    .when(found, |d| {
+                        d.border_b(look.hairline).border_color(p.rule.hsla())
+                    })
+                    .child(
+                        KoanIcon::new(Icon::Search)
+                            .role(TypeRole::TitleSmall)
+                            .tone(Tone::Muted),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            TextField::new(&self.input)
+                                .bare()
+                                .role(TypeRole::TitleSmall),
+                        ),
+                    ),
+                )
+                .child(body)
+                .child(foot),
             )
     }
 }

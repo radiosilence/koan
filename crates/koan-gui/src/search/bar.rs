@@ -9,12 +9,16 @@
 //! | Return | play a track (after the queue's end), open a record or an artist |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
+//! | ⇧⌘Return | replace the queue, asking first when it holds anything |
 //! | Tab | tick the lit row; the verbs then act on everything ticked |
 //! | ⇧Return | every result, on the results page |
-//! | Escape | empty the query, then close |
+//! | Escape | clear the ticks, then empty the query, then close |
 //!
-//! It replaces the ⇧⌘K picker: picking several things to queue together is
-//! the box's ticks.
+//! Ticked rows are listed first, whatever the query, so a pick built over
+//! several queries stays in view. The answers go deeper while the box is
+//! open (`Search::set_deep`), and rows are shown only once they answer the
+//! query as typed, so a fast Return never acts on the last query's answer.
+//! It replaces the ⇧⌘K picker.
 
 use std::rc::Rc;
 
@@ -56,6 +60,10 @@ impl Item {
             Kind::Artist => Playable::Artist(self.id),
         }
     }
+
+    fn same(&self, other: &Item) -> bool {
+        self.kind == other.kind && self.id == other.id
+    }
 }
 
 fn credit(parts: &[koan_ffi::CreditPart]) -> String {
@@ -92,6 +100,21 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     tracks.chain(albums).chain(artists).collect()
 }
 
+/// Every row as listed: `ticked` first, then what was found that is not
+/// ticked.
+fn listed(ticked: &[Item], found: &[Item]) -> Vec<Item> {
+    ticked
+        .iter()
+        .cloned()
+        .chain(
+            found
+                .iter()
+                .filter(|f| !ticked.iter().any(|t| t.same(f)))
+                .cloned(),
+        )
+        .collect()
+}
+
 /// What a key asks of the lit row, or of everything ticked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
@@ -99,6 +122,8 @@ enum Verb {
     Take,
     Next,
     Append,
+    /// In place of the queue.
+    Replace,
     /// Every result, on their page.
     All,
 }
@@ -106,6 +131,7 @@ enum Verb {
 impl Verb {
     fn of(secondary: bool, alt: bool, shift: bool) -> Self {
         match (secondary, alt, shift) {
+            (true, _, true) => Verb::Replace,
             (_, _, true) => Verb::All,
             (true, _, _) => Verb::Next,
             (_, true, _) => Verb::Append,
@@ -118,14 +144,11 @@ pub struct SearchBar {
     lib: Lib,
     search: Entity<Search>,
     input: Entity<InputState>,
-    /// The answer the rows were made from, and the rows.
+    /// The answer the found rows were made from, and the rows.
     shown: Option<(Rc<Results>, Rc<Vec<Item>>)>,
     lit: Option<usize>,
     /// Ticked, in the order ticked.
     ticked: Vec<Item>,
-    /// ⌥Return was taken from the key itself; the field's own Return that
-    /// follows it is not taken again.
-    alt_taken: bool,
     /// The sleeves last asked for.
     aimed: Option<Rc<Vec<Item>>>,
     _subscriptions: Vec<Subscription>,
@@ -142,6 +165,7 @@ impl Focusable for SearchBar {
 impl SearchBar {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = lib.search.clone();
+        let owner = cx.entity_id();
         let query = search.read(cx).query().to_string();
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx).placeholder("search everything");
@@ -153,17 +177,14 @@ impl SearchBar {
             cx.subscribe_in(
                 &input,
                 window,
-                |this, input, event: &InputEvent, _, cx| match event {
+                |this, input, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
                         this.lit = None;
                         let text = input.read(cx).value().to_string();
                         this.search.update(cx, |s, cx| s.set_query(&text, cx));
                     }
                     InputEvent::PressEnter { secondary, shift } => {
-                        if std::mem::take(&mut this.alt_taken) {
-                            return;
-                        }
-                        this.act(Verb::of(*secondary, false, *shift), cx);
+                        this.act(Verb::of(*secondary, false, *shift), window, cx);
                     }
                     _ => {}
                 },
@@ -173,7 +194,14 @@ impl SearchBar {
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
+            // Closed: the search goes back to the sidebar's depth, and the
+            // sleeves asked for are let go.
+            cx.on_release(move |this, cx| {
+                this.search.update(cx, |s, cx| s.set_deep(false, cx));
+                this.lib.covers.update(cx, |c, cx| c.release(owner, cx));
+            }),
         ];
+        search.update(cx, |s, cx| s.set_deep(true, cx));
         Self {
             lib,
             search,
@@ -181,16 +209,19 @@ impl SearchBar {
             shown: None,
             lit: None,
             ticked: Vec::new(),
-            alt_taken: false,
             aimed: None,
             _subscriptions: subscriptions,
         }
     }
 
-    /// The rows for the search's answer, made again only when it changed.
-    fn rows(&mut self, cx: &App) -> Rc<Vec<Item>> {
+    /// What was found for the query as typed, made again only when the
+    /// answer changed; nothing until an answer to this very query has come.
+    fn found(&mut self, cx: &App) -> Rc<Vec<Item>> {
         let search = self.search.read(cx);
-        let Some(results) = search.results().filter(|_| !search.query().is_empty()) else {
+        let Some(results) = search
+            .results()
+            .filter(|r| !search.query().is_empty() && r.query == search.query())
+        else {
             return Rc::new(Vec::new());
         };
         if let Some((shown, rows)) = &self.shown
@@ -201,6 +232,11 @@ impl SearchBar {
         let rows = Rc::new(items(&results.summary));
         self.shown = Some((results.clone(), rows.clone()));
         rows
+    }
+
+    fn rows(&mut self, cx: &App) -> Vec<Item> {
+        let found = self.found(cx);
+        listed(&self.ticked, &found)
     }
 
     fn arrow(&mut self, down: bool, cx: &mut Context<Self>) {
@@ -215,11 +251,7 @@ impl SearchBar {
         let Some(item) = self.lit.and_then(|i| rows.get(i)).cloned() else {
             return;
         };
-        match self
-            .ticked
-            .iter()
-            .position(|t| t.kind == item.kind && t.id == item.id)
-        {
+        match self.ticked.iter().position(|t| t.same(&item)) {
             Some(i) => {
                 self.ticked.remove(i);
             }
@@ -228,7 +260,7 @@ impl SearchBar {
         cx.notify();
     }
 
-    fn act(&mut self, verb: Verb, cx: &mut Context<Self>) {
+    fn act(&mut self, verb: Verb, window: &mut Window, cx: &mut Context<Self>) {
         if verb == Verb::All {
             self.search.update(cx, |s, cx| s.submit(cx));
             cx.emit(Dismissed);
@@ -249,6 +281,10 @@ impl SearchBar {
             return;
         };
         let items: Vec<Playable> = targets.iter().map(Item::playable).collect();
+        let lib = self.lib.clone();
+        let queue = move |placement: Placement, cx: &mut App| {
+            crate::library::actions::queue(&lib, &items, placement, cx).detach()
+        };
         match verb {
             // One record or artist goes to its page; tracks, or a pick,
             // play after the queue's end.
@@ -259,15 +295,51 @@ impl SearchBar {
                 };
                 self.lib.nav.update(cx, |nav, cx| nav.open(page, cx));
             }
-            Verb::Take => {
-                crate::library::actions::queue(&self.lib, &items, Placement::AppendAndPlay, cx)
-                    .detach()
-            }
-            Verb::Next => {
-                crate::library::actions::queue(&self.lib, &items, Placement::Next, cx).detach()
-            }
-            Verb::Append => {
-                crate::library::actions::queue(&self.lib, &items, Placement::Append, cx).detach()
+            Verb::Take => queue(Placement::AppendAndPlay, cx),
+            Verb::Next => queue(Placement::Next, cx),
+            Verb::Append => queue(Placement::Append, cx),
+            Verb::Replace => {
+                let replace = move |cx: &mut App| {
+                    queue(
+                        Placement::Replace {
+                            start_at: None,
+                            shuffled: false,
+                        },
+                        cx,
+                    )
+                };
+                let queued = cx
+                    .global::<crate::mirror::Mirror>()
+                    .queue
+                    .read(cx)
+                    .items
+                    .len();
+                if queued > 0 {
+                    // Asked over the window, the box gone.
+                    cx.emit(Dismissed);
+                    crate::components::sheet::confirm(
+                        crate::components::sheet::Confirm {
+                            title: "replace the queue".into(),
+                            verb: "replace".into(),
+                            destructive: true,
+                            lines: vec![
+                                format!(
+                                    "{} come off the queue, and what you picked takes its place.",
+                                    crate::library::chrome::count(queued as u64, "track", "tracks")
+                                )
+                                .into(),
+                            ],
+                            note: Some(
+                                "Add to queue keeps the queue and puts these after it.".into(),
+                            ),
+                        },
+                        window,
+                        cx,
+                        replace,
+                    );
+                    return;
+                }
+                replace(cx);
             }
             Verb::All => {}
         }
@@ -275,7 +347,10 @@ impl SearchBar {
     }
 
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.input.read(cx).value().is_empty() {
+        if !self.ticked.is_empty() {
+            self.ticked.clear();
+            cx.notify();
+        } else if self.input.read(cx).value().is_empty() {
             cx.emit(Dismissed);
         } else {
             self.input.update(cx, |input, cx| input.clean(window, cx));
@@ -283,14 +358,20 @@ impl SearchBar {
     }
 
     /// Asks for every sleeve of a new answer, all at once: the box holds a
-    /// few dozen rows at most.
-    fn aim(&mut self, rows: &Rc<Vec<Item>>, side: Pixels, window: &Window, cx: &mut Context<Self>) {
-        if self.aimed.as_ref().is_some_and(|a| Rc::ptr_eq(a, rows)) {
+    /// hundred rows at most.
+    fn aim(
+        &mut self,
+        found: &Rc<Vec<Item>>,
+        side: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.aimed.as_ref().is_some_and(|a| Rc::ptr_eq(a, found)) {
             return;
         }
-        self.aimed = Some(rows.clone());
+        self.aimed = Some(found.clone());
         let scale = window.scale_factor();
-        let ranked: Vec<(Key, Priority)> = rows
+        let ranked: Vec<(Key, Priority)> = found
             .iter()
             .filter_map(|r| r.album)
             .map(|album| (Key::new(Art::Album(album), side, scale), Priority::Visible))
@@ -304,16 +385,20 @@ impl Render for SearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         let side = RowMetrics::sleeve(&p.look);
-        let rows = self.rows(cx);
-        self.aim(&rows, side, window, cx);
+        let found = self.found(cx);
+        self.aim(&found, side, window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {
             window.request_animation_frame();
         }
-        let picking = !self.ticked.is_empty();
+        let rows = listed(&self.ticked, &found);
+        let ticks = self.ticked.len();
+        let picking = ticks > 0;
         let scale = window.scale_factor();
-        let mut sections: Vec<(Kind, Vec<SuggestionRow>)> = Vec::new();
+        // The ticked first under a heading of their own, then what was
+        // found, by kind.
+        let mut sections: Vec<(Option<Kind>, Vec<SuggestionRow>)> = Vec::new();
         for (ix, item) in rows.iter().enumerate() {
             let mut row = SuggestionRow::new(("search-bar-row", ix), item.title.clone());
             if let Some(detail) = &item.detail {
@@ -323,11 +408,7 @@ impl Render for SearchBar {
                 row = row.figure(length.clone());
             }
             if picking {
-                let on = self
-                    .ticked
-                    .iter()
-                    .any(|t| t.kind == item.kind && t.id == item.id);
-                row = row.picked(on).icon(match item.kind {
+                row = row.picked(ix < ticks).icon(match item.kind {
                     Kind::Track => Icon::Track,
                     Kind::Album => Icon::Album,
                     Kind::Artist => Icon::Artist,
@@ -349,26 +430,26 @@ impl Render for SearchBar {
                         cx.notify();
                     }
                 }))
-                .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                     this.lit = Some(ix);
                     let m = e.modifiers();
                     if m.secondary(cx) && !m.shift {
                         this.tick(cx);
                     } else {
-                        this.act(Verb::Take, cx);
+                        this.act(Verb::Take, window, cx);
                     }
                 }));
+            let group = (ix >= ticks).then_some(item.kind);
             match sections.last_mut() {
-                Some((kind, list)) if *kind == item.kind => list.push(row),
-                _ => sections.push((item.kind, vec![row])),
+                Some((kind, list)) if *kind == group => list.push(row),
+                _ => sections.push((group, vec![row])),
             }
         }
         let mut bar = CommandBar::new("search-bar", &self.input).lit(self.lit);
         for (kind, list) in sections {
-            bar = bar.section(kind.heading(), list);
+            bar = bar.section(kind.map_or("ticked", Kind::heading), list);
         }
-        let typed = !self.input.read(cx).value().trim().is_empty();
-        if typed {
+        if !self.input.read(cx).value().trim().is_empty() {
             bar = bar.empty("nothing found");
         }
         let bar = bar
@@ -382,9 +463,17 @@ impl Render for SearchBar {
             )
             .key("⌘↩", "play next")
             .key("⌥↩", "add to queue")
+            .key("⇧⌘↩", "replace the queue")
             .key("tab", "tick")
             .key("⇧↩", "all results")
-            .key("esc", "close")
+            .key(
+                "esc",
+                if picking {
+                    format!("clear {ticks} ticked")
+                } else {
+                    "close".to_owned()
+                },
+            )
             .on_dismiss(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
         div()
             .absolute()
@@ -394,15 +483,13 @@ impl Render for SearchBar {
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.arrow(false, cx)))
             .capture_action(cx.listener(|this, _: &Escape, window, cx| this.escape(window, cx)))
             .capture_action(cx.listener(|this, _: &FocusNext, _, cx| this.tick(cx)))
-            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+            // The field binds no ⌥Return, so it is taken here.
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 let k = &e.keystroke;
                 if k.key == "enter" && k.modifiers.alt {
-                    this.alt_taken = true;
                     cx.stop_propagation();
-                    this.act(
-                        Verb::of(k.modifiers.secondary(cx), true, k.modifiers.shift),
-                        cx,
-                    );
+                    let verb = Verb::of(k.modifiers.secondary(cx), true, k.modifiers.shift);
+                    this.act(verb, window, cx);
                 }
             }))
             .child(bar)
@@ -414,12 +501,34 @@ mod tests {
     use super::*;
     use core::prelude::v1::test;
 
+    fn item(kind: Kind, id: i64) -> Item {
+        Item {
+            kind,
+            id,
+            album: None,
+            title: SharedString::default(),
+            detail: None,
+            length: None,
+        }
+    }
+
     #[test]
     fn the_verbs_follow_the_modifiers() {
         assert_eq!(Verb::of(false, false, false), Verb::Take);
         assert_eq!(Verb::of(true, false, false), Verb::Next);
         assert_eq!(Verb::of(false, true, false), Verb::Append);
-        assert_eq!(Verb::of(true, false, true), Verb::All);
+        assert_eq!(Verb::of(true, false, true), Verb::Replace);
         assert_eq!(Verb::of(false, false, true), Verb::All);
+    }
+
+    /// A pick stays listed whatever the query, first and once.
+    #[test]
+    fn ticked_rows_lead_and_are_not_listed_twice() {
+        let ticked = [item(Kind::Album, 3)];
+        let found = [item(Kind::Track, 1), item(Kind::Album, 3)];
+        let rows = listed(&ticked, &found);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].same(&ticked[0]));
+        assert!(rows[1].same(&found[0]));
     }
 }

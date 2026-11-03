@@ -7,13 +7,13 @@ use gpui_kit::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
-    Align, BarLevels, Collection, CollectionSection, CollectionWidth, Column, CopyButton, CopyText,
-    CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget, EmptyState, FadeIn,
-    FilterField, Form, FormRow, FormSection, Inspector, KoanContextMenu, MenuEntry, Mosaic,
-    NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars, QrCode, Reveal,
-    RowKind, RowList, RowListState, SectionHeader, SectionHeading, ShuffleButton, SplitView,
-    SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid,
-    TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
+    Align, BarLevels, Collection, CollectionSection, CollectionWidth, Column, CommandBar,
+    CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget,
+    EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Inspector, KoanContextMenu,
+    MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars,
+    QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader, SectionHeading, ShuffleButton,
+    SplitView, SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt,
+    TileGrid, TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
 };
 use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
 
@@ -21,6 +21,7 @@ use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
 pub struct State {
     collection: CollectionWidth,
     filter: Entity<InputState>,
+    command: Entity<InputState>,
     rows: RowListState,
     split: Pixels,
     line: usize,
@@ -41,6 +42,7 @@ impl State {
         Self {
             collection: CollectionWidth::default(),
             filter: cx.new(|cx| InputState::new(window, cx).default_value("low")),
+            command: cx.new(|cx| InputState::new(window, cx).default_value("polar")),
             rows,
             split: px(220.0),
             line: 2,
@@ -377,6 +379,40 @@ impl StoryContent {
                                             .picked(true),
                                         ),
                                 ),
+                        )
+                        .into_any_element(),
+                    SectionHeader::new("Command bar").into_any_element(),
+                    frame(420.0)
+                        .relative()
+                        .child(
+                            CommandBar::new("story-command", &self.more.command)
+                                .section(
+                                    "Records",
+                                    vec![
+                                        SuggestionRow::new("story-command-1", "Polar Bear")
+                                            .detail("Polar Bear")
+                                            .figure("2008")
+                                            .icon(Icon::Album),
+                                        SuggestionRow::new("story-command-2", "Peepers")
+                                            .detail("Polar Bear")
+                                            .figure("2010")
+                                            .icon(Icon::Album)
+                                            .picked(true),
+                                    ],
+                                )
+                                .section(
+                                    "Artists",
+                                    vec![
+                                        SuggestionRow::new("story-command-3", "Polar Bear")
+                                            .icon(Icon::Artist),
+                                    ],
+                                )
+                                .lit(Some(0))
+                                .key("↩", "play")
+                                .key("⌘↩", "play next")
+                                .key("⌥↩", "add to queue")
+                                .key("⇥", "tick")
+                                .key("esc", "clear"),
                         )
                         .into_any_element(),
                     SectionHeader::new("Inspector and synced lines").into_any_element(),

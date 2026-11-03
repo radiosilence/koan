@@ -78,6 +78,9 @@ pub struct Shell {
     lyrics_slide: crate::components::SlideState,
     /// ⇧⌘K's picker, while it is open.
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
+    /// What had the keyboard when the search box opened, which has it back
+    /// when the box closes.
+    before_search: Option<FocusHandle>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
@@ -153,6 +156,7 @@ impl Shell {
             _activation: activation,
             shortcuts: None,
             search_bar: None,
+            before_search: None,
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
@@ -267,6 +271,10 @@ impl Shell {
         let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
             return;
         };
+        // The sidebar's field opened the box by taking the keyboard: given
+        // it back, it would open the box again, so the page has it instead.
+        let field = self.sidebar.read(cx).search_focus(cx);
+        self.before_search = window.focused(cx).filter(|f| field.as_ref() != Some(f));
         let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
             &bar,
@@ -274,7 +282,13 @@ impl Shell {
             |this, _, _: &crate::search::bar::Dismissed, window, cx| {
                 this.search_bar = None;
                 this.arrived_at = this.nav.read(cx).current();
-                this.refocus(window, cx);
+                match this.before_search.take() {
+                    Some(before) => {
+                        window.focus(&before, cx);
+                        cx.notify();
+                    }
+                    None => this.focus_page(window, cx),
+                }
             },
         );
         self.search_bar = Some((bar, dismissed));
@@ -289,6 +303,11 @@ impl Shell {
             cx.notify();
             return;
         }
+        self.focus_page(window, cx);
+    }
+
+    /// The page showing takes the keyboard, wherever it was.
+    fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);

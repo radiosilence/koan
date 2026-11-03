@@ -2071,33 +2071,24 @@ impl KoanEngine {
         self: Arc<Self>,
         shelf: ShelfKind,
     ) -> Result<ShelfSummary, KoanError> {
-        use koan_core::shelves::{self, Shelf};
-        offload::offload(move || {
-            let db = self.db()?;
-            let shelf = match &shelf {
-                ShelfKind::Favourites => Shelf::Favourites,
-                ShelfKind::Recent => Shelf::Recent,
-                ShelfKind::Search { query } => Shelf::Search(query),
-                ShelfKind::Downloaded => Shelf::Downloaded,
-            };
-            let s = shelves::summary(
-                &db.conn,
-                shelf,
-                queries::LOCAL_USER,
-                shelves::now(),
-                offline(),
-            )
-            .map_err(db_err)?;
-            Ok(ShelfSummary {
-                artists: s.artists.preview.into_iter().map(Artist::from).collect(),
-                artist_total: s.artists.total,
-                albums: decorate_albums(&db, s.albums.preview),
-                album_total: s.albums.total,
-                tracks: self.decorate(&db, s.tracks.preview),
-                track_total: s.tracks.total,
-            })
-        })
-        .await
+        shelf_summary_of(self, shelf, koan_core::shelves::PREVIEW).await
+    }
+
+    /// The same, `artists`, `albums` and `tracks` deep: what a search box
+    /// that things are picked from lists.
+    pub async fn shelf_summary_sized(
+        self: Arc<Self>,
+        shelf: ShelfKind,
+        artists: u32,
+        albums: u32,
+        tracks: u32,
+    ) -> Result<ShelfSummary, KoanError> {
+        let sizes = koan_core::shelves::Sizes {
+            artists,
+            albums,
+            tracks,
+        };
+        shelf_summary_of(self, shelf, sizes).await
     }
 
     /// The Apple TV's Top Shelf: the first `TOP_SHELF_LIMIT` records played
@@ -8029,6 +8020,43 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
         },
         ImportError::Failed(message) => KoanError::BadArgument { message },
     }
+}
+
+/// A shelf's summary, `sizes` deep: what `shelf_summary` and
+/// `shelf_summary_sized` share.
+async fn shelf_summary_of(
+    engine: Arc<KoanEngine>,
+    shelf: ShelfKind,
+    sizes: koan_core::shelves::Sizes,
+) -> Result<ShelfSummary, KoanError> {
+    use koan_core::shelves::{self, Shelf};
+    offload::offload(move || {
+        let db = engine.db()?;
+        let shelf = match &shelf {
+            ShelfKind::Favourites => Shelf::Favourites,
+            ShelfKind::Recent => Shelf::Recent,
+            ShelfKind::Search { query } => Shelf::Search(query),
+            ShelfKind::Downloaded => Shelf::Downloaded,
+        };
+        let s = shelves::summary_of(
+            &db.conn,
+            shelf,
+            queries::LOCAL_USER,
+            shelves::now(),
+            offline(),
+            sizes,
+        )
+        .map_err(db_err)?;
+        Ok(ShelfSummary {
+            artists: s.artists.preview.into_iter().map(Artist::from).collect(),
+            artist_total: s.artists.total,
+            albums: decorate_albums(&db, s.albums.preview),
+            album_total: s.albums.total,
+            tracks: engine.decorate(&db, s.tracks.preview),
+            track_total: s.tracks.total,
+        })
+    })
+    .await
 }
 
 #[cfg(test)]
