@@ -321,6 +321,10 @@ impl<V: View> IntoElement for ViewElement<V> {
 
 struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
+    // KOAN: the draw `prepaint_range` was recorded in. A cached ancestor
+    // reused whole carries this state into the next frame without moving
+    // the range, which then points into a frame that is gone.
+    prepaint_frame: u64,
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
@@ -548,6 +552,9 @@ fn prepaint_view(
                     && element_state.cache_key.text_style == text_style
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
+                    // KOAN: reused only from the frame just drawn, the one
+                    // its ranges index into.
+                    && element_state.prepaint_frame + 1 == window.frames_drawn
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -555,6 +562,7 @@ fn prepaint_view(
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    element_state.prepaint_frame = window.frames_drawn;
 
                     return (None, element_state);
                 }
@@ -579,6 +587,7 @@ fn prepaint_view(
                     ViewElementState {
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
+                        prepaint_frame: window.frames_drawn,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
                         cache_key: ViewElementCacheKey {
                             bounds,

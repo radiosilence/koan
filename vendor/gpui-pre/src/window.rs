@@ -1302,6 +1302,9 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    // KOAN: draws so far, which a cached view's ranges are checked against
+    // (`view.rs`).
+    pub(crate) frames_drawn: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -2224,6 +2227,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             focus_generation: 0,
+            frames_drawn: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -3462,6 +3466,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.frames_drawn += 1; // KOAN: view.rs.
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]

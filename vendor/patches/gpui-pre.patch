@@ -1870,7 +1870,7 @@ index 0000000..75dc0d0
 +    }
 +}
 diff --git a/src/view.rs b/src/view.rs
-index 76688b7..6ef8b65 100644
+index 76688b7..cffc2df 100644
 --- a/src/view.rs
 +++ b/src/view.rs
 @@ -8,7 +8,6 @@ use crate::{Empty, Window};
@@ -1881,7 +1881,33 @@ index 76688b7..6ef8b65 100644
  use std::{
      any::{TypeId, type_name},
      fmt,
-@@ -560,7 +559,11 @@ fn prepaint_view(
+@@ -322,6 +321,10 @@ impl<V: View> IntoElement for ViewElement<V> {
+ 
+ struct ViewElementState {
+     prepaint_range: Range<PrepaintStateIndex>,
++    // KOAN: the draw `prepaint_range` was recorded in. A cached ancestor
++    // reused whole carries this state into the next frame without moving
++    // the range, which then points into a frame that is gone.
++    prepaint_frame: u64,
+     paint_range: Range<PaintIndex>,
+     cache_key: ViewElementCacheKey,
+     accessed_entities: FxHashSet<EntityId>,
+@@ -549,6 +552,9 @@ fn prepaint_view(
+                     && element_state.cache_key.text_style == text_style
+                     && !window.dirty_views.contains(&entity_id)
+                     && !window.refreshing
++                    // KOAN: reused only from the frame just drawn, the one
++                    // its ranges index into.
++                    && element_state.prepaint_frame + 1 == window.frames_drawn
+                 {
+                     let prepaint_start = window.prepaint_index();
+                     window.reuse_prepaint(element_state.prepaint_range.clone());
+@@ -556,11 +562,16 @@ fn prepaint_view(
+                         .extend_accessed(&element_state.accessed_entities);
+                     let prepaint_end = window.prepaint_index();
+                     element_state.prepaint_range = prepaint_start..prepaint_end;
++                    element_state.prepaint_frame = window.frames_drawn;
+ 
                      return (None, element_state);
                  }
  
@@ -1894,7 +1920,7 @@ index 76688b7..6ef8b65 100644
                  let prepaint_start = window.prepaint_index();
                  let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                      let mut element = render(window, cx);
-@@ -570,7 +573,6 @@ fn prepaint_view(
+@@ -570,13 +581,13 @@ fn prepaint_view(
                  });
  
                  let prepaint_end = window.prepaint_index();
@@ -1902,7 +1928,14 @@ index 76688b7..6ef8b65 100644
  
                  (
                      Some(element),
-@@ -623,9 +625,9 @@ fn paint_view(
+                     ViewElementState {
+                         accessed_entities,
+                         prepaint_range: prepaint_start..prepaint_end,
++                        prepaint_frame: window.frames_drawn,
+                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                         cache_key: ViewElementCacheKey {
+                             bounds,
+@@ -623,9 +634,9 @@ fn paint_view(
                      let paint_start = window.paint_index();
  
                      if let Some(element) = element {
@@ -1952,7 +1985,7 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..dbcc309 100644
+index c559412..ab49e15 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1281,6 +1281,10 @@ pub struct Window {
@@ -1966,7 +1999,17 @@ index c559412..dbcc309 100644
      /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
      /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
      pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
-@@ -1913,28 +1917,45 @@ impl Window {
+@@ -1298,6 +1302,9 @@ pub struct Window {
+     /// Incremented every time focus moves. Used to invalidate a
+     /// pending keyboard activation state when focus changes.
+     pub(crate) focus_generation: u64,
++    // KOAN: draws so far, which a cached view's ranges are checked against
++    // (`view.rs`).
++    pub(crate) frames_drawn: u64,
+     pending_input: Option<PendingInput>,
+     pending_modifier: ModifierState,
+     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
+@@ -1913,28 +1920,45 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -2016,7 +2059,7 @@ index c559412..dbcc309 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -2184,6 +2205,8 @@ impl Window {
+@@ -2184,6 +2208,8 @@ impl Window {
              visibility_observers: SubscriberSet::new(),
              hovered,
              needs_present,
@@ -2025,7 +2068,23 @@ index c559412..dbcc309 100644
              input_rate_tracker,
              #[cfg(feature = "profiler")]
              window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
-@@ -3618,12 +3641,40 @@ impl Window {
+@@ -2201,6 +2227,7 @@ impl Window {
+             focus: None,
+             focus_enabled: true,
+             focus_generation: 0,
++            frames_drawn: 0,
+             pending_input: None,
+             pending_modifier: ModifierState::default(),
+             pending_input_observers: SubscriberSet::new(),
+@@ -3439,6 +3466,7 @@ impl Window {
+     /// the contents of the new [`Scene`], use [`Self::present`].
+     #[profiling::function]
+     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
++        self.frames_drawn += 1; // KOAN: view.rs.
+         // Drain every draw in profiler builds so a previous frame's
+         // first-invalidation timestamp can't be attributed to this one.
+         #[cfg(feature = "profiler")]
+@@ -3618,12 +3646,40 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -2066,7 +2125,7 @@ index c559412..dbcc309 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4741,107 @@ impl Window {
+@@ -4690,6 +4746,107 @@ impl Window {
          }
      }
  
@@ -2174,7 +2233,7 @@ index c559412..dbcc309 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4929,12 @@ impl Window {
+@@ -4777,7 +4934,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -2188,7 +2247,7 @@ index c559412..dbcc309 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7074,6 +7231,22 @@ impl Window {
+@@ -7074,6 +7236,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

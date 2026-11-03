@@ -1,0 +1,1 @@
+- **Hovering no longer crashes the kōan GUI app.** A view drawn again after a frame in which its cached ancestor was reused whole could reuse text layouts recorded two frames earlier and panic in `reuse_layouts`; such a view is now drawn afresh.
