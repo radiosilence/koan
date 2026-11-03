@@ -161,7 +161,11 @@ impl StoryContent {
                             .flex()
                             .flex_col()
                             .gap(look.space(Space::Xs))
-                            .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
+                            .child(TileArt::new(
+                                ("grid-tile", index),
+                                grid.side,
+                                TileSleeve::Colour(colour),
+                            ))
                             .child(text(
                                 ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
                                 TypeRole::Control,
