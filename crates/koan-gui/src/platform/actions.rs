@@ -176,7 +176,12 @@ macro_rules! shortcut {
 /// as well as ⌘+, as in every app with the item; the menu shows the first.
 pub const MENU: &[Shortcut] = &[
     shortcut!("Search…", ["secondary-k"], Navigation, Search),
-    shortcut!("Add Music…", ["secondary-shift-k"], Navigation, AddMusic),
+    shortcut!(
+        "Find and Play…",
+        ["secondary-shift-k"],
+        Navigation,
+        AddMusic
+    ),
     shortcut!("Queue", ["secondary-1"], Navigation, ShowQueue),
     shortcut!("Albums", ["secondary-2"], Navigation, ShowAlbums),
     shortcut!("Artists", ["secondary-3"], Navigation, ShowArtists),
@@ -247,7 +252,7 @@ pub const HOTKEYS: &[Shortcut] = &[
         Playback,
         FavouriteCurrentTrack
     ),
-    shortcut!("Add music", ["p"], Navigation, AddMusic),
+    shortcut!("Find and play", ["p"], Navigation, AddMusic),
     shortcut!("Search library", ["/"], Navigation, Search),
     shortcut!("Albums", ["l", "a"], Navigation, ShowAlbums),
     shortcut!("Artists", ["r"], Navigation, ShowArtists),

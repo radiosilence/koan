@@ -77,7 +77,10 @@ pub struct Shell {
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
     /// ⇧⌘K's picker, while it is open.
-    picker: Option<(Entity<crate::search::picker::PickerSheet>, Subscription)>,
+    search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
+    /// What had the keyboard when the search box opened, which has it back
+    /// when the box closes.
+    before_search: Option<(FocusHandle, Route)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
@@ -152,7 +155,8 @@ impl Shell {
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
-            picker: None,
+            search_bar: None,
+            before_search: None,
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
@@ -254,32 +258,52 @@ impl Shell {
         cx.notify();
     }
 
-    /// ⌘K and `/`: the sidebar's search field, the sidebar shown first.
+    /// ⌘K, `/`, ⇧⌘K and the sidebar's field: the search box over the
+    /// window, holding the keyboard.
     fn search(&mut self, _: &Search, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.sidebar_shown {
-            self.toggle_sidebar(&ToggleSidebar, window, cx);
-        }
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.focus_search(window, cx));
+        self.open_search_bar(window, cx);
     }
 
-    /// ⇧⌘K: the picker, over the window.
     fn add_music(&mut self, _: &AddMusic, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picker.is_some() {
+        self.open_search_bar(window, cx);
+    }
+
+    fn open_search_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((bar, _)) = &self.search_bar {
+            window.focus(&bar.focus_handle(cx), cx);
             return;
         }
-        let engine = crate::engine::engine(cx);
-        let picker = cx.new(|cx| crate::search::picker::PickerSheet::new(engine, window, cx));
+        let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
+            return;
+        };
+        // The sidebar's field opened the box by taking the keyboard: given
+        // it back, it would open the box again, so the page has it instead.
+        let field = self.sidebar.read(cx).search_focus(cx);
+        let route = self.nav.read(cx).current();
+        self.before_search = window
+            .focused(cx)
+            .filter(|f| field.as_ref() != Some(f))
+            .map(|f| (f, route));
+        let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
-            &picker,
+            &bar,
             window,
-            |this, _, _: &crate::search::picker::Dismissed, window, cx| {
-                this.picker = None;
-                this.arrived_at = this.nav.read(cx).current();
-                this.refocus(window, cx);
+            |this, _, _: &crate::search::bar::Dismissed, window, cx| {
+                this.search_bar = None;
+                let route = this.nav.read(cx).current();
+                this.arrived_at = route;
+                // Back where the keyboard was, unless the box opened a page:
+                // then that page has it.
+                match this.before_search.take().filter(|(_, at)| *at == route) {
+                    Some((before, _)) => {
+                        window.focus(&before, cx);
+                        cx.notify();
+                    }
+                    None => this.focus_page(window, cx),
+                }
             },
         );
-        self.picker = Some((picker, dismissed));
+        self.search_bar = Some((bar, dismissed));
         cx.notify();
     }
 
@@ -291,6 +315,11 @@ impl Shell {
             cx.notify();
             return;
         }
+        self.focus_page(window, cx);
+    }
+
+    /// The page showing takes the keyboard, wherever it was.
+    fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
@@ -819,8 +848,8 @@ impl Render for Shell {
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
             }))
-            .children(self.picker.as_ref().map(|(picker, _)| {
-                deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
+            .children(self.search_bar.as_ref().map(|(bar, _)| {
+                deferred(div().absolute().size_full().child(bar.clone())).with_priority(2)
             }))
     }
 }

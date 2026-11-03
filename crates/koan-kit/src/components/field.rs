@@ -28,6 +28,7 @@ pub struct TextField {
     state: Entity<InputState>,
     ground: bool,
     disabled: bool,
+    role: TypeRole,
 }
 
 impl TextField {
@@ -36,12 +37,20 @@ impl TextField {
             state: state.clone(),
             ground: true,
             disabled: false,
+            role: TypeRole::Control,
         }
     }
 
     /// Not editable, and faded: while what it feeds is under way.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Its text in `role` rather than `control`: a search box's large
+    /// query.
+    pub fn role(mut self, role: TypeRole) -> Self {
+        self.role = role;
         self
     }
 
@@ -55,7 +64,7 @@ impl TextField {
 impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let line = look.line_height(TypeRole::Control);
+        let line = look.line_height(self.role);
         let id = gpui_kit::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
         let answers = super::Answerer::of(&id, window, cx);
         let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
@@ -86,7 +95,7 @@ impl RenderOnce for TextField {
                     .px(px(0.0))
                     .py(px(0.0))
                     .h(line)
-                    .text_role(TypeRole::Control, &look)
+                    .text_role(self.role, &look)
                     .text_color(look.palette.ink.hsla()),
             )
             .children(answers.layer(window, cx))

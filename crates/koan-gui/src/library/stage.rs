@@ -59,6 +59,11 @@ impl LibraryStage {
         self.focus_on_arrival = true;
     }
 
+    /// What the library's pages read and act through.
+    pub fn lib(&self) -> super::Lib {
+        self.lib.clone()
+    }
+
     /// The library's artwork cache.
     pub fn covers(&self) -> Entity<super::covers::Covers> {
         self.lib.covers.clone()
