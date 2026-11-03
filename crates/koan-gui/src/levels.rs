@@ -30,7 +30,7 @@ use std::time::Instant;
 use futures::StreamExt as _;
 use koan_kit::app::*;
 use koan_kit::components::{
-    BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay, renderer_mark,
+    BarLevels, BarsPlace, PlayingBars, Prism, SHADED, bars_overlay, renderer_mark,
 };
 use parking_lot::Mutex;
 
@@ -46,6 +46,8 @@ struct Registry {
     slots: HashMap<u64, (BarsPlace, Hsla)>,
     /// Each slot drawn as a shader, by its levels, and its window.
     shaders: HashMap<u64, (WindowId, BarLevels)>,
+    /// Each window's rainbow prism, while the rainbow is drawn there.
+    prisms: HashMap<WindowId, Prism>,
     /// Windows that do not show: their slots keep nothing running.
     hidden: HashSet<WindowId>,
     /// Rung as a quad slot goes, so the roots paint again without it: a slot
@@ -155,6 +157,29 @@ pub fn visibility(window: WindowId, shows: bool, cx: &mut App) {
     }
 }
 
+/// `window`'s rainbow prism, fed the bands while it shows, or none to stop.
+pub fn prism(window: WindowId, prism: Option<Prism>, cx: &mut App) {
+    let Some(levels) = cx.try_global::<Levels>().cloned() else {
+        return;
+    };
+    let live = {
+        let mut registry = levels.registry.lock();
+        match prism {
+            Some(prism) => {
+                prism.hold_bands(registry.bars.heights());
+                registry.prisms.insert(window, prism);
+            }
+            None => {
+                registry.prisms.remove(&window);
+            }
+        }
+        registry.live()
+    };
+    if live {
+        follow(&levels, cx);
+    }
+}
+
 /// Paints the bars of `windows` again, where they are quads.
 fn repaint(windows: &[WindowId], cx: &mut App) {
     let feeds: Vec<Entity<Feed>> = cx
@@ -202,6 +227,7 @@ pub fn bars(color: Hsla) -> AnyElement {
     if HANDED_OFF.load(Ordering::Relaxed) {
         return renderer_mark(color).into_any_element();
     }
+    let prism = crate::rainbow::Painted::now();
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {
@@ -232,6 +258,7 @@ pub fn bars(color: Hsla) -> AnyElement {
         follow(&levels, cx);
         Some(bars)
     })
+    .prism(prism)
 }
 
 /// Paints this window's bars over everything drawn before it, where they
@@ -314,6 +341,7 @@ impl Registry {
             .values()
             .any(|(place, _)| shows(&place.window.window_id()))
             || self.shaders.values().any(|(window, _)| shows(window))
+            || self.prisms.keys().any(shows)
     }
 
     /// A frame from the analyser. Whether the bars moved; the shaders' bands
@@ -333,6 +361,9 @@ impl Registry {
         let over = std::time::Duration::from_secs_f32(elapsed);
         for (_, bars) in self.shaders.values() {
             bars.glide(next, over);
+        }
+        for prism in self.prisms.values() {
+            prism.hear(next, over);
         }
         true
     }

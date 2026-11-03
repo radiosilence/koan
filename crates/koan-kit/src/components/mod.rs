@@ -34,6 +34,7 @@ mod filter_field;
 mod form;
 mod heart;
 mod inspector;
+mod layer;
 mod level;
 mod link_text;
 mod list_keys;
@@ -45,6 +46,7 @@ mod panel;
 mod picker;
 mod pill;
 pub(crate) mod placeholder;
+mod prism;
 mod progress;
 mod qr;
 mod ring;
@@ -108,7 +110,7 @@ pub mod list_actions {
 }
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{FieldState, InputEvent, TextField};
+pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
@@ -116,6 +118,7 @@ pub use form::{
 };
 pub use heart::Heart;
 pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
@@ -127,14 +130,15 @@ pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
-pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
+pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, title_text};
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use panel::TOOLTIPS_DRAWN;
-pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
+pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
+pub use prism::{Burst, Prism, PrismFill, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -156,12 +160,14 @@ pub use tabs::{StatusLine, TabStrip};
 pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
-    Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
-    ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
+    Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
+    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS, opens_panel,
 };
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
-pub use window::SecondaryWindow;
+pub use window::{
+    MainWindow, SecondaryWindow, close_button, draws_decorations, moves_window, window_buttons,
+};
 
 use crate::theme::{Look, MARK, Motion};
 

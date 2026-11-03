@@ -101,3 +101,34 @@ impl RenderOnce for TextField {
             .children(answers.layer(window, cx))
     }
 }
+
+/// What a `TextArea` edits: the page owns it, made with
+/// `cx.new(|cx| AreaState::new(window, cx).rows(6))`.
+pub use gpui_kit::component::input::TextareaState as AreaState;
+
+/// Several lines of text pasted or typed (a measurement's rows): `control`
+/// type in `ink` on a square `surface` ground, as a `TextField`.
+#[derive(IntoElement)]
+pub struct TextArea {
+    state: Entity<AreaState>,
+}
+
+impl TextArea {
+    pub fn new(state: &Entity<AreaState>) -> Self {
+        Self {
+            state: state.clone(),
+        }
+    }
+}
+
+impl RenderOnce for TextArea {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .p(look.space(Space::S))
+            .bg(look.palette.surface.hsla())
+            .text_role(TypeRole::Control, &look)
+            .text_color(look.palette.ink.hsla())
+            .child(gpui_kit::component::input::Textarea::new(&self.state).appearance(false))
+    }
+}

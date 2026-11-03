@@ -56,6 +56,11 @@ pub struct KoanTheme {
     /// "Theme tint", in percent: how far the wash is held to its contrast
     /// limit.
     pub wash_tint: u32,
+    /// How fast the wash drifts, in percent of its own pace: 0 holds it
+    /// still.
+    pub wash_drift: u32,
+    /// How far the wash turns either way as it drifts, in degrees.
+    pub wash_turn: u32,
     /// "Wash the whole window": the wash runs under the sidebar and the
     /// toolbar as well as the page, and they draw no ground of their own.
     pub wash_window: bool,
@@ -73,6 +78,10 @@ pub struct KoanTheme {
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
+    /// The hidden rainbow appearance, while it is drawn, and whether in
+    /// brat's palette: what may carry the palette as a gradient (a progress
+    /// fill, the chosen tab) does.
+    pub prism: Option<bool>,
 }
 
 impl Global for KoanTheme {}
@@ -84,12 +93,15 @@ impl Default for KoanTheme {
             icons: true,
             record_colours: true,
             wash_tint: 100,
+            wash_drift: 100,
+            wash_turn: 3,
             wash_window: true,
             low_power: false,
             contrast: false,
             opaque: false,
             system_text: 1.0,
             pinned: HashMap::new(),
+            prism: None,
         }
     }
 }
@@ -447,6 +459,22 @@ impl KoanTheme {
         cx.refresh_windows();
     }
 
+    /// The rainbow appearance drawn, in brat's palette or not, or put away.
+    pub fn set_prism(prism: Option<bool>, cx: &mut App) {
+        if cx.global::<KoanTheme>().prism != prism {
+            cx.global_mut::<KoanTheme>().prism = prism;
+            cx.refresh_windows();
+        }
+    }
+
+    /// The palette's gradient, where a component may draw one: the rainbow
+    /// is drawn, shaders are, and motion is allowed.
+    pub fn prism_gradient(cx: &App) -> Option<bool> {
+        cx.global::<KoanTheme>()
+            .prism
+            .filter(|_| crate::components::SHADED && Self::motion_allowed(cx))
+    }
+
     pub fn set_icons(icons: bool, cx: &mut App) {
         cx.global_mut::<KoanTheme>().icons = icons;
         cx.refresh_windows();
@@ -473,6 +501,15 @@ impl KoanTheme {
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
+    }
+
+    /// The wash's drift: its pace in percent (0 still, up to 200) and how far
+    /// it turns either way, in degrees (up to 10). The wash observes the
+    /// theme, so it takes them at once.
+    pub fn set_wash_drift(percent: u32, degrees: u32, cx: &mut App) {
+        let theme = cx.global_mut::<KoanTheme>();
+        theme.wash_drift = percent.min(200);
+        theme.wash_turn = degrees.min(10);
     }
 
     /// Moves the window's grounds, which sit in cached views: every window
@@ -617,6 +654,12 @@ impl Look {
     /// that are not steps of the scale (a prominent button's 12 × 20).
     pub fn spaced(&self, points: f32) -> Pixels {
         px(points * self.scale.space)
+    }
+
+    /// A width that holds text, in points at 100 %, grown with the text
+    /// size rather than the spacing.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.scale.size)
     }
 
     pub fn font_size(&self, role: TypeRole) -> Pixels {

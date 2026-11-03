@@ -398,6 +398,8 @@ struct WgpuResources {
     // between, which each present composes with the shaders, and the
     // pipelines that lay a layer down (#1641).
     shader_layers: KoanLayers,
+    // KOAN: each layer group's texture (#1859).
+    layer_groups: KoanLayers,
     compose_pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
 
@@ -1425,6 +1427,10 @@ impl WgpuRenderer {
         // KOAN: a scene with shaders is drawn once as the layers they are
         // drawn between, and each present composes them with the shaders
         // (#1641).
+        // KOAN: each layer group drawn into its texture first (#1859).
+        if let Err(error) = core.draw_layer_groups(scene, size, premultiplied_alpha) {
+            log::error!("failed to draw layer groups: {error:#}");
+        }
         let rendered = if scene.shader_layers.is_some() && !core.uses_webgl_instance_data {
             core.compose_frame(scene, &frame_view, size, premultiplied_alpha)
         } else {
@@ -1644,6 +1650,7 @@ impl WgpuRendererCore {
                 shader_color_target,
                 blank_texture_bind_group,
                 shader_layers: KoanLayers::default(),
+                layer_groups: KoanLayers::default(),
                 compose_pipelines: None,
             },
             atlas,
@@ -1925,6 +1932,7 @@ impl WgpuRendererCore {
                     PrimitiveBatch::Shaders {
                         program,
                         texture,
+                        group,
                         range,
                     } => {
                         if let Some(instances) = &shader_instances {
@@ -1932,6 +1940,7 @@ impl WgpuRendererCore {
                                 instances,
                                 program,
                                 texture,
+                                group,
                                 instance_range(range),
                                 &mut pass,
                             );
@@ -2161,6 +2170,76 @@ impl WgpuRendererCore {
         });
     }
 
+    // KOAN: (#1859) each layer group's scene drawn into a texture the size
+    // of the window, over clear, its content where it was painted; kept for
+    // the frame's presents.
+    fn draw_layer_groups(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+        premultiplied_alpha: bool,
+    ) -> Result<()> {
+        let extent = (size.width.0 as u32, size.height.0 as u32);
+        if scene.layer_groups.is_empty() {
+            self.resources_mut().layer_groups = KoanLayers::default();
+            return Ok(());
+        }
+        let held = &self.resources().layer_groups;
+        if held.generation == scene.generation && held.size == extent {
+            return Ok(());
+        }
+        let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
+            if self.resources().layer_groups.size == extent {
+                std::mem::take(&mut self.resources_mut().layer_groups.layers)
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
+        for group in &scene.layer_groups {
+            if group.is_blank() {
+                drawn.push(None);
+                continue;
+            }
+            let (texture, bind_group) = match pool.pop() {
+                Some(held) => held,
+                None => {
+                    let resources = self.resources();
+                    let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("koan_layer_group"),
+                        size: wgpu::Extent3d {
+                            width: extent.0,
+                            height: extent.1,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: self.target_format,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    let bind_group = self.create_texture_bind_group("koan_layer_group", &view);
+                    (texture, bind_group)
+                }
+            };
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.render_frame(group, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+            drawn.push(Some((texture, bind_group)));
+        }
+        self.resources_mut().layer_groups = KoanLayers {
+            generation: scene.generation,
+            slot_generation: 0,
+            size: extent,
+            layers: drawn,
+        };
+        Ok(())
+    }
+
     fn compose_frame(
         &mut self,
         scene: &Scene,
@@ -2324,16 +2403,18 @@ impl WgpuRendererCore {
                 while start < group.end {
                     let head = &scene.shaders[start];
                     let key = |s: &gpui::PaintShader| {
-                        (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                        (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
                     };
+                    // A layer group's shader is drawn alone, with its texture.
                     let end = scene.shaders[start..group.end]
                         .iter()
-                        .position(|s| key(s) != key(head))
-                        .map_or(group.end, |n| start + n);
+                        .position(|s| key(s) != key(head) || s.group.is_some())
+                        .map_or(group.end, |n| (start + n).max(start + 1));
                     self.draw_shaders(
                         &instances,
                         head.program,
                         head.image.as_ref().map(|t| t.texture_id),
+                        head.group,
                         start as u32..end as u32,
                         &mut pass,
                     );
@@ -2480,6 +2561,7 @@ impl WgpuRendererCore {
         instances: &InstanceBinding,
         program: &'static gpui::ShaderProgram,
         texture: Option<AtlasTextureId>,
+        group: Option<usize>,
         range: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
     ) {
@@ -2487,13 +2569,18 @@ impl WgpuRendererCore {
         let Some(Some(pipeline)) = resources.shader_pipelines.get(program.name) else {
             return;
         };
-        let image = match texture {
+        // KOAN: a layer group's texture, drawn this frame (#1859).
+        let grouped = group.and_then(|g| resources.layer_groups.layers.get(g)?.as_ref());
+        let image = match (grouped, texture) {
+            (Some((_, bind_group)), _) => bind_group,
+            (None, texture) => match texture {
             Some(id) => match resources.atlas_texture_bind_groups.get(&id) {
                 Some(cached) => &cached.bind_group,
                 // Released by the atlas: a stale paint, replaced soon.
                 None => return,
             },
             None => &resources.blank_texture_bind_group,
+            },
         };
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
@@ -3130,6 +3217,7 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
+        self.core.draw_layer_groups(scene, size, false)?; // KOAN: #1859.
         self.core
             .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
         Ok(())
@@ -3151,6 +3239,7 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
+        self.core.draw_layer_groups(scene, size, false)?; // KOAN: #1859.
         self.core.compose_frame(scene, &view, size, false)?;
         self.read_image()
     }
@@ -3705,6 +3794,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             program: &HALF,
             uniforms: uniforms.clone(),
             image: None,
+            group: None,
         });
         scene.finish();
         let size = Size { width: DevicePixels(64), height: DevicePixels(32) };
@@ -3832,6 +3922,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             program: &SOLID,
             uniforms: uniforms.clone(),
             image: None,
+            group: None,
         }
     }
 

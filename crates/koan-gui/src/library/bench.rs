@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-// the renderer's image ids, counted by the bench.
-use koan_kit::raw::ImageId;
+use koan_kit::app::image::ImageId;
 
 use super::covers::Sleeve;
 

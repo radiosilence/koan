@@ -26,6 +26,13 @@ pub fn panel(look: &Look) -> Stateful<Div> {
         .border_color(look.palette.rule.hsla())
 }
 
+/// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
+/// sheet drawn by its owner rather than presented through `present`.
+pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement {
+    use gpui_kit::base::FocusTrapElement as _;
+    panel.focus_trap("sheet-trap", focus)
+}
+
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
 pub fn wide_panel(look: &Look) -> Stateful<Div> {

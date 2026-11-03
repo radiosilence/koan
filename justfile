@@ -166,23 +166,8 @@ macos-icon:
 # icon with a spindle at the circle's centre, so it is told apart from the Mac
 # app), and AppIcon-launch.png, the same icon on the macOS icon grid, which a
 # build outside a bundle sets at launch.
-gui-icon:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v rsvg-convert >/dev/null || { echo "gui-icon needs rsvg-convert (librsvg: brew install librsvg)" >&2; exit 1; }
-    dir=crates/koan-gui/packaging
-    set="$dir/AppIcon.iconset"
-    rm -rf "$set" && mkdir -p "$set"
-    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
-                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
-        px="${spec%% *}"; name="${spec##* }"
-        rsvg-convert -w "$px" -h "$px" "$dir/AppIcon.svg" -o "$set/$name.png"
-    done
-    iconutil -c icns "$set" -o "$dir/AppIcon.icns"
-    rm -rf "$set"
-    rsvg-convert -w 1024 -h 1024 "$dir/AppIcon-launch.svg" -o "$dir/AppIcon-launch.png"
-    echo "built $dir/AppIcon.icns and $dir/AppIcon-launch.png"
+gui-icon *args:
+    python3 scripts/gui-icon.py {{args}}
 
 # Build the FFI static library and regenerate the Swift bindings.
 #
@@ -200,15 +185,16 @@ macos-ffi:
     export MACOSX_DEPLOYMENT_TARGET=26.0
     profile=${KOAN_FFI_PROFILE:-release}
     case "$profile" in
-        release) cargo build --release -p koan-ffi ;;
-        debug) cargo build -p koan-ffi ;;
+        release) cargo rustc --release -p koan-ffi --crate-type staticlib ;;
+        debug) cargo rustc -p koan-ffi --crate-type staticlib ;;
         *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
     esac
     lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
-    # .dylib, and cargo leaves one next to the archive. The release DMG shipped
+    # .dylib, and an older build of the crate as a cdylib may have left one
+    # next to the archive. The release DMG shipped
     # an app that referenced
     # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
     # could not launch anywhere. A directory with one file in it cannot produce
@@ -717,7 +703,7 @@ ios-ffi platform="iphonesimulator":
     # that variable as a reason to rebuild: lowering it relinked objects built
     # for the old version, and the linker warned about every one of them.
     out=${CARGO_TARGET_DIR:-target}/ios-{{ios_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
     # From this build rather than the Mac's, so an iOS build needs no second
@@ -1224,7 +1210,7 @@ tv-ffi platform="appletvsimulator":
     # rustc must target the same version.
     export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
     out=${CARGO_TARGET_DIR:-target}/tv-{{tv_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/tv-link/{{platform}}" && mkdir -p "target/tv-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/tv-link/{{platform}}/"
     just ffi-bindings "target/tv-link/{{platform}}/libkoan_ffi.a"

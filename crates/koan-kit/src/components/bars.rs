@@ -140,6 +140,7 @@ type Attach = dyn Fn(BarsPlace, &mut Window, &mut App) -> Option<BarLevels>;
 pub struct PlayingBars {
     color: Hsla,
     attach: Rc<Attach>,
+    prism: Option<bool>,
 }
 
 impl PlayingBars {
@@ -150,13 +151,30 @@ impl PlayingBars {
         Self {
             color,
             attach: Rc::new(attach),
+            prism: None,
         }
+    }
+
+    /// Drawn as ribbons of the rainbow appearance's palette (brat's when
+    /// `Some(true)`) rather than in `color`, where the bars are a shader.
+    pub fn prism(mut self, prism: Option<bool>) -> Self {
+        self.prism = prism;
+        self
     }
 }
 
 impl RenderOnce for PlayingBars {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let Self { color, attach } = self;
+        let Self {
+            color,
+            attach,
+            prism,
+        } = self;
+        let program = if prism.is_some() {
+            &super::prism::PRISM_BARS
+        } else {
+            &BARS
+        };
         canvas(
             move |bounds, window, cx| {
                 let place = BarsPlace {
@@ -166,12 +184,15 @@ impl RenderOnce for PlayingBars {
                 };
                 let bars = attach(place, window, cx).filter(|_| SHADED)?;
                 bars.style(color, window.scale_factor());
+                if let Some(brat) = prism {
+                    bars.0.set(12, brat as u8 as f32);
+                }
                 bars.0.attach(false, window, cx);
                 Some(bars)
             },
             |bounds, bars, window, _| {
                 if let Some(bars) = bars {
-                    bars.0.paint(&BARS, None, bounds, window);
+                    bars.0.paint(program, None, bounds, window);
                 }
             },
         )
