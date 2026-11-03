@@ -1870,7 +1870,7 @@ index 0000000..75dc0d0
 +    }
 +}
 diff --git a/src/view.rs b/src/view.rs
-index 76688b7..cffc2df 100644
+index 76688b7..bc550cd 100644
 --- a/src/view.rs
 +++ b/src/view.rs
 @@ -8,7 +8,6 @@ use crate::{Empty, Window};
@@ -1881,28 +1881,30 @@ index 76688b7..cffc2df 100644
  use std::{
      any::{TypeId, type_name},
      fmt,
-@@ -322,6 +321,10 @@ impl<V: View> IntoElement for ViewElement<V> {
+@@ -322,6 +321,11 @@ impl<V: View> IntoElement for ViewElement<V> {
  
  struct ViewElementState {
      prepaint_range: Range<PrepaintStateIndex>,
-+    // KOAN: the draw `prepaint_range` was recorded in. A cached ancestor
-+    // reused whole carries this state into the next frame without moving
-+    // the range, which then points into a frame that is gone.
++    // KOAN: the draws `prepaint_range` and `paint_range` were recorded in.
++    // A cached ancestor reused whole carries this state into the next frame
++    // without moving the ranges, which then point into a frame that is gone.
 +    prepaint_frame: u64,
++    paint_frame: u64,
      paint_range: Range<PaintIndex>,
      cache_key: ViewElementCacheKey,
      accessed_entities: FxHashSet<EntityId>,
-@@ -549,6 +552,9 @@ fn prepaint_view(
+@@ -549,6 +553,10 @@ fn prepaint_view(
                      && element_state.cache_key.text_style == text_style
                      && !window.dirty_views.contains(&entity_id)
                      && !window.refreshing
 +                    // KOAN: reused only from the frame just drawn, the one
 +                    // its ranges index into.
 +                    && element_state.prepaint_frame + 1 == window.frames_drawn
++                    && element_state.paint_frame + 1 == window.frames_drawn
                  {
                      let prepaint_start = window.prepaint_index();
                      window.reuse_prepaint(element_state.prepaint_range.clone());
-@@ -556,11 +562,16 @@ fn prepaint_view(
+@@ -556,11 +564,16 @@ fn prepaint_view(
                          .extend_accessed(&element_state.accessed_entities);
                      let prepaint_end = window.prepaint_index();
                      element_state.prepaint_range = prepaint_start..prepaint_end;
@@ -1920,7 +1922,7 @@ index 76688b7..cffc2df 100644
                  let prepaint_start = window.prepaint_index();
                  let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                      let mut element = render(window, cx);
-@@ -570,13 +581,13 @@ fn prepaint_view(
+@@ -570,13 +583,14 @@ fn prepaint_view(
                  });
  
                  let prepaint_end = window.prepaint_index();
@@ -1932,10 +1934,11 @@ index 76688b7..cffc2df 100644
                          accessed_entities,
                          prepaint_range: prepaint_start..prepaint_end,
 +                        prepaint_frame: window.frames_drawn,
++                        paint_frame: 0,
                          paint_range: PaintIndex::default()..PaintIndex::default(),
                          cache_key: ViewElementCacheKey {
                              bounds,
-@@ -623,9 +634,9 @@ fn paint_view(
+@@ -623,15 +637,16 @@ fn paint_view(
                      let paint_start = window.paint_index();
  
                      if let Some(element) = element {
@@ -1947,6 +1950,13 @@ index 76688b7..cffc2df 100644
                      } else {
                          window.reuse_paint(element_state.paint_range.clone());
                      }
+ 
+                     let paint_end = window.paint_index();
+                     element_state.paint_range = paint_start..paint_end;
++                    element_state.paint_frame = window.frames_drawn; // KOAN: as prepaint_frame.
+ 
+                     ((), element_state)
+                 },
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
 index ae98aa5..ea0f6a4 100644
 --- a/src/window/a11y/debug.rs
