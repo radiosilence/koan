@@ -186,7 +186,7 @@ impl ShelfPage {
             menu: None,
             starting: HashSet::new(),
             aimed: Vec::new(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             keyed: false,
             revealed: None,

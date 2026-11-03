@@ -59,12 +59,18 @@ impl AppearancePane {
             return;
         }
         let theme = cx.global::<KoanTheme>();
-        let pace = self.wash_drift.take().unwrap_or(theme.wash_drift);
-        let turn = self.wash_turn.take().unwrap_or(theme.wash_turn);
+        let (drift, turned) = (self.wash_drift.take(), self.wash_turn.take());
+        let pace = drift.unwrap_or(theme.wash_drift);
+        let turn = turned.unwrap_or(theme.wash_turn);
         KoanTheme::set_wash_drift(pace, turn, cx);
+        // Only the setting that moved is written.
         let engine = self.ctx.model.read(cx).engine();
-        engine.set_wash_drift(pace as u16);
-        engine.set_wash_turn(turn as u8);
+        if drift.is_some() {
+            engine.set_wash_drift(pace as u16);
+        }
+        if turned.is_some() {
+            engine.set_wash_turn(turn as u8);
+        }
         cx.notify();
     }
 
