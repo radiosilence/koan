@@ -60,9 +60,16 @@ impl Shade {
     /// from the ground (lighter in dark mode, darker in light) until it
     /// reaches `minimum` on `bg` and `surface`. Worked out once per shade.
     pub fn held(self, minimum: f64, dark: bool, tokens: Palette) -> Shade {
-        type Key = ([u64; 3], bool, u64);
+        // The grounds it is held against are part of what it is: the same
+        // shade held on another palette is another shade.
+        type Key = ([u64; 3], bool, u64, [u32; 2]);
         static CACHE: LazyLock<Mutex<HashMap<Key, Shade>>> = LazyLock::new(Default::default);
-        let key = (self.rgb.map(f64::to_bits), dark, minimum.to_bits());
+        let key = (
+            self.rgb.map(f64::to_bits),
+            dark,
+            minimum.to_bits(),
+            [tokens.bg.0, tokens.surface.0],
+        );
         if let Some(held) = CACHE.lock().get(&key) {
             return *held;
         }

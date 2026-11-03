@@ -159,6 +159,11 @@ impl Glide {
         );
     }
 
+    /// Turning while the size is unknown (`set_unknown`).
+    pub(crate) fn unknown(&self) -> bool {
+        self.0.get(0) > 0.5
+    }
+
     /// The value as last set, before any motion since.
     pub fn value(&self) -> f32 {
         self.1.lock().map_or(0.0, |(value, _, _)| value)

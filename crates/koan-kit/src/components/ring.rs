@@ -196,7 +196,10 @@ impl RenderOnce for ProgressRing {
             return canvas(
                 move |_, window, cx| {
                     glide.0.set_color(8, color);
-                    glide.0.attach(false, window, cx);
+                    // The turn of an unknown amount is decorative, so under
+                    // Reduce Motion it stands as a still arc; a known share
+                    // is information and still glides.
+                    glide.0.attach(glide.unknown(), window, cx);
                     glide
                 },
                 |bounds, glide, window, _| glide.0.paint(&RING, None, bounds, window),
