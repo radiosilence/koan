@@ -34,6 +34,7 @@ pub struct MenuEntry {
     keys: Option<SharedString>,
     run: Option<Run>,
     stays_open: bool,
+    actions: Vec<(Icon, SharedString, bool, Run)>,
 }
 
 impl MenuEntry {
@@ -53,7 +54,35 @@ impl MenuEntry {
             keys: None,
             run: None,
             stays_open: false,
+            actions: Vec::new(),
         }
+    }
+
+    /// A quiet glyph at the row's end that acts on what the row names
+    /// without choosing it ("move here", "forget this device"), with `help`
+    /// as its tooltip. Every row of the menu keeps the same slots, so the
+    /// actions line up.
+    pub fn action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((icon, help.into(), false, Rc::new(run)));
+        self
+    }
+
+    /// `action`, its glyph in the accent while `lit`: a setting that is on
+    /// for what the row names, as an output's EQ.
+    pub fn lit_action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        lit: bool,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((icon, help.into(), lit, Rc::new(run)));
+        self
     }
 
     /// Choosing it leaves the menu open: a choice among outputs or devices,
@@ -460,6 +489,15 @@ impl Render for Menu {
         let look = Look::of(window, cx);
         let menu = cx.entity();
         let mut panel = MenuPanel::new();
+        let slots = self
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Item(item) => item.trailing.len() + item.actions.len(),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
         for (index, entry) in self.entries.iter().enumerate() {
             let highlighted = self.highlighted == Some(index);
             let hovered = {
@@ -525,6 +563,17 @@ impl Render for Menu {
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
                     }
+                    for (k, (icon, help, lit, run)) in item.actions.iter().enumerate() {
+                        let run = run.clone();
+                        row = row.lit_action(
+                            ("action", index * 8 + k),
+                            *icon,
+                            help.clone(),
+                            *lit,
+                            move |event, window, cx| run(event, window, cx),
+                        );
+                    }
+                    row = row.slots(slots);
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }

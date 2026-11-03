@@ -498,21 +498,12 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
                 command(cx, "select output", move |e| e.select_output(choice));
             })
     };
-    let eq = |id: String, on: bool| {
-        move |_: &mut Window, _: &mut App| {
-            let device = id.clone();
-            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
-                .icon(Icon::Filters)
-                .label("eq")
-                .when(on, |b| b.tone(Tone::Accent))
-                // The EQ of the device this row names, which need not be the
-                // one in use.
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    crate::dsp::window::open(Some(device.clone()), cx);
-                })
-                .into_any_element()
-        }
+    // The EQ of the device a row names, which need not be the one in use;
+    // lit while it has one.
+    let eq = |entry: MenuEntry, id: String, on: bool| {
+        entry.lit_action(Icon::Filters, "eq for this output", on, move |_, _, cx| {
+            crate::dsp::window::open(Some(id.clone()), cx);
+        })
     };
     let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
@@ -544,11 +535,14 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = device.preset.is_some() || device.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(device.name.clone())
-                .icon(output_icon(&device.kind))
-                .rich(detail)
-                .warns(busy)
-                .trailing(eq(device.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(device.name.clone())
+                    .icon(output_icon(&device.kind))
+                    .rich(detail)
+                    .warns(busy),
+                device.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
@@ -575,12 +569,15 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = renderer.preset.is_some() || renderer.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(renderer.name.clone())
-                .icon(Icon::Speaker)
-                .reach(Icon::Wifi)
-                .rich(detail)
-                .warns(problem.is_some() || busy)
-                .trailing(eq(renderer.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(renderer.name.clone())
+                    .icon(Icon::Speaker)
+                    .reach(Icon::Wifi)
+                    .rich(detail)
+                    .warns(problem.is_some() || busy),
+                renderer.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
@@ -637,14 +634,6 @@ fn blocked_note() -> String {
     } else {
         "macOS isn't letting kōan on the local network, so no network speaker can be found. Started outside its app, it has the permission of the app that started it: allow that app in System Settings › Privacy & Security › Local Network, or run kōan from its bundle.".to_owned()
     }
-}
-
-/// A stable small number for an id string, for an element id.
-pub(crate) fn id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    id.hash(&mut h);
-    h.finish()
 }
 
 /// An output's glyph by how it is connected, as the Mac's picker gives it.
