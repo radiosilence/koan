@@ -4,7 +4,7 @@
 use gpui_kit::{App, KeyBinding};
 
 gpui_kit::actions!(
-    input,
+    koan_field,
     [
         Backspace,
         Delete,
