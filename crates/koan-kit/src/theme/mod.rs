@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use gpui_kit::{
     App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
-    Subscription, Task, Track, TrackCurve, TrackRepeat, Window, WindowAppearance, WindowId, px,
+    Subscription, Task, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};
@@ -448,7 +448,7 @@ impl KoanTheme {
             // reads it again once it has landed; the slots move the rest.
             if ease && feed.slots.is_some() {
                 feed._landing = Some(cx.spawn(async move |feed, cx| {
-                    cx.background_executor().timer(Motion::SETTLE).await;
+                    cx.background_executor().timer(Motion::DISSOLVE).await;
                     feed.update(cx, |_, cx| cx.notify()).ok();
                 }));
             } else {
@@ -570,8 +570,9 @@ impl AccentFeed {
         feed
     }
 
-    /// Sends the slots to the target as it is drawn with `contrast`: over
-    /// `Motion::SETTLE` when `ease`, at once otherwise.
+    /// Sends the slots to the target as it is drawn with `contrast`: as the
+    /// wash dissolves to the record (`Motion::DISSOLVE`, in-out) when `ease`,
+    /// at once otherwise.
     fn aim(&self, contrast: bool, ease: bool) {
         self.contrast.set(contrast);
         let Some(slots) = &self.slots else {
@@ -581,8 +582,8 @@ impl AccentFeed {
             from: 0.0,
             to: 1.0,
             start: 0.0,
-            length: Motion::SETTLE.as_secs_f32(),
-            curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+            length: Motion::DISSOLVE.as_secs_f32(),
+            curve: crate::components::curve(crate::components::Ease::InOut),
             repeat: TrackRepeat::Once,
         };
         for (dark, [fill, text]) in [true, false].into_iter().zip(slots) {

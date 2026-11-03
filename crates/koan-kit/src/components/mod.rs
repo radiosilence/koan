@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+pub(crate) use animated::curve;
 mod answer;
 mod arrive;
 mod availability;

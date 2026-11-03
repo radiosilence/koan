@@ -381,7 +381,7 @@ fn anchored(mut track: Track, now: f32) -> Track {
     track
 }
 
-fn curve(ease: Ease) -> TrackCurve {
+pub(crate) fn curve(ease: Ease) -> TrackCurve {
     match ease {
         Ease::Linear => TrackCurve::Linear,
         Ease::InOut => TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),

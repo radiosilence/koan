@@ -67,10 +67,8 @@ const TRAVEL_PERIOD: f32 = 23.0;
 /// Mac's ±3° over 19 s. A field this soft moves most visibly by turning.
 const TURN: f32 = 3.0 * std::f32::consts::PI / 180.0;
 const TURN_PERIOD: f32 = 19.0;
-/// A dissolve between records, and the drift starting or coming to rest:
-/// long enough that the room is seen to have changed without being caught
-/// changing.
-const EASE: Duration = Duration::from_secs(2);
+/// A dissolve between records, and the drift starting or coming to rest.
+const EASE: Duration = Motion::DISSOLVE;
 /// The drift's whole cycle: both swings back where they started. The shader's
 /// clock is counted from a multiple of it, so it stays small and exact.
 const CYCLE: f32 = 598.0;
