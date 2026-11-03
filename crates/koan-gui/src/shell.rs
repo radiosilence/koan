@@ -67,7 +67,7 @@ pub struct Shell {
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
-    /// ⇧⌘K's picker, while it is open.
+    /// The search box over the window, while it is open.
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     /// What had the keyboard when the search box opened, which has it back
     /// when the box closes.
