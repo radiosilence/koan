@@ -247,6 +247,7 @@ A change the control learns of rather than sees done (a favourite set by a short
 | `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling | `SETTLE`, quick-out |
 | `Heart` filling, the album tile's included, however the favourite changed | six dots leaving the heart | `SETTLE`, quick-out |
 | `Heart` emptying | a ring closing in on it | `ARRIVE`, ease in and out |
+| `TableRow::landed` (rows dropped, moved or added to the queue) | the ground lifting under the text and settling | `SETTLE`, quick-out |
 | `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it from its leading edge | `SETTLE`, quick-out |
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
