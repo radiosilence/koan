@@ -8373,3 +8373,67 @@ mod move_tests {
         assert!(!can_move_music(Some(away), Some(phone), true));
     }
 }
+
+#[cfg(test)]
+mod clock_stream_tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::ClockStream;
+    use crate::state::{EngineState, StateSlice};
+
+    fn clock(state: &Arc<EngineState>) -> ClockStream {
+        ClockStream {
+            state: Arc::downgrade(state),
+            moves: tokio::sync::Mutex::new(state.anchor_moves()),
+        }
+    }
+
+    fn playhead(state: &EngineState, position_ms: u64, playing: bool) {
+        state.publish(StateSlice::Playhead {
+            position_ms,
+            seekable_ms: 0,
+            playing,
+        });
+    }
+
+    /// The clients' executors (GPUI's, Swift's) poll the stream with no Tokio
+    /// reactor running, so it must wait without one: polled here by a plain
+    /// executor, on a thread of its own, against a deadline.
+    fn next_within(stream: Arc<ClockStream>, limit: Duration) -> Option<u64> {
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(stream.next()));
+        });
+        got.recv_timeout(limit)
+            .expect("the clock answers without Tokio")
+    }
+
+    #[test]
+    fn the_clock_ticks_and_follows_a_new_anchor_outside_tokio() {
+        let state = EngineState::new();
+        playhead(&state, 1_700, true);
+        let stream = Arc::new(clock(&state));
+
+        let ms = next_within(stream.clone(), Duration::from_secs(2)).unwrap();
+        assert!((1_990..2_100).contains(&ms), "the next whole second: {ms}");
+
+        let pauser = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            playhead(&pauser, 42_000, false);
+        });
+        // Playing from 2 s, the next tick is a second off; the pause comes
+        // first and is answered at once.
+        let ms = next_within(stream.clone(), Duration::from_millis(800)).unwrap();
+        assert_eq!(ms, 42_000);
+
+        drop(state);
+        assert_eq!(
+            next_within(stream, Duration::from_secs(1)),
+            None,
+            "the engine gone"
+        );
+    }
+}
