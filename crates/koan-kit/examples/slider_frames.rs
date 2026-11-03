@@ -3,7 +3,7 @@
 //! draw. Prints the draw times and how often the storybook beside the slider
 //! rendered, which should be never: a drag is one slider's business.
 //!
-//! cargo run --release -p koan-gui --example slider_frames
+//! cargo run --release -p koan-kit --example slider_frames
 
 use std::cell::Cell;
 use std::error::Error;
@@ -11,10 +11,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use koan_gui::components::Slider;
-use koan_gui::storybook::Storybook;
-use koan_gui::theme;
 use koan_kit::app::*;
+use koan_kit::components::Slider;
+use koan_kit::storybook::Storybook;
+use koan_kit::theme;
 // A measuring tool outside the app: GPUI's headless harness and input, driven directly.
 use koan_kit::raw::{HeadlessAppContext, PlatformInput, StyleRefinement, point, px, size};
 

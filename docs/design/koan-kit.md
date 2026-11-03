@@ -120,17 +120,15 @@ With text in it the field shows a clear mark at its trailing edge, `muted` and `
 ```rust
 TableRow::new(id, RowKind::Art)
     .selected(picked)
-    .current(playing)
-    .lead(Lead::Number(n))       // or Lead::Time, Lead::Bars
-    .sleeve(sleeve)              // drawn with Placeholder while missing
-    .title(title, credit_line)   // flexes and truncates
-    .mark(availability)
-    .heart(favourite)
-    .figure(Column::Format, quality)   // fixed, right-aligned
-    .figure(Column::Length, duration)
+    .lead(MARK, mark)            // a fixed cell, its content at its trailing edge
+    .lead_exact(sleeve_side, sleeve)
+    .title(title)                // flexes and truncates
+    .line(credit)
+    .figure(FORMAT, quality)     // fixed, right-aligned
+    .figure(LENGTH, duration)
 ```
 
-`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. A fixed cell's width is passed in points at 100 % and grows with the text size; each list names its widths as constants of its own (the queue's `MARK`), so nothing yet makes one figure the same width in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
 
 ### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
 

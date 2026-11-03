@@ -33,15 +33,20 @@ reqwest = { version = "0.13", default-features = false, features = [
 rusqlite = { version = "0.41", features = ["bundled"] }
 walkdir = "2.5"
 
-# The desktop app's test loop (`just gui-run`): release speed, but rebuilt
-# incrementally in many units without LTO, so a change to koan-core recompiles
-# what it touches rather than koan-server and koan-ffi whole.
+# The desktop app's test loop (`just gui-run`): dependencies optimised fully,
+# without their debug checks, built once and kept; the workspace's own crates at opt-level 1, rebuilt
+# incrementally, with debug assertions and overflow checks on. Audio, the
+# decoders and GPUI run at release speed while an edit rebuilds only the
+# crates it touches.
 [profile.gui-dev]
-inherits = "release"
-incremental = true
-codegen-units = 256
-lto = false
+inherits = "dev"
+opt-level = 1
 debug = "line-tables-only"
+
+[profile.gui-dev.package."*"]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
 
 [patch.crates-io]
 # Our copies of GPUI's crates, patched until the patches are taken upstream
