@@ -560,7 +560,7 @@ impl Dsp {
                     }
                     Err(e) => {
                         dsp.autoeq_results.clear();
-                        dsp.autoeq_failed = Some(describe(&e).into());
+                        dsp.autoeq_failed = Some(describe(&e));
                     }
                 }
                 cx.notify();
