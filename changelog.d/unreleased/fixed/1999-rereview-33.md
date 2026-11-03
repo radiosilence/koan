@@ -1,0 +1,1 @@
+- **Menus say what they show.** In the kōan GUI app a menu's word button, such as "move here", is named to a screen reader by the words shown, and a choice that cannot be chosen now still shows its tick, muted.
