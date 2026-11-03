@@ -16,13 +16,21 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, labe
 #[derive(IntoElement)]
 pub struct MenuPanel {
     children: Vec<AnyElement>,
+    min_width: Option<f32>,
 }
 
 impl MenuPanel {
     pub fn new() -> Self {
         Self {
             children: Vec::new(),
+            min_width: None,
         }
+    }
+
+    /// At least `points` wide, where given; 180 points otherwise.
+    pub fn min_width(mut self, points: Option<f32>) -> Self {
+        self.min_width = points;
+        self
     }
 }
 
@@ -44,7 +52,7 @@ impl RenderOnce for MenuPanel {
         super::accessible(div().id("menu-panel"), gpui_kit::Role::Menu, None)
             .flex()
             .flex_col()
-            .min_w(look.spaced(180.))
+            .min_w(look.spaced(self.min_width.unwrap_or(180.)))
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
             .border(look.hairline)

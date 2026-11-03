@@ -482,6 +482,7 @@ struct OutputView {
 /// has its EQ button, in the accent while an EQ is in force there. Under the
 /// renderer in use, its own volume and what it is sent.
 fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
+    let menu = menu.min_width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
         let name = view.controlled.as_deref().unwrap_or("That device");
