@@ -1091,10 +1091,10 @@ jobs:
     timeout-minutes: 90
     needs: [changes, make-room]
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
-    # Best effort while the GUI app is new: a package that fails to build is
-    # left off the release, and neither the run nor anything after it fails.
-    # Without its DMG the release's Koan.dmg stays the SwiftUI app's.
-    continue-on-error: true
+    # The macOS build is the release's Mac app, Koan.dmg, which nothing
+    # stands in for: if it fails, the release does. The Linux packages are
+    # best effort while they are new: one that fails to build is left off.
+    continue-on-error: ${{ matrix.name != 'macos-arm64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1295,12 +1295,12 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, publish-package]
+    needs: [check-version, android, linux-build, macos-release, publish-package, gui-release]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
     # which a release push skips on purpose.
-    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.android.result == 'success' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' && needs.publish-package.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.android.result == 'success' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' && needs.publish-package.result == 'success' && needs.gui-release.result == 'success' }}
     permissions:
       contents: write
     steps:
@@ -1309,8 +1309,18 @@ jobs:
         with:
           path: artifacts
           # What is shipped, not the builds it was packaged from. The GUI
-          # app's packages (`gui-koan-*`) are gui-attach's.
+          # app's packages (`gui-koan-*`) are gui-attach's, but for its DMG
+          # below.
           pattern: koan-*
+      # The desktop app's DMG, signed with the Developer ID, as Koan.dmg from
+      # the moment the release exists; gui-attach replaces it with the
+      # stapled one. The SwiftUI app's is the notary job's, as
+      # Koan-legacy.dmg, and never Koan.dmg.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gui-koan-macos-arm64
+          path: gui
+      - run: cp gui/koan-gui-macos-arm64.dmg Koan.dmg
       # Release writes go through RELEASE_TOKEN: GitHub answers the workflow
       # token's with "Resource not accessible by integration", contents: write
       # notwithstanding.
@@ -1358,14 +1368,10 @@ jobs:
             Linux: the `.deb` and AppImage below. Android: install `koan-android-arm64.apk` below.
 
             ---
-          # The SwiftUI app's DMG goes up as Koan.dmg, so the release always
-          # has a Mac download; gui-attach replaces it with the desktop app's
-          # once that is notarised, and the notary job adds the SwiftUI one as
-          # Koan-legacy.dmg.
           files: |
             artifacts/**/*.tar.gz
-            artifacts/**/*.dmg
             artifacts/koan-android-arm64.apk
+            Koan.dmg
 
   update-homebrew:
     name: Update Homebrew Tap
@@ -1447,7 +1453,8 @@ jobs:
     timeout-minutes: 200
     needs: [check-version, publish-release, gui-release]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
-    continue-on-error: true
+    # Its notarising the Mac app is required: a failure fails the release's
+    # run. Re-running it waits on the submission already made.
     permissions:
       contents: write
     env:
@@ -1480,15 +1487,14 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
       - name: Notarise, staple and attach the DMG
-        continue-on-error: true
         run: |
           set -euo pipefail
           # One matching artifact unpacks into artifacts/ itself, several each
           # into a folder of their own: find the DMG either way.
           src=$(find artifacts -type f -name 'koan-gui-*.dmg' | head -1)
           if [ -z "$src" ]; then
-            echo "::warning::no GUI DMG built"
-            exit 0
+            echo "::error::no GUI DMG built"
+            exit 1
           fi
           hash=$(shasum -a 256 "$src" | cut -c1-12)
           dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
