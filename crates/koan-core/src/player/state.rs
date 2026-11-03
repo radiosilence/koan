@@ -825,11 +825,29 @@ pub struct QueueReading {
     pub error: Option<String>,
 }
 
+/// An output opening for the player off its thread: the device asked for
+/// (`None`, the system's default) and since when. While one is, the playhead
+/// stands still, and a front end says what it waits for once it has waited a
+/// while (`OUTPUT_WAIT_NOTE`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputOpening {
+    pub device: Option<String>,
+    pub since: std::time::Instant,
+    /// An earlier attempt is still stuck in the audio system, so asking
+    /// again is refused until it returns.
+    pub stuck: bool,
+}
+
+/// How long an output may take to open before the front ends say so.
+pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Shared player state — atomics for lock-free reads from UI thread.
 ///
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The output opening, while one is (`OutputOpening`).
+    output_opening: parking_lot::Mutex<Option<OutputOpening>>,
     /// The playback state, with `WAITING` set while the player waits for a
     /// track it was asked for. One atomic, so no reader sees one updated
     /// without the other.
@@ -982,6 +1000,7 @@ impl SharedPlayerState {
             start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
+            output_opening: parking_lot::Mutex::new(None),
             pending_seek: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
@@ -1035,6 +1054,20 @@ impl SharedPlayerState {
     /// Nothing loaded and nothing waited for: where adding tracks starts them.
     pub fn is_idle(&self) -> bool {
         self.transport() == (PlaybackState::Stopped, false)
+    }
+
+    /// The output opening, while one is.
+    pub fn output_opening(&self) -> Option<OutputOpening> {
+        self.output_opening.lock().clone()
+    }
+
+    pub(crate) fn set_output_opening(&self, opening: Option<OutputOpening>) {
+        let mut held = self.output_opening.lock();
+        if *held != opening {
+            *held = opening;
+            drop(held);
+            self.changed();
+        }
     }
 
     /// Publish the playback state and the wait together.
@@ -1174,6 +1207,10 @@ impl SharedPlayerState {
     /// A renderer playing a file keeps its clock here; one playing a stream
     /// processed here keeps it on the timeline, in time into the stream.
     pub fn playhead_moving(&self) -> bool {
+        // Nothing plays until the output has opened, whatever was asked.
+        if self.output_opening.lock().is_some() {
+            return false;
+        }
         let clock =
             (*self.renderer_clock.lock()).or_else(|| self.timeline.get().and_then(|t| t.clock()));
         match clock {

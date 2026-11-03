@@ -74,6 +74,9 @@ struct RootView: View {
                 .toolbar(removing: KoanTheme.metric(.sidebarToggle, system: nil))
         } detail: {
             StageView()
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    OutputWaitBanner()
+                }
                 .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
                 // A page fills the column whether or not it has anything in it
                 // to fill it with. Results while the query is still running

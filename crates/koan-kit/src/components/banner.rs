@@ -9,14 +9,14 @@ use super::{Button, ButtonKind, Handler};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};
 
 /// The glyph and message in `tone`, `fine`, on the page's ground with a rule
-/// beneath; an action at the far edge where there is something to do about
+/// beneath; the actions at the far edge where there is something to do about
 /// it. Two lines at most.
 #[derive(IntoElement)]
 pub struct Banner {
     icon: Icon,
     message: SharedString,
     tone: Tone,
-    action: Option<(SharedString, Handler<ClickEvent>)>,
+    actions: Vec<(SharedString, Handler<ClickEvent>)>,
 }
 
 impl Banner {
@@ -25,17 +25,18 @@ impl Banner {
             icon,
             message: message.into(),
             tone,
-            action: None,
+            actions: Vec::new(),
         }
     }
 
-    /// What to do about it: a compact button, in the app's words.
+    /// Something to do about it: a compact button, in the app's words, after
+    /// any added before.
     pub fn action(
         mut self,
         label: impl Into<SharedString>,
         run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.action = Some((label.into(), std::sync::Arc::new(run)));
+        self.actions.push((label.into(), std::sync::Arc::new(run)));
         self
     }
 }
@@ -64,10 +65,15 @@ impl RenderOnce for Banner {
                     .line_clamp(2)
                     .child(self.message),
             )
-            .children(self.action.map(|(label, run)| {
-                Button::new("banner-action", ButtonKind::Compact)
-                    .label(label)
-                    .on_click(move |e, window, cx| run(e, window, cx))
-            }))
+            .children(
+                self.actions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (label, run))| {
+                        Button::new(("banner-action", i), ButtonKind::Compact)
+                            .label(label)
+                            .on_click(move |e, window, cx| run(e, window, cx))
+                    }),
+            )
     }
 }
