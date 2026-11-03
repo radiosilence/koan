@@ -21,9 +21,9 @@
 
 use std::rc::Rc;
 
-use koan_ffi::{Placement, ShelfSummary};
 use koan_kit::app::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
 use koan_kit::app::*;
+use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
 use crate::components::{CommandBar, Cover, CoverArt, RowMetrics, SuggestionRow};
@@ -65,7 +65,7 @@ impl Item {
     }
 }
 
-fn credit(parts: &[koan_ffi::CreditPart]) -> String {
+fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
@@ -409,7 +409,9 @@ impl SearchBar {
             .map(|album| (Key::new(Art::Album(album), side, scale), Priority::Visible))
             .collect();
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
+        self.lib
+            .covers
+            .update(cx, |c, cx| c.request(owner, ranked, cx));
     }
 }
 

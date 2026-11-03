@@ -11,8 +11,8 @@ pub mod rows;
 
 use std::collections::HashSet;
 
-use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
+use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -591,7 +591,7 @@ impl QueueView {
     /// Queues what was dragged from the library before row `dest`, where
     /// `rows::place` says.
     fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
-        use koan_ffi::Placement;
+        use koan_runtime::Placement;
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
@@ -688,8 +688,9 @@ impl QueueView {
                 .id(("sleeve", row as u64))
                 .into_any_element()
         });
-        // What a track row reads beyond its item: its heart. A transfer's
-        // progress its availability mark reads each frame it is drawn.
+        // What a track row reads beyond its item: its heart, and its
+        // transfer, whose progress the availability mark's ring glides on
+        // the GPU.
         let mut favourite = None;
         let mut availability = None;
         if let Row::Track { ix, .. } = r {
@@ -705,7 +706,7 @@ impl QueueView {
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
             if self.lib.is_none() && status == EntryStatus::Downloading {
-                transfer = Some(koan_ffi::TransferState::Running);
+                transfer = Some(koan_runtime::TransferState::Running);
             }
             availability =
                 crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
@@ -875,7 +876,9 @@ fn row_menu(
         return menu;
     };
     let ids = this.acting_on(row, cx);
-    let grouped = this.queue.read(cx).grouped;
+    // What was asked for, not what is laid out: a regroup lands on the
+    // background executor, and a second toggle before it would undo the first.
+    let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
@@ -1012,7 +1015,7 @@ fn row_menu(
         );
     }
     if !tracks.is_empty() {
-        let sets = vec![koan_ffi::TrackSet::Tracks { ids: tracks }];
+        let sets = vec![koan_runtime::TrackSet::Tracks { ids: tracks }];
         menu = menu.item(
             MenuEntry::new(if record.is_some() {
                 "copy album share link"
@@ -1048,7 +1051,7 @@ fn row_menu(
         .item(
             MenuEntry::new("group by album")
                 .icon(Icon::Album)
-                .checked(grouped)
+                .toggled(grouped)
                 .on_click({
                     let view = view.clone();
                     move |_, window, cx| {
@@ -1470,7 +1473,7 @@ impl QueueView {
 /// Why the dice cannot shuffle the rest of the queue now, the Mac's
 /// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
 /// queue, and with nothing after the cursor there is nothing to shuffle.
-fn dice_refusal(now: &koan_ffi::NowPlaying) -> Option<&'static str> {
+fn dice_refusal(now: &koan_runtime::NowPlaying) -> Option<&'static str> {
     if now.shuffle {
         Some("shuffle play is on: turn it off to shuffle the queue itself")
     } else if !now.queue_shufflable {
@@ -1506,7 +1509,8 @@ impl QueueView {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
-        let grouped = queue.grouped;
+        // What was asked for, not what is laid out yet.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();

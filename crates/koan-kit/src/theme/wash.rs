@@ -75,22 +75,41 @@ const CYCLE: f32 = 598.0;
 /// The field's side: the blurred sleeve carries nothing finer.
 pub const FIELD: u32 = 32;
 
+/// The span of OKLab's a and b the field encodes, centred on grey: wider
+/// than any sRGB colour reaches.
+const LAB_SPAN: f64 = 0.7;
+
 /// The wash as a fragment program, made from the record's field (`field`) at
 /// each present: a cubic B-spline through the field, the tone's luminance
 /// hold, the ground at the wash's strength, and a dither of a level either
 /// way, so a gradient this soft shows no bands at any size. Uniforms: 0
 /// whether to lay it over `bg` (the layer drawn first), 1 whether the
-/// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1). Tracks: 0 the drift's
+/// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1), 6 the tone's luminance
+/// limit (`Tone::limit`, the one place it is set). Tracks: 0 the drift's
 /// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1),
 /// 4 the turn's swing (-1 to 1) and 5 how far it turns, in radians, each at
-/// full amplitude; a new turn eases there rather than jumping (#1883). The overscan (1.38),
-/// reach (0.12), rise (0.10), field (32) and strength (0.6) are written into
-/// the source; a test holds them to the constants.
+/// full amplitude; a new turn eases there rather than jumping (#1883). The
+/// field is OKLab: L in red, a and b in green and blue over `LAB_SPAN`. The
+/// overscan (1.38), reach (0.12), rise (0.10), field (32), the span (0.7) and
+/// strength (0.6) are written into the source; a test holds them to the
+/// constants.
 pub static WASH: ShaderProgram = ShaderProgram {
     name: "koan-wash",
     msl: r#"
-float3 koan_wash_linear(float3 c) {
-    return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
+float3 koan_wash_from_lab(float3 f) {
+    float L = f.r;
+    float A = (f.g - 0.5) * 0.7;
+    float B = (f.b - 0.5) * 0.7;
+    float l = L + 0.3963377774 * A + 0.2158037573 * B;
+    float m = L - 0.1055613458 * A - 0.0638541728 * B;
+    float s = L - 0.0894841775 * A - 1.2914855480 * B;
+    l = l * l * l;
+    m = m * m * m;
+    s = s * s * s;
+    return max(float3(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), 0.0);
 }
 
 float3 koan_wash_gamma(float3 c) {
@@ -139,15 +158,14 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 
     // The tone's hold: under `muted`'s limit in the dark, over `surface`'s
     // in the light, by the person's tint.
-    float3 light = koan_wash_linear(field);
+    float3 light = koan_wash_from_lab(field);
     float y = dot(light, float3(0.2126, 0.7152, 0.0722));
+    float limit = u[6];
     if (u[1] > 0.5) {
-        float limit = (0.2831 + 0.05) / 4.6 - 0.05;
         if (y > limit) {
             light *= 1.0 + (limit / y - 1.0) * u[5];
         }
     } else {
-        float limit = 0.86;
         if (y < limit) {
             light += (1.0 - light) * ((limit - y) / (1.0 - y) * u[5]);
         }
@@ -162,8 +180,20 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn koan_wash_linear(c: vec3<f32>) -> vec3<f32> {
-    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+fn koan_wash_from_lab(f: vec3<f32>) -> vec3<f32> {
+    let L = f.x;
+    let A = (f.y - 0.5) * 0.7;
+    let B = (f.z - 0.5) * 0.7;
+    let l0 = L + 0.3963377774 * A + 0.2158037573 * B;
+    let m0 = L - 0.1055613458 * A - 0.0638541728 * B;
+    let s0 = L - 0.0894841775 * A - 1.2914855480 * B;
+    let l = l0 * l0 * l0;
+    let m = m0 * m0 * m0;
+    let s = s0 * s0 * s0;
+    return max(vec3<f32>(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), vec3<f32>(0.0));
 }
 
 fn koan_wash_gamma(c0: vec3<f32>) -> vec3<f32> {
@@ -206,15 +236,14 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
               + g1.x * koan_sample(tile, vec2<f32>(p1.x, p0.y)).rgb)
       + g1.y * (g0.x * koan_sample(tile, vec2<f32>(p0.x, p1.y)).rgb
               + g1.x * koan_sample(tile, vec2<f32>(p1.x, p1.y)).rgb);
-    var light = koan_wash_linear(field);
+    var light = koan_wash_from_lab(field);
     let y = dot(light, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let limit = u[1].z;
     if (u[0].y > 0.5) {
-        let limit = (0.2831 + 0.05) / 4.6 - 0.05;
         if (y > limit) {
             light = light * (1.0 + (limit / y - 1.0) * u[1].y);
         }
     } else {
-        let limit = 0.86;
         if (y < limit) {
             light = light + (1.0 - light) * ((limit - y) / (1.0 - y) * u[1].y);
         }
@@ -265,6 +294,12 @@ impl Tone {
             Tone::Light => 0.86,
         }
     }
+}
+
+/// The luminance limit the wash is held to in an appearance, as the program
+/// takes it (uniform 6).
+pub fn tone_limit(dark: bool) -> f32 {
+    if dark { Tone::Dark } else { Tone::Light }.limit() as f32
 }
 
 /// A decoded sleeve, as straight-alpha RGBA.
@@ -344,17 +379,21 @@ pub fn field(sleeve: &Sleeve) -> image::RgbaImage {
     let cell = side / FIELD as usize;
     let mut out = image::RgbaImage::new(FIELD, FIELD);
     for (x, y, pixel) in out.enumerate_pixels_mut() {
-        let [r, g, b] = [0, 1, 2].map(|c| {
+        let linear = [0, 1, 2].map(|c| {
             let mut sum = 0.0;
             for dy in 0..cell {
                 for dx in 0..cell {
                     sum += channels[c][(y as usize * cell + dy) * side + x as usize * cell + dx];
                 }
             }
-            let v = super::accent::oklch::gamma(sum / (cell * cell) as f64) * 255.0;
-            v.round().clamp(0.0, 255.0) as u8
+            sum / (cell * cell) as f64
         });
-        pixel.0 = [b, g, r, 255];
+        // In OKLab, so the GPU's filtered reads blend in an even space, not
+        // in sRGB's encoding, which would darken and dull a colour edge.
+        let [l, a, b] = super::accent::oklch::lab(linear);
+        let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+        let chroma = |v: f64| byte(v / LAB_SPAN + 0.5);
+        pixel.0 = [chroma(b), chroma(a), byte(l), 255];
     }
     out
 }
@@ -941,6 +980,7 @@ impl Wash {
                     bg.g,
                     bg.b,
                     self.hold as f32 / 100.0,
+                    tone_limit(look.dark),
                 ],
             );
             self.amplitude.write(&shader, 0);
@@ -1026,7 +1066,7 @@ mod tests {
                 format!("let n = {:?};", FIELD as f32)
                     .replace("let ", if source == WASH.msl { "float " } else { "let " }),
                 format!("* {STRENGTH:?};"),
-                format!("{:?}", Tone::Light.limit()),
+                format!("- 0.5) * {LAB_SPAN:?};"),
             ] {
                 assert!(source.contains(&figure), "{figure} missing");
             }
@@ -1064,9 +1104,19 @@ mod tests {
         let red = Sleeve::new([220, 20, 20, 255].repeat(64 * 64).into(), 64, 64).unwrap();
         let field = field(&red);
         assert_eq!(field.dimensions(), (FIELD, FIELD));
-        let [b, _, r, a] = field.get_pixel(FIELD / 2, FIELD / 2).0;
-        assert!(r > 200 && b < 60, "red {r} blue {b}");
-        assert_eq!(a, 255);
+        let [b, a_ch, l, alpha] = field.get_pixel(FIELD / 2, FIELD / 2).0;
+        let lab = [
+            l as f64 / 255.0,
+            (a_ch as f64 / 255.0 - 0.5) * LAB_SPAN,
+            (b as f64 / 255.0 - 0.5) * LAB_SPAN,
+        ];
+        let [r, g, bl] = super::super::accent::oklch::linear_from_lab(lab)
+            .map(super::super::accent::oklch::gamma);
+        assert!(
+            r > 0.75 && g < 0.25 && bl < 0.25,
+            "red {r} green {g} blue {bl}"
+        );
+        assert_eq!(alpha, 255);
     }
 
     fn solid(r: u8, g: u8, b: u8) -> Sleeve {

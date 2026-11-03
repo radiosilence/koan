@@ -1,0 +1,1 @@
+- **Syncs ask a server sixteen albums or playlists at a time.** Measured against a koan server, that is three times faster than four; the per-album fallback no longer holds up a library scan.

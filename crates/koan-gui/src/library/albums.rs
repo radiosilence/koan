@@ -13,9 +13,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::components::{UniformListScrollHandle, uniform_list};
-use koan_ffi::{AlbumSort, BrowseFilter};
 use koan_kit::app::platform::TouchPhase;
 use koan_kit::app::*;
+use koan_runtime::{AlbumSort, BrowseFilter};
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -503,7 +503,7 @@ impl AlbumGrid {
         let owner = cx.entity_id();
         self.lib
             .covers
-            .update(cx, |covers, _| covers.request(owner, ranked));
+            .update(cx, |covers, cx| covers.request(owner, ranked, cx));
     }
 
     /// The pick's drag payload, built once per change to the pick.
@@ -933,6 +933,10 @@ impl Render for AlbumGrid {
             self.frame(grid, count, window, cx);
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no albums yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("albums", |shelf| {
@@ -957,20 +961,10 @@ impl Render for AlbumGrid {
                 cx.listener(|this, _, _, cx| this.retry(cx)),
             )
             .into_any_element(),
-            _ if count == 0 => chrome::empty_state(
-                crate::theme::Icon::Album,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no albums yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
-            )
-            .into_any_element(),
+            _ if count == 0 => {
+                chrome::empty_state(crate::theme::Icon::Album, empty_title, empty_detail)
+                    .into_any_element()
+            }
             Some(grid) => uniform_list(
                 "albums",
                 grid.rows(count),

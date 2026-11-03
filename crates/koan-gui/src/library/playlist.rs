@@ -10,8 +10,8 @@
 
 use std::collections::HashSet;
 
-use koan_ffi::{EntryStatus, Playlist, PlaylistEntry, QueueItem, TrackSet};
 use koan_kit::app::*;
+use koan_runtime::{EntryStatus, Playlist, PlaylistEntry, QueueItem, TrackSet};
 
 use super::Lib;
 use super::actions;
@@ -371,34 +371,16 @@ impl PlaylistPage {
         });
     }
 
-    /// Offline, entries with no file here are not listed: a place among the
-    /// rows shown is not one among the playlist's entries, and a reorder of
-    /// the rows shown would send the rest to the end.
-    fn partial(&self) -> bool {
-        self.playlist
-            .as_ref()
-            .is_some_and(|p| p.track_count as usize > self.items.len())
-    }
-
     /// Where `dragged` would land if let go over a row, which the insertion
     /// line shows.
     fn lands(&self, dragged: &PlayableDrag) -> Lands {
         let id = self.id;
-        let own = dragged.origin.as_ref().is_some_and(|o| o.playlist == id);
-        if own && self.partial() {
-            return Lands::Nowhere(
-                "not reordered: some of this playlist's tracks are not on this device",
-            );
-        }
         let itself = dragged
             .sets
             .iter()
-            .any(|s| matches!(s, koan_ffi::TrackSet::Playlist { id: p } if *p == id));
+            .any(|s| matches!(s, koan_runtime::TrackSet::Playlist { id: p } if *p == id));
         if itself {
             return Lands::Nowhere("a playlist cannot be added to itself");
-        }
-        if !own && self.partial() {
-            return Lands::End;
         }
         Lands::Row
     }
@@ -417,9 +399,11 @@ impl PlaylistPage {
                 crate::notice::show(why, crate::theme::Tone::Muted, cx);
                 return;
             }
-            Lands::End | Lands::Row => {}
+            Lands::Row => {}
         }
-        let partial = self.partial();
+        // Places are named by entry, never by index: offline, entries with
+        // no file here are not listed, and the engine moves the rows shown
+        // among all of them.
         match dragged.origin.as_ref().filter(|o| o.playlist == id) {
             Some(origin) => {
                 let moving: Vec<String> = origin.entries.iter().map(i64::to_string).collect();
@@ -430,25 +414,64 @@ impl PlaylistPage {
                 };
                 let order: Vec<String> =
                     self.items.iter().map(|i| i.queue_item_id.clone()).collect();
-                let moved = rows::reordered(&order, &moving, &target, after);
-                if moved == order {
+                if rows::reordered(&order, &moving, &target, after) == order {
                     return;
                 }
-                let ids: Vec<i64> = moved.iter().filter_map(|id| id.parse().ok()).collect();
-                command(cx, "reorder playlist", move |e| e.reorder_playlist(id, ids));
+                // Before the target, or after it: before the first row
+                // following it that stays.
+                let at = order.iter().position(|o| *o == target);
+                let before = match (after, at) {
+                    (false, _) => Some(target.as_str()),
+                    (true, Some(at)) => order[at + 1..]
+                        .iter()
+                        .find(|o| !moving.contains(o))
+                        .map(String::as_str),
+                    (true, None) => None,
+                }
+                .and_then(|o| o.parse::<i64>().ok());
+                let entries = origin.entries.to_vec();
+                self.edit(cx, "reorder playlist", move |e| {
+                    e.move_playlist_entries(id, entries, before)
+                });
             }
             None => {
-                let at = if partial {
-                    self.playlist.as_ref().map_or(0, |p| p.track_count as usize)
-                } else {
-                    rows::position(&self.rows, dest, self.items.len())
-                } as u32;
+                let at = rows::position(&self.rows, dest, self.items.len());
+                let before = self.items.get(at).and_then(|i| i.playlist_entry_id);
                 let sets = dragged.sets.to_vec();
-                command(cx, "add to playlist", move |e| {
-                    e.insert_into_playlist(id, sets, at)
+                self.edit(cx, "add to playlist", move |e| {
+                    e.insert_into_playlist_before(id, sets, before)
                 });
             }
         }
+    }
+
+    /// An edit placed among the playlist's entries. A refusal is said in the
+    /// notice line and the rows are read again: the place it named may have
+    /// gone on another device, and the rows shown are then not the
+    /// playlist's.
+    fn edit<F, Fut, T>(&self, cx: &mut Context<Self>, what: &'static str, f: F)
+    where
+        F: FnOnce(std::sync::Arc<koan_runtime::KoanEngine>) -> Fut,
+        Fut: std::future::Future<Output = Result<T, koan_runtime::KoanError>> + 'static,
+        T: 'static,
+    {
+        let future = f(crate::engine::engine(cx));
+        cx.spawn(async move |this, cx| {
+            let Err(e) = future.await else { return };
+            log::warn!("{what}: {e}");
+            let words = match &e {
+                koan_runtime::KoanError::NotFound { .. } => {
+                    "The playlist changed on another device; try again.".to_string()
+                }
+                e => crate::settings::model::describe(e),
+            };
+            this.update(cx, |this, cx| {
+                crate::notice::show(words, crate::theme::Tone::Bad, cx);
+                this.load(cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The payload for dragging `items` out: their tracks, marked as this
@@ -636,7 +659,7 @@ pub fn ask_delete(
 /// `said` what could not go in: a track never downloaded has no file to
 /// name.
 pub fn export(
-    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    engine: std::sync::Arc<koan_runtime::KoanEngine>,
     id: i64,
     name: String,
     cx: &mut App,
@@ -681,7 +704,7 @@ fn described(items: &[&QueueItem]) -> Vec<(i64, String)> {
 /// an empty one), then makes it and opens it. The tracks are resolved first,
 /// so the question can say how many it will hold.
 pub fn new_playlist(
-    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    engine: std::sync::Arc<koan_runtime::KoanEngine>,
     nav: Entity<crate::navigator::Navigator>,
     sets: Vec<TrackSet>,
     window: &mut Window,
@@ -751,7 +774,7 @@ impl PlaylistPage {
             .map(|album| Key::new(Art::Album(*album), side, scale))
             .collect();
         let (arts, more) = self.lib.covers.update(cx, |c, cx| {
-            c.request(owner, keys.iter().map(|k| (*k, Priority::Visible)));
+            c.request(owner, keys.iter().map(|k| (*k, Priority::Visible)), cx);
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let arts: Vec<CoverArt> = keys.iter().map(|k| CoverArt::from(c.sleeve(*k))).collect();
             (arts, more)
@@ -871,7 +894,7 @@ impl PlaylistPage {
             "playlist-more",
             ToolbarButton::new("playlist-more-trigger", Icon::More, "more"),
             move |dismiss, _, _| {
-                let queue = |placement: fn() -> koan_ffi::Placement| {
+                let queue = |placement: fn() -> koan_runtime::Placement| {
                     let close = dismiss.clone();
                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                         close(window, cx);
@@ -891,11 +914,11 @@ impl PlaylistPage {
                 MenuPanel::new()
                     .child(
                         MenuRow::new("playlist-next", "play next")
-                            .on_click(queue(|| koan_ffi::Placement::Next)),
+                            .on_click(queue(|| koan_runtime::Placement::Next)),
                     )
                     .child(
                         MenuRow::new("playlist-queue", "add to queue")
-                            .on_click(queue(|| koan_ffi::Placement::Append)),
+                            .on_click(queue(|| koan_runtime::Placement::Append)),
                     )
                     .child(
                         MenuRow::new("playlist-shuffle-order", "shuffle the order…")
@@ -1059,7 +1082,6 @@ impl PlaylistPage {
             let lower = position.y > bounds.center().y;
             let at = match lands {
                 Lands::Row => Some(rows::insertion_point(row, lower)),
-                Lands::End => Some(count),
                 Lands::Nowhere(_) => None,
             };
             if this.drop_at != at {
@@ -1385,7 +1407,7 @@ mod tests {
 
     #[test]
     fn an_entry_is_listed_under_its_own_id_and_waits_for_nothing() {
-        let track = koan_ffi::Track {
+        let track = koan_runtime::Track {
             id: 7,
             title: "Song".into(),
             artist_name: "Artist".into(),
@@ -1415,7 +1437,7 @@ mod tests {
         let item = listed(PlaylistEntry {
             entry_id: 42,
             track,
-            run: koan_ffi::RunRole::Single,
+            run: koan_runtime::RunRole::Single,
         });
         assert_eq!(item.queue_item_id, "42");
         assert_eq!(item.playlist_entry_id, Some(42));
@@ -1429,6 +1451,5 @@ mod tests {
 #[derive(Clone, Copy)]
 enum Lands {
     Row,
-    End,
     Nowhere(&'static str),
 }

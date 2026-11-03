@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 
 use chrono::{Local, TimeZone};
-use koan_ffi::PlayHistoryEntry;
 use koan_kit::app::*;
+use koan_runtime::PlayHistoryEntry;
 
 use super::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -366,7 +366,7 @@ impl HistoryPage {
         let owner = cx.entity_id();
         self.lib
             .covers
-            .update(cx, |covers, _| covers.request(owner, ranked));
+            .update(cx, |covers, cx| covers.request(owner, ranked, cx));
     }
 
     fn line(
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn plays_fall_under_their_days_newest_first() {
-        let track = |id| koan_ffi::Track {
+        let track = |id| koan_runtime::Track {
             id,
             title: "Song".into(),
             artist_name: "Artist".into(),

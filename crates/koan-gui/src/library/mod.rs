@@ -34,8 +34,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use koan_ffi::KoanEngine;
 use koan_kit::app::*;
+use koan_runtime::KoanEngine;
 
 /// A listener on `view` that outlives the borrow of its context: what
 /// `cx.listener` gives, for a handler made inside a closure over that context.

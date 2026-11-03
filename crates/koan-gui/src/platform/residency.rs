@@ -53,7 +53,7 @@ pub enum Login {
 }
 
 /// Reads `devices.keep_running` and applies it. Once the engine is open.
-pub fn init(engine: &std::sync::Arc<koan_ffi::KoanEngine>, cx: &mut App) {
+pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
     cx.set_global(Residency::default());
     set(false, cx);
     read_login(cx);

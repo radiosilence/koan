@@ -3,9 +3,9 @@
 //! select toggle and the bar a pick acts through. Drawn in the kōan look:
 //! square, flat, lowercase, one hairline where a region needs one.
 
-use koan_ffi::BrowseChoices;
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::BrowseChoices;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
@@ -210,7 +210,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
                         dismiss(window, cx);
                         browse.update(cx, |b, cx| {
                             // Random again is a new shuffle.
-                            if sort == koan_ffi::AlbumSort::Random && b.album_sort == sort {
+                            if sort == koan_runtime::AlbumSort::Random && b.album_sort == sort {
                                 b.reshuffle(cx);
                             }
                             b.update(cx, |b| b.album_sort = sort);
@@ -225,7 +225,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 /// since a new deal is something tried until one is liked, and a menu makes
 /// each try two clicks.
 pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
-    let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
+    let random = lib.browse.read(cx).effective_album_sort() == koan_runtime::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
         ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again")
@@ -548,13 +548,13 @@ pub fn selection_bar<V: Picking>(
         .verb(
             "sel-next",
             "play next",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Next, cx).detach()),
         )
         .verb_help(
             "sel-queue",
             "add to queue",
             "add the selection to the end of the queue",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()),
         )
         .element(crate::components::opens_panel(
             "sel-playlist",

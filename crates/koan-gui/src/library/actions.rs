@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
-use koan_ffi::Placement;
 use koan_kit::app::*;
+use koan_runtime::Placement;
 
 use super::Lib;
 use super::drag::{Playable, sources};
@@ -110,26 +110,17 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
 
 /// The tracks `items` name, in order, each once: what a verb over records
 /// and artists acts on.
-pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
-    let mut ids = Vec::new();
-    for item in items {
-        let found = match item {
-            Playable::Track(id) => Ok(vec![id]),
-            Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
-            Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
-        };
-        match found {
-            Ok(found) => {
-                for id in found {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
-            }
-            Err(e) => log::warn!("tracks of a pick: {e}"),
+pub async fn track_ids_of(engine: Arc<koan_runtime::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
+    // One read for the whole pick, as the queue resolves it.
+    let found = match engine.track_ids_of(super::drag::sources(&items)).await {
+        Ok(found) => found,
+        Err(e) => {
+            log::warn!("tracks of a pick: {e}");
+            return Vec::new();
         }
-    }
-    ids
+    };
+    let mut seen = std::collections::HashSet::with_capacity(found.len());
+    found.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
 /// What a pick is called in a question about it.
@@ -186,7 +177,7 @@ pub fn remove_downloads(lib: &Lib, items: &[Playable], window: &mut Window, cx: 
 /// The question before removing downloads, and the removal: shared by the
 /// library's menus and the queue's.
 pub fn ask_remove_downloads(
-    engine: Arc<koan_ffi::KoanEngine>,
+    engine: Arc<koan_runtime::KoanEngine>,
     title: String,
     ids: Vec<i64>,
     window: &mut Window,
@@ -500,8 +491,8 @@ pub fn playlist_submenu(
 /// out. Said either way on the app's notice line, since a link copied in
 /// silence, or not at all, looks the same as a click that missed.
 pub fn copy_share_link(
-    engine: Arc<koan_ffi::KoanEngine>,
-    sets: Vec<koan_ffi::TrackSet>,
+    engine: Arc<koan_runtime::KoanEngine>,
+    sets: Vec<koan_runtime::TrackSet>,
     name: Option<String>,
     cx: &mut App,
 ) {
