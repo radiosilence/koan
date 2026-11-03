@@ -564,6 +564,15 @@ pub fn reconcile_playlists(
             let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
             let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
+            // A push in flight records what it did only once the server has
+            // answered: one of this playlist (`push_lock`), or one creating a
+            // playlist there that this listing may already hold (`CREATING`),
+            // is waited for, so the check below sees what it wrote.
+            let lock = match local {
+                Some(local) => push_lock(local.id),
+                None => CREATING.clone(),
+            };
+            let _push = lock.lock();
             // All of it or none: a copy renamed but not refilled, or refilled but
             // not marked synced, would push back as an edit nobody made.
             let stored = queries::atomically(&db.conn, || {
@@ -904,6 +913,13 @@ fn push_lock(id: i64) -> std::sync::Arc<parking_lot::Mutex<()>> {
         .clone()
 }
 
+/// Held by a push that creates a playlist on the server, from before the
+/// create until its server id is recorded here. A sync whose listing already
+/// holds that playlist, with no local copy known for it yet, waits for it
+/// rather than pulling it in as a second copy.
+static CREATING: std::sync::LazyLock<std::sync::Arc<parking_lot::Mutex<()>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Send a playlist's name and contents to the server, in order.
 ///
 /// `createPlaylist` with a `playlistId` replaces the contents wholesale, which
@@ -926,6 +942,9 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
     let remote_id = local.remote_id.as_deref();
+    // Taken after this playlist's own lock, as a sync takes either alone.
+    let creating = CREATING.clone();
+    let _creating = remote_id.is_none().then(|| creating.lock());
     let song_ids = match queries::remote_ids_for_playlist(&db.conn, id) {
         Ok(ids) => ids,
         Err(e) => {
