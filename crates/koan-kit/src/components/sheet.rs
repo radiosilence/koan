@@ -6,9 +6,9 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use crate::components::field::{FieldState as InputState, InputEvent};
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -18,7 +18,7 @@ use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     super::accessible(
         div().id("sheet-panel"),
-        gpui_kit::Role::Dialog,
+        gpui::Role::Dialog,
         Some(label(name)),
     )
     .flex()
@@ -559,7 +559,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
@@ -579,10 +579,10 @@ mod tests {
 
     /// A question put away with Escape gives the keyboard back to what
     /// asked, so a sheet that asked goes on taking its keys.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_keyboard_goes_back_to_what_asked(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (asker, cx) = cx.add_window_view(|_, cx| Asker {
@@ -638,10 +638,10 @@ mod tests {
 
     /// A sheet presented over the window goes with Escape, as its cancel
     /// does, and gives the keyboard back to what presented it.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_presented_sheet_goes_with_escape(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {
@@ -667,10 +667,10 @@ mod tests {
 
     /// A sheet busy with something it must see through stays through
     /// Escape, and goes with it again once it lets go.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_held_sheet_stays_through_escape(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {

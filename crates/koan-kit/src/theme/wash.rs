@@ -35,8 +35,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
     Task, Window, canvas, div, point, px, size,
 };

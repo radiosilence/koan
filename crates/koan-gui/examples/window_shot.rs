@@ -100,8 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 shell.update(cx, |shell, cx| shell.show(route, cx));
             }
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
-            // gpui-component's focus and click extensions, for the shell's own handling.
-            cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
+            koan_kit::components::host(root, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(dark), window, cx)

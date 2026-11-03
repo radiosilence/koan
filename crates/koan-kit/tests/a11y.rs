@@ -5,8 +5,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
-use gpui_kit::{
+use gpui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+use gpui::{
     AnyWindowHandle, Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
     div, px,
 };
@@ -94,7 +94,7 @@ impl Render for Page {
 
 fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Rc<Cell<u32>>, Rc<Cell<f32>>) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let page = Page::default();
@@ -169,7 +169,7 @@ fn send(window: AnyWindowHandle, cx: &mut TestAppContext, action: Action, target
     cx.run_until_parked();
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
@@ -201,7 +201,7 @@ fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     assert_eq!(tunings, 2);
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn components_report_their_state(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
@@ -219,7 +219,7 @@ fn components_report_their_state(cx: &mut TestAppContext) {
     assert!(node(&tree, "queue", "Button").1.get("disabled").is_none());
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn components_answer_a_screen_reader_s_actions(cx: &mut TestAppContext) {
     let (window, queued, seek) = open(cx);
     let tree = tree(window, cx);
@@ -282,10 +282,10 @@ impl Render for Queue {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -375,10 +375,10 @@ fn drawn_rows(tree: &str) -> (usize, usize) {
 /// A reader moving down a list one row at a time keeps going past the
 /// first screen: each row reached scrolls its neighbour on and the window
 /// draws it, with nothing else asking for a frame.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -434,10 +434,10 @@ impl Render for Uniform {
 /// A reader moving up a `uniform_list` from its top row reaches the rows
 /// above the screen: the list knows which row is at its top, so the reveal
 /// goes up rather than down.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let scroll = UniformListScrollHandle::new();
@@ -447,7 +447,7 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
         })
         .into();
     attach(window, cx);
-    scroll.scroll_to_item(150, gpui_kit::ScrollStrategy::Top);
+    scroll.scroll_to_item(150, gpui::ScrollStrategy::Top);
     window
         .update(cx, |_, window, _| window.refresh())
         .expect("the window");
@@ -468,4 +468,125 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
         top = now;
     }
     assert!(top + 20 <= start);
+}
+
+/// Text fields as a screen reader meets them: a text input named by its
+/// label, with its value, placeholder and text as a run; a read-only field
+/// offers no edit, a disabled one says so; a value the owner sets is
+/// announced; and a screen reader's request to set the value is an edit.
+struct Fields {
+    name: gpui::Entity<koan_kit::components::FieldState>,
+    fixed: gpui::Entity<koan_kit::components::FieldState>,
+    secret: gpui::Entity<koan_kit::components::FieldState>,
+    server: gpui::Entity<koan_kit::components::FieldState>,
+    filter: gpui::Entity<koan_kit::components::FieldState>,
+}
+
+impl Render for Fields {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use koan_kit::components::TextField;
+        div()
+            .w(px(400.))
+            .flex()
+            .flex_col()
+            .child(TextField::new(&self.name).label("name"))
+            .child(TextField::new(&self.fixed).label("address"))
+            .child(TextField::new(&self.secret).label("password"))
+            // Named by the row it sits in, and by the wrapper it is in.
+            .child(
+                koan_kit::components::FormRow::new("server")
+                    .control(div().w_full().child(TextField::new(&self.server))),
+            )
+            .child(koan_kit::components::FilterField::new(&self.filter).fill())
+    }
+}
+
+#[gpui::test]
+fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use koan_kit::components::FieldState;
+    cx.update(|cx| {
+        koan_kit::app::platform::init(cx);
+        theme::init(cx);
+    });
+    let window = cx.add_window(|window, cx| Fields {
+        name: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .placeholder("your name")
+                .default_value("Kate")
+        }),
+        fixed: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .read_only(true)
+                .default_value("192.168.1.10")
+        }),
+        secret: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .masked(true)
+                .default_value("hunter2")
+        }),
+        server: cx.new(|cx| FieldState::new(window, cx)),
+        filter: cx.new(|cx| FieldState::new(window, cx)),
+    });
+    let fields = window.root(cx).expect("the view");
+    let window: AnyWindowHandle = window.into();
+    attach(window, cx);
+    let tree = tree(window, cx);
+    let (id, name) = node(&tree, "name", "TextInput");
+    assert_eq!(name["value"], "Kate");
+    assert_eq!(name["placeholder"], "your name");
+    assert!(
+        name["on_action"].to_string().contains("SetValue"),
+        "an editable field takes a value: {name}"
+    );
+    let runs: Vec<Value> = nodes(&tree)
+        .into_iter()
+        .filter(|n| n["aria"]["role"] == "TextRun" && n["aria"]["value"] == "Kate")
+        .collect();
+    assert_eq!(runs.len(), 1, "its text as one run:\n{tree}");
+    let (_, fixed) = node(&tree, "address", "TextInput");
+    assert!(
+        !fixed["on_action"].to_string().contains("SetValue"),
+        "a read-only field takes no value: {fixed}"
+    );
+    node(&tree, "server", "TextInput");
+    node(&tree, "filter", "TextInput");
+    let (_, secret) = node(&tree, "password", "PasswordInput");
+    assert!(
+        secret.get("value").is_none(),
+        "a password is never read out"
+    );
+
+    // A screen reader sets the value: an edit of the person's.
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_a11y_action(
+                ActionRequest {
+                    action: Action::SetValue,
+                    target_tree: TreeId::ROOT,
+                    target_node: id,
+                    data: Some(gpui::accesskit::ActionData::Value("Liz".into())),
+                },
+                cx,
+            )
+        })
+        .expect("the window");
+    cx.run_until_parked();
+    let name_state = fields.read_with(cx, |f, _| f.name.clone());
+    assert_eq!(
+        name_state.read_with(cx, |f, _| f.value().to_string()),
+        "Liz"
+    );
+
+    // The owner sets it: announced as it lands.
+    window
+        .update(cx, |_, window, cx| {
+            name_state.update(cx, |f, cx| f.set_value("Ana", window, cx))
+        })
+        .expect("the window");
+    cx.run_until_parked();
+    let tree = self::tree(window, cx);
+    let (_, name) = node(&tree, "name", "TextInput");
+    assert_eq!(name["value"], "Ana");
+    assert_eq!(name["live"], "Polite");
 }

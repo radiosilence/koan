@@ -6,9 +6,9 @@
 //! around it. The caller owns the `InputState` and listens to it: emptying
 //! the field is a change like any other.
 
-use gpui_kit::component::input::{Escape, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use crate::components::field::{Escape, FieldState as InputState};
+use gpui::prelude::*;
+use gpui::*;
 
 use super::TextField;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
@@ -17,6 +17,7 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 pub struct FilterField {
     input: Entity<InputState>,
     fill: bool,
+    label: SharedString,
 }
 
 impl FilterField {
@@ -24,7 +25,15 @@ impl FilterField {
         Self {
             input: input.clone(),
             fill: false,
+            label: crate::theme::label("filter"),
         }
+    }
+
+    /// What a screen reader calls the field, in the app's words: "filter"
+    /// unless the page says what it filters.
+    pub fn label(mut self, label: &str) -> Self {
+        self.label = crate::theme::label(label);
+        self
     }
 
     /// As wide as what holds it, as the sidebar's search field is, rather
@@ -43,6 +52,11 @@ impl RenderOnce for FilterField {
         let hover = look.palette.ink.hsla();
         div()
             .id("filter-field")
+            .map(|d| {
+                #[cfg(test)]
+                let d = d.debug_selector(|| "filter".into());
+                d
+            })
             .flex()
             .items_center()
             .cursor_text()
@@ -82,7 +96,7 @@ impl RenderOnce for FilterField {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(TextField::new(&self.input).bare()),
+                    .child(TextField::new(&self.input).label(self.label).bare()),
             )
             .when(!empty, |d| {
                 d.child(
@@ -156,11 +170,7 @@ impl RenderOnce for FilterButton {
         } else {
             self.text.clone()
         };
-        let row = super::accessible(
-            div().id(self.id),
-            gpui_kit::Role::Button,
-            Some(shown.clone()),
-        );
+        let row = super::accessible(div().id(self.id), gpui::Role::Button, Some(shown.clone()));
         let row = match self.on_click {
             Some(run) => super::answers_click(row, run.clone())
                 .cursor_pointer()
@@ -194,7 +204,7 @@ impl RenderOnce for FilterButton {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext, point};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
 
     use super::*;
     use crate::components::{Toolbar, ToolbarButton, ToolbarGroup};
@@ -215,11 +225,7 @@ mod tests {
                     .principal(div().id("drag").size_full())
                     .trailing(
                         ToolbarGroup::new()
-                            .child(
-                                div()
-                                    .debug_selector(|| "filter".into())
-                                    .child(FilterField::new(&self.input)),
-                            )
+                            .child(FilterField::new(&self.input))
                             .spacer()
                             .child(
                                 div()
@@ -232,10 +238,10 @@ mod tests {
     }
 
     /// The field takes its width in a toolbar, and a click on it focuses it.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_filter_field_in_a_toolbar_takes_its_width_and_a_click(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
@@ -262,10 +268,10 @@ mod tests {
 
     /// In a narrow toolbar the field gives up its width, down to its
     /// minimum, before the buttons beside it give up any.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|window, cx| Bar {
@@ -306,10 +312,10 @@ mod tests {
     /// Typing shows the clear mark; a press on it empties the field, tells
     /// the owner, and leaves the keyboard in the field. Escape empties it
     /// too, and with nothing left goes on to what is around it.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_clear_mark_and_escape_empty_the_field(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (field, cx) = cx.add_window_view(|window, cx| Field {
@@ -322,8 +328,8 @@ mod tests {
         cx.update(|_, cx| {
             cx.subscribe(
                 &input,
-                move |_, e: &gpui_kit::component::input::InputEvent, _| {
-                    if matches!(e, gpui_kit::component::input::InputEvent::Change) {
+                move |_, e: &crate::components::field::InputEvent, _| {
+                    if matches!(e, crate::components::field::InputEvent::Change) {
                         counted.set(counted.get() + 1);
                     }
                 },

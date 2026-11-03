@@ -7,9 +7,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 
-use super::{Animated, Ease, Repeat, ShaderProgram};
+use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 
 /// The picture, cropped to fill its bounds as `ObjectFit::Cover` does, at the
 /// opacity of track 0. Uniforms: 0..2 the crop's offset, 2..4 its scale, in
@@ -69,9 +69,15 @@ impl Arrival {
     }
 }
 
-/// `image` filling its bounds, fading in by `arrival`. Under Reduce Motion
-/// it stands whole at once.
-pub fn arriving(image: Arc<RenderImage>, arrival: &Arrival) -> impl IntoElement {
+/// `image` filling its bounds, fading in by `arrival`. Under Reduce Motion,
+/// and where the renderer draws no shaders, it stands whole at once.
+pub fn arriving(image: Arc<RenderImage>, arrival: &Arrival) -> AnyElement {
+    if !SHADED {
+        return img(image)
+            .object_fit(ObjectFit::Cover)
+            .size_full()
+            .into_any_element();
+    }
     let animated = arrival.animated.clone();
     let source = image.size(0);
     canvas(
@@ -92,4 +98,5 @@ pub fn arriving(image: Arc<RenderImage>, arrival: &Arrival) -> impl IntoElement 
         move |bounds, animated, window, _| animated.paint(&ARRIVE, Some(image), bounds, window),
     )
     .size_full()
+    .into_any_element()
 }

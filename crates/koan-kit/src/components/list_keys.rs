@@ -12,7 +12,7 @@
 //! out where each key leaves the cursor and what it picks. The app binds the
 //! keys, from the table its shortcuts sheet lists.
 
-use gpui_kit::actions;
+use gpui::actions;
 
 actions!(
     list,

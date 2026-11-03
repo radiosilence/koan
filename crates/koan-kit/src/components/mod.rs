@@ -30,7 +30,7 @@ mod details;
 mod drag;
 mod empty;
 mod fade;
-mod field;
+pub mod field;
 mod filter_field;
 mod form;
 mod heart;
@@ -78,10 +78,10 @@ mod window;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui_kit::{
+use gpui::{
     AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+    Stateful, StatefulInteractiveElement, Styled, Task, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
@@ -112,7 +112,7 @@ pub mod list_actions {
 }
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
+pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
 pub use filter_field::{FilterButton, FilterField};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
@@ -169,7 +169,8 @@ pub use toolbar::{
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{
-    MainWindow, SecondaryWindow, close_button, draws_decorations, moves_window, window_buttons,
+    MainWindow, SecondaryWindow, close_button, draws_decorations, host, moves_window,
+    window_buttons,
 };
 
 use crate::theme::{Look, MARK, Motion};
@@ -249,12 +250,15 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
 /// A colour moving between its off and on colours on the GPU, through a
 /// colour slot (#1859): the control draws once with the slot's colour as a
 /// leave fade starts, and the presents that follow move it with no frame
-/// drawn. The slot is held only for the fade, and let go at the control's
-/// next draw after it lands; at rest the control draws a plain colour.
+/// drawn. The slot is held only for the fade: as it lands the control is
+/// drawn once more in its plain colour, and that draw lets the slot go, so
+/// the table's slots are held only by fades still running.
 struct ColorFade {
     on: bool,
     /// The slot fading and when it lands, while a leave fade runs.
     fading: Option<(ColorSlot, Instant)>,
+    /// Wakes the control as the fade lands.
+    _landing: Option<Task<()>>,
 }
 
 /// The colour a control's text, glyph or edge draws in, `on_color` when `on`
@@ -271,8 +275,12 @@ pub(crate) fn fade(
     cx: &mut App,
 ) -> Hsla {
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| ColorFade { on, fading: None });
-    state.update(cx, |fade, _| {
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade {
+        on,
+        fading: None,
+        _landing: None,
+    });
+    state.update(cx, |fade, cx| {
         let now = Animated::now();
         if fade.on != on {
             fade.on = on;
@@ -293,8 +301,20 @@ pub(crate) fn fade(
                     );
                     (slot, now + Motion::LEAVE)
                 });
+            // One wake at the landing, which draws the plain colour and lets
+            // the slot go.
+            fade._landing = fade.fading.as_ref().map(|(_, lands)| {
+                // Counted to the landing on the present clock, which runs
+                // ahead of the wall clock: woken then, the draw sees it landed.
+                let wait = lands.saturating_duration_since(Instant::now());
+                cx.spawn(async move |fade, cx| {
+                    cx.background_executor().timer(wait).await;
+                    fade.update(cx, |_, cx| cx.notify()).ok();
+                })
+            });
         } else if fade.fading.as_ref().is_some_and(|(_, lands)| now >= *lands) {
             fade.fading = None;
+            fade._landing = None;
         }
         match &fade.fading {
             Some((slot, _)) => slot.hsla(1.0),
@@ -560,10 +580,10 @@ pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> S
 /// not fading, it is nothing: a control at rest puts no quad in the scene.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if transition.at(0, Animated::now()) <= 0.0 && !transition.moving() {
-        return gpui_kit::Empty.into_any_element();
+        return gpui::Empty.into_any_element();
     }
     if !SHADED {
-        let amount = transition.at(0, Animated::now());
+        let amount = plain_amount(transition);
         return div()
             .absolute()
             .size_full()
@@ -579,12 +599,18 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         .into_any_element()
 }
 
+/// How lit a fill is where the renderer draws no shaders: no fade, since
+/// nothing draws the frames between, so the state as it is headed.
+fn plain_amount(transition: &Animated) -> f32 {
+    transition.track(0).to
+}
+
 /// A control as a screen reader meets it: its role and its name. The tree
 /// is built only while assistive technology is attached, so this costs
 /// nothing otherwise. See docs/design/koan-kit.md, "Accessibility".
 pub(crate) fn accessible<E: StatefulInteractiveElement>(
     element: E,
-    role: gpui_kit::Role,
+    role: gpui::Role,
     name: Option<SharedString>,
 ) -> E {
     let element = element.role(role);
@@ -620,35 +646,53 @@ pub(crate) fn announced<E: StatefulInteractiveElement>(
     accessible(
         element,
         if alarm {
-            gpui_kit::Role::Alert
+            gpui::Role::Alert
         } else {
-            gpui_kit::Role::Status
+            gpui::Role::Status
         },
         Some(text.clone()),
     )
     .aria_value(text)
     .aria_live(if alarm {
-        gpui_kit::accesskit::Live::Assertive
+        gpui::accesskit::Live::Assertive
     } else {
-        gpui_kit::accesskit::Live::Polite
+        gpui::accesskit::Live::Polite
     })
 }
 
 /// A checked state as AccessKit has it.
-pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
+pub(crate) fn toggled(on: bool) -> gpui::Toggled {
     if on {
-        gpui_kit::Toggled::True
+        gpui::Toggled::True
     } else {
-        gpui_kit::Toggled::False
+        gpui::Toggled::False
     }
 }
 
 /// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
-    handler: Handler<gpui_kit::ClickEvent>,
+    handler: Handler<gpui::ClickEvent>,
 ) -> E {
-    element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
-        handler(&gpui_kit::ClickEvent::default(), window, cx)
+    element.on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+        handler(&gpui::ClickEvent::default(), window, cx)
     })
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// Without shaders nothing draws a fade's frames, so a fill shows the
+    /// state it is headed to: lit as the pointer arrives, gone as it leaves.
+    #[test]
+    fn a_plain_fill_reads_where_its_state_is_headed() {
+        let lit = Animated::new();
+        lit.hold(0, 1.0);
+        assert_eq!(plain_amount(&lit), 1.0, "lit at once");
+        lit.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
+        assert!(lit.at(0, Animated::now()) > 0.5, "the GPU's fade has begun");
+        assert_eq!(plain_amount(&lit), 0.0, "gone at once without it");
+    }
 }

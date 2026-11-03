@@ -24,9 +24,6 @@ use crate::engine::{command, engine};
 use crate::mirror::{Mirror, Playback, Playhead};
 use crate::theme::{Icon, KoanTheme, Look};
 
-/// How long a clicked line holds the emphasis while its seek lands.
-const SEEK_LANDS: Duration = Duration::from_secs(1);
-
 /// What the words are for: a track of the library, or a queue entry it no
 /// longer has, which plays from its own tags.
 #[derive(Clone, PartialEq, Hash)]
@@ -50,13 +47,13 @@ pub struct LyricsPanel {
     /// When the playhead reached the active line, which its motion is
     /// timed from.
     since: Option<Instant>,
-    /// A line clicked to seek to, and when: it stays the line sung until the
-    /// playhead reaches it, so the emphasis moves once rather than back to
-    /// the old line while the seek lands.
-    sought: Option<(usize, Instant)>,
+    /// A line clicked to seek to: it stays the line sung while the seek is
+    /// on its way (`transport::landing`), so the emphasis moves once rather
+    /// than back to the line before on a reading from before the seek.
+    sought: Option<usize>,
     _load: Option<Task<()>>,
     _follow: Option<Task<()>>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 impl LyricsPanel {
@@ -66,6 +63,8 @@ impl LyricsPanel {
             _subscriptions: [
                 cx.observe(&mirror.playback, |this, _, cx| this.track_changed(cx)),
                 cx.observe(&mirror.playhead, |this, _, cx| this.follow(cx)),
+                // A seek sent, landing or lapsing.
+                cx.observe_global::<crate::transport::Landing>(|this, cx| this.follow(cx)),
                 // Cached under the window, and the wash setting decides its
                 // ground.
                 cx.observe_global::<KoanTheme>(|_, cx| cx.notify()),
@@ -173,7 +172,10 @@ impl LyricsPanel {
     /// Marks the line being sung and sleeps until the next one starts.
     fn follow(&mut self, cx: &mut Context<Self>) {
         self._follow = None;
-        let anchor = *self.playhead.read(cx);
+        // The seek's target while it is on its way, the engine's playhead
+        // once it has landed: never a reading older than the seek.
+        let landing = crate::transport::landing(cx);
+        let anchor = landing.unwrap_or_else(|| *self.playhead.read(cx));
         let Some(lyrics) = self.lyrics(cx) else {
             return;
         };
@@ -182,18 +184,18 @@ impl LyricsPanel {
         }
         let position = anchor.at(Instant::now(), 0) as f64 / 1000.0;
         let (mut active, next) = place(&lyrics.lines, position);
-        let mut landed = true;
-        // How long the clicked line is still held, for a timer to end it at.
+        // The clicked line held while its seek is on its way; the timer
+        // wakes for the landing's lapse, which nothing else may announce.
+        active = sung(active, self.sought, landing.is_some());
         let mut held = None;
-        match self.sought {
-            Some((line, _)) if active == Some(line) => {}
-            Some((line, at)) if at.elapsed() < SEEK_LANDS => {
-                active = Some(line);
-                landed = false;
-                held = Some((SEEK_LANDS - at.elapsed()).as_secs_f64());
-            }
-            _ => {}
+        if let (Some(_), Some(target)) = (self.sought, landing) {
+            held = Some(
+                crate::transport::LANDING
+                    .saturating_sub(target.at.elapsed())
+                    .as_secs_f64(),
+            );
         }
+        let landed = landing.is_none();
         let now = Instant::now();
         let since = active
             .filter(|_| anchor.playing)
@@ -236,7 +238,7 @@ impl LyricsPanel {
         else {
             return;
         };
-        self.sought = Some((line, Instant::now()));
+        self.sought = Some(line);
         if self.active != Some(line) {
             self.active = Some(line);
             self.since = None;
@@ -305,9 +307,30 @@ fn place(lines: &[LyricLine], position: f64) -> (Option<usize>, Option<f64>) {
     (active, next)
 }
 
+/// The line sung: the clicked line while its seek is on its way, so a
+/// reading from before the seek cannot move it back a line; the playhead's
+/// line otherwise.
+fn sung(at_playhead: Option<usize>, clicked: Option<usize>, landing: bool) -> Option<usize> {
+    match clicked {
+        Some(line) if landing => Some(line),
+        _ => at_playhead,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A click on line 4 holds it while the seek lands, whatever an older
+    /// reading says (line 3), and once landed the playhead decides again.
+    #[test]
+    fn the_clicked_line_holds_until_the_seek_lands() {
+        assert_eq!(sung(Some(3), Some(4), true), Some(4));
+        assert_eq!(sung(None, Some(4), true), Some(4));
+        assert_eq!(sung(Some(4), Some(4), false), Some(4));
+        assert_eq!(sung(Some(5), Some(4), false), Some(5));
+        assert_eq!(sung(Some(3), None, true), Some(3));
+    }
 
     #[test]
     fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {

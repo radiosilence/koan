@@ -5,7 +5,7 @@
 //! The content is laid out and painted as it would be unwrapped, so it takes
 //! the pointer where it stands; only how it shows moves.
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Animated, Ease, Repeat, ShaderProgram};
 use crate::theme::{KoanTheme, Motion};
@@ -179,8 +179,13 @@ impl Element for AnimatedLayer {
             });
         // Its view drawn again once it settles, which paints it with no
         // group: a cached view would otherwise go on replaying the group,
-        // and its texture, until something else drew it (#1878).
-        if let Some(wait) = self.animated.settled_in() {
+        // and its texture, until something else drew it (#1878). A layer
+        // composed at rest too keeps its group, so nothing is owed it: asked
+        // at rest, the wait is nothing and the view would draw again at
+        // once, every frame.
+        if !self.always
+            && let Some(wait) = self.animated.settled_in()
+        {
             let view = window.current_view();
             cx.spawn(async move |cx| {
                 cx.background_executor().timer(wait).await;

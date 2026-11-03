@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
 
-use gpui_kit::{
+use gpui::{
     App, AssetSource, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, Styled, Window, div, px, svg,
 };
@@ -153,7 +153,7 @@ fn glyph_named(name: &str) -> Option<&'static Glyph> {
 pub struct Assets;
 
 impl AssetSource for Assets {
-    fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         if path == crate::components::placeholder::ENSO {
             return Ok(Some(Cow::Owned(
                 crate::components::placeholder::enso_svg().into_bytes(),
@@ -176,7 +176,7 @@ impl AssetSource for Assets {
         Ok(Some(Cow::Owned(render(glyph, units, layer).into_bytes())))
     }
 
-    fn list(&self, path: &str) -> gpui_kit::Result<Vec<SharedString>> {
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         gpui_kit::assets::Assets.list(path)
     }
 }
