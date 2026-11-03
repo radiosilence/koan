@@ -75,7 +75,12 @@ impl ControlView {
     }
 
     fn can_move(&self, to: Option<&DeviceInfo>) -> bool {
-        koan_runtime::can_move_music(to.cloned(), self.controlled().cloned(), self.has_queue)
+        koan_runtime::can_move_music(
+            to.cloned(),
+            self.target.clone(),
+            self.controlled().cloned(),
+            self.has_queue,
+        )
     }
 }
 

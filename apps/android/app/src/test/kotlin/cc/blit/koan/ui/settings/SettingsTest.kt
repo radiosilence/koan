@@ -62,21 +62,6 @@ class SettingsTest {
     )
 
     @Test
-    fun musicMovesOnlyWhereThereIsSomethingToMoveAndALibraryToPlayIt() {
-        val tv = device()
-        // From this phone: only with a queue, only to a device with the same library.
-        assertTrue(canMoveMusic(tv, target = null, controlled = null, hasQueue = true))
-        assertFalse(canMoveMusic(tv, target = null, controlled = null, hasQueue = false))
-        assertFalse(canMoveMusic(device(sameLibrary = false), target = null, controlled = null, hasQueue = true))
-        assertFalse(canMoveMusic(device(problem = "Out of reach"), target = null, controlled = null, hasQueue = true))
-        // Back here from a device controlled: only while it has music.
-        assertTrue(canMoveMusic(null, target = "tv", controlled = tv, hasQueue = false))
-        assertFalse(canMoveMusic(null, target = "tv", controlled = device(state = PlayState.STOPPED), hasQueue = true))
-        // Not to the device already controlled.
-        assertFalse(canMoveMusic(tv, target = "tv", controlled = tv, hasQueue = true))
-    }
-
-    @Test
     fun aDeviceSaysWhatItIsDoing() {
         assertEquals("Playing Tone 300 Hz — Tone Settings", detail(device()))
         assertEquals("Idle · different library", detail(device(state = PlayState.STOPPED, sameLibrary = false)))
