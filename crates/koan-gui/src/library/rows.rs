@@ -15,10 +15,12 @@ use koan_kit::raw::font;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
+use super::Lib;
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
+use super::nav::Page;
 use super::selection::Selection;
 use super::tokens::{Paint, Type};
 use crate::components::{
@@ -43,12 +45,29 @@ pub fn art_height(p: &Paint) -> Pixels {
 /// A gathered row's sleeve, in points at 100 % (`RowMetrics::sleeve`).
 pub const SLEEVE: f32 = 32.0;
 
+/// Where a click on a track's row landed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowPart {
+    /// The row itself, which each list answers in its own way.
     Row,
     Artist(i64),
     Album(i64),
     Heart,
+}
+
+impl RowPart {
+    /// What a click on a row's link or heart does, the same in every list:
+    /// the artist's or the record's page, or the track's favourite.
+    pub fn follow(self, track: i64, lib: &Lib, cx: &mut App) {
+        match self {
+            RowPart::Row => {}
+            RowPart::Artist(id) => lib.nav.update(cx, |n, cx| n.open(Page::Artist(id), cx)),
+            RowPart::Album(id) => lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
+            RowPart::Heart => lib
+                .feed
+                .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
+        }
+    }
 }
 
 pub trait TrackList: actions::Menus {

@@ -68,14 +68,6 @@ impl ControlView {
         self.devices.iter().find(|d| &d.id == target)
     }
 
-    /// The device controlled, by name, while it is not this one.
-    pub fn controlled_name(&self) -> Option<String> {
-        self.target.as_ref().map(|_| {
-            self.controlled()
-                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
-        })
-    }
-
     /// The device controlled cannot be reached: commands fail until it is
     /// back.
     pub fn out_of_reach(&self) -> bool {

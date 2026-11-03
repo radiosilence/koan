@@ -26,13 +26,6 @@ pub fn panel(look: &Look) -> Stateful<Div> {
         .border_color(look.palette.rule.hsla())
 }
 
-/// A sheet that holds a list to pick from (the picker): wider than a
-/// question's, and tall from the start, so the list growing as it is
-/// typed into moves nothing.
-pub fn list_panel(look: &Look) -> Stateful<Div> {
-    panel(look).w(px(680.0)).h(relative(0.8)).max_h(px(640.0))
-}
-
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
 pub fn wide_panel(look: &Look) -> Stateful<Div> {
@@ -97,17 +90,6 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .pt(look.space(Space::Xxl))
         .bg(look.veil(0.6))
         .occlude()
-}
-
-/// A sheet whose head is a search: the field across the top, with a hairline
-/// under it.
-pub fn search_head(input: &Entity<InputState>, look: &Look) -> impl IntoElement {
-    div()
-        .px(look.space(Space::L))
-        .py(look.space(Space::M))
-        .border_b(look.hairline)
-        .border_color(look.palette.rule.hsla())
-        .child(super::FilterField::new(input).fill())
 }
 
 /// A band under the head or over the foot: a sheet's segmented choice.

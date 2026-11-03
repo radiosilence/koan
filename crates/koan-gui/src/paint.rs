@@ -1,7 +1,7 @@
 //! A window's look as these views draw with it: the theme's `Look`, with its
 //! colours flattened to the values the views paint with.
 
-use crate::theme::{Look, Space, Tone, tokens};
+use crate::theme::{Look, Space, Tone};
 use koan_kit::app::{App, Pixels, Window};
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::{Hsla, hsla, px};
@@ -75,11 +75,6 @@ impl Paint {
     /// A width that holds text, in points at 100 %, grown with the text size.
     pub fn sized(&self, points: f32) -> Pixels {
         px(points * self.look.scale.size)
-    }
-
-    /// A faint hairline of `ink` between regions.
-    pub fn row_rule(&self) -> Hsla {
-        self.ink.opacity(tokens::ROW_RULE_OPACITY)
     }
 
     /// A flat dim over artwork, under the hover play mark. Not a fade.
