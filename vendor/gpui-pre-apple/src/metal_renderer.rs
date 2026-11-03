@@ -2196,12 +2196,17 @@ float koan_track(constant float *u, uint k, float time) {
 }
 
 // The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-// texels around its tile in the atlas.
+// texels around its tile in the atlas. Past the texture's edge it is clear,
+// as a layer group's texture holds only its visible part (#1878).
 float4 koan_sample(texture2d<float> image, float4 tile, float2 uv) {
     constexpr sampler linear(filter::linear, address::clamp_to_edge);
     float2 extent = float2(image.get_width(), image.get_height());
+    float2 raw = tile.xy + uv * tile.zw;
+    if (any(raw < 0.0) || any(raw > extent)) {
+        return float4(0.0);
+    }
     float2 at = clamp(
-        tile.xy + uv * tile.zw,
+        raw,
         tile.xy + 0.5,
         tile.xy + tile.zw - 0.5
     );

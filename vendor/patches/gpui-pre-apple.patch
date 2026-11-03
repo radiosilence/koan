@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..dc32523 100644
+index 862e62a..96bb313 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -126,6 +126,26 @@ pub struct MetalRenderer {
@@ -622,7 +622,7 @@ index 862e62a..dc32523 100644
          command_encoder.set_vertex_buffer(
              SpriteInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1486,8 +1974,280 @@ struct InstanceBindings {
+@@ -1486,8 +1974,285 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
@@ -795,8 +795,8 @@ index 862e62a..dc32523 100644
 +        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
 +    }
 +    return koan_bezier_curve(y1, y2, s);
-+}
-+
+ }
+ 
 +float koan_spring(float x0, float v0, float k, float c, float t) {
 +    float w = sqrt(max(k, 1e-3));
 +    float z = c / (2.0 * w);
@@ -845,15 +845,20 @@ index 862e62a..dc32523 100644
 +        p = koan_bezier(a.x, a.y, b.x, b.y, p);
 +    }
 +    return from + (to - from) * p;
- }
- 
++}
++
 +// The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-+// texels around its tile in the atlas.
++// texels around its tile in the atlas. Past the texture's edge it is clear,
++// as a layer group's texture holds only its visible part (#1878).
 +float4 koan_sample(texture2d<float> image, float4 tile, float2 uv) {
 +    constexpr sampler linear(filter::linear, address::clamp_to_edge);
 +    float2 extent = float2(image.get_width(), image.get_height());
++    float2 raw = tile.xy + uv * tile.zw;
++    if (any(raw < 0.0) || any(raw > extent)) {
++        return float4(0.0);
++    }
 +    float2 at = clamp(
-+        tile.xy + uv * tile.zw,
++        raw,
 +        tile.xy + 0.5,
 +        tile.xy + tile.zw - 0.5
 +    );
@@ -903,7 +908,7 @@ index 862e62a..dc32523 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2259,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2264,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -934,7 +939,7 @@ index 862e62a..dc32523 100644
      })
  }
  
-@@ -1799,4 +2583,661 @@ mod tests {
+@@ -1799,4 +2588,661 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }

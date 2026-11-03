@@ -68,10 +68,15 @@ struct KoanShaderInstance {
 @group(2) @binding(1) var s_koan_image: sampler;
 
 // The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-// texels around its tile in the atlas.
+// texels around its tile in the atlas. KOAN: past the texture's edge it is
+// clear, as a layer group's texture holds only its visible part (#1878).
 fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let extent = vec2<f32>(textureDimensions(t_koan_image, 0));
-    let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
+    let raw = tile.xy + uv * tile.zw;
+    if (any(raw < vec2<f32>(0.0)) || any(raw > extent)) {
+        return vec4<f32>(0.0);
+    }
+    let at = clamp(raw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
     return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
 }
 

@@ -197,10 +197,10 @@ index 074d430..2538748 100644
      return out;
  }
 diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
-index f6611df..a53e289 100644
+index f6611df..45800f2 100644
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
-@@ -45,6 +45,198 @@ const SUBPIXEL_SHADERS: &str = concat!(
+@@ -45,6 +45,203 @@ const SUBPIXEL_SHADERS: &str = concat!(
      include_str!("shaders_subpixel.wgsl"),
  );
  
@@ -227,10 +227,15 @@ index f6611df..a53e289 100644
 +@group(2) @binding(1) var s_koan_image: sampler;
 +
 +// The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-+// texels around its tile in the atlas.
++// texels around its tile in the atlas. KOAN: past the texture's edge it is
++// clear, as a layer group's texture holds only its visible part (#1878).
 +fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
 +    let extent = vec2<f32>(textureDimensions(t_koan_image, 0));
-+    let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
++    let raw = tile.xy + uv * tile.zw;
++    if (any(raw < vec2<f32>(0.0)) || any(raw > extent)) {
++        return vec4<f32>(0.0);
++    }
++    let at = clamp(raw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
 +    return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
 +}
 +
@@ -399,7 +404,7 @@ index f6611df..a53e289 100644
  fn least_common_multiple(left: u64, right: u64) -> u64 {
      let mut first = left;
      let mut second = right;
-@@ -190,11 +382,41 @@ struct WgpuResources {
+@@ -190,11 +387,41 @@ struct WgpuResources {
      globals_buffer: wgpu::Buffer,
      globals_bind_group: wgpu::BindGroup,
      path_globals_bind_group: wgpu::BindGroup,
@@ -441,7 +446,7 @@ index f6611df..a53e289 100644
  }
  
  struct CachedTextureBindGroup {
-@@ -523,6 +745,17 @@ impl WgpuRendererCore {
+@@ -523,6 +750,17 @@ impl WgpuRendererCore {
                          },
                          count: None,
                      },
@@ -459,7 +464,7 @@ index f6611df..a53e289 100644
                  ],
              });
  
-@@ -1077,6 +1310,10 @@ impl WgpuRenderer {
+@@ -1077,6 +1315,10 @@ impl WgpuRenderer {
              core.dual_source_blending,
              core.uses_webgl_instance_data,
          );
@@ -470,7 +475,7 @@ index f6611df..a53e289 100644
  
          if let RendererState::Ready { surface, core } = &self.state {
              surface.configure(&core.resources.device, &self.surface_config);
-@@ -1191,13 +1428,27 @@ impl WgpuRenderer {
+@@ -1191,13 +1433,27 @@ impl WgpuRenderer {
              .create_view(&wgpu::TextureViewDescriptor::default());
          let premultiplied_alpha =
              self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
@@ -505,7 +510,7 @@ index f6611df..a53e289 100644
              log::error!("{error:#}");
              return false;
          }
-@@ -1247,6 +1498,13 @@ impl WgpuRendererCore {
+@@ -1247,6 +1503,13 @@ impl WgpuRendererCore {
              usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
              mapped_at_creation: false,
          });
@@ -519,7 +524,7 @@ index f6611df..a53e289 100644
          let (
              instance_data,
              instance_data_capacity,
-@@ -1306,6 +1564,11 @@ impl WgpuRendererCore {
+@@ -1306,6 +1569,11 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -531,7 +536,7 @@ index f6611df..a53e289 100644
              ],
          });
          let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-@@ -1328,9 +1591,47 @@ impl WgpuRendererCore {
+@@ -1328,9 +1596,47 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -579,7 +584,7 @@ index f6611df..a53e289 100644
  
          Self {
              resources: WgpuResources {
-@@ -1343,11 +1644,19 @@ impl WgpuRendererCore {
+@@ -1343,11 +1649,19 @@ impl WgpuRendererCore {
                  globals_buffer,
                  globals_bind_group,
                  path_globals_bind_group,
@@ -599,7 +604,7 @@ index f6611df..a53e289 100644
              },
              atlas,
              path_globals_offset,
-@@ -1429,7 +1738,12 @@ impl WgpuRendererCore {
+@@ -1429,7 +1743,12 @@ impl WgpuRendererCore {
          );
  
          self.atlas.before_frame();
@@ -613,7 +618,7 @@ index f6611df..a53e289 100644
  
          let gamma_params = GammaParams {
              gamma_ratios: self.rendering_params.gamma_ratios,
-@@ -1462,6 +1776,7 @@ impl WgpuRendererCore {
+@@ -1462,6 +1781,7 @@ impl WgpuRendererCore {
              self.gamma_offset,
              bytemuck::bytes_of(&gamma_params),
          );
@@ -621,7 +626,7 @@ index f6611df..a53e289 100644
  
          self.record_frame(scene, target_view, clear_color)
              .inspect_err(|_| {
-@@ -1492,6 +1807,26 @@ impl WgpuRendererCore {
+@@ -1492,6 +1812,26 @@ impl WgpuRendererCore {
                  )
              })?;
          self.prepare_texture_bind_groups(scene);
@@ -648,7 +653,7 @@ index f6611df..a53e289 100644
  
          let mut encoder =
              self.resources()
-@@ -1607,6 +1942,24 @@ impl WgpuRendererCore {
+@@ -1607,6 +1947,24 @@ impl WgpuRendererCore {
                      // Surfaces are macOS-only for video playback and are not
                      // implemented by the WGPU renderer.
                      PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -673,7 +678,7 @@ index f6611df..a53e289 100644
                  }
              }
          }
-@@ -1688,6 +2041,11 @@ impl WgpuRendererCore {
+@@ -1688,6 +2046,11 @@ impl WgpuRendererCore {
                  PrimitiveBatch::MonochromeSprites { texture_id, .. }
                  | PrimitiveBatch::SubpixelSprites { texture_id, .. }
                  | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
@@ -685,7 +690,7 @@ index f6611df..a53e289 100644
                  _ => continue,
              };
              if !texture_ids.contains(&texture_id) {
-@@ -1695,9 +2053,30 @@ impl WgpuRendererCore {
+@@ -1695,9 +2058,30 @@ impl WgpuRendererCore {
              }
          }
  
@@ -719,7 +724,7 @@ index f6611df..a53e289 100644
  
          for texture_id in texture_ids {
              let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
-@@ -1727,6 +2106,37 @@ impl WgpuRendererCore {
+@@ -1727,6 +2111,37 @@ impl WgpuRendererCore {
          }
      }
  
@@ -757,7 +762,7 @@ index f6611df..a53e289 100644
      fn draw_instances(
          &self,
          instances: &InstanceBinding,
-@@ -1775,6 +2185,521 @@ impl WgpuRendererCore {
+@@ -1775,6 +2190,521 @@ impl WgpuRendererCore {
          Ok(())
      }
  
@@ -1279,7 +1284,7 @@ index f6611df..a53e289 100644
      unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
          unsafe {
              std::slice::from_raw_parts(
-@@ -2400,11 +3325,33 @@ impl WgpuHeadlessRenderer {
+@@ -2400,11 +3330,33 @@ impl WgpuHeadlessRenderer {
              .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
              .view
              .clone();
@@ -1313,7 +1318,7 @@ index f6611df..a53e289 100644
      /// Copies the current render target back to the CPU. Dimensions come from the
      /// target texture itself, so the copy can never disagree with what was rendered.
      fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
-@@ -2921,4 +3868,328 @@ mod tests {
+@@ -2921,4 +3873,328 @@ mod tests {
              ]
          );
      }
