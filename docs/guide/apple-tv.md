@@ -97,7 +97,9 @@ per TV, and then works from every device signed in to your account.
 
 To set it up, sign the TV in from a phone or Mac: once the TV is signed in,
 kōan asks whether to wake it from there. Or choose **Set Up Waking…** from the
-TV's menu in Play on (a long press on iOS, a right click on the Mac). The TV
+TV's menu in Play on (a long press on iOS, a right click on the Mac); in the
+desktop app on a Mac, the television button on the TV's row, or choosing the
+TV while nothing can wake it yet, does the same. The TV
 shows a four-digit code; type it on the phone or Mac. The TV waits about half
 a minute for it, and **Try Again** asks for a fresh one. Your server keeps
 the pairing for your account, which needs kōan 0.66.4 or later on the server.
