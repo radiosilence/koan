@@ -202,6 +202,11 @@ impl Shell {
         });
     }
 
+    /// The queue's view, for tools that drive the window headlessly.
+    pub fn queue(&self) -> &Entity<QueueView> {
+        &self.queue
+    }
+
     /// Goes to `route`, as a link or a menu would.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {

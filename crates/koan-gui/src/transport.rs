@@ -1383,6 +1383,8 @@ impl Render for Seek {
             |_, _, _, _| {},
         )
         .absolute()
+        .top_0()
+        .left_0()
         .size_full();
         // How far a track still downloading can be played, moving as its
         // bytes arrive; nothing once the file is all here.

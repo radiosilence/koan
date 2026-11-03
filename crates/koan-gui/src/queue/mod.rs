@@ -229,6 +229,12 @@ impl QueueView {
         view
     }
 
+    /// Where row `row` was drawn last frame, in the window; `None` while it
+    /// is off screen. For tools that drive the window headlessly.
+    pub fn row_bounds(&self, row: usize) -> Option<Bounds<Pixels>> {
+        self.list.row_bounds(row)
+    }
+
     /// "Group by album": the rows under record headings, or flat.
     fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
         window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);

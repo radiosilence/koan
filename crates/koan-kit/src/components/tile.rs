@@ -334,6 +334,8 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 
