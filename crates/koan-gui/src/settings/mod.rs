@@ -55,10 +55,13 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         let (engine, waiting) = model.update(cx, |m, _| {
             (m.engine().clone(), std::mem::take(&mut m.waiting_pairs))
         });
+        // All at once: quitting waits only a moment for them.
+        let declines = waiting
+            .into_iter()
+            .map(|pair| engine.clone().decline_pairing(pair));
+        let declines = futures::future::join_all(declines);
         async move {
-            for pair in waiting {
-                engine.clone().decline_pairing(pair).await.ok();
-            }
+            declines.await;
         }
     })
     .detach();

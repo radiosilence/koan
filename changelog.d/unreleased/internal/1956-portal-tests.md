@@ -1,0 +1,1 @@
+- **The desktop app's tests no longer fail at random on Linux.** The theme leaves the desktop portal unwatched under the test scheduler, whose wakes from D-Bus threads it refuses.

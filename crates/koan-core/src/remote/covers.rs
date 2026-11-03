@@ -500,7 +500,7 @@ fn allowed(enabled: bool, reachable: bool) -> bool {
     enabled
         && reachable
         && !CONSTRAINED.load(Ordering::Relaxed)
-        && !STOPPED.load(Ordering::Relaxed)
+        && !stopped()
         && crate::quiet::awake()
 }
 
@@ -640,6 +640,10 @@ const BULK_FAILURES: usize = 3;
 /// What a bulk answer hands each frame to: whether to read on.
 type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
 
+/// What `in_bulk` asks a chunk through: `SubsonicClient::get_covers`, or a
+/// test's answers.
+type Fetch<'a> = dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError> + 'a;
+
 /// `koanCovers` for `ids`, `BULK_MAX` at a time, through `fetch`
 /// (`SubsonicClient::get_covers`), asking `may` whether to go on: keeps what the server holds
 /// and says it has none of, and returns the ids it does not hold ready, or
@@ -649,7 +653,7 @@ type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
 /// not reach, one the server cannot answer or refuses is not, and what is
 /// left goes to the one by one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
-    fetch: &mut dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError>,
+    fetch: &mut Fetch,
     may: &dyn Fn() -> Result<(), Halt>,
     cfg: &Config,
     ids: Vec<String>,
