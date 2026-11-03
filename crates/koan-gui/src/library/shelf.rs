@@ -394,8 +394,8 @@ impl ShelfPage {
         }
         self.aimed = keys.clone();
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| {
-            c.request(owner, keys.into_iter().map(|k| (k, Priority::Visible)))
+        self.lib.covers.update(cx, |c, cx| {
+            c.request(owner, keys.into_iter().map(|k| (k, Priority::Visible)), cx)
         });
     }
 

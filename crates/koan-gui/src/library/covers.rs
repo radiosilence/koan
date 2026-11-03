@@ -640,8 +640,15 @@ impl Covers {
     /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
     /// longer asks for is not started on its account. A record that comes on
     /// screen after a failed fetch is tried again. Never notifies, so it can
-    /// be called while drawing.
-    pub fn request(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
+    /// be called while drawing. Asking for less (a scroll come to rest) trims
+    /// memory back to the smaller budget once nothing can be drawing what
+    /// went.
+    pub fn request(
+        &mut self,
+        owner: EntityId,
+        ranked: impl IntoIterator<Item = (Key, Priority)>,
+        cx: &mut Context<Self>,
+    ) {
         // A key ranked twice keeps its most urgent ranking.
         let mut wanted: HashMap<Key, Priority> = HashMap::new();
         for (key, priority) in ranked {
@@ -671,8 +678,16 @@ impl Covers {
                 queue.failed.remove(&art);
             }
         }
+        let shrank = previous.is_some_and(|prev| wanted.len() < prev.len());
         self.requests.insert(owner, wanted);
         self.publish();
+        if shrank
+            && !self.trim_waiting
+            && self.memory_bytes > RETAIN
+            && self.memory_bytes > Self::budget(&self.asked())
+        {
+            self.trim_later(cx);
+        }
     }
 
     /// A list or page going away: nothing it asked for is wanted on its
