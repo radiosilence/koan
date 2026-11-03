@@ -319,3 +319,140 @@ fn a_hover_storm_across_cached_views_draws_every_frame(cx: &mut TestAppContext) 
     }
     draw(window, cx);
 }
+
+/// Where the app is, as a navigator: an entity the stage observes.
+struct Route {
+    album: bool,
+}
+
+/// A page made by the stage when it first shows: its rows arrive from a
+/// read in a spawned task, which notifies when they land.
+struct AlbumPage {
+    rows: Option<usize>,
+    /// Renders that drew the rows.
+    drawn_with_rows: usize,
+}
+
+impl AlbumPage {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let read = cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(5));
+        cx.spawn(async move |page, cx| {
+            read.await;
+            page.update(cx, |page, cx| {
+                page.rows = Some(12);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        Self {
+            rows: None,
+            drawn_with_rows: 0,
+        }
+    }
+}
+
+impl Render for AlbumPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if self.rows.is_some() {
+            self.drawn_with_rows += 1;
+        }
+        div()
+            .size_full()
+            .child(format!("{} rows", self.rows.unwrap_or(0)))
+    }
+}
+
+/// The stage: makes the page as it renders for the album route.
+struct Stage {
+    route: Entity<Route>,
+    page: Option<Entity<AlbumPage>>,
+}
+
+impl Render for Stage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.route.read(cx).album && self.page.is_none() {
+            self.page = Some(cx.new(AlbumPage::new));
+        }
+        div().size_full().children(
+            self.page
+                .clone()
+                .map(|page| page.cached(StyleRefinement::default().size_full())),
+        )
+    }
+}
+
+/// The window's content, cached as the shell's is.
+struct Content {
+    stage: Entity<Stage>,
+}
+
+impl Render for Content {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            self.stage
+                .clone()
+                .cached(StyleRefinement::default().size_full()),
+        )
+    }
+}
+
+struct Shell {
+    content: Entity<Content>,
+}
+
+impl Render for Shell {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            self.content
+                .clone()
+                .cached(StyleRefinement::default().size_full()),
+        )
+    }
+}
+
+/// A page two cached views down, made when its stage renders and filled by
+/// a spawned read, draws its rows when the read notifies, though its stage
+/// drew again in between and reused it: no input, no refresh, nothing but
+/// the notify asks for the frame. The stage made the page, so the page's
+/// own entity was first read in the stage's render.
+#[gpui_kit::test]
+fn a_page_filled_by_a_spawned_read_draws_without_input(cx: &mut TestAppContext) {
+    let route = cx.new(|_| Route { album: false });
+    let stage = cx.new(|cx| {
+        let route_handle = route.clone();
+        cx.observe(&route_handle, |_, _, cx| cx.notify()).detach();
+        Stage {
+            route: route_handle,
+            page: None,
+        }
+    });
+    let content = cx.new(|_| Content {
+        stage: stage.clone(),
+    });
+    let _window = cx.add_window(|_, _| Shell { content });
+    cx.run_until_parked();
+
+    route.update(cx, |route, cx| {
+        route.album = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let page = stage
+        .read_with(cx, |stage, _| stage.page.clone())
+        .expect("the stage made the page as it rendered");
+
+    // The stage draws again before the read lands (the navigator notifies
+    // more than once for a move), and the page, unchanged, is reused.
+    route.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(10));
+    cx.run_until_parked();
+    let (rows, drawn) = page.read_with(cx, |page, _| (page.rows, page.drawn_with_rows));
+    assert_eq!(rows, Some(12), "the read landed");
+    assert!(drawn > 0, "the rows landed but no frame drew them");
+}

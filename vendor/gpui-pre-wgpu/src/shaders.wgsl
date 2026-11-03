@@ -1105,12 +1105,16 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         let distance = f / length(gradient);
         alpha = saturate(0.5 - distance);
     }
-    let prepared_gradient = prepare_gradient_color(
+    var prepared_gradient = prepare_gradient_color(
         background.tag,
         background.color_space,
         background.solid,
         background.colors,
     );
+    // KOAN: a path drawn in a colour slot follows it as it moves (#1859).
+    if (background.tag != 1u && background.solid.h >= 2.0) {
+        prepared_gradient.solid = koan_rgba(background.solid);
+    }
     let color = gradient_color(background, input.position.xy, bounds,
         prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);

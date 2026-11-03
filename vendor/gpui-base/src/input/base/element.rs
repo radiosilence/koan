@@ -3454,11 +3454,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
         // KOAN: drawn by the caret's shader, which reads whether it shows as
         // each frame is presented, so a blink draws no frame (#1786).
         if focused && show_cursor {
-            let caret = editor_style.caret.to_rgb();
-            caret_uniforms.set(4, caret.r);
-            caret_uniforms.set(5, caret.g);
-            caret_uniforms.set(6, caret.b);
-            caret_uniforms.set(7, caret.a);
+            // KOAN: a caret in a colour slot follows it as it moves (#1859).
+            caret_uniforms.set_color(4, editor_style.caret);
             for cursor_info in prepaint.cursor_infos_with_scroll() {
                 window.paint_shader(
                     snap_caret_to_device_pixels(cursor_info.bounds, window.scale_factor()),

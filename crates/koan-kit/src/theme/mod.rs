@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use gpui::{
     App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
-    Subscription, Task, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
+    Subscription, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};
@@ -473,18 +473,22 @@ impl KoanTheme {
             }
             feed.target = accent;
             feed.aim(contrast, ease);
-            // What reads the accent on the CPU (a shader's uniforms, a path)
-            // reads it again once it has landed; the slots move the rest.
-            if ease && feed.slots.is_some() {
-                feed._landing = Some(cx.spawn(async move |feed, cx| {
-                    cx.background_executor().timer(Motion::DISSOLVE).await;
-                    feed.update(cx, |_, cx| cx.notify()).ok();
-                }));
-            } else {
-                feed._landing = None;
+            // Everything drawn in the accent names its slots (fills, text,
+            // paths, a caret, shader uniforms) and a fade reads a slot as it
+            // starts, so a turn redraws no view: the rainbow's every step
+            // included. Only without slots does a view draw the colour
+            // itself, and need drawing again.
+            if feed.slots.is_none() {
                 cx.notify();
             }
         });
+        // A window at rest presents nothing by itself: one present each, and
+        // a window drawing with the slots keeps presenting while they move.
+        for window in cx.windows() {
+            window
+                .update(cx, |_, window, _| window.request_present())
+                .ok();
+        }
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
@@ -618,7 +622,6 @@ pub struct AccentFeed {
     /// aim rather than looked up per call.
     contrast: std::cell::Cell<bool>,
     held: std::cell::Cell<[Shade; 2]>,
-    _landing: Option<Task<()>>,
 }
 
 impl AccentFeed {
@@ -631,10 +634,19 @@ impl AccentFeed {
             slots,
             contrast: std::cell::Cell::new(false),
             held: std::cell::Cell::new([target.shade(true), target.shade(false)]),
-            _landing: None,
         };
         feed.aim(false, false);
         feed
+    }
+
+    /// Whether the accent is still turning to its target.
+    fn turning(&self) -> bool {
+        let now = gpui_kit::present_now();
+        self.slots
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|slot| slot.moving(now))
     }
 
     /// Sends the slots to the target as it is drawn with `contrast`: as the
@@ -681,10 +693,11 @@ fn held(shade: Shade, dark: bool, contrast: bool) -> Shade {
 }
 
 /// The accent a window draws, through the feed's slots where it has them.
-/// A change of contrast lands the slots on the held shade at once.
+/// A change of contrast lands the slots on the held shade at once, as does
+/// motion stopping (Reduce Motion, Low Power Mode) mid-turn.
 fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
     let feed = cx.global::<AccentHandle>().0.read(cx);
-    if feed.contrast.get() != contrast {
+    if feed.contrast.get() != contrast || (!KoanTheme::motion_allowed(cx) && feed.turning()) {
         feed.aim(contrast, false);
     }
     let mut shade = feed.held.get()[usize::from(!dark)];
@@ -699,9 +712,10 @@ struct AccentHandle(Entity<AccentFeed>);
 
 impl Global for AccentHandle {}
 
-/// Redraws a view whenever the accent moves. A cached view that draws the
-/// accent holds the subscription for as long as it lives; an uncached one
-/// redraws with its parent and needs none.
+/// Redraws a view when the accent changes in a way the colour slots cannot
+/// carry: where no slots could be claimed, each record's accent. A cached
+/// view that draws the accent holds the subscription for as long as it
+/// lives; an uncached one redraws with its parent and needs none.
 pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
     let feed = cx.global::<AccentHandle>().0.clone();
     cx.observe(&feed, |_, _, cx| cx.notify())
