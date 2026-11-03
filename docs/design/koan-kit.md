@@ -194,6 +194,21 @@ A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_o
 
 `Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives. It is the one loading mark: a pane waiting on its rows shows it rather than a word. On the shader path the ensō is drawn from a field baked once (how far along the brush and how far from it each texel is), its head and tail moving with `time`, so it turns smoothly at any size with no frame drawn.
 
+### Motion: the principles
+
+Motion is what makes the app feel made with care, and it is easy to spoil with too much of it. Each rule below is one every component follows, so a page that uses the kit gets the same motion everywhere and writes none of its own.
+
+- **Motion says what happened.** An animation answers something the person did or something that changed: a favourite set, music arriving in the queue, a download finishing, a panel opening. Nothing moves without a change behind it, and nothing moves only to decorate. The playing bars and the wash carry the music's own levels and colour; the motion between their values smooths real data, and is never invented.
+- **Quick and quiet.** Every transition is within the motion tokens: `FAST` (80 ms) for a state flipping, `NORMAL` (120 ms) for something arriving, `LEAVE` (130 ms) for something going, `SETTLE` (250 ms) for the longest, an answer or a panel sliding. An answer is the accent at low opacity, drawn around or under what was acted on and never over its text. If an animation is noticed for itself, it is too large.
+- **Arrive at once, leave with a fade.** What the person causes shows the moment they cause it: a pressed button, a hovered row and a lit control respond on the frame they are touched. What goes lingers for `LEAVE`, so the eye follows it out. A response that waits for its own animation reads as lag.
+- **Nothing jumps.** A change mid-flight starts from what is on screen, and a spring carries its speed into the new target (`Animated::to`). Content laid out by a moving size is laid out at its full size and clipped, so a sliding panel or a growing slot moves what is beside it and reflows nothing inside.
+- **Motion goes where the thing went.** A sweep draws from the leading edge toward the trailing one; music sent somewhere answers at its destination, the sidebar's queue or playlist row, not where it left. A panel slides from the edge it lives at.
+- **What is first seen stands still.** A page drawn for the first time, a row scrolled in, or a heart drawn fresh shows its state without animating to it. Only a change seen while the thing is on screen answers (`Answerer::follow`).
+- **The same interaction moves the same way everywhere.** Motion lives in the kit's components (buttons, toggles, rows, hearts, copy controls, menus, panels), never in a page. A new interaction gets a variant of an existing answer before it gets a new one.
+- **Curves.** Quick-out (`Ease::QuickOut`) for what arrives or settles; ease in and out for what loops or breathes; a spring for what the person drags or retargets often; linear only for progress, where the speed itself is information.
+- **Free at rest.** Everything that moves is keyframes the GPU interpolates at the display's refresh rate (below). Nothing is capped, paced or stepped by a timer. Nothing runs at rest, off screen or in a hidden window.
+- **Reduce Motion is honoured whole.** Transitions land at once, decorative motion stands still, and answers are not drawn. Progress still shows, since it is information.
+
 ### Animated (GPU-drawn motion)
 
 Every aspect of the UI is smooth and moves with ease, because any animation is drawn by the GPU through shaders: at the display's refresh rate always (120 Hz on ProMotion), with next to no CPU per frame, and nothing at all while nothing moves. No animation is capped, paced or stepped by a timer.
