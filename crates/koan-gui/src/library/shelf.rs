@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use koan_ffi::{AlbumSort, BrowseFilter, ShelfKind, ShelfSummary, TrackBrowseSort};
+use koan_ffi::{ShelfKind, ShelfSummary};
 use koan_kit::app::*;
 
 use super::covers::{Art, Covers, Key, Priority, UPLOAD_BYTES_PER_FRAME};
@@ -27,6 +27,7 @@ use crate::components::{
     Collection, CollectionSection, CollectionWidth, EmptyState, PageHeader, Pill, RowKind,
     RowMetrics, SectionHeading, TileGrid,
 };
+use crate::navigator::{Listing, Shelf};
 use crate::theme::Icon;
 
 /// What a shelf is called and what it says with nothing on it.
@@ -353,36 +354,14 @@ impl ShelfPage {
 
     /// Opens `page`'s browser narrowed to this shelf, from its top, sorted
     /// as the shelf is.
-    fn see_all(&mut self, page: Page, cx: &mut Context<Self>) {
-        let shelf = self.shelf.clone();
-        self.lib.browse.update(cx, |b, cx| {
-            b.update(cx, |b| {
-                let mut filter = BrowseFilter::default();
-                let (album, track) = match &shelf {
-                    ShelfKind::Favourites => {
-                        filter.favourites = true;
-                        (AlbumSort::Artist, TrackBrowseSort::Artist)
-                    }
-                    ShelfKind::Recent => {
-                        filter.recent = true;
-                        (AlbumSort::LastPlayed, TrackBrowseSort::LastPlayed)
-                    }
-                    ShelfKind::Downloaded => {
-                        filter.downloaded = true;
-                        (AlbumSort::Downloaded, TrackBrowseSort::Artist)
-                    }
-                    ShelfKind::Search { .. } => (AlbumSort::BestMatch, TrackBrowseSort::BestMatch),
-                };
-                b.filter = filter;
-                b.album_sort = album;
-                b.track_sort = track;
-            });
-            let search = match &shelf {
-                ShelfKind::Search { query } => query.clone(),
-                _ => String::new(),
-            };
-            b.set_search(search, cx);
-        });
+    fn see_all(&mut self, listing: Listing, cx: &mut Context<Self>) {
+        let shelf = match &self.shelf {
+            ShelfKind::Favourites => Shelf::Favourites,
+            ShelfKind::Recent => Shelf::Recent,
+            ShelfKind::Downloaded => Shelf::Downloaded,
+            ShelfKind::Search { .. } => Shelf::Search,
+        };
+        let page = Page::Shelved(shelf, listing);
         self.lib.nav.update(cx, |nav, cx| {
             nav.forget_place(page);
             nav.open(page, cx);
@@ -416,14 +395,14 @@ impl ShelfPage {
         &self,
         title: &'static str,
         total: u64,
-        page: Page,
+        listing: Listing,
         cx: &mut Context<Self>,
     ) -> SectionHeading {
         SectionHeading::new(title)
             .count(chrome::grouped(total))
             .on_open(
                 SharedString::from(format!("see-all-{title}")),
-                cx.listener(move |this, _, _, cx| this.see_all(page, cx)),
+                cx.listener(move |this, _, _, cx| this.see_all(listing, cx)),
             )
     }
 
@@ -900,19 +879,19 @@ impl Render for ShelfPage {
             .empty(EmptyState::new(words.icon, words.empty).detail(words.detail));
         if let Some(s) = self.summary.clone() {
             header = header.detail(counts(&s));
-            let artists = self.heading("artists", s.artist_total, Page::Artists, cx);
+            let artists = self.heading("artists", s.artist_total, Listing::Artists, cx);
             collection = collection.section(
                 CollectionSection::pills(artists, self.pills(&s, cx)).reveal(self.reveal_in(0)),
             );
             if let Some(grid) = grid {
                 self.aim(p, grid, scale, cx);
-                let albums = self.heading("albums", s.album_total, Page::Albums, cx);
+                let albums = self.heading("albums", s.album_total, Listing::Albums, cx);
                 let tiles = self.tiles(&s, grid, scale, cx);
                 collection = collection.section(
                     CollectionSection::tiles(albums, grid, tiles).reveal(self.reveal_in(1)),
                 );
             }
-            let tracks = self.heading("tracks", s.track_total, Page::Tracks, cx);
+            let tracks = self.heading("tracks", s.track_total, Listing::Tracks, cx);
             let rows = self.rows(p, &s, window, cx);
             collection =
                 collection.section(CollectionSection::rows(tracks, rows).reveal(self.reveal_in(2)));

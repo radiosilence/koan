@@ -22,6 +22,7 @@ pub mod keys;
 pub mod nav;
 pub mod playlist;
 pub mod rows;
+pub mod scope;
 pub mod selection;
 pub mod shelf;
 pub mod stage;

@@ -406,17 +406,17 @@ impl Render for Sidebar {
                     .drop_highlight::<ExternalPaths>(&p.look)
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .drop_highlight::<PlaylistDrag>(&p.look)
-                    .on_drop(cx.listener(|this, dragged: &PlaylistDrag, _, cx| {
+                    .accept(cx.listener(|this, dragged: &PlaylistDrag, _, cx| {
                         this.drop_playlist = None;
                         let sets = dragged.as_library().sets.to_vec();
                         command(cx, "queue a playlist", move |e| {
                             e.queue(sets, koan_ffi::Placement::Append)
                         });
                     }))
-                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                    .accept(cx.listener(|_, paths: &ExternalPaths, _, cx| {
                         drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
                     }))
-                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                    .accept(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
                         let sets = dragged.sets.to_vec();
                         command(cx, "queue from the library", move |e| {
                             e.queue(sets, koan_ffi::Placement::Append)
@@ -527,7 +527,7 @@ impl Render for Sidebar {
                         .when(!playlist.readonly, |row| {
                             row.drop_highlight::<ExternalPaths>(&p.look)
                                 .drop_highlight::<PlayableDrag>(&p.look)
-                                .on_drop(cx.listener({
+                                .accept(cx.listener({
                                     let id = playlist.id;
                                     move |_, paths: &ExternalPaths, _, cx| {
                                         drop::add_files_to_playlist(
@@ -538,7 +538,7 @@ impl Render for Sidebar {
                                         )
                                     }
                                 }))
-                                .on_drop(cx.listener({
+                                .accept(cx.listener({
                                     let id = playlist.id;
                                     move |_, dragged: &PlayableDrag, _, cx| {
                                         if dragged.is_from(id) {

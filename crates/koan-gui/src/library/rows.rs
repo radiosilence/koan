@@ -187,15 +187,11 @@ pub fn track_row<V: TrackList>(
             );
     }
 
-    let heart = div()
-        .id(("row-heart", id as u64))
-        .cursor_pointer()
-        .text_color(if state.favourite { p.accent } else { p.muted })
+    let heart = crate::components::Heart::new(("row-heart", id as u64), state.favourite)
         .when(!state.favourite, |d| {
             d.invisible().group_hover(ROW_GROUP, |s| s.visible())
         })
-        .on_click(click(RowPart::Heart))
-        .child(super::tile::heart_glyph(p, state.favourite));
+        .on_click(click(RowPart::Heart));
 
     let drag = state.drag;
     let target = actions::MenuTarget {

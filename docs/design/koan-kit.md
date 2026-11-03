@@ -215,6 +215,19 @@ progress.set(0, fraction);                 // from any thread, as the engine rep
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 
+### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
+
+A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
+
+| Control | Answer |
+|---|---|
+| `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
+| `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
+| `Heart` | six dots leaving a heart that fills; a ring closing in on one that empties |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row) | a line drawn in under it |
+
+`SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
+
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
 
 `SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.

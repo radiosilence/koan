@@ -1320,31 +1320,18 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
         return slot.into_any_element();
     };
     slot.child(
-        div()
-            .id(look.id("heart", 0))
-            .cursor_pointer()
+        crate::components::Heart::new(look.id("heart", 0), favourite)
+            .role(TypeRole::Fine)
             .when(!favourite, |d| {
                 // The row's own group, which `TableRow` names for every row.
                 d.invisible()
                     .group_hover(crate::components::ROW_GROUP, |s| s.visible())
             })
             .on_click(move |_, _, cx| {
-                cx.stop_propagation();
                 feed.update(cx, |feed, cx| {
                     feed.toggle_favourite(Playable::Track(track), cx)
                 });
-            })
-            .child(glyph(
-                if favourite {
-                    Icon::Favourited
-                } else {
-                    Icon::Favourite
-                },
-                if favourite { "♥" } else { "♡" },
-                TypeRole::Fine,
-                if favourite { p.accent_text } else { p.muted },
-                p,
-            )),
+            }),
     )
     .into_any_element()
 }

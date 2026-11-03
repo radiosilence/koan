@@ -155,10 +155,13 @@ impl RenderOnce for Collection {
         let margin = RowMetrics::page_margin(&look);
         let cell = self.width.0.clone();
         let measure = canvas(
-            move |bounds, window, cx| {
+            move |bounds, window, _| {
+                // A notify from inside the frame that measured is cleared with
+                // that frame; the next one is asked for instead, which draws
+                // the tiles at the width just found.
                 if cell.get() != Some(bounds.size.width) {
                     cell.set(Some(bounds.size.width));
-                    cx.notify(window.current_view());
+                    window.request_animation_frame();
                 }
             },
             |_, _, _, _| {},
