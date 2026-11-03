@@ -92,6 +92,7 @@ fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
     let engine = engine.clone();
     let action = action.clone();
     cx.spawn(async move |cx| {
+        let favourite = matches!(action, Dock::Favourite(_));
         let done = match action {
             Dock::Favourite(id) => engine.toggle_favourite(id).await.map(|_| ()),
             Dock::Repeat(mode) => engine.set_repeat(mode).await,
@@ -104,7 +105,7 @@ fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
             log::warn!("dock menu: {e}");
         }
         // A heart moved: the pages read again, and so does the menu.
-        if matches!(action, Dock::Favourite(_)) {
+        if favourite {
             cx.update(crate::library::feed::favourites_moved);
         }
     })

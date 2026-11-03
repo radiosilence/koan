@@ -279,15 +279,15 @@ impl WindowRoot {
                     let Some(art) = fetch.await.map_err(|_| ())? else {
                         return Ok(None);
                     };
-                    let Ok(image) = image::load_from_memory(&art.data) else {
+                    let Ok(image) = ::image::load_from_memory(&art.data) else {
                         return Ok(None);
                     };
                     let image = image.to_rgba8();
-                    let small = image::imageops::resize(
+                    let small = ::image::imageops::resize(
                         &image,
                         SAMPLE,
                         SAMPLE,
-                        image::imageops::FilterType::Triangle,
+                        ::image::imageops::FilterType::Triangle,
                     );
                     let pixels = small.into_raw();
                     let accent = Accent::of_sleeve(&pixels, SAMPLE, SAMPLE);
