@@ -6517,9 +6517,11 @@ mod tests {
         assert_eq!(preset_for("DAC"), Some(("Desk".into(), true)));
         assert!(cfg.dsp.profile_for("Amp").is_none(), "switched off");
         assert_eq!(tunings_for("Amp"), vec![("Warm".to_string(), true)]);
+        let mut used = detail("Warm").unwrap().devices;
+        used.sort();
         assert_eq!(
-            detail("Warm").unwrap().devices,
-            ["DAC", "Amp"],
+            used,
+            ["Amp", "DAC"],
             "used for counts the outputs whose filters hold it"
         );
         assert_eq!(preset_for("Amp"), Some(("Quiet".into(), false)));
