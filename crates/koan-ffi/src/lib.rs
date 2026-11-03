@@ -4650,71 +4650,7 @@ impl KoanEngine {
 
     /// The whole configuration, as the settings window shows it.
     pub async fn settings(self: Arc<Self>) -> Settings {
-        offload::offload(move || {
-            let cfg = Config::cached();
-            let cache_dir = cfg.cache_dir();
-            let cache_bytes = koan_core::helpers::cache_bytes();
-
-            let db = self.db().ok();
-            Settings {
-                library_folders: cfg
-                    .library
-                    .folders
-                    .iter()
-                    .map(|p| LibraryFolder {
-                        path: p.to_string_lossy().into_owned(),
-                        tracks: db
-                            .as_ref()
-                            .map(|db| koan_core::helpers::tracks_under(db, p))
-                            .unwrap_or(0),
-                    })
-                    .collect(),
-
-                remote_enabled: cfg.remote.enabled,
-                remote_url: cfg.remote.url.clone(),
-                remote_username: cfg.remote.username.clone(),
-                remote_signed_in: koan_core::helpers::remote_credential(&cfg).is_some(),
-                remote_tracks: db
-                    .as_ref()
-                    .map(|db| koan_core::helpers::tracks_from_server(db))
-                    .unwrap_or(0),
-                remote_last_sync: db.as_ref().and_then(|db| {
-                    koan_core::remote::sync::get_last_sync(db, &cfg.remote.url)
-                        .ok()
-                        .flatten()
-                }),
-                download_workers: cfg.remote.download_workers as u32,
-                cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
-                download_ahead: cfg.remote.download_ahead,
-                cache_dir: cache_dir.to_string_lossy().into_owned(),
-                cache_bytes,
-                auto_sync: cfg.remote.auto_sync,
-                auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
-                play_queue: cfg.remote.play_queue,
-                preload_covers: cfg.remote.preload_covers,
-
-                replaygain: match cfg.playback.replaygain {
-                    config::ReplayGainMode::Off => "off".into(),
-                    config::ReplayGainMode::Track => "track".into(),
-                    config::ReplayGainMode::Album => "album".into(),
-                },
-                pre_amp_db: cfg.playback.pre_amp_db,
-                fade_on_pause: cfg.playback.fade_on_pause,
-                devices_discoverable: cfg.devices.discoverable,
-                devices_addresses: cfg.devices.addresses.clone(),
-                devices_refused: cfg.devices.refused.clone(),
-                devices_nearby_control: match cfg.devices.nearby_control {
-                    config::NearbyControl::Full => "full".into(),
-                    config::NearbyControl::Playback => "playback".into(),
-                },
-                devices_keep_running: cfg.devices.keep_running,
-                share_enabled: cfg.share.enabled,
-                share_port: cfg.share.port,
-                share_invite_to: cfg.share.invite_to.into(),
-                share_url: cfg.share.url.clone().unwrap_or_default(),
-            }
-        })
-        .await
+        offload::offload(move || read_settings(self.db().ok().as_deref())).await
     }
 
     /// Write the settings back.
@@ -7833,6 +7769,72 @@ fn scrobbling_connection(
     }
 }
 
+/// The configuration as the settings window shows it, with the library's
+/// counts from `db` where there is one.
+fn read_settings(db: Option<&koan_core::db::connection::Database>) -> Settings {
+    let cfg = Config::cached();
+    let cache_dir = cfg.cache_dir();
+    let cache_bytes = koan_core::helpers::cache_bytes();
+
+    Settings {
+        library_folders: cfg
+            .library
+            .folders
+            .iter()
+            .map(|p| LibraryFolder {
+                path: p.to_string_lossy().into_owned(),
+                tracks: db
+                    .as_ref()
+                    .map(|db| koan_core::helpers::tracks_under(db, p))
+                    .unwrap_or(0),
+            })
+            .collect(),
+
+        remote_enabled: cfg.remote.enabled,
+        remote_url: cfg.remote.url.clone(),
+        remote_username: cfg.remote.username.clone(),
+        remote_signed_in: koan_core::helpers::remote_credential(&cfg).is_some(),
+        remote_tracks: db
+            .as_ref()
+            .map(|db| koan_core::helpers::tracks_from_server(db))
+            .unwrap_or(0),
+        remote_last_sync: db.as_ref().and_then(|db| {
+            koan_core::remote::sync::get_last_sync(db, &cfg.remote.url)
+                .ok()
+                .flatten()
+        }),
+        download_workers: cfg.remote.download_workers as u32,
+        cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
+        download_ahead: cfg.remote.download_ahead,
+        cache_dir: cache_dir.to_string_lossy().into_owned(),
+        cache_bytes,
+        auto_sync: cfg.remote.auto_sync,
+        auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
+        play_queue: cfg.remote.play_queue,
+        preload_covers: cfg.remote.preload_covers,
+
+        replaygain: match cfg.playback.replaygain {
+            config::ReplayGainMode::Off => "off".into(),
+            config::ReplayGainMode::Track => "track".into(),
+            config::ReplayGainMode::Album => "album".into(),
+        },
+        pre_amp_db: cfg.playback.pre_amp_db,
+        fade_on_pause: cfg.playback.fade_on_pause,
+        devices_discoverable: cfg.devices.discoverable,
+        devices_addresses: cfg.devices.addresses.clone(),
+        devices_refused: cfg.devices.refused.clone(),
+        devices_nearby_control: match cfg.devices.nearby_control {
+            config::NearbyControl::Full => "full".into(),
+            config::NearbyControl::Playback => "playback".into(),
+        },
+        devices_keep_running: cfg.devices.keep_running,
+        share_enabled: cfg.share.enabled,
+        share_port: cfg.share.port,
+        share_invite_to: cfg.share.invite_to.into(),
+        share_url: cfg.share.url.clone().unwrap_or_default(),
+    }
+}
+
 /// `update_settings`' write: every field of `s`, or with `read`, only those
 /// `s` changes from it.
 fn write_settings(read: Option<&Settings>, s: &Settings) -> Result<(), KoanError> {
@@ -8487,5 +8489,37 @@ mod clock_end_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("the next track's anchor");
         assert!(next.is_some_and(|ms| ms < 100), "{next:?}");
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    /// A write with the settings it was read from writes only what it
+    /// changed: a field another writer moved since the read (a sign-in
+    /// setting the server's address) stays as that writer left it. Without
+    /// the read, every field is written.
+    #[test]
+    fn a_write_since_a_read_keeps_what_others_wrote() {
+        let _one = config::SWITCHING.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        Config::persist(|cfg| cfg.remote.url = "https://old.example".into()).unwrap();
+
+        let read = read_settings(None);
+        assert_eq!(read.remote_url, "https://old.example");
+        // Another writer, after the read.
+        Config::persist(|cfg| cfg.remote.url = "https://new.example".into()).unwrap();
+        let mut edited = read.clone();
+        edited.fade_on_pause = !read.fade_on_pause;
+
+        write_settings(Some(&read), &edited).unwrap();
+        let now = Config::cached();
+        assert_eq!(now.remote.url, "https://new.example");
+        assert_eq!(now.playback.fade_on_pause, edited.fade_on_pause);
+
+        write_settings(None, &edited).unwrap();
+        assert_eq!(Config::cached().remote.url, "https://old.example");
     }
 }
