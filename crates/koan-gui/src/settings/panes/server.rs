@@ -165,8 +165,9 @@ impl ServerPane {
             .update(cx, |m, cx| m.sign_in(url, username, secret, with_key, cx));
     }
 
-    /// Signs in through an invite. One for another server or account than
-    /// the one signed in to asks first, since signing in replaces it.
+    /// Signs in through an invite, once the person says so: the question
+    /// names the account and server, and what becomes of the sign-in it
+    /// replaces. One for the account already signed in changes nothing.
     pub fn join(&mut self, text: &str, quiet: bool, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.ctx.model.clone();
         let Some(invite) = model.read(cx).engine().parse_invite(text.to_owned()) else {
@@ -189,29 +190,44 @@ impl ServerPane {
         let Some(settings) = model.read(cx).settings() else {
             return;
         };
-        let elsewhere =
-            settings.remote_url != invite.server || settings.remote_username != invite.username;
-        if settings.remote_signed_in && elsewhere {
-            let current = host_of(settings);
-            let join = {
-                let model = model.clone();
-                let invite = invite.clone();
-                move |_: &[String], _: &mut Window, cx: &mut App| {
-                    let invite = invite.clone();
-                    model.update(cx, |m, cx| m.join_invite(invite, cx))
-                }
-            };
-            let sheet = Sheet::new(format!("Sign in to {host} as {}?", invite.username))
-                .message(format!(
-                    "kōan is signed in to {current}. Signing in here signs out of it: its tracks, favourites, history, playlists and downloads are removed from this device. Local files stay."
-                ))
-                .action(Action::new("Sign In", join));
-            self.ctx
-                .sheets
-                .update(cx, |s, cx| s.show(sheet, window, cx));
-        } else {
-            model.update(cx, |m, cx| m.join_invite(invite, cx));
+        let same = settings.remote_url.trim_end_matches('/') == invite.server.trim_end_matches('/')
+            && settings.remote_username == invite.username;
+        // The account and server already signed in: nothing to do.
+        if settings.remote_signed_in && same {
+            model.update(cx, |m, cx| {
+                m.done(
+                    format!("You're already signed in as {} on {host}.", invite.username),
+                    cx,
+                )
+            });
+            return;
         }
+        // Nothing changes until the person says so: a link can come from
+        // anywhere, and signing in replaces whatever is signed in now.
+        let message = if settings.remote_signed_in {
+            let current = host_of(settings);
+            format!(
+                "kōan is signed in to {current}. Signing in here signs out of it: its tracks, favourites, history, playlists and downloads are removed from this device. Local files stay."
+            )
+        } else {
+            format!(
+                "kōan signs in to {host} as {} and brings its library to this device.",
+                invite.username
+            )
+        };
+        let join = {
+            let model = model.clone();
+            move |_: &[String], _: &mut Window, cx: &mut App| {
+                let invite = invite.clone();
+                model.update(cx, |m, cx| m.join_invite(invite, cx))
+            }
+        };
+        let sheet = Sheet::new(format!("Sign in as {} on {host}?", invite.username))
+            .message(message)
+            .action(Action::new("Sign In", join));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn sign_out(&self, window: &mut Window, cx: &mut App) {

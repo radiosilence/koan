@@ -20,7 +20,7 @@ The same context menu has download to cache, which fetches a remote library's tr
 
 Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. A pattern typed or changed can be saved under a name, which stores it in `config.toml` for every kōan on that configuration; the sheet says whether the name is new or replaces one before it saves. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
 
-Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite signs in, asking first when it would replace an account signed in elsewhere, and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
+Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite asks first whether to sign in as its account on its server, saying what becomes of the account signed in now, and changes nothing until you say so (one for the account already signed in just says so); and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
 
 ## Media keys and now playing
 
