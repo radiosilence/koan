@@ -282,6 +282,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::OutputOpened(_)
             | PlayerCommand::RetryOutput
             | PlayerCommand::CancelOutput
+            | PlayerCommand::DspLoaded(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
             | PlayerCommand::RouteChanged
