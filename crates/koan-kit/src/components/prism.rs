@@ -1107,6 +1107,13 @@ impl Prism {
         }
     }
 
+    /// The window's one flash gate, which its bursts share (`Burst::sharing`):
+    /// a beat and a burst, however they fall, start at most three times a
+    /// second between them.
+    pub fn gate(&self) -> FlashGate {
+        FlashGate(self.last_beat.clone())
+    }
+
     /// The bands standing where they are, for a prism newly fed.
     pub fn hold_bands(&self, bands: [f32; 3]) {
         for (i, band) in bands.into_iter().enumerate() {
@@ -1176,13 +1183,23 @@ pub struct Burst {
     animated: Animated,
     program: &'static ShaderProgram,
     length: Duration,
-    /// When it was last thrown: a burst starts at most three times a second
-    /// (`MIN_BEAT_GAP`), however fast the records change or the hearts are
-    /// pressed, as the beat's flashes do.
-    fired: std::sync::Arc<parking_lot::Mutex<Option<std::time::Instant>>>,
+    /// When a flash last started in its window: the gate it shares with the
+    /// window's prism and other bursts (`sharing`).
+    fired: Arc<Mutex<Option<Instant>>>,
 }
 
+/// The time the last flash started, shared by a window's prism and bursts.
+#[derive(Clone, Default)]
+pub struct FlashGate(Arc<Mutex<Option<Instant>>>);
+
 impl Burst {
+    /// Shares `gate` with the window's prism, so its throws and the beat's
+    /// flashes keep one gap between them.
+    pub fn sharing(mut self, gate: &FlashGate) -> Self {
+        self.fired = gate.0.clone();
+        self
+    }
+
     pub fn confetti() -> Self {
         Self {
             animated: spent(),
@@ -1215,13 +1232,13 @@ impl Burst {
     /// Throws it from `at`, in the window's coordinates, scaled `scale`
     /// device pixels to a point. Nothing is thrown under Reduce Motion: the
     /// quad is decorative, so its clock does not start. A throw within
-    /// `MIN_BEAT_GAP` of the last is dropped, so bursts, like the beat's
-    /// flashes, start at most three times a second.
+    /// `MIN_BEAT_GAP` of the last flash its gate saw, a beat or a burst, is
+    /// dropped, so flashes start at most three times a second.
     pub fn fire(&self, at: Point<Pixels>, scale: f32, brat: bool) {
-        let now = std::time::Instant::now();
+        let now = Animated::now();
         {
             let mut fired = self.fired.lock();
-            if fired.is_some_and(|last| now.duration_since(last) < MIN_BEAT_GAP) {
+            if fired.is_some_and(|last| now.saturating_duration_since(last) < MIN_BEAT_GAP) {
                 return;
             }
             *fired = Some(now);
@@ -1367,7 +1384,8 @@ mod tests {
     use super::*;
 
     /// A burst thrown again inside `MIN_BEAT_GAP` is dropped: holding Next
-    /// through a shuffled queue sweeps at most three times a second.
+    /// through a shuffled queue sweeps at most three times a second. Bursts
+    /// sharing a prism's gate hold off each other and the beat.
     #[test]
     fn a_burst_starts_at_most_three_times_a_second() {
         let sweep = Burst::sweep();
@@ -1380,6 +1398,19 @@ mod tests {
             sweep.animated.track(0),
             first,
             "a throw inside the gap is dropped"
+        );
+        let prism = Prism::new();
+        let (confetti, sticker) = (
+            Burst::confetti().sharing(&prism.gate()),
+            Burst::sticker().sharing(&prism.gate()),
+        );
+        confetti.fire(at, 2.0, false);
+        let before = sticker.animated.track(0);
+        sticker.fire(at, 2.0, false);
+        assert_eq!(
+            sticker.animated.track(0),
+            before,
+            "one gate for the window's flashes"
         );
     }
 }

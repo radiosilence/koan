@@ -87,6 +87,7 @@ impl WindowRoot {
         let followed = playback.clone();
         let shown = playback.clone();
         let painted = playback.clone();
+        let prism = Prism::new();
         let mut root = Self {
             wash: cx.new(|_| Wash::new()),
             content: content.into(),
@@ -97,11 +98,13 @@ impl WindowRoot {
             drift,
             fetching: None,
             rainbow: false,
-            prism: Prism::new(),
             prism_fed: false,
-            confetti: Burst::confetti(),
-            sweep: Burst::sweep(),
-            sticker: Burst::sticker(),
+            // One flash gate for the window: the beat and every burst start
+            // at most three times a second between them.
+            confetti: Burst::confetti().sharing(&prism.gate()),
+            sweep: Burst::sweep().sharing(&prism.gate()),
+            sticker: Burst::sticker().sharing(&prism.gate()),
+            prism,
             swept: None,
             active: window.is_window_active(),
             visible: true,
