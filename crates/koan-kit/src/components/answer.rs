@@ -44,6 +44,10 @@ pub enum Answer {
     /// The control's ground lifting to the accent and settling back: a
     /// bordered button pressed, rows landing.
     Lift,
+    /// The first of rows dropped into a list: its ground lifting as
+    /// `Lift`'s, and the insertion line it landed at closing into it from
+    /// both ends along its top edge.
+    Landed,
     /// A short streak leaving the glyph the way it points: a skip, forward
     /// (`true`) or back.
     Streak(bool),
@@ -94,7 +98,7 @@ impl Answer {
             Answer::Burst => 1.0,
             Answer::Close => 2.0,
             Answer::Sweep => 3.0,
-            Answer::Lift => 4.0,
+            Answer::Lift | Answer::Landed => 4.0,
             Answer::Streak(_) => 5.0,
             Answer::Fill => 10.0,
             Answer::Empty => 11.0,
@@ -126,6 +130,7 @@ impl Answer {
     /// Which way it travels, for a streak: 1 forward, -1 back.
     fn heading(self) -> f32 {
         match self {
+            Answer::Lift => 0.0,
             Answer::Streak(false) | Answer::Nudge(false) | Answer::Slide(false) => -1.0,
             _ => 1.0,
         }
@@ -137,7 +142,7 @@ impl Answer {
     fn duration(self) -> Duration {
         match self {
             Answer::Ring | Answer::Close | Answer::Streak(_) => Motion::ARRIVE,
-            Answer::Burst | Answer::Sweep | Answer::Lift => Motion::SETTLE,
+            Answer::Burst | Answer::Sweep | Answer::Lift | Answer::Landed => Motion::SETTLE,
             Answer::Fill
             | Answer::Empty
             | Answer::Morph(_)
@@ -162,7 +167,7 @@ impl Answer {
         match self {
             Answer::Ring | Answer::Close => 6.0,
             Answer::Burst | Answer::Streak(_) => 9.0,
-            Answer::Sweep | Answer::Lift | Answer::Slide(_) => 0.0,
+            Answer::Sweep | Answer::Lift | Answer::Landed | Answer::Slide(_) => 0.0,
             Answer::Tick(_) => 1.0,
             Answer::Fill => 7.0,
             Answer::Empty | Answer::Morph(_) => 2.0,
@@ -220,6 +225,12 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         a = (x >= tail && x <= head) ? 0.45 * (1.0 - t) * across : 0.0;
     } else {
         a = 0.12 * (1.0 - e);
+        if (u[1] > 0.5) {
+            float half_w = 0.5 * size.x * (1.0 - e);
+            if (position.y < 2.0 * pt && abs(position.x - c.x) <= half_w) {
+                a = max(a, 0.7 * (1.0 - t));
+            }
+        }
     }
     return float4(u[8], u[9], u[10], u[11] * a);
 }
@@ -270,6 +281,12 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         }
     } else {
         a = 0.12 * (1.0 - e);
+        if (u[0].y > 0.5) {
+            let half_w = 0.5 * size.x * (1.0 - e);
+            if (position.y < 2.0 * pt && abs(position.x - c.x) <= half_w) {
+                a = max(a, 0.7 * (1.0 - t));
+            }
+        }
     }
     let rgba = u[2];
     return vec4<f32>(rgba.xyz, rgba.w * a);
