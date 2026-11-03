@@ -366,6 +366,13 @@ impl Render for Painted {
     }
 }
 
+/// The accent as the next present shows it: the colour table filled by the
+/// kit's colour source, as a window presenting fills it, then read back.
+fn shown_accent(window: &Window, cx: &gpui::App) -> Rgba {
+    gpui::refresh_dynamic_colors(present_now());
+    Rgba::from(Look::of(window, cx).accent.hsla())
+}
+
 fn accent(rng: &mut Rng) -> Accent {
     Accent::of(Some([
         rng.unit() as f64,
@@ -388,7 +395,7 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
         cx.update(|_, cx| KoanTheme::set_accent(last, true, cx));
         if i % 25 == 0 {
             cx.run_until_parked();
-            let shown = cx.update(|window, cx| Rgba::from(Look::of(window, cx).accent.hsla()));
+            let shown = cx.update(|window, cx| shown_accent(window, cx));
             assert!(finite(shown), "{shown:?}");
         }
     }
@@ -396,7 +403,7 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
     std::thread::sleep(Motion::DISSOLVE + Duration::from_millis(100));
     let (shown, target) = cx.update(|window, cx| {
         let look = Look::of(window, cx);
-        (Rgba::from(look.accent.hsla()), look.accent.rgba())
+        (shown_accent(window, cx), look.accent.rgba())
     });
     for (a, b) in [shown.r, shown.g, shown.b]
         .into_iter()
@@ -424,7 +431,7 @@ fn reduce_motion_mid_settle_lands_the_accent(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (shown, target) = cx.update(|window, cx| {
         let look = Look::of(window, cx);
-        (Rgba::from(look.accent.hsla()), look.accent.rgba())
+        (shown_accent(window, cx), look.accent.rgba())
     });
     for (a, b) in [shown.r, shown.g, shown.b]
         .into_iter()
