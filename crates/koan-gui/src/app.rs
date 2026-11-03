@@ -129,7 +129,10 @@ pub fn start(
         // app starts then. Otherwise someone opened kōan and wants it.
         let keep = settings.settings().await.devices_keep_running;
         let background = keep && crate::platform::residency::launched_at_login();
-        cx.update(|cx| open(saved, !background, cx));
+        cx.update(|cx| {
+            crate::platform::residency::adopt(keep, cx);
+            open(saved, !background, cx)
+        });
     })
     .detach();
 }
@@ -141,6 +144,9 @@ pub fn start(
 struct MainWindowSlot {
     handle: Option<AnyWindowHandle>,
     ready: bool,
+    /// Its saved bounds are being read to open it again: asked again
+    /// meanwhile, it is not opened twice.
+    opening: bool,
 }
 
 impl Global for MainWindowSlot {}
@@ -184,12 +190,19 @@ pub fn show_window(cx: &mut App) -> bool {
             .ok();
         return true;
     }
+    let slot = cx.global_mut::<MainWindowSlot>();
+    if std::mem::replace(&mut slot.opening, true) {
+        return true;
+    }
     let saved = cx
         .background_executor()
         .spawn(async { window_state::read() });
     cx.spawn(async move |cx| {
         let saved = saved.await;
-        cx.update(|cx| open_window(saved, cx));
+        cx.update(|cx| {
+            cx.global_mut::<MainWindowSlot>().opening = false;
+            open_window(saved, cx)
+        });
     })
     .detach();
     true
@@ -223,7 +236,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
         open_window(saved, cx);
     } else {
         log::info!("opened at login; staying in the menu bar");
-        crate::platform::residency::window_closing(cx);
+        crate::platform::residency::settle_dock(cx);
     }
     // `--settings` opens Settings beside the window, for checking it
     // without a keyboard.
@@ -245,9 +258,8 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             // Closing the last window quits, unless kōan is kept running,
             // and quitting waits for nothing spawned: a file of a few bytes,
             // written now.
-            window.on_window_should_close(cx, |window, cx| {
+            window.on_window_should_close(cx, |window, _| {
                 window_state::write(window.window_bounds());
-                crate::platform::residency::window_closing(cx);
                 true
             });
             let shell = cx.new(|cx| Shell::new(window, cx));

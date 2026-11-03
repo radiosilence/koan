@@ -87,7 +87,7 @@ impl Sidebar {
             reorders: 0,
             search: None,
             searching: false,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: ListCursor::default(),
             import_problem: None,
             running: running(&transfers.read(cx).0),
@@ -128,14 +128,8 @@ impl Sidebar {
         sidebar
     }
 
-    /// The search field, over the library's search and art.
-    pub fn set_search(
-        &mut self,
-        search: Entity<crate::search::Search>,
-        covers: Entity<Covers>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// The search field, over the library's search.
+    pub fn set_search(&mut self, search: Entity<crate::search::Search>, cx: &mut Context<Self>) {
         let watch = cx.observe(&search, |this: &mut Self, search, cx| {
             let searching = !search.read(cx).query().is_empty();
             if searching != this.searching {
@@ -143,16 +137,9 @@ impl Sidebar {
                 cx.notify();
             }
         });
-        let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
+        let field = cx.new(|cx| crate::search::field::SearchField::new(search, cx));
         self.search = Some((field, watch));
         cx.notify();
-    }
-
-    /// Where the search field takes the keyboard, once the library is open.
-    pub fn search_focus(&self, cx: &App) -> Option<FocusHandle> {
-        self.search
-            .as_ref()
-            .map(|(field, _)| field.read(cx).focus_handle(cx))
     }
 
     /// Draws the playlists' sleeves from the library's art cache.
@@ -670,8 +657,17 @@ impl Render for Sidebar {
             )
             .children(
                 cx.try_global::<crate::notice::Notice>()
-                    .and_then(|n| n.text.clone().map(|text| (text, n.said)))
-                    .map(|((text, tone), said)| NavNote::new(text, tone).said("notice", said)),
+                    .and_then(|n| {
+                        // News for a moment after it is said: the sidebar
+                        // shown again later does not answer it again.
+                        let fresh = n
+                            .at
+                            .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+                        n.text.clone().map(|text| (text, n.said, fresh))
+                    })
+                    .map(|((text, tone), said, fresh)| {
+                        NavNote::new(text, tone).said("notice", said, fresh)
+                    }),
             )
     }
 }

@@ -826,7 +826,7 @@ impl StoryContent {
                             TileArt::new(("story-tile", 1usize), side, TileSleeve::Colour(warm))
                                 .codec(Some("FLAC".into()))
                                 .badge(Some("Deluxe".into()))
-                                .heart(Some((true, false))),
+                                .heart(true, false, true),
                         )
                         .child(
                             TileArt::new(("story-tile", 2usize), side, TileSleeve::Loading)

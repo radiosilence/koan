@@ -896,6 +896,21 @@ impl Wash {
         // and hold once it has come to rest at nothing: a wash at rest
         // presents nothing.
         let drifting = self.amplitude.to > 0.0 || self.amplitude.moving(now);
+        // The person's pace and turn (Settings → Appearance). A drift set to
+        // nothing keeps the last pace while its amplitude eases out, so it
+        // comes to rest as it does when the music stops.
+        let theme = cx.global::<KoanTheme>();
+        let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
+        if drifting && theme.wash_drift > 0 {
+            let pace = theme.wash_drift as f32 / 100.0;
+            if pace != self.pace {
+                // The phase (now - epoch) * pace stays where it was.
+                let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+                let kept = since * self.pace as f64 / pace as f64;
+                self.epoch = now - Duration::from_secs_f64(kept);
+                self.pace = pace;
+            }
+        }
         let previous = self
             .previous
             .as_ref()
@@ -920,17 +935,7 @@ impl Wash {
             self.amplitude.write(&shader, 0);
             opacity.write(&shader, 1);
             if drifting {
-                // The person's pace and turn (Settings → Appearance).
-                let theme = cx.global::<KoanTheme>();
-                let pace = theme.wash_drift.max(1) as f32 / 100.0;
-                if pace != self.pace {
-                    // The phase (now - epoch) * pace stays where it was.
-                    let since = now.saturating_duration_since(self.epoch).as_secs_f64();
-                    let kept = since * self.pace as f64 / pace as f64;
-                    self.epoch = now - Duration::from_secs_f64(kept);
-                    self.pace = pace;
-                }
-                let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
+                let pace = self.pace;
                 let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
                     (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
