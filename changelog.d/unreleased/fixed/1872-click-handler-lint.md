@@ -1,0 +1,1 @@
+- **Clippy passes on koan-kit again.** The button's and transport control's click handlers are allowed their main-thread `Arc`.
