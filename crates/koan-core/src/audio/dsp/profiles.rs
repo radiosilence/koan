@@ -699,7 +699,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                 };
                 Summary {
                     name: p.name.clone(),
-                    devices: used_on(p, &cfg.dsp.tunings),
+                    devices: p.devices.clone(),
                     bands: p.filters.len(),
                     layers: p.layers.len(),
                     rates,
@@ -999,6 +999,7 @@ pub struct ImpulseDetail {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Detail {
     pub name: String,
+    /// The outputs it is chosen for, as `Summary::used_on`.
     pub devices: Vec<String>,
     pub source: Vec<String>,
     pub filters: Vec<crate::config::DspFilter>,
@@ -1045,18 +1046,6 @@ pub struct Detail {
 }
 
 /// Everything in the profile `name`.
-/// The outputs a profile plays on: those it corrects, then those whose
-/// filters hold it.
-fn used_on(profile: &DspProfile, tunings: &[config::DspOutputTuning]) -> Vec<String> {
-    let mut devices = profile.devices.clone();
-    for t in tunings.iter().filter(|t| t.tuning == profile.name) {
-        if !devices.contains(&t.device) {
-            devices.push(t.device.clone());
-        }
-    }
-    devices
-}
-
 pub fn detail(name: &str) -> Option<Detail> {
     let cfg = Config::cached();
     let profile = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
@@ -1116,7 +1105,7 @@ pub fn detail(name: &str) -> Option<Detail> {
     let chain_summary = summary(name).unwrap_or_default();
     Some(Detail {
         name: profile.name.clone(),
-        devices: used_on(profile, &cfg.dsp.tunings),
+        devices: used_on(&cfg.dsp, &profile.name),
         source: profile.source.clone(),
         filters: profile.filters.clone(),
         impulses,
@@ -4043,26 +4032,6 @@ mod tests {
     use crate::audio::dsp::impulse::{Impulse, Route};
 
     #[test]
-    fn a_profile_is_used_where_it_corrects_and_where_it_is_in_the_filters() {
-        let profile = DspProfile {
-            name: "Warm".into(),
-            devices: vec!["Amp".into()],
-            ..Default::default()
-        };
-        let tuning = |device: &str, tuning: &str| config::DspOutputTuning {
-            device: device.into(),
-            tuning: tuning.into(),
-            on: true,
-        };
-        let tunings = [
-            tuning("Desk DAC", "Warm"),
-            tuning("Amp", "Warm"),
-            tuning("Speakers", "Bright"),
-        ];
-        assert_eq!(used_on(&profile, &tunings), ["Amp", "Desk DAC"]);
-    }
-
-    #[test]
     fn an_import_lands_beside_the_config_and_merges_by_name() {
         let _guard = crate::config::tests::PERSIST_LOCK
             .lock()
@@ -6548,6 +6517,11 @@ mod tests {
         assert_eq!(preset_for("DAC"), Some(("Desk".into(), true)));
         assert!(cfg.dsp.profile_for("Amp").is_none(), "switched off");
         assert_eq!(tunings_for("Amp"), vec![("Warm".to_string(), true)]);
+        assert_eq!(
+            detail("Warm").unwrap().devices,
+            ["DAC", "Amp"],
+            "used for counts the outputs whose filters hold it"
+        );
         assert_eq!(preset_for("Amp"), Some(("Quiet".into(), false)));
         assert_eq!(cfg.dsp.profile_for("Speaker").unwrap().name, "HD 650");
         assert_eq!(tunings_for("Speaker"), vec![("Bright".to_string(), true)]);
