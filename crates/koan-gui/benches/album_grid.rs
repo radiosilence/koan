@@ -154,6 +154,7 @@ static ALLOCATOR: gpui::CountingAllocator<std::alloc::System> =
     gpui::CountingAllocator::new(std::alloc::System);
 
 fn main() {
+    koan_core::places::keep_with_config();
     if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         eprintln!("album_grid: skipped; point KOAN_CONFIG_DIR at a test library's config");
         return;

@@ -38,6 +38,7 @@ const HEIGHT: f32 = 750.0;
 const BUDGET: Duration = Duration::from_secs(600);
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     // SAFETY: set before any other thread starts.
     unsafe {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
