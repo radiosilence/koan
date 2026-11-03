@@ -284,6 +284,11 @@ impl MenuRow {
     }
 }
 
+/// The corner of a row's ground, in points.
+const ROW_RADIUS: f32 = 4.0;
+/// How strongly the accent grounds the chosen row of a menu of choices.
+const PICKED: f32 = 0.12;
+
 /// How wide a rich row's second line may be before it ends in an ellipsis:
 /// the Mac picker's width less the glyph column and the row's insets.
 const DETAIL_WIDTH: f32 = 260.0;
@@ -368,6 +373,7 @@ impl RenderOnce for MenuRow {
         let tick = look.points(TypeRole::Control);
         let on_click = self.on_click;
         let chosen = self.rich && self.checked == Some(true);
+        let picked = self.checked == Some(true);
         let muted = look.palette.muted.hsla();
         let accent = look.color(Tone::Accent);
         let (label, detail, reach) = (self.label, self.detail, self.reach);
@@ -450,8 +456,23 @@ impl RenderOnce for MenuRow {
             .flex()
             .items_center()
             .gap(look.space(if rich { Space::M } else { Space::S }))
-            .px(look.space(Space::M))
+            // Inset from the panel's edges, its ground rounded, as the Mac's
+            // picker draws a chosen row; the content keeps the panel's one
+            // left edge.
+            .mx(look.space(Space::Xs))
+            .px(look.space(Space::M) - look.space(Space::Xs))
             .py(look.space(if rich { Space::S } else { Space::Xs }))
+            .rounded(look.spaced(ROW_RADIUS))
+            // A rich row keeps two lines' height with one line of text, its
+            // title centred, so a list of them does not jump as details come
+            // and go.
+            .when(rich, |row| {
+                row.min_h(
+                    look.line_height(TypeRole::Body)
+                        + look.line_height(TypeRole::Fine)
+                        + look.space(Space::S) * 2.0,
+                )
+            })
             .text_role(
                 if rich {
                     TypeRole::Body
@@ -462,10 +483,18 @@ impl RenderOnce for MenuRow {
             )
             .text_color(color)
             .whitespace_nowrap()
-            .when((self.highlighted || chosen) && !self.disabled, |row| {
+            // The choice on the accent, faint, in every menu of choices; the
+            // highlight on `surface` elsewhere.
+            .when(picked && !self.disabled, |row| {
+                row.bg(accent.opacity(PICKED))
+                    .hover(move |row| row.bg(accent.opacity(PICKED * 1.5)))
+            })
+            .when(!picked && self.highlighted && !self.disabled, |row| {
                 row.bg(surface)
             })
-            .when(!self.disabled, |row| row.hover(move |row| row.bg(surface)))
+            .when(!picked && !self.disabled, |row| {
+                row.hover(move |row| row.bg(surface))
+            })
             .children(self.icon.filter(|_| look.icons || rich).map(|icon| {
                 if rich {
                     // The place's glyph, at the size of a small title, in a
