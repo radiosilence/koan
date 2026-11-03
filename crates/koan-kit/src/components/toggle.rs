@@ -191,17 +191,17 @@ impl RenderOnce for IconToggle {
             .min_w(HIT)
             .min_h(HIT)
             .tooltip(move |window, cx| super::Tooltip::view(label.clone(), window, cx))
+            // The glyph centred as every toolbar button's is; the on-mark
+            // drawn under it, outside the layout, so it lifts nothing.
             .child(
                 div()
-                    .pb(px(5.0))
-                    .border_b(HAIRLINE)
-                    .border_color(look.accent.hsla().opacity(on))
                     .relative()
                     .child(
                         KoanIcon::new(self.icon)
                             .role(TypeRole::Control)
                             .color(color),
                     )
+                    .child(on_mark(look.accent.hsla().opacity(on)))
                     .children(answers.layer(window, cx)),
             );
         if self.disabled {
@@ -239,4 +239,17 @@ fn switch(
     checked: bool,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
+}
+
+/// The accent hairline a toggle shows while on, 5 points under its glyph
+/// and as wide as it: positioned outside the layout, so a toggle's glyph sits
+/// where every other glyph in its row does.
+pub(crate) fn on_mark(color: gpui_kit::Hsla) -> gpui_kit::Div {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom(px(-5.0) - HAIRLINE)
+        .h(HAIRLINE)
+        .bg(color)
 }

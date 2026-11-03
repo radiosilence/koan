@@ -105,8 +105,10 @@ impl RenderOnce for TransportControl {
         .child(
             div()
                 .relative()
-                .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
                 .child(face)
+                // The on-mark outside the layout: shuffle and repeat stand
+                // level with previous and next.
+                .children(underline.map(super::toggle::on_mark))
                 // Off the glyph, not the hit area around it.
                 .children(answers.layer(window, cx)),
         )
