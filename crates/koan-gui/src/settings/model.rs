@@ -64,6 +64,9 @@ pub(crate) struct Draft {
     /// Writes landed so far. A read of the file that began before the last
     /// of them may have read the file before it, and is not applied.
     writes: u64,
+    /// A write in the chain under way failed, though a later one may have
+    /// landed.
+    chain_failed: bool,
 }
 
 impl Draft {
@@ -73,6 +76,7 @@ impl Draft {
             writing: Vec::new(),
             queued: Vec::new(),
             writes: 0,
+            chain_failed: false,
         }
     }
 
@@ -120,7 +124,14 @@ impl Draft {
     /// file holds. True when edits are waiting for another.
     pub(crate) fn failed(&mut self) -> bool {
         self.writing.clear();
+        self.chain_failed = true;
         !self.queued.is_empty()
+    }
+
+    /// The chain of writes is done, nothing waiting: true when every write
+    /// in it landed, so what waited on it may run.
+    pub(crate) fn chain_done(&mut self) -> bool {
+        !std::mem::take(&mut self.chain_failed)
     }
 
     /// The file read again, by a read that began after `writes` writes had
@@ -152,6 +163,9 @@ pub struct SettingsModel {
     shown: Option<Settings>,
     /// Edits made before the file was first read, applied once it has been.
     early: Vec<Edit>,
+    /// What waits for the file's first read: a link that launched the app
+    /// is answered as the settings stand, not as signed out.
+    loaded: Vec<Box<dyn FnOnce(&mut App)>>,
     /// What waits for the writes under way to land.
     written: Vec<Then>,
     /// The error shown is a write's.
@@ -186,6 +200,7 @@ impl SettingsModel {
             draft: None,
             shown: None,
             early: Vec::new(),
+            loaded: Vec::new(),
             written: Vec::new(),
             write_failed: false,
             last_error: None,
@@ -267,6 +282,9 @@ impl SettingsModel {
                         if start {
                             model.write(cx);
                         }
+                        for then in std::mem::take(&mut model.loaded) {
+                            cx.defer(then);
+                        }
                     }
                 }
                 // Kept running as the file says now, edited here or by
@@ -298,6 +316,20 @@ impl SettingsModel {
         self.redraw(cx);
         if start {
             self.write(cx);
+        }
+    }
+
+    /// Runs `then` once the file has been read: now, if it has. Outside the
+    /// model's update, so it may update the model and its windows.
+    pub(crate) fn when_loaded(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut App) + 'static,
+    ) {
+        if self.draft.is_some() {
+            cx.defer(then);
+        } else {
+            self.loaded.push(Box::new(then));
         }
     }
 
@@ -354,15 +386,23 @@ impl SettingsModel {
                 if more {
                     model.write(cx);
                 } else {
-                    // What waited on a write that failed does not run: a scan
-                    // of a folder that was not saved would clear the error
-                    // saying so.
+                    // What waited on a write that failed does not run, even
+                    // where a later write in the chain landed: a scan of a
+                    // folder that was not saved would clear the error saying
+                    // so.
+                    let whole = model.draft.as_mut().is_none_or(Draft::chain_done);
                     let waiting = std::mem::take(&mut model.written);
-                    if !model.write_failed {
+                    if whole {
                         for then in waiting {
                             then(model, cx);
                         }
                     }
+                    // What was written is the read with the edits over it,
+                    // and only the changed fields went to the file: a sign-in
+                    // landing between the read and the write is in the file
+                    // and not in the draft. Read once the chain is done, so
+                    // no write landing after it drops the read.
+                    model.reload(cx);
                 }
             })
             .ok();
@@ -835,6 +875,27 @@ mod tests {
         draft.take();
         assert!(!draft.failed());
         assert!(paths(&draft.drawn()).is_empty());
+    }
+
+    /// A write that failed keeps the chain from counting as written, though
+    /// a write queued behind it landed: what waits on the chain (a scan of
+    /// an unsaved folder) does not run. The next chain starts clean.
+    #[test]
+    fn a_failed_write_spoils_its_chain() {
+        let mut draft = Draft::new(settings(1));
+        draft.edit(add("/a"));
+        draft.take();
+        draft.edit(add("/b"));
+        assert!(draft.failed(), "/b waits");
+        let edits = draft.take();
+        let mut written = settings(1);
+        edits.iter().for_each(|e| e(&mut written));
+        assert!(!draft.wrote(written.clone()));
+        assert!(!draft.chain_done());
+        draft.edit(add("/c"));
+        draft.take();
+        assert!(!draft.wrote(written));
+        assert!(draft.chain_done());
     }
 
     #[test]

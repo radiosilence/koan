@@ -111,25 +111,16 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
 /// The tracks `items` name, in order, each once: what a verb over records
 /// and artists acts on.
 pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
-    let mut ids = Vec::new();
-    for item in items {
-        let found = match item {
-            Playable::Track(id) => Ok(vec![id]),
-            Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
-            Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
-        };
-        match found {
-            Ok(found) => {
-                for id in found {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
-            }
-            Err(e) => log::warn!("tracks of a pick: {e}"),
+    // One read for the whole pick, as the queue resolves it.
+    let found = match engine.track_ids_of(super::drag::sources(&items)).await {
+        Ok(found) => found,
+        Err(e) => {
+            log::warn!("tracks of a pick: {e}");
+            return Vec::new();
         }
-    }
-    ids
+    };
+    let mut seen = std::collections::HashSet::with_capacity(found.len());
+    found.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
 /// What a pick is called in a question about it.
