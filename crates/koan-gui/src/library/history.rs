@@ -248,8 +248,10 @@ impl HistoryPage {
                 verb: "clear".into(),
                 destructive: true,
                 lines: vec![
+                    // So far: plays arriving from other devices before the
+                    // answer are forgotten with the rest.
                     format!(
-                        "Every play is forgotten: {}.",
+                        "Every play is forgotten: {} so far. Signed in to a kōan server, on every device too.",
                         chrome::count(n, "play", "plays")
                     )
                     .into(),
