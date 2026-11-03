@@ -1,0 +1,1 @@
+- **Artist photo.** An artist page's photo is now the size of a record page's sleeve, so the two headers line up.
