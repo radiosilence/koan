@@ -3,7 +3,8 @@
 //! to what was being looked at, so it is a layer over the window rather than
 //! a window, and a click anywhere or Escape closes it.
 //!
-//! The picture is decoded at the size it is drawn at, off the main thread,
+//! The picture is decoded at the size it is drawn at, rounded up to a step of
+//! 256 points, off the main thread,
 //! by the sleeve cache every view shares; until it lands the record's
 //! placeholder holds its place.
 
@@ -93,8 +94,11 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         (s.album, s.title.clone(), s.detail.clone(), a.focus.clone())
     };
     let look = Look::of(window, cx);
+    // Decoded in steps of 256 points, so a window being resized asks for a
+    // new size, and a new decode, only now and then; the viewer scales it.
     let side = Viewer::side(window.viewport_size(), &look);
-    let art = covers::art(Some(album), side, cx);
+    let decoded = Pixels::from((f32::from(side) / 256.0).ceil() * 256.0);
+    let art = covers::art(Some(album), decoded, cx);
     let mut viewer = Viewer::new("artwork-viewer", art, title).on_click(|_, _, cx| hide(cx));
     if let Some(detail) = detail {
         viewer = viewer.detail(detail);
