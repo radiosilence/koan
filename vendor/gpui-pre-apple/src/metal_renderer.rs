@@ -1058,19 +1058,15 @@ impl MetalRenderer {
         if self.compose_pipelines.is_none() {
             self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
         }
-        // KOAN: a layer drawing with a colour slot that moves, or was
-        // written since the layers were drawn, is drawn again (#1859).
+        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
+        // while one of its slots moves, when the table was written since it
+        // was drawn, and once more after its slots stop, so the last value
+        // lands; the other layers are kept.
+        let now = gpui::present_now();
         let slot_generation = gpui::color_slots_generation();
-        let slots_moved = plan.layers.iter().any(|layer| {
-            !layer.color_slots.is_empty()
-                && (self.shader_layers.slot_generation != slot_generation
-                    || layer.color_slots_moving(gpui::present_now()))
-        });
-        if slots_moved
-            || !self
-                .shader_layers
-                .holds(scene.generation, width, height)
-        {
+        let held = self.shader_layers.holds(scene.generation, width, height)
+            && self.shader_layers.layers.len() == plan.layers.len();
+        if !held {
             let mut pool = self.shader_layers.take(width, height);
             let mut drawn = Vec::with_capacity(plan.layers.len());
             for (k, layer) in plan.layers.iter().enumerate() {
@@ -1100,7 +1096,26 @@ impl MetalRenderer {
                 width,
                 height,
                 layers: drawn,
+                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
             };
+        } else {
+            let written = self.shader_layers.slot_generation != slot_generation;
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.color_slots.is_empty() {
+                    continue;
+                }
+                let moving = layer.color_slots_moving(now);
+                let was_moving = std::mem::replace(&mut self.shader_layers.moving[k], moving);
+                if !(written || moving || was_moving) {
+                    continue;
+                }
+                if let Some(target) = self.shader_layers.layers[k].clone() {
+                    // After the last compose that read it: the same queue.
+                    self.render_frame(layer, &target, viewport_size, k > 0)?
+                        .commit();
+                }
+            }
+            self.shader_layers.slot_generation = slot_generation;
         }
         let pipelines = self
             .compose_pipelines
@@ -1853,6 +1868,9 @@ struct ShaderLayerTextures {
     width: u64,
     height: u64,
     layers: Vec<Option<metal::Texture>>,
+    /// KOAN: whether each layer's colour slots were moving when it was
+    /// last drawn (#1859).
+    moving: Vec<bool>,
 }
 
 impl ShaderLayerTextures {
