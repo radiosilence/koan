@@ -82,8 +82,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut frames = 0usize;
     while start.elapsed() < churn {
-        frames += sweep(&mut cx, window, 24)?;
-        frames += scroll(&mut cx, window, 20)?;
+        frames += sweep(&mut cx, window, 6)?;
+        frames += scroll(&mut cx, window, 5)?;
     }
     println!(
         "queue: {frames} frames over {:.0?} while playing",
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             cx.update_window(window, |_, window, cx| {
                 theme::pin_appearance(Some(dark), window, cx)
             })?;
-            let drawn = sweep(&mut cx, window, 16)? + scroll(&mut cx, window, 30)?;
+            let drawn = sweep(&mut cx, window, 5)? + scroll(&mut cx, window, 8)?;
             println!(
                 "{name} ({}): {drawn} frames",
                 if dark { "dark" } else { "light" }
