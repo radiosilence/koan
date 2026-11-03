@@ -79,7 +79,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{
-    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
+    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
     Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
@@ -125,8 +125,8 @@ pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
-    uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
+    spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
@@ -386,34 +386,66 @@ pub fn focus_ring(handle: &FocusHandle, window: &Window, cx: &App) -> Option<Div
     ring(handle, &Look::of(window, cx), window)
 }
 
+/// Where a list's or a grid's keyboard cursor was last laid out, owned by
+/// the page that has the cursor and handed to what draws it (`.spot`). The
+/// cursor's ring writes its bounds here as it is laid out, so the page's
+/// scroll area can bring it into view (`ScrollArea::follow`) and the menu
+/// key can open under it, both from layout rather than from a global.
+#[derive(Clone, Default)]
+pub struct CursorSpot(std::rc::Rc<Spot>);
+
+#[derive(Default)]
+struct Spot {
+    bounds: std::cell::Cell<Option<Bounds<Pixels>>>,
+    /// Bumped each time the keys move the cursor: what a scroll area
+    /// follows, so moving to the same item again still scrolls to it.
+    moves: std::cell::Cell<u64>,
+}
+
+impl CursorSpot {
+    /// The keys moved the cursor: where it was is no longer where it is,
+    /// and the next layout brings it into view.
+    pub fn moved(&self) {
+        self.0.bounds.set(None);
+        self.0.moves.set(self.0.moves.get() + 1);
+    }
+
+    /// Where the cursor's ring was laid out since it last moved.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.bounds.get()
+    }
+
+    /// Where the cursor was laid out is no longer trusted, its moves left
+    /// alone: the next layout says again.
+    pub(crate) fn forget_bounds(&self) {
+        self.0.bounds.set(None);
+    }
+
+    pub(crate) fn moves(&self) -> u64 {
+        self.0.moves.get()
+    }
+
+    fn record(&self, bounds: Bounds<Pixels>) {
+        self.0.bounds.set(Some(bounds));
+    }
+}
+
 /// The focus ring drawn inside a row, for the row a list's keyboard cursor
 /// is on: the list holds the focus, so the row's ring sits within it rather
-/// than standing off over its neighbours.
-pub(crate) fn cursor_ring(look: &Look) -> Div {
-    div()
+/// than standing off over its neighbours. Laid out, it tells `spot` where.
+pub(crate) fn cursor_ring(look: &Look, spot: Option<&CursorSpot>) -> Div {
+    let ring = div()
         .absolute()
         .inset_0()
         .border(MARK)
-        .border_color(look.accent.hsla())
-        .child(
-            canvas(
-                |bounds, window, cx| {
-                    let id = window.window_handle().window_id();
-                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
-                },
-                |_, _, _, _| {},
-            )
-            .size_full(),
-        )
+        .border_color(look.accent.hsla());
+    match spot.cloned() {
+        Some(spot) => {
+            ring.child(canvas(move |bounds, _, _| spot.record(bounds), |_, _, _, _| {}).size_full())
+        }
+        None => ring,
+    }
 }
-
-/// Where the keyboard's cursor ring was drawn, and in which window: what the
-/// menu key opens a context menu under. The key clears it and lets a frame
-/// draw, so only a ring drawn in that frame counts.
-#[derive(Default)]
-pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
-
-impl Global for CursorAt {}
 
 /// A fill or an outline following a control's state on the GPU: lit at once
 /// as the state comes on (the pointer arrives), and faded out over

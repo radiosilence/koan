@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use futures::StreamExt as _;
 use koan_ffi::Playlist;
 use koan_kit::app::*;
 
@@ -65,6 +66,8 @@ pub struct Sidebar {
     /// with the arrows.
     focus: FocusHandle,
     cursor: ListCursor,
+    /// Where the cursor was laid out, for the rows' scroll to follow.
+    spot: crate::components::CursorSpot,
     /// Transfers queued or running, counted beside "downloads" while any are.
     running: usize,
     _subscriptions: [Subscription; 7],
@@ -89,6 +92,7 @@ impl Sidebar {
             searching: false,
             focus: cx.focus_handle().tab_stop(true),
             cursor: ListCursor::default(),
+            spot: Default::default(),
             import_problem: None,
             running: running(&transfers.read(cx).0),
             _subscriptions: [
@@ -167,17 +171,21 @@ impl Sidebar {
     /// Asks for the playlists again, with the records on each one's sleeve;
     /// a newer ask replaces one in flight.
     fn reload(&mut self, cx: &mut Context<Self>) {
+        /// How many playlists' sleeves are read at once.
+        const SLEEVE_READS: usize = 8;
         let engine = engine(cx);
         let reorders = self.reorders;
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
-                    // Every playlist's sleeve read together, not one after
-                    // another.
-                    let read = futures::future::join_all(playlists.iter().map(|playlist| {
+                    // The sleeves read a few at a time, in order: each read
+                    // takes a thread and a connection of the engine's.
+                    let read: Vec<_> = futures::stream::iter(playlists.iter().map(|playlist| {
                         let (engine, id) = (engine.clone(), playlist.id);
                         async move { (id, engine.playlist_cover_album_ids(id).await) }
                     }))
+                    .buffered(SLEEVE_READS)
+                    .collect()
                     .await;
                     this.update(cx, |this, cx| {
                         if this.reorders != reorders {
@@ -265,6 +273,7 @@ impl Sidebar {
             self.cursor.at = places.iter().position(|p| *p == current);
         }
         self.cursor.step(by, places.len(), false);
+        self.spot.moved();
         cx.notify();
     }
 
@@ -275,6 +284,7 @@ impl Sidebar {
                 nav.choose(page);
                 cx.notify();
             });
+            cx.emit(Opened);
         }
     }
 }
@@ -342,6 +352,12 @@ fn running(transfers: &[koan_ffi::Transfer]) -> usize {
     transfers.iter().filter(|t| !t.state.is_settled()).count()
 }
 
+/// A place in the sidebar was opened, by a click or Return: the page takes
+/// the keyboard, the page already showing included.
+pub struct Opened;
+
+impl EventEmitter<Opened> for Sidebar {}
+
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -351,6 +367,7 @@ fn go(
             nav.choose(page);
             cx.notify();
         });
+        cx.emit(Opened);
     })
 }
 
@@ -369,6 +386,7 @@ impl Render for Sidebar {
         if !dragging {
             self.drop_playlist = None;
         }
+        let spot = self.spot.clone();
         let row = |page: Route,
                    id: ElementId,
                    label: &'static str,
@@ -378,6 +396,7 @@ impl Render for Sidebar {
                 .icon(icon)
                 .selected(current == Some(page))
                 .cursor(keyed == Some(page))
+                .spot(&spot)
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
@@ -495,6 +514,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
+                        .spot(&self.spot)
                         .arrivals(playlist_arrivals[index])
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
@@ -515,9 +535,12 @@ impl Render for Sidebar {
                             } else {
                                 "This playlist is read-only, and can't be added to".into()
                             };
-                            let refused = why.clone();
-                            row.on_drop(move |_: &PlayableDrag, _, cx| {
-                                crate::notice::show(refused.clone(), Tone::Muted, cx)
+                            let (refused, id) = (why.clone(), playlist.id);
+                            row.on_drop(move |dragged: &PlayableDrag, _, cx| {
+                                // Its own tracks let go over it add nothing.
+                                if !dragged.is_from(id) {
+                                    crate::notice::show(refused.clone(), Tone::Muted, cx)
+                                }
                             })
                             .on_drop(
                                 move |_: &ExternalPaths, _, cx| {
@@ -610,11 +633,13 @@ impl Render for Sidebar {
             .on_action(cx.listener(|this, _: &list_actions::First, _, cx| {
                 let len = this.places().len();
                 this.cursor.to(0, len, false);
+                this.spot.moved();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &list_actions::Last, _, cx| {
                 let len = this.places().len();
                 this.cursor.to(usize::MAX, len, false);
+                this.spot.moved();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &list_actions::Activate, _, cx| this.open_cursor(cx)))
@@ -638,7 +663,7 @@ impl Render for Sidebar {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(ScrollArea::new("sidebar-rows", body)),
+                    .child(ScrollArea::new("sidebar-rows", body).follow(&self.spot)),
             )
             .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.

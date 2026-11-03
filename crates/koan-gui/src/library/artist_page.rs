@@ -101,6 +101,8 @@ pub struct ArtistPage {
     /// The keyboard's place on the page, in `order`: the records, the
     /// features, then the appearances.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The page holds the keyboard, as of the last frame.
     keyed: bool,
     _subscriptions: Vec<Subscription>,
@@ -165,6 +167,7 @@ impl ArtistPage {
             starting: HashSet::new(),
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             _subscriptions: subscriptions,
         };
@@ -345,7 +348,7 @@ impl ArtistPage {
                 }
             }
             Item::Track(i) => Anchored::Track(record.appearances.get(*i)?.id),
-            Item::About => return None,
+            Item::About => Anchored::About,
         };
         Some(Anchor {
             at,
@@ -375,6 +378,7 @@ impl ArtistPage {
             (Item::Track(i), Anchored::Track(id)) => {
                 record.appearances.get(*i).is_some_and(|t| t.id == id)
             }
+            (Item::About, Anchored::About) => true,
             _ => false,
         });
         match item_ix {
@@ -590,11 +594,12 @@ impl ArtistPage {
                     drag,
                     kind: crate::components::RowKind::Art,
                     note: None,
-                    cursor: self.keyed
+                    cursor: (self.keyed
                         && self.cursor.at
-                            == Some(record.albums.len() + record.features.len() + index),
+                            == Some(record.albums.len() + record.features.len() + index))
+                    .then(|| self.spot.clone()),
                     place: Some((index, record.appearances.len())),
-                    reveal: None,
+                    reveal: p.a11y.then(|| rows::Reveal::List(self.list.clone(), ix)),
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -660,7 +665,8 @@ impl ArtistPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
-                cursor: self.keyed && self.cursor.at == Some(first + ix),
+                cursor: (self.keyed && self.cursor.at == Some(first + ix))
+                    .then(|| self.spot.clone()),
                 show_artist,
                 side: grid.side,
                 sleeve,
@@ -875,9 +881,33 @@ impl actions::Menus for ArtistPage {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TileHost for ArtistPage {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
+        let Some(r) = &self.record else { return };
+        let Some(at) = r
+            .albums
+            .iter()
+            .chain(&r.features)
+            .position(|record| record.id == album)
+        else {
+            return;
+        };
+        if let Some((item, _)) = self
+            .lines()
+            .into_iter()
+            .find(|(_, range)| range.contains(&at))
+        {
+            crate::components::reveal_around_list(&self.list, item);
+            cx.notify();
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -891,8 +921,7 @@ impl TileHost for ArtistPage {
         let order = self.order();
         // The keyboard carries on from the tile clicked.
         if let Some(at) = order.iter().position(|p| *p == item) {
-            self.cursor.at = Some(at);
-            self.cursor.anchor = Some(at);
+            self.cursor.click(at, modifiers.shift);
         }
         if self
             .selection
@@ -957,8 +986,7 @@ impl TrackList for ArtistPage {
             RowPart::Row => {
                 if let Some(r) = &self.record {
                     let at = r.albums.len() + r.features.len() + index;
-                    self.cursor.at = Some(at);
-                    self.cursor.anchor = Some(at);
+                    self.cursor.click(at, event.modifiers().shift);
                 }
                 let ids: Vec<i64> = self
                     .record
@@ -994,6 +1022,10 @@ impl super::keys::KeyedList for ArtistPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.record.as_ref().map_or(0, |r| {
             r.albums.len() + r.features.len() + r.appearances.len()
@@ -1007,28 +1039,22 @@ impl super::keys::KeyedList for ArtistPage {
     /// Rows of a section's tiles hold the column; a section's last row may
     /// be short, and a track row is one.
     fn below(&self, at: usize, rows: isize) -> usize {
-        let lines = self.lines();
-        let Some(line) = lines.iter().position(|(_, range)| range.contains(&at)) else {
-            return at;
-        };
-        let column = at - lines[line].1.start;
-        let to = line
-            .saturating_add_signed(rows)
-            .min(lines.len().saturating_sub(1));
-        let range = &lines[to].1;
-        (range.start + column).min(range.end.saturating_sub(1))
+        super::keys::line_below(
+            &self
+                .lines()
+                .into_iter()
+                .map(|(_, range)| range)
+                .collect::<Vec<_>>(),
+            at,
+            rows,
+        )
     }
 
     /// One thing is marked, as a plain click marks a row, without starting
     /// a pick: the tiles still play on a click. A range starts one.
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
-        if from == to {
-            self.selection.arrow(order[from]);
-        } else {
-            self.selection.only(order[from]);
-            self.selection.click(order[to], true, &order);
-        }
+        super::keys::mark_range(&mut self.selection, &order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
@@ -1154,6 +1180,7 @@ impl Render for ArtistPage {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )

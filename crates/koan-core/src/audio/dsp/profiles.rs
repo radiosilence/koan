@@ -999,6 +999,7 @@ pub struct ImpulseDetail {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Detail {
     pub name: String,
+    /// The outputs it is chosen for, as `Summary::used_on`.
     pub devices: Vec<String>,
     pub source: Vec<String>,
     pub filters: Vec<crate::config::DspFilter>,
@@ -1104,7 +1105,7 @@ pub fn detail(name: &str) -> Option<Detail> {
     let chain_summary = summary(name).unwrap_or_default();
     Some(Detail {
         name: profile.name.clone(),
-        devices: profile.devices.clone(),
+        devices: used_on(&cfg.dsp, &profile.name),
         source: profile.source.clone(),
         filters: profile.filters.clone(),
         impulses,
@@ -6516,6 +6517,11 @@ mod tests {
         assert_eq!(preset_for("DAC"), Some(("Desk".into(), true)));
         assert!(cfg.dsp.profile_for("Amp").is_none(), "switched off");
         assert_eq!(tunings_for("Amp"), vec![("Warm".to_string(), true)]);
+        assert_eq!(
+            detail("Warm").unwrap().devices,
+            ["DAC", "Amp"],
+            "used for counts the outputs whose filters hold it"
+        );
         assert_eq!(preset_for("Amp"), Some(("Quiet".into(), false)));
         assert_eq!(cfg.dsp.profile_for("Speaker").unwrap().name, "HD 650");
         assert_eq!(tunings_for("Speaker"), vec![("Bright".to_string(), true)]);

@@ -12,10 +12,9 @@ use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
-    NextRegion, PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
-    help,
+    self, ActualSize, AddMusic, Back, Bigger, FocusNext, FocusPrevious, Forward, NextRegion,
+    PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue,
+    ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -67,6 +66,7 @@ pub struct Shell {
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
     /// The search box over the window, while it is open.
+    _opened: Subscription,
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     /// What had the keyboard when the search box opened, which has it back
     /// when the box closes.
@@ -124,8 +124,20 @@ impl Shell {
             .ok();
         })
         .detach();
+        let sidebar = cx.new(|cx| Sidebar::new(&nav, cx));
+        // The sidebar's click took the keyboard from the page; opening a
+        // place gives it to the page, the one showing included.
+        let opened = cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, _: &crate::sidebar::Opened, window, cx| {
+                this.arrived_at = this.nav.read(cx).current();
+                this.focus_page(window, cx);
+            },
+        );
         Self {
-            sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            _opened: opened,
+            sidebar,
             transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             banner: cx.new(crate::server_banner::ServerBanner::new),
             nav,
@@ -292,9 +304,16 @@ impl Shell {
 
     /// The page showing takes the keys again.
     fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Typing in a field moved the route (the sidebar's search lists its
-        // results as it is typed): the field keeps the keyboard.
-        if typing(&window.context_stack()) {
+        // Typing in a field that outlives the route moved it (the sidebar's
+        // search lists its results as it is typed): the field keeps the
+        // keyboard. A field of the page left behind (its filter, the picker)
+        // goes with it, so the page showing takes the keyboard instead.
+        let lasting = self.sidebar.focus_handle(cx).contains_focused(window, cx)
+            || self
+                .search_bar
+                .as_ref()
+                .is_some_and(|(bar, _)| bar.focus_handle(cx).contains_focused(window, cx));
+        if lasting && typing(&window.context_stack()) {
             cx.notify();
             return;
         }
@@ -313,7 +332,7 @@ impl Shell {
             // A library page is made as the stage draws it, and takes the
             // keyboard then.
             if let Some(library) = self.library.as_ref().filter(|_| LibraryStage::draws(route)) {
-                library.update(cx, |stage, _| stage.focus_on_arrival());
+                library.update(cx, |stage, cx| stage.take_keyboard(window, cx));
             }
         }
         cx.notify();
@@ -391,12 +410,7 @@ impl Shell {
 
     /// Asks before forgetting every cover kept on this device, saying how
     /// many and how much, then fetches what is on screen again.
-    fn clear_artwork(
-        &mut self,
-        _: &ClearArtworkCache,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn clear_artwork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(covers) = self.library.as_ref().map(|l| l.read(cx).covers()) else {
             return;
         };
@@ -605,11 +619,11 @@ impl Render for Shell {
             .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &FocusNext, window, cx| {
-                window.focus_next(cx);
+                crate::components::sheet::step_focus(true, window, cx);
                 this.focus_moved(cx);
             }))
             .on_action(cx.listener(|this, _: &FocusPrevious, window, cx| {
-                window.focus_prev(cx);
+                crate::components::sheet::step_focus(false, window, cx);
                 this.focus_moved(cx);
             }))
             .on_action(cx.listener(|this, _: &NextRegion, window, cx| this.region(1, window, cx)))
@@ -630,7 +644,6 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
-            .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))

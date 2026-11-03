@@ -65,6 +65,8 @@ pub struct ArtistBrowser {
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     search: Entity<chrome::SearchField>,
@@ -162,6 +164,7 @@ impl ArtistBrowser {
             rewinds,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             search,
             filters,
@@ -332,6 +335,7 @@ impl ArtistBrowser {
             })
             .selected(selected)
             .cursor(self.keyed && self.cursor.at == Some(index))
+            .spot(&self.spot)
             // Exactly the glyph's width, so it starts on the header's edge.
             .lead_exact(
                 crate::components::RowMetrics::lead_glyph(&p.look),
@@ -359,8 +363,7 @@ impl ArtistBrowser {
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(index);
-                this.cursor.anchor = Some(index);
+                this.cursor.click(index, e.modifiers().shift);
                 let order = &this.order;
                 if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
                     this.lib
@@ -398,6 +401,10 @@ impl actions::Menus for ArtistBrowser {
 
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
+    }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
     }
 }
 
@@ -479,6 +486,7 @@ impl Render for ArtistBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -507,13 +515,17 @@ impl super::keys::KeyedList for ArtistBrowser {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.artists.len()
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         self.selection.only(self.order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(self.order[to], true, &self.order);
         }
     }

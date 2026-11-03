@@ -463,13 +463,18 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     }
     // Tab and F6 move between controls in a text field too, where the field
     // has no use for them; the bare table binds them outside fields only.
-    for (key, action) in [
-        ("tab", FocusNext.boxed_clone()),
-        ("shift-tab", FocusPrevious.boxed_clone()),
-        ("f6", NextRegion.boxed_clone()),
-        ("shift-f6", PreviousRegion.boxed_clone()),
+    // Tab stays inside a question or menu over the window (`step_focus`);
+    // F6, which leaves for another region, is not bound there.
+    let regions = Rc::new(
+        KeyBindingContextPredicate::parse("koan && !Ask && !KoanMenu").expect("a valid context"),
+    );
+    for (key, action, when) in [
+        ("tab", FocusNext.boxed_clone(), &window),
+        ("shift-tab", FocusPrevious.boxed_clone(), &window),
+        ("f6", NextRegion.boxed_clone(), &regions),
+        ("shift-f6", PreviousRegion.boxed_clone(), &regions),
     ] {
-        push(&mut bindings, key, action, Some(window.clone()), cx);
+        push(&mut bindings, key, action, Some(when.clone()), cx);
     }
     // Not under a menu or a question opened over the list: their keys are
     // their own, as the bare table's are.

@@ -93,6 +93,8 @@ pub struct AlbumPage {
     scroll: UniformListScrollHandle,
     /// The keyboard's place among the tracks.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     width: Rc<Cell<Option<Pixels>>>,
@@ -139,6 +141,7 @@ impl AlbumPage {
             _slow: None,
             scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
@@ -184,6 +187,8 @@ impl AlbumPage {
                     Ok(page) if page.album.is_some() => {
                         this.lines = lines(&page.tracks);
                         this.album = page.album;
+                        let ids = |t: &[Track]| -> Vec<i64> { t.iter().map(|t| t.id).collect() };
+                        this.cursor.relocate(&ids(&this.tracks), &ids(&page.tracks));
                         this.tracks = page.tracks;
                         this.gone = None;
                     }
@@ -237,7 +242,22 @@ impl AlbumPage {
         let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
+                // A heading to a screen reader, carrying the reveal on to the
+                // tracks below it as their rows do.
+                let scroll = self.scroll.clone();
+                let count = self.lines.len();
+                let list_view = cx.entity_id();
                 return div()
+                    .id(("disc", i))
+                    .role(a11y::Role::Heading)
+                    .aria_label(title.clone())
+                    .aria_level(3)
+                    .when(p.a11y, |d| {
+                        d.on_a11y_action(a11y::AccessibleAction::ScrollIntoView, move |_, _, cx| {
+                            Reveal::Uniform(scroll.clone(), i, count).run();
+                            cx.notify(list_view);
+                        })
+                    })
                     .w_full()
                     .h(height)
                     .flex()
@@ -272,7 +292,7 @@ impl AlbumPage {
             drag,
             kind,
             note: None,
-            cursor: self.keyed && self.cursor.at == Some(index),
+            cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             place: Some((index, self.tracks.len())),
             reveal: p
                 .a11y
@@ -398,6 +418,10 @@ impl actions::Menus for AlbumPage {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for AlbumPage {
@@ -418,8 +442,7 @@ impl TrackList for AlbumPage {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -527,6 +550,7 @@ impl Render for AlbumPage {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -551,6 +575,10 @@ impl super::keys::KeyedList for AlbumPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.tracks.len()
     }
@@ -558,7 +586,7 @@ impl super::keys::KeyedList for AlbumPage {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }

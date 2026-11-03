@@ -1,0 +1,1 @@
+- **Play on and the output menu.** A renderer found while the output menu is open no longer moves the highlight onto another one, the menu no longer says this computer may need updating while its outputs are read, music moved here that has not started says so in plain words, and the transport no longer redraws whenever another device reports its playhead.

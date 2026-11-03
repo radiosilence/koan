@@ -46,10 +46,10 @@ pub struct DownloadsPage {
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
-    /// What the keys last moved to, for the list to scroll to.
-    revealed: Option<usize>,
     /// How many transfers the list shows, as of the last frame.
     count: usize,
     _subscriptions: [Subscription; 3],
@@ -73,8 +73,8 @@ impl DownloadsPage {
             limit: None,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
-            revealed: None,
             count: 0,
             _limit: cx.spawn(async move |this, cx| {
                 let limit = read.await;
@@ -90,6 +90,8 @@ impl DownloadsPage {
     fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
+            // A limit of nothing keeps only what is playing and next.
+            Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),
             None => format!("{} cached", bytes(used)),
         };
@@ -164,6 +166,7 @@ impl DownloadsPage {
         });
         let row = TableRow::new(("download", id as u64), RowKind::Text)
             .cursor(self.keyed && self.cursor.at == Some(index))
+            .spot(&self.spot)
             .title(
                 div()
                     .text_role(TypeRole::Body, &p.look)
@@ -200,8 +203,7 @@ impl DownloadsPage {
             .on_click(cx.listener(move |this, _, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(index);
-                this.cursor.anchor = Some(index);
+                this.cursor.place(index);
                 Self::open(&this.nav, album, cx);
             }))
             .child(row)
@@ -232,7 +234,7 @@ impl Render for DownloadsPage {
                 .map(|(index, t)| self.row(index, t, &p, window, cx))
                 .collect();
             ScrollArea::items("downloads", rows)
-                .reveal(self.revealed)
+                .follow(&self.spot)
                 .into_any_element()
         };
         crate::library::keys::keyed(
@@ -259,6 +261,10 @@ impl crate::library::keys::KeyedList for DownloadsPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.count
     }
@@ -267,9 +273,8 @@ impl crate::library::keys::KeyedList for DownloadsPage {
 
     fn toggle(&mut self, _: usize, _: &mut Context<Self>) {}
 
-    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
-        self.revealed = Some(ix);
-    }
+    /// The list follows the cursor's spot, told by the keys.
+    fn reveal(&mut self, _: usize, _: &mut Context<Self>) {}
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let album = self.transfers.read(cx).0.get(ix).and_then(|t| t.album_id);

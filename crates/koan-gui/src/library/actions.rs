@@ -240,19 +240,14 @@ pub fn keyed_target(
     album: Option<i64>,
     after: After,
 ) -> MenuTarget {
-    let picked = selection.picked();
-    if selection.contains(item) && picked.len() > 1 {
-        MenuTarget {
-            items: picked.into(),
-            album: None,
-            after,
-        }
-    } else {
-        MenuTarget {
-            items: Arc::from([item]),
-            album,
-            after: None,
-        }
+    let items = selection.dragging(item);
+    let single = items.len() == 1;
+    MenuTarget {
+        items: items.into(),
+        album: album.filter(|_| single),
+        // What a menu verb on the pick runs after it: on the item alone,
+        // nothing.
+        after: if single { None } else { after },
     }
 }
 
@@ -262,6 +257,11 @@ pub trait Menus: Sized + 'static {
     fn lib(&self) -> &Lib;
     fn menu_target(&mut self) -> &mut Option<MenuTarget>;
     fn menu_target_ref(&self) -> &Option<MenuTarget>;
+    /// Where the list's keyboard cursor was laid out: what the menu key
+    /// opens the menu under.
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        None
+    }
 }
 
 /// A row's or tile's right mouse down, noting what the list's menu acts on.
@@ -276,10 +276,13 @@ pub fn mark<V: Menus>(
 
 /// The list's one context menu, over whatever its rows marked. A right
 /// click on the list clears the mark first, in the capture phase, so one on
-/// empty space acts on nothing.
+/// empty space acts on nothing. `spot` is the page's keyboard cursor, which
+/// the page passes as it renders: reading the page from here would read it
+/// while it is being updated.
 pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
     element: E,
     view: WeakEntity<V>,
+    spot: Option<crate::components::CursorSpot>,
     window: &mut Window,
     cx: &mut App,
 ) -> E {
@@ -293,7 +296,7 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 }
             },
         ))
-        .koan_context_menu("list-menu", window, cx, move |m, window, cx| {
+        .koan_context_menu_at("list-menu", spot, window, cx, move |m, window, cx| {
             let Some(view) = view.upgrade() else { return m };
             let (lib, target) = {
                 let page = view.read(cx);
@@ -375,12 +378,18 @@ pub fn menu(
             .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
     );
     // Moving the pick's files where a pattern puts them, previewed first.
-    let (organise_lib, organise_items) = (lib.clone(), items.clone());
-    menu = menu.separator().item(
-        MenuEntry::new("organise…")
-            .icon(Icon::Organize)
-            .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
-    );
+    let (organise_lib, organise_items, organise_after) =
+        (lib.clone(), items.clone(), after.clone());
+    menu =
+        menu.separator()
+            .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click(
+                move |_, window, cx| {
+                    organise(&organise_lib, &organise_items, window, cx);
+                    if let Some(after) = &organise_after {
+                        after(cx);
+                    }
+                },
+            ));
     // A remote library's files on this device: fetched now, or let go.
     let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
     let (drop_lib, drop_items) = (lib.clone(), items.clone());

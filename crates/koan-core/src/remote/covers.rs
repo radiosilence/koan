@@ -554,6 +554,10 @@ const BULK_FAILURES: usize = 3;
 /// What a bulk answer hands each frame to: whether to read on.
 type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
 
+/// What `in_bulk` asks a chunk through: `SubsonicClient::get_covers`, or a
+/// test's answers.
+type Fetch<'a> = dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError> + 'a;
+
 /// `koanCovers` for `ids`, `BULK_MAX` at a time, through `fetch`
 /// (`SubsonicClient::get_covers`), asking `may` whether to go on: keeps what the server holds
 /// and says it has none of, and returns the ids it does not hold ready, or
@@ -563,7 +567,7 @@ type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
 /// not reach, one the server cannot answer or refuses is not, and what is
 /// left goes to the one by one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
-    fetch: &mut dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError>,
+    fetch: &mut Fetch,
     may: &dyn Fn() -> Result<(), Halt>,
     cfg: &Config,
     ids: Vec<String>,
@@ -790,7 +794,7 @@ mod tests {
     #[test]
     fn a_cut_stream_is_asked_again_for_the_rest() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut asked: Vec<Vec<String>> = Vec::new();
         let (rest, halted) = {
             let mut fetch = |ask: &[String], each: &mut Each| {
@@ -816,7 +820,7 @@ mod tests {
     #[test]
     fn a_bulk_answer_stops_between_frames() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let read = std::cell::Cell::new(0);
         let mut fetch = |ask: &[String], each: &mut Each| {
             for id in ask {
@@ -846,7 +850,7 @@ mod tests {
     #[test]
     fn koan_covers_failing_falls_back_to_one_by_one() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut calls = 0;
         let all = ids(BULK_MAX * (BULK_FAILURES + 2));
         let (rest, halted) = {

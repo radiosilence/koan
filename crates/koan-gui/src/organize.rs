@@ -112,7 +112,8 @@ impl OrganizeSheet {
                     Ok(selection) => this.selection = Some(selection),
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
-                // Setting the field previews, through its subscription.
+                // Setting the field says nothing to its subscription: the
+                // preview is asked for here.
                 this.draft.update(cx, |s, cx| s.set_value(text, window, cx));
                 this.preview(cx);
             })
@@ -229,6 +230,9 @@ impl OrganizeSheet {
         self.chosen = Some(index);
         let text = pattern.pattern.clone();
         self.draft.update(cx, |s, cx| s.set_value(text, window, cx));
+        // Setting the field emits no change: without this the plan shown,
+        // and the one confirmed, would be the last pattern's.
+        self.preview(cx);
     }
 
     /// The typed pattern differs from the named one chosen, or none is.
@@ -313,6 +317,7 @@ impl OrganizeSheet {
             );
         }
         let (pattern, ids) = (self.pattern(cx), self.track_ids.clone());
+        let ancillary = self.move_ancillary;
         let sheet = cx.entity().downgrade();
         ask::confirm(
             ask::Confirm {
@@ -330,11 +335,16 @@ impl OrganizeSheet {
             cx,
             move |cx| {
                 let Some(sheet) = sheet.upgrade() else { return };
-                let run = engine(cx).organize_execute(
-                    pattern.clone(),
-                    Some(ids.clone()),
-                    Some(base.clone()),
-                );
+                // The move reads whether ancillary files go with it from the
+                // configuration: the choice previewed is written first.
+                let engine = engine(cx);
+                let set = engine.clone().set_organize_moves_ancillary(ancillary);
+                let execute =
+                    engine.organize_execute(pattern.clone(), Some(ids.clone()), Some(base.clone()));
+                let run = async move {
+                    set.await?;
+                    execute.await
+                };
                 // Escape leaves the sheet while files move, as its cancel
                 // is disabled: dropping it would stop the move part way.
                 ask::hold(true, cx);

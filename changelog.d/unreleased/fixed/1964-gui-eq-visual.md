@@ -1,0 +1,1 @@
+- **The EQ window, looked over.** Sheets start a step below their head, links sit on the text's edge instead of centred, a target's previews stand in columns, and Manage EQ's details read in one case.

@@ -105,7 +105,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, window.scale_factor(), cx)),
             None => chip,
         }
     }
@@ -123,6 +123,8 @@ pub struct QueueView {
     /// move from.
     anchor: Option<RowRef>,
     cursor: Option<RowRef>,
+    /// Where the cursor's row was laid out, for the menu key.
+    spot: crate::components::CursorSpot,
     /// The row at the top of the list and its index then, kept as the list
     /// scrolls and as the view draws, so a queue sent whole can be shown from
     /// the same row.
@@ -148,9 +150,9 @@ pub struct QueueView {
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
-    /// The rest of the queue can be shuffled in place: there is a rest, and
-    /// shuffle play is off (it keeps an order of its own beside the queue).
-    shufflable: bool,
+    /// Why the rest of the queue cannot be shuffled in place now, `None`
+    /// when it can (`dice_refusal`).
+    dice: Option<&'static str>,
     /// The queue items as of the last edit, which the next is told against.
     known: HashSet<String>,
     /// Items moved by a drag here, landing with the next edit.
@@ -172,11 +174,14 @@ impl QueueView {
         let subscriptions = [
             cx.observe(&playback, |this, playback, cx| {
                 let now = &playback.read(cx).0;
-                let shufflable = now.queue_shufflable && !now.shuffle;
-                if shufflable != this.shufflable {
-                    this.shufflable = shufflable;
+                let dice = dice_refusal(now);
+                if dice != this.dice {
+                    this.dice = dice;
                     cx.notify();
                 }
+                // The cursor is the playback's: it can move in an update of
+                // its own, after the queue's rows already have.
+                this.follow(cx);
             }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
@@ -219,6 +224,7 @@ impl QueueView {
             selected: HashSet::new(),
             anchor: None,
             cursor: None,
+            spot: Default::default(),
             top: None,
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
@@ -229,10 +235,7 @@ impl QueueView {
             following: false,
             followed: None,
             followed_row: None,
-            shufflable: {
-                let now = &cx.global::<Mirror>().playback.read(cx).0;
-                now.queue_shufflable && !now.shuffle
-            },
+            dice: dice_refusal(&cx.global::<Mirror>().playback.read(cx).0),
             known: HashSet::new(),
             moved: Vec::new(),
             landed: HashSet::new(),
@@ -435,6 +438,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn select_range(&mut self, to: usize, cx: &App) {
@@ -450,6 +454,7 @@ impl QueueView {
             self.anchor = Some(self.row_ref(to, cx));
         }
         self.cursor = Some(self.row_ref(to, cx));
+        self.spot.moved();
     }
 
     fn toggle(&mut self, row: usize, cx: &App) {
@@ -464,6 +469,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
@@ -677,7 +683,7 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
@@ -788,6 +794,7 @@ impl QueueView {
         row_frame
             .selected(selected)
             .cursor(cursor)
+            .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
                     .when_some(place, |frame, (ix, items)| frame.place(ix, items))
@@ -1439,8 +1446,8 @@ impl QueueView {
         cx.notify();
     }
 
-    /// While following, a new playing track is brought into view; with
-    /// nothing playing there is nothing to follow.
+    /// While following, a new playing track is brought into view; with no
+    /// track under the cursor there is nothing to follow.
     fn follow(&mut self, cx: &mut Context<Self>) {
         if !self.following {
             return;
@@ -1453,9 +1460,23 @@ impl QueueView {
                     self.list.reveal(row);
                     self.followed = Some(id);
                     self.followed_row = Some(row);
+                    cx.notify();
                 }
             }
         }
+    }
+}
+
+/// Why the dice cannot shuffle the rest of the queue now, the Mac's
+/// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
+/// queue, and with nothing after the cursor there is nothing to shuffle.
+fn dice_refusal(now: &koan_ffi::NowPlaying) -> Option<&'static str> {
+    if now.shuffle {
+        Some("shuffle play is on: turn it off to shuffle the queue itself")
+    } else if !now.queue_shufflable {
+        Some("nothing after this track to shuffle")
+    } else {
+        None
     }
 }
 
@@ -1527,14 +1548,13 @@ impl QueueView {
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
+                // Refused as the Mac refuses it, and saying why.
                 ToolbarButton::new(
                     "queue-dice",
                     Icon::Reshuffle,
-                    "shuffle the rest of the queue",
+                    self.dice.unwrap_or("shuffle the rest of the queue"),
                 )
-                // As the Mac refuses it: nothing after the cursor, or shuffle
-                // play on, which keeps an order of its own.
-                .disabled(!self.shufflable)
+                .disabled(self.dice.is_some())
                 .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
             .child(
@@ -1561,7 +1581,7 @@ impl QueueView {
 }
 
 /// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
-/// read as "save" is chosen, not each time the toolbar draws.
+/// read when "save" is chosen.
 fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",
@@ -1802,7 +1822,7 @@ impl Render for QueueView {
                 .named("queue")
                 .into_any_element()
             }))
-            .koan_context_menu("queue-menu", window, cx, {
+            .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
                 move |menu, window, cx| row_menu(menu, &view, window, cx)
             })

@@ -132,6 +132,8 @@ pub struct AlbumGrid {
     focus: FocusHandle,
     /// The keyboard's place in the grid, by record.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The grid holds the keyboard, as of the last frame.
     keyed: bool,
     search: Entity<chrome::SearchField>,
@@ -242,6 +244,7 @@ impl AlbumGrid {
             rewinds,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             search,
             filters,
@@ -559,7 +562,8 @@ impl AlbumGrid {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&record.id),
-                cursor: self.keyed && self.cursor.at == Some(start + ix),
+                cursor: (self.keyed && self.cursor.at == Some(start + ix))
+                    .then(|| self.spot.clone()),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -777,10 +781,14 @@ impl actions::Menus for AlbumGrid {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TileHost for AlbumGrid {
-    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
         if let (Some(grid), Some(ix)) = (
             self.grid,
             self.records.iter().position(|record| record.id == album),
@@ -791,6 +799,9 @@ impl TileHost for AlbumGrid {
                 ix / columns,
                 self.records.len().div_ceil(columns),
             );
+            // A scroll handle asks for no frame: drawn again so the next row
+            // of tiles reaches the accessibility tree on an idle window.
+            cx.notify();
         }
     }
 
@@ -806,8 +817,7 @@ impl TileHost for AlbumGrid {
         let item = Playable::Album(album);
         // The keyboard carries on from the tile clicked.
         if let Some(index) = self.records.iter().position(|r| r.id == album) {
-            self.cursor.at = Some(index);
-            self.cursor.anchor = Some(index);
+            self.cursor.click(index, modifiers.shift);
         }
         if self
             .selection
@@ -970,6 +980,7 @@ impl Render for AlbumGrid {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -1009,6 +1020,10 @@ impl super::keys::KeyedList for AlbumGrid {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.records.len()
     }
@@ -1025,13 +1040,7 @@ impl super::keys::KeyedList for AlbumGrid {
     /// without starting a pick: the tiles still play on a click. A range
     /// starts one.
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        let item = |ix: usize| Playable::Album(self.records[ix].id);
-        if from == to {
-            self.selection.arrow(item(from));
-        } else {
-            self.selection.only(item(from));
-            self.selection.click(item(to), true, &self.order);
-        }
+        super::keys::mark_range(&mut self.selection, &self.order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
