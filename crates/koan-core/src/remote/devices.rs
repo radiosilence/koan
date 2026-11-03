@@ -1255,21 +1255,42 @@ pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
     }
     log::info!("tv: paired {id}");
     remember_tv_addr(&id, pending.addr);
+    // The latest pairing sent for this TV, so an undo of this one never
+    // drops a newer one the person made since.
+    SENT.lock().insert(id.clone(), ticket);
     let reported = link::report(LinkReport::TvPairing {
         device: id.clone(),
         pairing: Some(credential.clone()),
     });
+    // A cancel ends the wait: it rings the change signal.
     let kept = reported && {
-        let kept = || tv_pairing_of(&id).as_ref() == Some(&credential);
-        await_until(kept, PAIRING_KEPT)
+        let settled =
+            || !PAIRING.current(ticket) || tv_pairing_of(&id).as_ref() == Some(&credential);
+        await_until(settled, PAIRING_KEPT) && PAIRING.current(ticket)
     };
-    // Cancelled while the server was told: told again, to drop it.
+    // Cancelled while the server was told: told again, to drop it, unless a
+    // newer pairing of this TV has been sent since, or the server holds
+    // another one, which the drop would take with it.
     if !PAIRING.current(ticket) {
-        if reported {
-            link::report(LinkReport::TvPairing {
-                device: id,
-                pairing: None,
-            });
+        if !reported {
+            return Err(CANCELLED.into());
+        }
+        let mut sent = SENT.lock();
+        let ours = sent.get(&id) == Some(&ticket)
+            && tv_pairing_of(&id).is_none_or(|held| held == credential);
+        if !ours {
+            return Err(CANCELLED.into());
+        }
+        sent.remove(&id);
+        drop(sent);
+        if !link::report(LinkReport::TvPairing {
+            device: id,
+            pairing: None,
+        }) {
+            return Err(
+                "Cancelled, but your server may still have the pairing: use Stop waking once connected."
+                    .into(),
+            );
         }
         return Err(CANCELLED.into());
     }
@@ -1287,11 +1308,17 @@ pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
 /// What a cancelled pairing ends with.
 const CANCELLED: &str = "Cancelled.";
 
+/// Per TV, the ticket of the last pairing sent to the server.
+static SENT: std::sync::LazyLock<Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Abandon the pairing under way, and a begin still finding the TV; the TV
 /// takes its PIN down when the connection closes. A pairing finishing
 /// meanwhile is undone (`finish_tv_pairing`).
 pub fn cancel_tv_pairing() {
     drop(PAIRING.cancel());
+    // A finish waiting on the server sees it at once.
+    crate::signal::engine_changed().bump();
 }
 
 /// Stop waking the Apple TV `id`: the server drops its pairing for every
