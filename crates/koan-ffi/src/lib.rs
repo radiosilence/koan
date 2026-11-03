@@ -23,6 +23,11 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
+
+/// Analyser frames a second for clients that interpolate between them
+/// (`viz_keyframes`): enough for the bars to follow the music, few enough
+/// that the analyser costs little.
+const VIZ_KEYFRAMES: u8 = 30;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
@@ -1318,6 +1323,15 @@ impl KoanEngine {
     /// — so a paused koan delivers no messages, wakes nothing, and the thread
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
+        VizStream::new(&self.viz)
+    }
+
+    /// Follow the spectrum as keyframes, for a client that draws the bars
+    /// on the GPU and moves them between frames itself (the kōan GUI app):
+    /// the analyser runs at the rate koan chooses for keyframes, which is far
+    /// below a display's, and the client never names a rate.
+    pub fn viz_keyframes(&self) -> Arc<VizStream> {
+        self.set_viz_fps(VIZ_KEYFRAMES);
         VizStream::new(&self.viz)
     }
 
