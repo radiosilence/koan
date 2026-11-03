@@ -147,7 +147,7 @@ impl Storybook {
 }
 
 impl Render for Storybook {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .relative()
             .size_full()

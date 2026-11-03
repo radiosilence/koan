@@ -479,7 +479,11 @@ mod tests {
             Modifiers::default(),
         );
         cx.run_until_parked();
-        assert_eq!(offset(&page, cx), px(0.0), "dragged past the top: the start");
+        assert_eq!(
+            offset(&page, cx),
+            px(0.0),
+            "dragged past the top: the start"
+        );
         cx.simulate_mouse_up(
             point(edge, bounds.top()),
             MouseButton::Left,

@@ -121,9 +121,17 @@ mod tests {
         cx.run_until_parked();
         let focused = |cx: &mut VisualTestContext| cx.update(|window, cx| window.focused(cx));
         cx.dispatch_action(Tab);
-        assert_eq!(focused(cx).as_ref(), Some(&inside[0]), "past the last, the first");
+        assert_eq!(
+            focused(cx).as_ref(),
+            Some(&inside[0]),
+            "past the last, the first"
+        );
         cx.dispatch_action(TabPrev);
-        assert_eq!(focused(cx).as_ref(), Some(&inside[1]), "before the first, the last");
+        assert_eq!(
+            focused(cx).as_ref(),
+            Some(&inside[1]),
+            "before the first, the last"
+        );
         assert!(cx.update(|window, cx| trap.contains_focused(window, cx)));
     }
 

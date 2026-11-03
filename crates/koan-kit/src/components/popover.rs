@@ -186,11 +186,7 @@ mod tests {
     }
 
     fn trigger(cx: &mut VisualTestContext) {
-        let at = cx
-            .debug_bounds("outside")
-            .expect("drawn")
-            .bottom_left()
-            + point(px(4.0), px(8.0));
+        let at = cx.debug_bounds("outside").expect("drawn").bottom_left() + point(px(4.0), px(8.0));
         cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
         cx.run_until_parked();
@@ -217,7 +213,10 @@ mod tests {
         let (_, cx) = page(cx);
         trigger(cx);
         press(cx, "outside");
-        assert!(cx.debug_bounds("panel").is_none(), "a press outside closes it");
+        assert!(
+            cx.debug_bounds("panel").is_none(),
+            "a press outside closes it"
+        );
         trigger(cx);
         assert!(cx.debug_bounds("panel").is_some());
         trigger(cx);

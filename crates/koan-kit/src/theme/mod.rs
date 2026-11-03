@@ -146,7 +146,7 @@ pub fn init(cx: &mut App) {
 /// Keeps a window drawn in its appearance: redrawn when the system's
 /// changes. Hold the returned subscription as long as the window.
 pub fn follow_appearance<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Subscription {
-    cx.observe_window_appearance(window, |_, window, cx| {
+    cx.observe_window_appearance(window, |_, window, _| {
         window.refresh();
     })
 }

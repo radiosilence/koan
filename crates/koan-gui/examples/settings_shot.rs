@@ -50,7 +50,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     cx.update(|cx| {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-        koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
     });
