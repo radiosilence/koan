@@ -337,13 +337,16 @@ fn import_dropped(app: &mut app::App, text: String, callbacks: &TuiCallbacks) {
 ///
 /// Called by koan-cli after spawning the player and setting up initial
 /// playback. "loading" shows until `loading` disconnects: its sender is held
-/// by the thread reading what is to play into the queue.
+/// by the thread reading what is to play into the queue. `session` is the
+/// saved session this player keeps (`session()`), `None` for one that keeps
+/// none, such as a remote control's.
 pub fn run_tui(
     state: Arc<SharedPlayerState>,
     viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     start_in_library: bool,
     loading: Option<crossbeam_channel::Receiver<()>>,
+    session: Option<&'static str>,
     callbacks: TuiCallbacks,
 ) -> std::io::Result<()> {
     use crossterm::{
@@ -432,7 +435,7 @@ pub fn run_tui(
     );
     let mut now_playing = NowPlaying::default();
     // This player's session, whichever device the pages show.
-    let mut autosave = Autosave::start(app.view.local.clone(), session());
+    let mut autosave = Autosave::start(app.view.local.clone(), session);
 
     let flush_deletes = |app: &mut app::App| {
         if let Some(deletes) = app.art.gfx.take_deletes() {

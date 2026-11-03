@@ -252,6 +252,7 @@ pub fn cmd_play(
         tx,
         start_in_library,
         loading,
+        koan_tui::play::session(),
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
@@ -325,7 +326,11 @@ pub fn cmd_play_remote(server_url: &str) {
         playlist_items_from_paths,
     };
 
-    if let Err(e) = koan_tui::play::run_tui(state, viz_snapshot, cmd_tx, true, None, callbacks) {
+    // The server's queue is not this terminal's session, and a remote control
+    // takes no terminal device's lock.
+    if let Err(e) =
+        koan_tui::play::run_tui(state, viz_snapshot, cmd_tx, true, None, None, callbacks)
+    {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
