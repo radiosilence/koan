@@ -424,6 +424,8 @@ impl Teardown {
 /// device is a call into the audio system.
 pub struct DspLoaded {
     ticket: u64,
+    /// The output device asked for when the reading began.
+    wanted: Option<String>,
     config: Arc<crate::config::Config>,
     /// The device resolved, or `None` where none could be.
     device: Option<String>,
@@ -842,6 +844,7 @@ impl Player {
                 let setup = device.as_deref().and_then(|d| ctx.dsp_for(d));
                 let _ = tx.send(PlayerCommand::DspLoaded(DspLoaded {
                     ticket,
+                    wanted,
                     config,
                     device,
                     setup,
@@ -853,9 +856,14 @@ impl Player {
     }
 
     /// A DSP reading from `reload_dsp`'s thread: dropped if a newer one was
-    /// asked for since.
+    /// asked for since, or if the output moved meanwhile (another device, a
+    /// renderer), since it reads a device no longer in use and would restart
+    /// what plays for nothing.
     fn on_dsp_loaded(&mut self, loaded: DspLoaded) {
-        if loaded.ticket != self.dsp_ticket {
+        if loaded.ticket != self.dsp_ticket
+            || loaded.wanted != self.output_device_name
+            || self.renderer.is_some()
+        {
             return;
         }
         let DspLoaded {
@@ -2355,10 +2363,16 @@ impl Player {
         }
         let teardown = Arc::new(Teardown::default());
         let done = teardown.clone();
+        // One teardown at a time, in order: an open waits for the latest,
+        // which has waited for the one before it.
+        let before = self.teardown.take();
         let parts = (engine, rate_watch);
         let spawned = thread::Builder::new()
             .name("koan-output-drop".into())
             .spawn(move || {
+                if let Some(before) = before {
+                    before.wait();
+                }
                 drop(parts);
                 done.finish();
             });
@@ -7213,6 +7227,43 @@ mod tests {
         let cache = player.dsp.as_ref().expect("read");
         assert_eq!(cache.device, "Busy DAC");
         assert!(cache.setup.is_some());
+    }
+
+    #[test]
+    fn a_dsp_reading_for_a_device_since_changed_is_dropped() {
+        let backend = GatedBackend::new(&["list"]);
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.output_device_name = Some("Busy DAC".into());
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
+
+        player.process_command(PlayerCommand::ReloadDsp);
+        backend.held(1);
+        // Chosen while the reading is under way, as set_output_device and
+        // clear_output_device do, without their config writes.
+        player.output_device_name = None;
+        open_gate(&backend.gate);
+        loop {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(cmd @ PlayerCommand::DspLoaded(_)) => {
+                    player.process_command(cmd);
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => panic!("no reading came back: {e}"),
+            }
+        }
+        assert!(
+            player.dsp.is_none(),
+            "the old device's reading is not taken"
+        );
     }
 
     #[test]
