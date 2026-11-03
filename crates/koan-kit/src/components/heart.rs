@@ -1,7 +1,8 @@
 //! The heart on anything that can be favourited, the Mac's `FavouriteButton`:
-//! the outline off, filled in the accent on. Its own click answers it: six
-//! small dots leave a heart that fills, and one ring closes in on a heart
-//! that empties. A change made elsewhere (a shortcut, another device)
+//! the outline off, filled in the accent on. Its own click answers it: the
+//! fill pops in past its size and settles with small particles thrown out
+//! round it, and deflates, squashing, into the outline when emptied, drawn
+//! by the GPU from the heart's own strokes (`Answer::Fill`, `Answer::Empty`). A change made elsewhere (a shortcut, another device)
 //! answers alike. A heart its owner hides at rest (a row's, shown under the
 //! pointer) shows while it answers, so a heart emptied elsewhere is seen to
 //! close; one its owner does not draw at all at rest follows its favourite
@@ -29,14 +30,25 @@ pub struct Heart {
     on_click: Option<Handler<ClickEvent>>,
 }
 
+/// What a heart turning `on` or off answers with: the glyph's own motion,
+/// or with icons hidden, the marks around the character.
+fn answer(on: bool, icons: bool) -> Answer {
+    match (on, icons) {
+        (true, true) => Answer::Fill,
+        (false, true) => Answer::Empty,
+        (true, false) => Answer::Burst,
+        (false, false) => Answer::Close,
+    }
+}
+
 /// The heart `id`'s answers, following `on`: a change answers.
 fn follow(id: &ElementId, on: bool, window: &mut Window, cx: &mut App) -> Answerer {
-    let accent = Look::of(window, cx).accent.hsla();
+    let look = Look::of(window, cx);
     let answers = Answerer::of(id, window, cx);
     answers.follow(
         on as u64,
-        if on { Answer::Burst } else { Answer::Close },
-        accent,
+        answer(on, look.icons),
+        look.accent.hsla(),
         window,
         cx,
     );
@@ -145,6 +157,14 @@ impl RenderOnce for Heart {
         let on = self.on;
         let answers = follow(&self.id, on, window, cx);
         let live = answers.live(cx);
+        // While the glyph answers, the program draws it in its place.
+        let morphing = answers.glyph_live(cx);
+        let side = px(crate::theme::icons::side(look.points(self.role)));
+        // The fill in the heart's own on-colour, which falls back to `ink`
+        // where the accent does not read as text, so neither end snaps.
+        let fill = look.text_color(Tone::Accent);
+        let drawn = answers.glyph_layer(side, color, Some(fill), window, cx);
+        let icons = look.icons;
         let tip = self.help.clone().unwrap_or_else(|| {
             crate::theme::label(if on {
                 "remove from favourites"
@@ -170,14 +190,14 @@ impl RenderOnce for Heart {
             .child(
                 div()
                     .relative()
-                    .child(glyph)
+                    .child(div().when(morphing, |d| d.invisible()).child(glyph))
+                    .children(drawn)
                     .children(answers.layer(window, cx)),
             )
             .when_some(self.on_click, move |d, handler| {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                    let answer = if on { Answer::Close } else { Answer::Burst };
-                    answers.start(answer, accent, cx);
+                    answers.start(answer(!on, icons), accent, cx);
                     handler(event, window, cx)
                 });
                 answers_click(d, press.clone()).on_click(move |event, window, cx| {
