@@ -339,7 +339,7 @@ impl Render for PeoplePane {
         rows.push(buttons(
             vec![
                 div()
-                    .w(look.spaced(200.0))
+                    .w(look.sized(200.0))
                     .child(TextField::new(&self.username))
                     .into_any_element(),
                 Picker::new(
@@ -519,7 +519,7 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .w_full()
                     .items_center()
                     .gap(look.space(Space::Xs))
-                    .child(code.element(look.spaced(168.0), look.spaced(12.0)))
+                    .child(code.element(look.sized(168.0), look.spaced(12.0)))
                     .child(text(
                         "Scan with a phone's camera to open it there.",
                         TypeRole::Fine,
