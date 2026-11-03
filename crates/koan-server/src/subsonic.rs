@@ -11765,6 +11765,57 @@ mod tests {
         );
     }
 
+    /// An album's year is its original release's where its tags name one, and
+    /// its release's otherwise, whole dates included; `byYear` lists them in
+    /// that order.
+    #[tokio::test]
+    async fn an_albums_year_is_its_original_release() {
+        let (state, _dir) = test_state();
+        let db = Database::open(state.pool.path()).unwrap();
+        for (i, (album, date, original)) in [
+            ("Meddle", Some("2016"), Some("1971-10-30")),
+            ("Piper", None, Some("1967")),
+            ("The Wall", Some("1979-11-30"), None),
+            ("Ummagumma", Some("1969"), None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut meta = track_meta(&format!("/music/{i}.flac"), "Song", album, 1);
+            meta.date = date.map(Into::into);
+            meta.original_date = original.map(Into::into);
+            queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        let r = json_of(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/getAlbumList2?{}&type=byYear&fromYear=1900&toYear=2100",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        let years: Vec<(String, i64)> = r["albumList2"]["album"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["name"].as_str().unwrap().to_string(),
+                    a["year"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            years,
+            vec![
+                ("Piper".into(), 1967),
+                ("Ummagumma".into(), 1969),
+                ("Meddle".into(), 1971),
+                ("The Wall".into(), 1979),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn test_opensubsonic_fields() {
         let (state, _dir) = test_state();
