@@ -127,6 +127,10 @@ pub struct MenuRow {
     keys: Option<SharedString>,
     /// The action the keyboard is on, lit as the pointer lights it.
     keyed: Option<usize>,
+    /// What the tick's answer is kept under, where the row's own id is its
+    /// place in a menu that refills: what the row is, so a row moved by a
+    /// refill does not answer as if its choice had changed.
+    tick_key: Option<ElementId>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -218,6 +222,7 @@ impl MenuRow {
             columns: None,
             keys: None,
             keyed: None,
+            tick_key: None,
             on_click: None,
         }
     }
@@ -273,6 +278,12 @@ impl MenuRow {
 
     fn act(mut self, action: MenuAction) -> Self {
         self.trailing.push(action);
+        self
+    }
+
+    /// Keeps the tick's answer under `key`, which names what the row is.
+    pub fn tick_key(mut self, key: impl Into<ElementId>) -> Self {
+        self.tick_key = Some(key.into());
         self
     }
 
@@ -547,7 +558,11 @@ impl RenderOnce for MenuRow {
         // The tick of a choice draws itself in as the row becomes the choice,
         // and erases as it stops being one, as a toggle's does.
         let tick_answers = self.checked.filter(|_| look.icons).map(|checked| {
-            let answers = super::Answerer::of(&super::child(&self.id, "tick"), window, cx);
+            let key = self
+                .tick_key
+                .clone()
+                .unwrap_or_else(|| super::child(&self.id, "tick"));
+            let answers = super::Answerer::of(&key, window, cx);
             answers.follow(
                 checked as u64,
                 super::Answer::Tick(checked),
