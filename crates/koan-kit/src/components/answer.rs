@@ -307,7 +307,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             for (int i = 0; i < 7; i++) {
                 float ang = -1.5708 + float(i) * 0.8976;
                 float2 p = float2(12.0, 12.5) + (7.5 + 5.5 * e) * float2(cos(ang), sin(ang));
-                float dot_r = 1.3 * (1.0 - t);
+                float dot_r = 1.6 * sin(pi * min(t * 1.4, 1.0));
                 fill = max(fill, clamp((dot_r - length(g - p)) * k + 0.5, 0.0, 1.0) * (1.0 - t));
             }
         } else {
@@ -417,7 +417,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             for (var i = 0; i < 7; i++) {
                 let ang = -1.5708 + f32(i) * 0.8976;
                 let p = vec2<f32>(12.0, 12.5) + (7.5 + 5.5 * e) * vec2<f32>(cos(ang), sin(ang));
-                let dot_r = 1.3 * (1.0 - t);
+                let dot_r = 1.6 * sin(pi * min(t * 1.4, 1.0));
                 fill = max(fill, clamp((dot_r - length(g - p)) * k + 0.5, 0.0, 1.0) * (1.0 - t));
             }
         } else {
@@ -804,6 +804,48 @@ impl Answerer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A glyph's change of state answers with its own motion: play and
+    /// pause fold either way, shuffle crosses, repeat spins with its one;
+    /// anything else is not a glyph motion.
+    #[test]
+    fn a_glyph_moves_from_the_state_it_stood_in() {
+        use crate::theme::Icon;
+        let m = glyph_mark;
+        let moved = |from, to| glyph_motion(from, to);
+        assert_eq!(
+            moved(m(Icon::Play, None), m(Icon::Pause, None)),
+            Some(Answer::Morph(Morph::ToPause))
+        );
+        assert_eq!(
+            moved(m(Icon::Pause, None), m(Icon::Play, None)),
+            Some(Answer::Morph(Morph::ToPlay))
+        );
+        assert_eq!(
+            moved(m(Icon::Shuffle, Some(false)), m(Icon::Shuffle, Some(true))),
+            Some(Answer::Morph(Morph::ShuffleOn))
+        );
+        assert_eq!(
+            moved(
+                m(Icon::RepeatQueue, Some(true)),
+                m(Icon::RepeatOne, Some(true))
+            ),
+            Some(Answer::Morph(Morph::SpinToOne))
+        );
+        assert_eq!(
+            moved(
+                m(Icon::RepeatOne, Some(true)),
+                m(Icon::RepeatQueue, Some(false))
+            ),
+            Some(Answer::Morph(Morph::SpinFromOne))
+        );
+        assert_eq!(
+            moved(m(Icon::Play, None), m(Icon::Shuffle, Some(true))),
+            None
+        );
+        assert!(Answer::Fill.glyph() && Answer::Nudge(true).glyph());
+        assert!(!Answer::Ring.glyph() && !Answer::Burst.glyph());
+    }
     use core::prelude::v1::test;
     use gpui::{TestAppContext, VisualTestContext, div, red};
 

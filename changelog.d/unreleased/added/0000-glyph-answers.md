@@ -1,0 +1,1 @@
+- **Controls with character.** A heart pops when filled, throwing out a few particles, and deflates when emptied; play folds into pause and back; a skip nudges its way; shuffle's arrows cross and repeat spins round, its one popping in. Each runs once, drawn by the GPU, and stands still under Reduce Motion.
