@@ -1,0 +1,403 @@
+//! The kōan scrollbar, which every scrolling surface lays over its right
+//! edge: thin and square on no track, `muted` at rest and `ink` under the
+//! pointer or held, taking no width from what scrolls. It shows at once
+//! while the content scrolls or the pointer is over its edge, and after a
+//! rest fades out quickly (`Motion::LEAVE`), on the GPU: a shader quad whose
+//! opacity is a track, so the fade draws no frame. Drag the thumb to scroll,
+//! or press the edge to bring the thumb there.
+//!
+//! A screen reader scrolls the content itself, which GPUI reports as a
+//! scroll area; the bar is how the content's place is drawn, and is left
+//! out of the accessibility tree.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Duration;
+
+use gpui::*;
+
+use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
+use crate::theme::Look;
+use crate::theme::tokens::Motion;
+
+/// What a scrollbar reads and moves: a scrolling div's `ScrollHandle`, a
+/// `uniform_list`'s handle or a `list`'s state. Offsets are GPUI's, zero at
+/// the top and negative down the content.
+pub trait ScrollSource: Clone + 'static {
+    fn offset(&self) -> Point<Pixels>;
+    fn set_offset(&self, offset: Point<Pixels>);
+    /// How far the content scrolls: zero when it fits.
+    fn max_offset(&self) -> Pixels;
+    fn start_drag(&self) {}
+    fn end_drag(&self) {}
+}
+
+impl ScrollSource for ScrollHandle {
+    fn offset(&self) -> Point<Pixels> {
+        ScrollHandle::offset(self)
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        ScrollHandle::set_offset(self, offset)
+    }
+
+    fn max_offset(&self) -> Pixels {
+        ScrollHandle::max_offset(self).y
+    }
+}
+
+impl ScrollSource for UniformListScrollHandle {
+    fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().base_handle.offset()
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.0.borrow_mut().base_handle.set_offset(offset)
+    }
+
+    fn max_offset(&self) -> Pixels {
+        self.0.borrow().base_handle.max_offset().y
+    }
+}
+
+impl ScrollSource for ListState {
+    fn offset(&self) -> Point<Pixels> {
+        self.scroll_px_offset_for_scrollbar()
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.set_offset_from_scrollbar(offset)
+    }
+
+    fn max_offset(&self) -> Pixels {
+        self.max_offset_for_scrollbar().y
+    }
+
+    fn start_drag(&self) {
+        self.scrollbar_drag_started()
+    }
+
+    fn end_drag(&self) {
+        self.scrollbar_drag_ended()
+    }
+}
+
+/// The thumb in its colour (uniforms 4..8), at the opacity of track 0.
+static THUMB: ShaderProgram = ShaderProgram {
+    name: "koan-scrollbar",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    return float4(u[4], u[5], u[6], u[7] * clamp(koan_track(u, 0, time), 0.0, 1.0));
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(u[1].xyz, u[1].w * clamp(koan_track(u, 0u, time), 0.0, 1.0));
+}
+"#,
+    prepare: None,
+};
+
+/// The thumb's width at rest, and under the pointer or held.
+const REST: Pixels = px(3.0);
+const WIDE: Pixels = px(5.0);
+/// Between the thumb and the edges it runs along.
+const INSET: Pixels = px(3.0);
+/// The edge that answers the pointer: the wide thumb and its insets.
+const EDGE: Pixels = px(11.0);
+const MIN_LENGTH: Pixels = px(32.0);
+/// How long the bar stays after the content stops or the pointer leaves.
+const LINGER: Duration = Duration::from_millis(800);
+
+/// The vertical scrollbar over its parent, which is `relative` and the
+/// size of what scrolls.
+pub struct Scrollbar<S: ScrollSource> {
+    source: S,
+}
+
+impl<S: ScrollSource> Scrollbar<S> {
+    pub fn vertical(source: &S) -> Self {
+        Self {
+            source: source.clone(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Bar {
+    /// The offset the last frame drew, to tell a scroll.
+    drawn: Option<Pixels>,
+    hovered: bool,
+    /// Held: where on the thumb it was taken, from its top.
+    grab: Option<Pixels>,
+    /// Showing where shaders do not draw the fade.
+    shown: bool,
+    fade: Animated,
+    linger: Option<Task<()>>,
+}
+
+impl Bar {
+    fn show(&mut self) {
+        self.fade.hold(0, 1.0);
+        self.shown = true;
+        self.linger = None;
+    }
+
+    /// Fades out after the linger, unless the pointer is over it or holds it.
+    fn rest(this: &Rc<RefCell<Self>>, view: EntityId, cx: &mut App) {
+        let mut bar = this.borrow_mut();
+        if bar.hovered || bar.grab.is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(this);
+        bar.linger = Some(cx.spawn(async move |cx| {
+            cx.background_executor().timer(LINGER).await;
+            let Some(bar) = weak.upgrade() else { return };
+            let mut bar = bar.borrow_mut();
+            let now = Animated::now();
+            let from = bar.fade.at(0, now);
+            bar.fade.segment(
+                0,
+                from,
+                0.0,
+                now,
+                Motion::LEAVE,
+                Ease::QuickOut,
+                Repeat::Once,
+            );
+            bar.shown = false;
+            drop(bar);
+            if !SHADED {
+                cx.update(|cx| cx.notify(view));
+            }
+        }));
+    }
+}
+
+pub struct Prepaint {
+    hitbox: Option<Hitbox>,
+    thumb: Option<Bounds<Pixels>>,
+    track: Bounds<Pixels>,
+    bar: Rc<RefCell<Bar>>,
+}
+
+impl<S: ScrollSource> IntoElement for Scrollbar<S> {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl<S: ScrollSource> Element for Scrollbar<S> {
+    type RequestLayoutState = ();
+    type PrepaintState = Prepaint;
+
+    fn id(&self) -> Option<ElementId> {
+        Some("koan-scrollbar".into())
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let mut style = Style {
+            position: Position::Absolute,
+            ..Style::default()
+        };
+        style.inset = Edges::all(px(0.0).into());
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Prepaint {
+        let bar = window.with_element_state(id.expect("an id"), |bar, _| {
+            let bar = bar.unwrap_or_else(|| {
+                let bar = Rc::new(RefCell::new(Bar::default()));
+                bar.borrow().fade.hold(0, 0.0);
+                bar
+            });
+            (bar.clone(), bar)
+        });
+        let track = Bounds::from_corners(
+            point(bounds.right() - EDGE, bounds.top() + INSET),
+            point(bounds.right(), bounds.bottom() - INSET),
+        );
+        let max = self.source.max_offset();
+        let offset = -self.source.offset().y;
+        let content = bounds.size.height + max;
+        if max <= px(0.5) || bounds.size.height <= px(0.0) {
+            bar.borrow_mut().drawn = Some(offset);
+            return Prepaint {
+                hitbox: None,
+                thumb: None,
+                track,
+                bar,
+            };
+        }
+        // A scroll since the last frame shows it, and it rests again once
+        // the content stops.
+        let view = window.current_view();
+        let scrolled = {
+            let mut b = bar.borrow_mut();
+            let moved = b.drawn.is_some_and(|drawn| drawn != offset);
+            b.drawn = Some(offset);
+            moved
+        };
+        if scrolled {
+            bar.borrow_mut().show();
+            Bar::rest(&bar, view, cx);
+        }
+        let length = (track.size.height * (bounds.size.height / content))
+            .max(MIN_LENGTH)
+            .min(track.size.height);
+        let room = track.size.height - length;
+        let top = track.top() + room * (offset / max).clamp(0.0, 1.0);
+        let wide = {
+            let b = bar.borrow();
+            b.hovered || b.grab.is_some()
+        };
+        let width = if wide { WIDE } else { REST };
+        let thumb = Bounds::new(
+            point(bounds.right() - INSET - width, top),
+            size(width, length),
+        );
+        Prepaint {
+            hitbox: Some(window.insert_hitbox(track, HitboxBehavior::BlockMouse)),
+            thumb: Some(thumb),
+            track,
+            bar,
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        prepaint: &mut Prepaint,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let (Some(hitbox), Some(thumb)) = (prepaint.hitbox.clone(), prepaint.thumb) else {
+            return;
+        };
+        let bar = prepaint.bar.clone();
+        let track = prepaint.track;
+        let view = window.current_view();
+        let look = Look::of(window, cx);
+        let colour = {
+            let b = bar.borrow();
+            if b.grab.is_some() {
+                look.palette.ink.hsla()
+            } else if b.hovered {
+                look.palette.ink.hsla().opacity(0.7)
+            } else {
+                look.palette.muted.hsla().opacity(0.6)
+            }
+        };
+        window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+        if SHADED {
+            let fade = bar.borrow().fade.clone();
+            fade.set_color(4, colour);
+            fade.attach(true, window, cx);
+            fade.paint(&THUMB, None, thumb, window);
+        } else if bar.borrow().shown {
+            window.paint_quad(fill(thumb, colour));
+        }
+
+        // The pointer over the edge shows it; leaving lets it rest.
+        let over = bar.clone();
+        let edge = hitbox.clone();
+        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            let hovered = edge.is_hovered(window);
+            if over.borrow().hovered == hovered {
+                return;
+            }
+            over.borrow_mut().hovered = hovered;
+            if hovered {
+                over.borrow_mut().show();
+            } else {
+                Bar::rest(&over, view, cx);
+            }
+            cx.notify(view);
+        });
+
+        // A press on the thumb takes it where it was pressed; on the edge
+        // beside it, brings the thumb's middle there and takes it.
+        let (press, source) = (bar.clone(), self.source.clone());
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble
+                || event.button != MouseButton::Left
+                || !hitbox.is_hovered(window)
+            {
+                return;
+            }
+            cx.stop_propagation();
+            let grab = if thumb.contains(&event.position) {
+                event.position.y - thumb.top()
+            } else {
+                thumb.size.height / 2.0
+            };
+            press.borrow_mut().grab = Some(grab);
+            press.borrow_mut().show();
+            source.start_drag();
+            scroll_to(&source, event.position.y - grab, track, thumb.size.height);
+            cx.notify(view);
+        });
+
+        if bar.borrow().grab.is_some() {
+            let (held, source) = (bar.clone(), self.source.clone());
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                let Some(grab) = held.borrow().grab else {
+                    return;
+                };
+                scroll_to(&source, event.position.y - grab, track, thumb.size.height);
+                cx.notify(view);
+            });
+            let (held, source) = (bar.clone(), self.source.clone());
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                    return;
+                }
+                if held.borrow_mut().grab.take().is_some() {
+                    source.end_drag();
+                    Bar::rest(&held, view, cx);
+                    cx.notify(view);
+                }
+            });
+        }
+    }
+}
+
+/// The content scrolled so the thumb's top is at `top`.
+fn scroll_to<S: ScrollSource>(source: &S, top: Pixels, track: Bounds<Pixels>, length: Pixels) {
+    let room = track.size.height - length;
+    if room <= px(0.0) {
+        return;
+    }
+    let share = ((top - track.top()) / room).clamp(0.0, 1.0);
+    let offset = source.offset();
+    source.set_offset(point(offset.x, -(source.max_offset() * share)));
+}

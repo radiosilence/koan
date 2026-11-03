@@ -294,7 +294,6 @@ mod tests {
     #[gpui::test]
     fn tiles_fill_the_measured_columns_and_wrap(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (page, cx) = cx.add_window_view(|_, _| Page {

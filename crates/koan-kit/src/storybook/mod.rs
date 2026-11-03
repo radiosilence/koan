@@ -148,7 +148,6 @@ impl Storybook {
 
 impl Render for Storybook {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
         div()
             .relative()
             .size_full()

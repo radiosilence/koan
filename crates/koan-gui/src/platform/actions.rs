@@ -38,7 +38,7 @@ const MENU_CONTEXT: &str = "koan && !Modal";
 /// field or menu, where space would otherwise play behind it.
 const BARE_CONTEXT: &str = "koan && !Input && !Modal && !KoanMenu";
 
-/// What the shell's text fields call their context (gpui-base's `Input`).
+/// What the shell's text fields call their context (koan-kit's `field::CONTEXT`).
 #[cfg(test)]
 const INPUT_CONTEXT: &str = "Input";
 

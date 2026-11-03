@@ -39,7 +39,6 @@ fn shaders(cx: &mut VisualTestContext) -> usize {
 #[gpui::test]
 fn controls_at_rest_draw_no_shader(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Page);

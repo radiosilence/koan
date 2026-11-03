@@ -5,8 +5,8 @@
 //! guessed at from their kind, which sizes the scrollbar from the first
 //! frame.
 
+use super::Scrollbar;
 use gpui::*;
-use gpui_kit::base::Scrollbar;
 
 use super::{RowKind, RowMetrics};
 

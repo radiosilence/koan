@@ -10,7 +10,6 @@ fn main() {
     gpui_platform::application()
         .with_assets(theme::icons::Assets)
         .run(|cx: &mut App| {
-            koan_kit::app::platform::init(cx);
             theme::init(cx);
             let options = SecondaryWindow::new("kōan storybook", "rocks.koan.storybook")
                 .size(1280.0, 900.0)

@@ -386,7 +386,6 @@ mod tests {
     #[koan_kit::app::test::test]
     fn the_code_is_heard_over_a_list(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            koan_kit::app::platform::init(cx);
             cx.bind_keys([
                 KeyBinding::new("up", list::Up, Some("List")),
                 KeyBinding::new("down", list::Down, Some("List")),

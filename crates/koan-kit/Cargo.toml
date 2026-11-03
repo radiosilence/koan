@@ -8,21 +8,18 @@ description = "kōan's design system for GPUI: the theme and its components. Kno
 publish = false
 
 [features]
-profiler = ["gpui/profiler", "gpui-kit/profiler"]
+profiler = ["gpui/profiler"]
 # GPUI's Metal shaders compiled when the app starts rather than when it is
 # built: a build then needs the Command Line Tools, not Xcode's Metal
 # toolchain. For development; releases compile them ahead, as by default.
 runtime-shaders = ["gpui_platform/runtime_shaders"]
-test-support = ["gpui/test-support", "gpui-kit/test-support"]
+test-support = ["gpui/test-support"]
 
 [dependencies]
 # GPUI itself (our vendored copy; the library is named `gpui`) and its
 # platform: the app model, elements, the platform and the test harness.
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10" }
-# The components koan-kit has not replaced yet: the text input, the window's
-# root, the scrollbar and the filter panels (#2021).
-gpui-kit = "0.8.1"
 # The wash's bake and the accent's sampling, in the version GPUI builds
 # against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
@@ -34,7 +31,6 @@ unicode-segmentation = "1.13"
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support"] }
-gpui-kit = { version = "0.8.1", features = ["test-support"] }
 serde_json = "1"
 
 # Reduce Motion, Increase Contrast, Reduce Transparency and Low Power Mode,

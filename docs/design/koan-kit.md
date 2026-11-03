@@ -12,11 +12,11 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 GPUI (vendor/gpui-pre*)  ->  koan-kit  ->  koan-gui
 ```
 
-koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates. A few components still come from gpui-kit (the text input, the window's root and focus trap, the scrollbar, the filter panels' popover) until koan-kit has its own (#2021); nothing outside koan-kit names gpui-kit.
+koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates, and every component from itself: the text field, the window's root (`Root`) and focus trap (`focus_trap`), the scrollbar (`Scrollbar`) and the panels controls open (`opens_panel`).
 
 **koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and `cargo run -p koan-kit` opens its storybook: every component and container on a page of its own, in each state, with the appearance, the accent (a sample sleeve among them, for its tone mapping and the wash), the text size, Reduce Motion and Show icons to switch. `examples/storybook.rs` draws each page offscreen, dark and light, to a PNG.
 
-**koan-gui** builds pages from koan-kit only: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
+**koan-gui** builds pages from koan-kit only: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
 ## Beyond kōan
 
@@ -403,7 +403,7 @@ Pages say what no component says for them through `koan_kit::app::a11y`: the sid
 | `koanSheet`, `KoanSheetAction` | `sheet` parts, `Asking` |
 | `ActivityIndicator` | `ProgressRow`, `ProgressBar` |
 | `SidebarView`'s status foot | `StatusBlock` |
-| `koanPopover` | `MenuPanel` as a popover (gap) |
+| `koanPopover` | `opens_panel` with a `MenuPanel` |
 | `KoanTabItem` (Settings tabs) | `settings/sheet.rs`'s tabs; a `Tabs` component (gap) |
 
 ## Where the spec and the Swift app disagree
@@ -418,7 +418,7 @@ The spec wins, except for these, each a deliberate choice for the desktop.
 
 Two parts, the compiler first.
 
-**The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla`, fonts and gpui-component's widgets. koan-gui still depends on GPUI itself, as `gpui`, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
+**The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla` and fonts. koan-gui still depends on GPUI itself, as `gpui`, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
 
 **`just gui-theme-leaks`**, in CI's GUI job: sizes and colours written as numbers (`px(`, `rgb(`, `hsla(` and the like), methods of the `Styled` trait that fix a size (`.p_4()`, `.text_xs()`, `.w_64()`, `.line_height(`), hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`), `gpui::` named directly, and each name taken from `koan_kit::raw`.
 

@@ -418,7 +418,7 @@ impl Render for Shell {
 /// drew again in between and reused it: no input, no refresh, nothing but
 /// the notify asks for the frame. The stage made the page, so the page's
 /// own entity was first read in the stage's render.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_page_filled_by_a_spawned_read_draws_without_input(cx: &mut TestAppContext) {
     let route = cx.new(|_| Route { album: false });
     let stage = cx.new(|cx| {

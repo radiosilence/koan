@@ -139,15 +139,14 @@ pub fn init(cx: &mut App) {
     if !cx.is_test() {
         watch_desktop_settings(cx);
     }
-    sync_components(is_dark(cx.window_appearance()), cx);
     crate::components::field::bind(cx);
+    crate::components::bind_root(cx);
 }
 
 /// Keeps a window drawn in its appearance: redrawn when the system's
 /// changes. Hold the returned subscription as long as the window.
 pub fn follow_appearance<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Subscription {
     cx.observe_window_appearance(window, |_, window, cx| {
-        sync_components(Look::of(window, cx).dark, cx);
         window.refresh();
     })
 }
@@ -215,7 +214,6 @@ fn set_system_display(
     theme.contrast = contrast;
     theme.opaque = opaque;
     theme.system_text = text;
-    sync_components(is_dark(cx.window_appearance()), cx);
     cx.refresh_windows();
 }
 
@@ -362,76 +360,7 @@ pub fn pin_appearance(dark: Option<bool>, window: &mut Window, cx: &mut App) {
         Some(dark) => pinned.insert(id, dark),
         None => pinned.remove(&id),
     };
-    sync_components(Look::of(window, cx).dark, cx);
     window.refresh();
-}
-
-/// gpui-component's theme, in the tokens: the toolbar's popover panels
-/// (`opens_panel`) are its `Popover`, and read their colours, type and
-/// corners from this one global. It follows the window most recently told
-/// to (the system's appearance, or a pinned window's), since it cannot
-/// differ per window. koan-kit's own fields read the look directly.
-fn sync_components(dark: bool, cx: &mut App) {
-    use gpui_kit::component::theme::Theme;
-    let koan = cx.global::<KoanTheme>();
-    let palette = Palette::for_look(dark, koan.contrast);
-    let accent = accent_shade(dark, koan.contrast, cx).hsla();
-    let size = TypeRole::Control.points() * koan.scale().text;
-    sync_scrollbar(&palette, cx);
-    let current = Theme::global(cx);
-    if current.colors.background == palette.bg.hsla()
-        && current.colors.foreground == palette.ink.hsla()
-        && current.colors.ring == accent
-        && current.font_size == px(size)
-        && current.font_family.as_ref() == FONT_FAMILY
-    {
-        return;
-    }
-    let theme = Theme::global_mut(cx);
-    theme.font_family = FONT_FAMILY.into();
-    theme.mono_font_family = FONT_FAMILY.into();
-    theme.font_size = px(size);
-    theme.mono_font_size = px(size);
-    theme.radius = px(0.0);
-    theme.radius_lg = px(0.0);
-    theme.shadow = false;
-    theme.colors.foreground = palette.ink.hsla();
-    theme.colors.muted_foreground = palette.muted.hsla();
-    theme.colors.background = palette.bg.hsla();
-    theme.colors.border = palette.muted.hsla();
-    theme.colors.ring = accent;
-}
-
-/// The kōan scrollbar, for gpui-base's `Scrollbar`, which every scrolling
-/// surface lays over itself: shown while it scrolls and while the pointer is
-/// over its edge, thin and square, `muted` at rest and `ink` held, on no
-/// track, taking no width from the page. It fades on the motion tokens.
-fn sync_scrollbar(palette: &Palette, cx: &mut App) {
-    use gpui_kit::base::{ScrollbarMode, ScrollbarMotion, ScrollbarStyles, ScrollbarTheme};
-    let (muted, ink) = (palette.muted.hsla(), palette.ink.hsla());
-    let clear = palette.bg.hsla().opacity(0.);
-    let thumb = |s: gpui_kit::base::ScrollbarThumbStyle, width: f32, color: Hsla| {
-        s.width(px(width))
-            .inset(px(3.))
-            .radius(px(0.))
-            .min_length(px(32.))
-            .bg(color)
-    };
-    let styles = ScrollbarStyles::default()
-        .track(|t| t.bg(clear).border_color(clear))
-        .track_hover(|t| t.bg(clear).border_color(clear))
-        .track_active(|t| t.bg(clear).border_color(clear))
-        .thumb(|s| thumb(s, 3., muted.opacity(0.6)))
-        .thumb_hover(|s| thumb(s, 5., ink.opacity(0.7)))
-        .thumb_active(|s| thumb(s, 5., ink));
-    let motion = ScrollbarMotion::default()
-        .with_enter(Motion::FAST)
-        .with_exit(Motion::NORMAL)
-        .with_expand(Motion::FAST);
-    gpui_kit::base::Theme::global_mut(cx).scrollbar = ScrollbarTheme::new()
-        .with_mode(ScrollbarMode::Hover)
-        .with_motion(motion)
-        .with_styles(styles);
 }
 
 /// The ratio the accent is held to on both grounds with more contrast asked
@@ -494,7 +423,6 @@ impl KoanTheme {
     pub fn set_text_size(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().text_size =
             percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());
-        sync_components(is_dark(cx.window_appearance()), cx);
         cx.refresh_windows();
     }
 
@@ -598,13 +526,6 @@ impl KoanTheme {
             cx.refresh_windows();
         }
     }
-
-    /// What a window's root view calls as it renders: dresses gpui-component's
-    /// theme for this window (windows render one at a time, so each one's
-    /// text fields read their own appearance). Costs a few comparisons.
-    pub fn drive(window: &mut Window, cx: &mut App) {
-        sync_components(Look::of(window, cx).dark, cx);
-    }
 }
 
 /// The record's accent as it settles. An entity rather than part of the
@@ -641,7 +562,7 @@ impl AccentFeed {
 
     /// Whether the accent is still turning to its target.
     fn turning(&self) -> bool {
-        let now = gpui_kit::present_now();
+        let now = gpui::present_now();
         self.slots
             .iter()
             .flatten()

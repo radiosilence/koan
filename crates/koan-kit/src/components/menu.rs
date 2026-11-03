@@ -8,9 +8,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use super::focus_trap::FocusTrap as _;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::base::FocusTrapElement as _;
 
 use super::{MenuPanel, MenuRow, MenuSeparator};
 use crate::theme::{Icon, KoanStyled, Look, Space};
@@ -834,7 +834,7 @@ impl Render for Menu {
                     .size_full(),
             )
             // Tab stays in the open menu rather than reaching the page under it.
-            .focus_trap("menu-trap", &self.focus)
+            .focus_trap(&self.focus, cx)
     }
 }
 
@@ -1202,7 +1202,6 @@ mod tests {
     #[gpui::test]
     fn a_choice_in_a_submenu_runs(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let chosen = Rc::new(Cell::new(None));
@@ -1273,7 +1272,6 @@ mod tests {
     #[gpui::test]
     fn a_slot_menu_with_nowhere_to_return_runs_the_fallback(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|_, _| Bar {
@@ -1313,7 +1311,6 @@ mod tests {
     #[gpui::test]
     fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let window = cx.add_empty_window();

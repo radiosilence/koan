@@ -241,7 +241,6 @@ mod tests {
     #[gpui::test]
     fn the_filter_field_in_a_toolbar_takes_its_width_and_a_click(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
@@ -271,7 +270,6 @@ mod tests {
     #[gpui::test]
     fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|window, cx| Bar {
@@ -315,7 +313,6 @@ mod tests {
     #[gpui::test]
     fn the_clear_mark_and_escape_empty_the_field(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (field, cx) = cx.add_window_view(|window, cx| Field {
