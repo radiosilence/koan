@@ -713,6 +713,15 @@ impl QueueView {
         }
         let feed = self.feed().cloned();
         let queue = self.queue.read(cx);
+        // The first of the rows that landed takes the insertion line into
+        // it: the row above it did not land.
+        let first_landed = row == 0
+            || self
+                .landed(match self.rows(cx)[row - 1] {
+                    Row::Heading { first, .. } => &queue.base[first].queue_item_id,
+                    Row::Track { ix, .. } => &queue.base[ix].queue_item_id,
+                })
+                .is_none();
         let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &queue.items[first..first + len];
@@ -728,7 +737,9 @@ impl QueueView {
                 };
                 let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
-                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading).landed(landed),
+                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading)
+                        .landed(landed)
+                        .seam(first_landed),
                     &run[0],
                     detail(run),
                     sleeve.unwrap_or_else(|| div().into_any_element()),
@@ -754,7 +765,9 @@ impl QueueView {
                     wide: !queue.disc_records.is_empty(),
                 };
                 let frame = track(
-                    TableRow::new(ElementId::Name(id.clone()), kind).landed(self.landed(&id)),
+                    TableRow::new(ElementId::Name(id.clone()), kind)
+                        .landed(self.landed(&id))
+                        .seam(first_landed),
                     item,
                     grouped,
                     sleeve,

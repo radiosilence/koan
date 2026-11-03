@@ -55,6 +55,9 @@ pub struct TableRow {
     place: Option<(usize, usize)>,
     reveal: Option<Handler<()>>,
     landed: Option<u64>,
+    /// The first of the rows that landed, which the insertion line closes
+    /// into.
+    seam: bool,
 }
 
 impl TableRow {
@@ -73,6 +76,7 @@ impl TableRow {
             place: None,
             reveal: None,
             landed: None,
+            seam: false,
         }
     }
 
@@ -83,6 +87,13 @@ impl TableRow {
     /// too, since arriving is the news.
     pub fn landed(mut self, landing: Option<u64>) -> Self {
         self.landed = landing;
+        self
+    }
+
+    /// Of rows landing, the first: the insertion line they were dropped at
+    /// closes into it along its top edge as its ground lifts.
+    pub fn seam(mut self, first: bool) -> Self {
+        self.seam = first;
         self
     }
 
@@ -362,7 +373,12 @@ impl RenderOnce for TableRow {
         let lift = self.landed.and_then(|landing| {
             let id = base.interactivity().element_id.clone()?;
             let answers = super::Answerer::of(&id, window, cx);
-            answers.announce(landing, super::Answer::Lift, look.accent.hsla(), window, cx);
+            let answer = if self.seam {
+                super::Answer::Landed
+            } else {
+                super::Answer::Lift
+            };
+            answers.announce(landing, answer, look.accent.hsla(), window, cx);
             answers.layer(window, cx)
         });
         let base = match self.spoken {

@@ -544,6 +544,19 @@ impl RenderOnce for MenuRow {
             None => div().relative().flex_1().min_w_0().child(name),
         };
         let rich = self.rich;
+        // The tick of a choice draws itself in as the row becomes the choice,
+        // and erases as it stops being one, as a toggle's does.
+        let tick_answers = self.checked.filter(|_| look.icons).map(|checked| {
+            let answers = super::Answerer::of(&super::child(&self.id, "tick"), window, cx);
+            answers.follow(
+                checked as u64,
+                super::Answer::Tick(checked),
+                look.accent.hsla(),
+                window,
+                cx,
+            );
+            answers
+        });
         // The row's actions, each in the menu's column of its kind, then its
         // tick when it is the choice. The tick stands in a words column
         // where there is one ("move here"): what is chosen is never moved
@@ -726,14 +739,20 @@ impl RenderOnce for MenuRow {
             // it; its room is kept on every row of a set of choices. In a
             // menu with slots it is in the last of them instead.
             .children(self.checked.filter(|_| !shares).map(|checked| {
+                let side = gpui::px(crate::theme::icons::side(tick));
+                let drawing = tick_answers.as_ref().is_some_and(|a| a.glyph_live(cx));
+                let drawn = tick_answers
+                    .as_ref()
+                    .and_then(|a| a.glyph_layer(side, ticked, None, window, cx));
                 div()
                     .relative()
                     .flex_none()
                     .ml(look.space(Space::M))
-                    .size(gpui::px(crate::theme::icons::side(tick)))
-                    .when(checked, |cell| {
+                    .size(side)
+                    .when(checked && !drawing, |cell| {
                         cell.child(KoanIcon::new(Icon::Check).points(tick).color(ticked))
                     })
+                    .children(drawn)
             }))
             .when(self.opens, |row| {
                 row.child(
