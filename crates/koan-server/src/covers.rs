@@ -328,6 +328,13 @@ impl Covers {
         art
     }
 
+    /// An album's cover at `size` if its own entry is kept: the cover, a
+    /// kept answer that it has none, or `None` when nothing is kept and only
+    /// reading its files would tell. Reads one small file at most.
+    pub(crate) fn album_cover_kept(&self, album: i64, size: u32) -> Option<Option<Bytes>> {
+        self.read_disk(&album_key(album, size))
+    }
+
     /// Drops the entries of albums the library has named in `art_evictions`
     /// since the last look (deleted, or rescanned with perhaps another image
     /// beside them), so their next request reads the files again. A mark the
