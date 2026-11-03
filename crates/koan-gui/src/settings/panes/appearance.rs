@@ -99,7 +99,15 @@ enum Held {
 impl Held {
     /// Its id, the name a screen reader gives it, its ends, its range and
     /// the step it lands on.
-    fn spec(self) -> (&'static str, &'static str, (&'static str, &'static str), u32, u32) {
+    fn spec(
+        self,
+    ) -> (
+        &'static str,
+        &'static str,
+        (&'static str, &'static str),
+        u32,
+        u32,
+    ) {
         match self {
             Held::Tint => ("wash-tint", "tint", ("full colour", "held"), 100, 5),
             Held::Drift => ("wash-drift", "drift", ("still", "twice as fast"), 200, 10),
