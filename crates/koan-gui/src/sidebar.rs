@@ -589,18 +589,22 @@ impl Render for Sidebar {
                                         )
                                     }
                                 }))
-                                .accept(cx.listener({
-                                    let id = playlist.id;
-                                    move |_, dragged: &PlayableDrag, _, cx| {
-                                        if dragged.is_from(id) {
-                                            return;
+                                // Its own tracks let go over it add nothing.
+                                .accept_if(
+                                    {
+                                        let id = playlist.id;
+                                        move |dragged: &PlayableDrag| !dragged.is_from(id)
+                                    },
+                                    cx.listener({
+                                        let id = playlist.id;
+                                        move |_, dragged: &PlayableDrag, _, cx| {
+                                            let sets = dragged.sets.to_vec();
+                                            command(cx, "add to playlist", move |e| {
+                                                e.add_to_playlist(id, sets)
+                                            });
                                         }
-                                        let sets = dragged.sets.to_vec();
-                                        command(cx, "add to playlist", move |e| {
-                                            e.add_to_playlist(id, sets)
-                                        });
-                                    }
-                                }))
+                                    }),
+                                )
                         })
                         .on_drop(cx.listener(
                             move |this, dragged: &PlaylistDrag, _, cx| {
