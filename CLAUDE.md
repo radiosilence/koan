@@ -293,7 +293,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `shell.rs` | The window: the sidebar from the top edge, the window's buttons on its ground, beside the page column (toolbar with back and forward, then the stage); transport along the foot. "Wash the whole window" takes the sidebar's and toolbar's ground away and spans the transport under both columns |
 | `sidebar.rs` | The queue, the library's sections, the playlists |
 | `sidebar_status.rs` | The sidebar's foot: what the device plays from and the library's counts, from `library_stats` on the Library and Cache slices |
-| `queue/` | The queue page, kept mounted: rows from `QueueItem.run` grouped or flat (`rows.rs`, disc numbering there too), linked credits, the heart, the availability mark with a transfer's ring, selection by queue item, keys, drag reorder, context menu |
+| `queue/` | The queue page, kept mounted: rows from `QueueItem.run` grouped or flat (`rows.rs`, disc numbering there too), linked credits, the heart, the availability mark with a transfer's ring, selection by queue item, keys, drag reorder, the rows that land with an edit lifting for a moment, context menu |
 | `lyrics.rs` | The lyrics beside the page (koan-kit `Inspector`, `SyncedLines`): cache first, LRCLIB after, words held with their track; one timer to the next line from the playhead anchor, none while paused; a click on a line seeks |
 | `artwork.rs` | The artwork viewer over the window, opened by a record page's sleeve and the transport's cover; decoded at the size drawn by the shared sleeve cache; a click or Escape closes it |
 | `links.rs` | Names that lead to their pages: a record's title, each credited artist. The queue and the transport draw with it |

@@ -158,7 +158,9 @@ impl RenderOnce for SyncedLines {
             );
         }
         items.push(air());
-        ScrollArea::items(self.id, items).reveal(self.active.map(|ix| ix + 1))
+        ScrollArea::items(self.id, items)
+            .reveal(self.active.map(|ix| ix + 1))
+            .centred()
     }
 }
 

@@ -1,0 +1,1 @@
+- **Motion in the desktop app follows written principles.** Each answer moves on its own curve. Toggles and segments answer however they change. Rows added to or moved in the queue lift where they land, a skip streaks the way it goes, a finished download rings on its mark, and the sung line of the lyrics stays centred.
