@@ -312,7 +312,10 @@ impl OrganizeSheet {
                 .into(),
             );
         }
-        let (pattern, ids) = (self.pattern(cx), self.track_ids.clone());
+        let Some(selection) = self.selection.clone() else {
+            return;
+        };
+        let (pattern, ancillary) = (self.pattern(cx), self.move_ancillary);
         let sheet = cx.entity().downgrade();
         ask::confirm(
             ask::Confirm {
@@ -330,10 +333,14 @@ impl OrganizeSheet {
             cx,
             move |cx| {
                 let Some(sheet) = sheet.upgrade() else { return };
-                let run = engine(cx).organize_execute(
+                // The plan previewed, from the selection it was previewed
+                // against and with the ancillary choice shown: refused, with
+                // nothing moved, if the library has changed since.
+                let run = engine(cx).organize_execute_previewed(
+                    selection.clone(),
                     pattern.clone(),
-                    Some(ids.clone()),
-                    Some(base.clone()),
+                    base.clone(),
+                    ancillary,
                 );
                 // Escape leaves the sheet while files move, as its cancel
                 // is disabled: dropping it would stop the move part way.
@@ -373,7 +380,13 @@ impl OrganizeSheet {
                                     this.checked = false;
                                     this.reread(cx);
                                 }
-                                Err(e) => this.error = Some(crate::settings::model::describe(&e)),
+                                // Read again, so the plan shown is the one a
+                                // second confirm would run.
+                                Err(e) => {
+                                    this.error = Some(crate::settings::model::describe(&e));
+                                    this.plan = None;
+                                    this.reread(cx);
+                                }
                             }
                             cx.notify();
                         })

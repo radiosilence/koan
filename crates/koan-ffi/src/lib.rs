@@ -2689,6 +2689,27 @@ impl KoanEngine {
     /// The rename and the database rows land together, and playback survives it
     /// — a Unix rename keeps the open descriptor. Destructive: run it only for
     /// a plan the user has seen.
+    /// Carry out exactly the plan previewed from `selection` (`check` with
+    /// the same pattern, folder and `move_ancillary`), then point the queue
+    /// at where the files went. Fails with a bad argument, nothing moved,
+    /// when the library has changed since the selection was read: preview
+    /// again.
+    ///
+    /// The rename and the database rows land together, and playback survives
+    /// it — a Unix rename keeps the open descriptor.
+    pub async fn organize_execute_previewed(
+        self: Arc<Self>,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base_dir: String,
+        move_ancillary: bool,
+    ) -> Result<OrganizePlan, KoanError> {
+        self.0
+            .clone()
+            .organize_execute_previewed(selection.0.clone(), pattern, base_dir, move_ancillary)
+            .await
+    }
+
     pub async fn organize_execute(
         self: Arc<Self>,
         pattern: String,

@@ -232,8 +232,8 @@ final class OrganizeModel {
     func run() {
         guard let subject, let plan, plan.movedCount > 0, !running else { return }
         let engine = self.engine
-        let (pattern, base) = (self.pattern, self.baseDir)
-        let ids = subject.trackIds
+        guard let selection else { return }
+        let (pattern, base, ancillary) = (self.pattern, self.baseDir, self.moveAncillary)
 
         // Claim the generation so an in-flight preview can't overwrite the
         // result of the run with a plan made before it.
@@ -246,7 +246,11 @@ final class OrganizeModel {
             // rewritten in one transaction, which is exactly what a scan reads
             // and writes.
             let result = await activity?.run("Moving files", uses: .localLibrary) {
-                try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
+                // The plan previewed, from the selection it was previewed
+                // against: refused, nothing moved, if the library changed since.
+                try await engine.organizeExecutePreviewed(
+                    selection: selection, pattern: pattern, baseDir: base, moveAncillary: ancillary
+                )
             } ?? .failure(OrganizeFailure.noEngine)
             running = false
             guard requested == generation else { return }
@@ -277,6 +281,8 @@ final class OrganizeModel {
                 previewing = false
                 self.plan = nil
                 error = String(describing: failure)
+                // Read again, so the plan shown is the one a second press runs.
+                resolveSelection(trackIds: subject.trackIds)
             }
         }
     }

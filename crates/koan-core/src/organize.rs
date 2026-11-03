@@ -51,6 +51,11 @@ pub enum OrganizeError {
     },
     #[error("not enough free space: {needed} bytes needed, {available} available")]
     NotEnoughSpace { needed: u64, available: u64 },
+    /// The library changed since the selection was read (a rescan, a sync,
+    /// an import), so the plan previewed may no longer be the one that would
+    /// run. Nothing moved; preview again.
+    #[error("the library changed since the preview: preview again before moving anything")]
+    LibraryChanged,
 }
 
 /// What the pattern means for one file.
@@ -680,6 +685,9 @@ fn resolve_from_paths(
 /// once here and formats many times against the result.
 pub struct ResolvedSelection {
     tracks: Vec<ResolvedTrack>,
+    /// The library's version when it was read: `execute_resolved` refuses
+    /// once the library has moved past it.
+    library_version: u64,
 }
 
 impl ResolvedSelection {
@@ -713,6 +721,9 @@ fn resolve_selection(
     db: &Database,
     selection: Selection<'_>,
 ) -> Result<ResolvedSelection, OrganizeError> {
+    // Read before the rows, so a change landing while they are read counts
+    // as after the selection.
+    let library_version = queries::library_version();
     let albums = load_album_facts(&db.conn)?;
     let tracks = match selection {
         Selection::All => resolve_from_rows(queries::all_tracks(&db.conn)?, &albums),
@@ -727,7 +738,10 @@ fn resolve_selection(
         }
         Selection::Paths(paths) => resolve_from_paths(db, paths, &albums)?,
     };
-    Ok(ResolvedSelection { tracks })
+    Ok(ResolvedSelection {
+        tracks,
+        library_version,
+    })
 }
 
 /// Turn a pattern into destinations. **Touches no files at all.**
@@ -793,8 +807,38 @@ fn run(
     pattern: &str,
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let mut result = plan(db, selection, pattern, base_dir, true)?;
+    let result = plan(db, selection, pattern, base_dir, true)?;
+    carry_out(db, result, base_dir)
+}
 
+/// Carry out exactly the plan previewed from `selection`: generated from the
+/// tracks it read, with `move_ancillary` as the preview had it, never from a
+/// fresh read of the library. Refused with `LibraryChanged`, nothing moved,
+/// when the library has changed since the selection was read, since the
+/// files and their tags may no longer be what was previewed.
+pub fn execute_resolved(
+    db: &Database,
+    selection: &ResolvedSelection,
+    pattern: &str,
+    base_dir: Option<&Path>,
+    move_ancillary: bool,
+) -> Result<OrganizeResult, OrganizeError> {
+    if queries::library_version() != selection.library_version {
+        return Err(OrganizeError::LibraryChanged);
+    }
+    let base = resolve_base_dir(base_dir)?;
+    let mut result = generate(selection, pattern, &base);
+    check_against_disk(&mut result, move_ancillary);
+    carry_out(db, result, &base)
+}
+
+/// Move the files a checked plan names, and report the plan with each move's
+/// outcome.
+fn carry_out(
+    db: &Database,
+    mut result: OrganizeResult,
+    base_dir: &Path,
+) -> Result<OrganizeResult, OrganizeError> {
     let pending: Vec<FileMove> = result
         .entries
         .iter()
@@ -1752,6 +1796,46 @@ fn batch_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The plan run is the one previewed: generated from the selection read
+    /// for the preview, with the ancillary choice passed in, and refused once
+    /// the library has moved since.
+    #[test]
+    fn execute_runs_the_previewed_selection_and_refuses_a_changed_library() {
+        let lib = tempfile::tempdir().unwrap();
+        let db = Database::open(&lib.path().join("koan.db")).unwrap();
+        let src = lib.path().join("in/a.flac");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, b"x").unwrap();
+        std::fs::write(lib.path().join("in/cover.jpg"), b"jpg").unwrap();
+        let mut meta = queries::sample_meta("Song", "Artist", "Album");
+        meta.path = Some(src.to_string_lossy().into_owned());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        let out = lib.path().join("out");
+
+        let selection = resolve(&db, Some(&[id])).unwrap();
+        queries::library_written();
+        assert!(matches!(
+            execute_resolved(&db, &selection, "%title%", Some(&out), true),
+            Err(OrganizeError::LibraryChanged)
+        ));
+        assert!(src.exists(), "nothing moved");
+
+        let selection = resolve(&db, Some(&[id])).unwrap();
+        let done = execute_resolved(&db, &selection, "%title%", Some(&out), false).unwrap();
+        assert_eq!(
+            done.entries
+                .iter()
+                .filter(|e| e.as_move().is_some())
+                .count(),
+            1
+        );
+        assert!(!src.exists());
+        assert!(
+            lib.path().join("in/cover.jpg").exists(),
+            "the ancillary choice passed in, not the configuration's"
+        );
+    }
     use crate::db::queries::TrackMeta;
     use crate::db::schema;
     use tempfile::TempDir;
