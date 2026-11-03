@@ -1354,7 +1354,7 @@ impl Focusable for Transport {
 pub(crate) const LANDING: Duration = Duration::from_secs(1);
 /// How near the engine's playhead must come to a seek's target to be its
 /// answer.
-const NEAR_MS: u64 = 250;
+pub(crate) const NEAR_MS: u64 = 250;
 
 /// Where the times put the playhead: reckoned from the anchor shown, or at
 /// the engine's whole second its own reading, so the times step as it says

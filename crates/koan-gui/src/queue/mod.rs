@@ -92,9 +92,17 @@ struct RowRef {
 /// queue sent whole while the drag lasts (a download landing, a library
 /// rescan) still takes the drop.
 #[derive(Clone)]
-struct DraggedRows {
+pub(crate) struct DraggedRows {
     row: usize,
 }
+
+/// The library tracks under the queue rows being dragged, set as the drag
+/// begins for the drop targets outside the queue (a playlist in the sidebar)
+/// that take them. Unlinked items have no library track and are left out.
+#[derive(Default)]
+pub(crate) struct QueueDragTracks(pub Vec<i64>);
+
+impl Global for QueueDragTracks {}
 
 /// What a drag of queue rows shows: the first row's sleeve and how many.
 struct DragPreview(SharedString, Option<i64>);
@@ -840,12 +848,19 @@ impl QueueView {
                     this.drop_at = None;
                     this.dragging = this.acting_on(dragged.row, cx);
                     let queue = this.queue.read(cx);
+                    let tracks = this
+                        .dragging
+                        .iter()
+                        .filter_map(|id| queue.items.get(*queue.at.get(id)?)?.track_id)
+                        .collect();
                     let album = queue
                         .rows
                         .get(dragged.row)
                         .and_then(|row| queue.items.get(row.items().start))
                         .and_then(|item| item.album_id);
-                    (this.drag_label(dragged.row, cx), album)
+                    let label = this.drag_label(dragged.row, cx);
+                    cx.set_global(QueueDragTracks(tracks));
+                    (label, album)
                 });
                 cx.new(|_| DragPreview(label, album))
             })

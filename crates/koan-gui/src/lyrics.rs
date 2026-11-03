@@ -186,7 +186,14 @@ impl LyricsPanel {
         let (mut active, next) = place(&lyrics.lines, position);
         // The clicked line held while its seek is on its way; the timer
         // wakes for the landing's lapse, which nothing else may announce.
-        active = sung(active, self.sought, landing.is_some());
+        // A seek lands within `NEAR_MS` of its target, often a hair short of
+        // the line's start, which reads as the line before until the playhead
+        // reaches it: the clicked line stays while the playhead is that near.
+        let short_of = self
+            .sought
+            .and_then(|line| lyrics.lines.get(line))
+            .map(|line| line.time_secs - position);
+        active = sung(active, self.sought, landing.is_some(), short_of);
         let mut held = None;
         if let (Some(_), Some(target)) = (self.sought, landing) {
             held = Some(
@@ -205,7 +212,7 @@ impl LyricsPanel {
                     (position - line.time_secs).max(0.0),
                 ))
             });
-        if landed {
+        if landed && !within_reach(short_of) {
             self.sought = None;
         }
         if active != self.active {
@@ -310,11 +317,22 @@ fn place(lines: &[LyricLine], position: f64) -> (Option<usize>, Option<f64>) {
 /// The line sung: the clicked line while its seek is on its way, so a
 /// reading from before the seek cannot move it back a line; the playhead's
 /// line otherwise.
-fn sung(at_playhead: Option<usize>, clicked: Option<usize>, landing: bool) -> Option<usize> {
+fn sung(
+    at_playhead: Option<usize>,
+    clicked: Option<usize>,
+    landing: bool,
+    short_of: Option<f64>,
+) -> Option<usize> {
     match clicked {
-        Some(line) if landing => Some(line),
+        Some(line) if landing || within_reach(short_of) => Some(line),
         _ => at_playhead,
     }
+}
+
+/// Whether the playhead is a hair short of the clicked line's start, as a
+/// landed seek leaves it.
+fn within_reach(short_of: Option<f64>) -> bool {
+    short_of.is_some_and(|s| s > 0.0 && s <= crate::transport::NEAR_MS as f64 / 1000.0)
 }
 
 #[cfg(test)]
@@ -325,11 +343,20 @@ mod tests {
     /// reading says (line 3), and once landed the playhead decides again.
     #[test]
     fn the_clicked_line_holds_until_the_seek_lands() {
-        assert_eq!(sung(Some(3), Some(4), true), Some(4));
-        assert_eq!(sung(None, Some(4), true), Some(4));
-        assert_eq!(sung(Some(4), Some(4), false), Some(4));
-        assert_eq!(sung(Some(5), Some(4), false), Some(5));
-        assert_eq!(sung(Some(3), None, true), Some(3));
+        assert_eq!(sung(Some(3), Some(4), true, None), Some(4));
+        assert_eq!(sung(None, Some(4), true, None), Some(4));
+        assert_eq!(sung(Some(4), Some(4), false, None), Some(4));
+        assert_eq!(sung(Some(5), Some(4), false, None), Some(5));
+        assert_eq!(sung(Some(3), None, true, None), Some(3));
+    }
+
+    /// A seek that lands a hair before the line's start keeps the clicked
+    /// line rather than showing the one before until the playhead arrives.
+    #[test]
+    fn a_seek_landing_just_short_keeps_the_clicked_line() {
+        assert_eq!(sung(Some(3), Some(4), false, Some(0.04)), Some(4));
+        assert_eq!(sung(Some(3), Some(4), false, Some(3.0)), Some(3));
+        assert_eq!(sung(Some(5), Some(4), false, Some(-1.0)), Some(5));
     }
 
     #[test]
