@@ -1100,7 +1100,7 @@ impl Render for Transport {
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
             .bg(p.bg)
-            .border_t(theme::HAIRLINE)
+            .border_t(p.look.hairline)
             .border_color(p.rule)
             .child(left)
             .child(centre)
