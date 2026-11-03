@@ -5,7 +5,7 @@
 //! that each kind is capped, that the rows stay inside the panel and that
 //! the keys at its foot match what Return does.
 //!
-//! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example search_shot -- target/search [QUERY]
+//! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example search_shot -- target/search [QUERY [SIZE [LOOK]]]
 //! The query defaults to "record", which every record of `just gui-library`
 //! matches.
 
@@ -33,6 +33,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let out = PathBuf::from(args.next().unwrap_or_else(|| "target/search".into()));
     let query = args.next().unwrap_or_else(|| "record".into());
+    // One window and one appearance a run: `large`/`small`, `dark`/`light`.
+    let only_size = args.next();
+    let only_look = args.next();
     std::fs::create_dir_all(&out)?;
     // SAFETY: set before any other thread starts.
     unsafe {
@@ -56,6 +59,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_gui::platform::actions::register(&engine, cx);
     });
     for (name, width, height) in SIZES {
+        if only_size.as_deref().is_some_and(|s| s != name) {
+            continue;
+        }
         let window = cx.open_window(size(px(width), px(height)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
@@ -66,6 +72,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         settle(&mut cx, window)?;
         for dark in [true, false] {
             let look = if dark { "dark" } else { "light" };
+            if only_look.as_deref().is_some_and(|l| l != look) {
+                continue;
+            }
             cx.update_window(window, |_, window, cx| {
                 theme::pin_appearance(Some(dark), window, cx);
                 window.dispatch_action(Box::new(koan_gui::platform::actions::Search), cx);
