@@ -13,7 +13,8 @@ use gpui_kit::{
 use koan_kit::components::{
     Badge, Banner, Button, ButtonKind, EmptyState, IconToggle, NavNote, NavRow, PageHeader,
     PlayButton, ProgressRow, RowKind, RowList, RowListState, SectionHeading, Segmented,
-    ShuffleButton, Slider, Stepper, TableRow, Toggle, Toolbar, spoken,
+    ShuffleButton, Slider, Stepper, TableRow, Toggle, Toolbar, UniformListScrollHandle,
+    reveal_around, spoken, uniform_list,
 };
 use koan_kit::theme::{self, Icon, Tone};
 use serde_json::Value;
@@ -317,4 +318,150 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
 
     send(window, cx, Action::ScrollIntoView, row);
     assert_eq!(revealed.get(), Some(2));
+}
+
+/// A long list of named rows, each revealing its neighbour as a reader
+/// reaches it, drawn in a window shorter than the list.
+struct LongList {
+    list: RowListState,
+}
+
+impl Render for LongList {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let list = self.list.clone();
+        div().size_full().child(
+            div().h(px(300.)).child(
+                RowList::new(&self.list, move |ix, _, _| {
+                    let list = list.clone();
+                    TableRow::new(("row", ix), RowKind::Text)
+                        .spoken(spoken([format!("row {ix}")]))
+                        .place(ix, ROWS)
+                        .on_reveal(move |_, _| list.reveal_around(ix))
+                        .into_any_element()
+                })
+                .named("long"),
+            ),
+        )
+    }
+}
+
+const ROWS: usize = 200;
+
+/// The highest-numbered row named `row n` in the tree, and the lowest.
+fn drawn_rows(tree: &str) -> (usize, usize) {
+    let tree: Value = serde_json::from_str(tree).expect("JSON");
+    let numbers: Vec<usize> = tree["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .filter_map(|node| {
+            node["aria"]["label"]
+                .as_str()?
+                .strip_prefix("row ")?
+                .parse()
+                .ok()
+        })
+        .collect();
+    (
+        numbers.iter().copied().min().unwrap_or(0),
+        numbers.iter().copied().max().unwrap_or(0),
+    )
+}
+
+/// A reader moving down a list one row at a time keeps going past the
+/// first screen: each row reached scrolls its neighbour on and the window
+/// draws it, with nothing else asking for a frame.
+#[gpui_kit::test]
+fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let list = RowListState::new();
+    list.reset(ROWS, RowKind::Text);
+    let window: AnyWindowHandle = cx.add_window(|_, _| LongList { list }).into();
+    attach(window, cx);
+
+    let (_, mut last) = drawn_rows(&tree(window, cx));
+    let first_screen = last;
+    for _ in 0..40 {
+        let (row, _) = node(&tree(window, cx), &format!("row {last}"), "ListItem");
+        send(window, cx, Action::ScrollIntoView, row);
+        let (_, now) = drawn_rows(&tree(window, cx));
+        assert!(
+            now > last,
+            "row {} never reached the tree after row {last}",
+            last + 1
+        );
+        last = now;
+    }
+    assert!(last >= first_screen + 40);
+}
+
+/// A `uniform_list` scrolled down, its rows revealing their neighbours.
+struct Uniform {
+    scroll: UniformListScrollHandle,
+}
+
+impl Render for Uniform {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let scroll = self.scroll.clone();
+        div().size_full().child(
+            div().h(px(300.)).child(
+                uniform_list("uniform", ROWS, move |range, _, _| {
+                    range
+                        .map(|ix| {
+                            let scroll = scroll.clone();
+                            TableRow::new(("row", ix), RowKind::Text)
+                                .spoken(spoken([format!("row {ix}")]))
+                                .place(ix, ROWS)
+                                .on_reveal(move |_, _| reveal_around(&scroll, ix, ROWS))
+                                .into_any_element()
+                        })
+                        .collect()
+                })
+                .track_scroll(&self.scroll)
+                .h_full(),
+            ),
+        )
+    }
+}
+
+/// A reader moving up a `uniform_list` from its top row reaches the rows
+/// above the screen: the list knows which row is at its top, so the reveal
+/// goes up rather than down.
+#[gpui_kit::test]
+fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let scroll = UniformListScrollHandle::new();
+    let window: AnyWindowHandle = cx
+        .add_window(|_, _| Uniform {
+            scroll: scroll.clone(),
+        })
+        .into();
+    attach(window, cx);
+    scroll.scroll_to_item(150, gpui_kit::ScrollStrategy::Top);
+    window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("the window");
+    cx.run_until_parked();
+
+    let (mut top, _) = drawn_rows(&tree(window, cx));
+    assert!(top >= 140, "the list did not scroll down: top row {top}");
+    let start = top;
+    for _ in 0..20 {
+        let (row, _) = node(&tree(window, cx), &format!("row {top}"), "ListItem");
+        send(window, cx, Action::ScrollIntoView, row);
+        let (now, _) = drawn_rows(&tree(window, cx));
+        assert!(
+            now < top,
+            "row {} never reached the tree from row {top}",
+            top.saturating_sub(1)
+        );
+        top = now;
+    }
+    assert!(top + 20 <= start);
 }

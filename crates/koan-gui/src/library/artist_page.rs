@@ -598,7 +598,7 @@ impl ArtistPage {
                             == Some(record.albums.len() + record.features.len() + index))
                     .then(|| self.spot.clone()),
                     place: Some((index, record.appearances.len())),
-                    reveal: None,
+                    reveal: p.a11y.then(|| rows::Reveal::List(self.list.clone(), ix)),
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -887,6 +887,26 @@ impl actions::Menus for ArtistPage {
 }
 
 impl TileHost for ArtistPage {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
+        let Some(r) = &self.record else { return };
+        let Some(at) = r
+            .albums
+            .iter()
+            .chain(&r.features)
+            .position(|record| record.id == album)
+        else {
+            return;
+        };
+        if let Some((item, _)) = self
+            .lines()
+            .into_iter()
+            .find(|(_, range)| range.contains(&at))
+        {
+            crate::components::reveal_around_list(&self.list, item);
+            cx.notify();
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,

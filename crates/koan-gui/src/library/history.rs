@@ -295,16 +295,36 @@ impl HistoryPage {
         self.ask_forget(plays, window, cx);
     }
 
-    fn ask_clear(&self, window: &mut Window, cx: &mut App) {
-        let n = self.entries.len() as u64;
+    /// Clearing forgets every play, whatever the filter shows: under a
+    /// filter the whole history is counted first, so the question says what
+    /// the answer does.
+    fn ask_clear(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lib.browse.read(cx).search().is_none() {
+            Self::confirm_clear(self.entries.len() as u64, window, cx);
+            return;
+        }
+        let read = self.lib.engine.clone().play_history(None);
+        cx.spawn_in(window, async move |_, cx| match read.await {
+            Ok(all) => {
+                cx.update(|window, cx| Self::confirm_clear(all.len() as u64, window, cx))
+                    .ok();
+            }
+            Err(e) => log::warn!("history: {e}"),
+        })
+        .detach();
+    }
+
+    fn confirm_clear(n: u64, window: &mut Window, cx: &mut App) {
         confirm(
             Confirm {
                 title: "clear history".into(),
                 verb: "clear".into(),
                 destructive: true,
                 lines: vec![
+                    // So far: plays arriving from other devices before the
+                    // answer are forgotten with the rest.
                     format!(
-                        "Every play is forgotten: {}.",
+                        "Every play is forgotten: {} so far. Signed in to a kōan server, on every device too.",
                         chrome::count(n, "play", "plays")
                     )
                     .into(),
@@ -357,10 +377,21 @@ impl HistoryPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match self.lines.get(i).cloned() {
-            Some(Line::Day(day)) => div()
-                .px(crate::components::RowMetrics::page_margin(&p.look))
-                .child(SectionHeading::new(day.as_ref()))
-                .into_any_element(),
+            Some(Line::Day(day)) => {
+                let list = self.list.clone();
+                let heading = SectionHeading::new(day.as_ref());
+                // A reader moving through the plays goes through each day's
+                // heading too, so the heading carries the reveal on.
+                let heading = if p.a11y {
+                    heading.on_reveal(move |_, _| Reveal::Rows(list.clone(), i).run())
+                } else {
+                    heading
+                };
+                div()
+                    .px(crate::components::RowMetrics::page_margin(&p.look))
+                    .child(heading)
+                    .into_any_element()
+            }
             Some(Line::Play { ix, time }) => {
                 let entry = &self.entries[ix];
                 let track = entry.track.clone();
@@ -579,7 +610,9 @@ impl HistoryPage {
                 )
                 .spacer();
         }
-        let empty = self.entries.is_empty();
+        // Clearing is the whole history's, so a filter matching nothing
+        // does not take it away.
+        let empty = self.entries.is_empty() && self.lib.browse.read(cx).search().is_none();
         group
             .child(self.search.clone())
             .child(ToolbarMenu::new(
@@ -768,7 +801,12 @@ mod tests {
             path: None,
             is_favourite: false,
         };
-        let now = Local::now().timestamp();
+        // Midday today: a second before is still today whenever the test runs.
+        let now = Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .and_then(|t| t.and_local_timezone(Local).single())
+            .map_or_else(|| Local::now().timestamp(), |t| t.timestamp());
         let entry = |id, played_at| PlayHistoryEntry {
             id,
             track: track(id),

@@ -27,16 +27,24 @@ use crate::theme::{Icon, KoanTheme, Look};
 /// How long a clicked line holds the emphasis while its seek lands.
 const SEEK_LANDS: Duration = Duration::from_secs(1);
 
+/// What the words are for: a track of the library, or a queue entry it no
+/// longer has, which plays from its own tags.
+#[derive(Clone, PartialEq, Hash)]
+enum Song {
+    Track(i64),
+    Entry(String),
+}
+
 pub struct LyricsPanel {
     playback: Entity<Playback>,
     playhead: Entity<Playhead>,
     /// What was found, and for which track.
-    loaded: Option<(i64, Option<Lyrics>)>,
+    loaded: Option<(Song, Option<Lyrics>)>,
     /// The track LRCLIB is being asked about.
-    fetching: Option<i64>,
+    fetching: Option<Song>,
     /// The track `_load` reads for. Replacing the load drops the one before,
     /// its fetch included, so a track left and come back to is read again.
-    loading: Option<i64>,
+    loading: Option<Song>,
     /// The line being sung.
     active: Option<usize>,
     /// When the playhead reached the active line, which its motion is
@@ -77,22 +85,21 @@ impl LyricsPanel {
         panel
     }
 
-    fn track(&self, cx: &App) -> Option<i64> {
-        self.playback
-            .read(cx)
-            .0
-            .entry
-            .as_ref()
-            .and_then(|e| e.track_id)
+    fn song(&self, cx: &App) -> Option<Song> {
+        let entry = self.playback.read(cx).0.entry.as_ref()?;
+        Some(match entry.track_id {
+            Some(track) => Song::Track(track),
+            None => Song::Entry(entry.queue_item_id.clone()),
+        })
     }
 
     fn lyrics(&self, cx: &App) -> Option<&Lyrics> {
-        let (track, lyrics) = self.loaded.as_ref()?;
-        (Some(*track) == self.track(cx)).then_some(lyrics.as_ref()?)
+        let (song, lyrics) = self.loaded.as_ref()?;
+        (Some(song) == self.song(cx).as_ref()).then_some(lyrics.as_ref()?)
     }
 
     fn track_changed(&mut self, cx: &mut Context<Self>) {
-        let Some(track) = self.track(cx) else {
+        let Some(song) = self.song(cx) else {
             self.loaded = None;
             self._load = None;
             self.loading = None;
@@ -101,20 +108,46 @@ impl LyricsPanel {
             cx.notify();
             return;
         };
-        if self.loading == Some(track) {
+        if self.loading.as_ref() == Some(&song) {
             return;
         }
-        self.loading = Some(track);
+        self.loading = Some(song.clone());
         self.fetching = None;
         self.active = None;
         self._follow = None;
         let engine = engine(cx);
+        let Song::Track(track) = song.clone() else {
+            let entry = self.playback.read(cx).0.entry.clone();
+            self.loaded = Some((song.clone(), None));
+            self.fetching = Some(song.clone());
+            self._load = Some(cx.spawn(async move |this, cx| {
+                let found = match entry {
+                    Some(e) => {
+                        engine
+                            .lyrics_by_tags(e.artist, e.title, e.album, e.duration_ms)
+                            .await
+                    }
+                    None => None,
+                };
+                this.update(cx, |this, cx| {
+                    if this.fetching.as_ref() == Some(&song) {
+                        this.fetching = None;
+                    }
+                    this.loaded = Some((song, found));
+                    this.follow(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
+            cx.notify();
+            return;
+        };
         self._load = Some(cx.spawn(async move |this, cx| {
             let cached = engine.clone().lyrics(track).await.ok().flatten();
             let synced = cached.as_ref().is_some_and(|l| l.synced);
             let alive = this.update(cx, |this, cx| {
-                this.loaded = Some((track, cached.clone()));
-                this.fetching = (!synced).then_some(track);
+                this.loaded = Some((song.clone(), cached.clone()));
+                this.fetching = (!synced).then(|| song.clone());
                 this.follow(cx);
                 cx.notify();
             });
@@ -123,10 +156,10 @@ impl LyricsPanel {
             }
             let fetched = engine.fetch_lyrics(track).await.ok().flatten();
             this.update(cx, |this, cx| {
-                if this.fetching == Some(track) {
+                if this.fetching.as_ref() == Some(&song) {
                     this.fetching = None;
                 }
-                this.loaded = Some((track, fetched.or(cached)));
+                this.loaded = Some((song, fetched.or(cached)));
                 this.follow(cx);
                 cx.notify();
             })
@@ -209,8 +242,8 @@ impl Render for LyricsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let washed = KoanTheme::washes_window(cx);
-        let track = self.track(cx);
-        let loading = self.fetching.is_some() && self.fetching == track;
+        let song = self.song(cx);
+        let loading = self.fetching.is_some() && self.fetching == song;
         let lyrics = self.lyrics(cx).cloned();
         let mut panel = Inspector::new("lyrics").clear(washed);
         if loading {
@@ -227,7 +260,7 @@ impl Render for LyricsPanel {
             .since(self.since)
             // The track: another track's lines start afresh, the same
             // words included.
-            .song(track)
+            .song(&song)
             .on_line(cx.listener(|this, line: &usize, _, cx| this.seek_to(*line, cx)))
             .into_any_element(),
             Some(l) if !l.content.is_empty() => {
@@ -237,7 +270,7 @@ impl Render for LyricsPanel {
             _ if loading => div().into_any_element(),
             _ => EmptyState::new(
                 Icon::LyricsText,
-                if track.is_none() {
+                if song.is_none() {
                     "nothing playing"
                 } else {
                     "no lyrics found"
