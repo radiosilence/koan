@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::child;
-use crate::theme::{HAIRLINE, Look};
+use crate::theme::Look;
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
@@ -194,7 +194,7 @@ impl RenderOnce for SplitView {
                     .flex_1()
                     .min_w(px(0.))
                     .h_full()
-                    .border_l(HAIRLINE)
+                    .border_l(look.hairline)
                     .border_color(rule)
                     .children(self.trailing),
             )

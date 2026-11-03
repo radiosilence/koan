@@ -39,6 +39,48 @@ impl Shade {
     pub fn hsla(self) -> Hsla {
         self.rgba().into()
     }
+
+    /// With more contrast asked for: the same hue, its lightness moved away
+    /// from the ground (lighter in dark mode, darker in light) until it
+    /// reaches `minimum` on `bg` and `surface`. Worked out once per shade.
+    pub fn held(self, minimum: f64, dark: bool, tokens: Palette) -> Shade {
+        static CACHE: LazyLock<Mutex<HashMap<([u64; 3], bool, u64), Shade>>> =
+            LazyLock::new(Default::default);
+        let key = (self.rgb.map(f64::to_bits), dark, minimum.to_bits());
+        if let Some(held) = CACHE.lock().get(&key) {
+            return *held;
+        }
+        let channels = |hex: super::tokens::Hex| hex.channels().map(|v| v as f64 / 255.0);
+        let bg = oklch::luminance(channels(tokens.bg));
+        let surface = oklch::luminance(channels(tokens.surface));
+        let contrast = |a: f64, b: f64| (a.max(b) + 0.05) / (a.min(b) + 0.05);
+        let reaches = |rgb: [f64; 3]| {
+            let y = oklch::luminance(rgb);
+            contrast(y, bg) >= minimum && contrast(y, surface) >= minimum
+        };
+        let (l, c, h) = oklch::from_srgb(self.rgb);
+        let made = (0..=100)
+            .map(|i| {
+                let step = i as f64 / 100.0;
+                let l = if dark {
+                    l + (1.0 - l) * step
+                } else {
+                    l * (1.0 - step)
+                };
+                oklch::to_srgb(l, c, h)
+            })
+            .find(|rgb| reaches(*rgb))
+            .map_or(self, |rgb| Shade {
+                rgb,
+                reads_as_text: true,
+            });
+        let mut cache = CACHE.lock();
+        if cache.len() >= 64 {
+            cache.clear();
+        }
+        cache.insert(key, made);
+        made
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -406,6 +448,28 @@ fn mix_oklab(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With more contrast asked for, every hue's accent reaches 7:1 on both
+    /// grounds of the contrast palette, light and dark.
+    #[test]
+    fn a_held_accent_reaches_seven_to_one() {
+        let channels = |hex: super::super::tokens::Hex| hex.channels().map(|v| v as f64 / 255.0);
+        for hue in (0..360).step_by(15) {
+            let record = oklch::to_srgb(0.6, 0.15, hue as f64);
+            let accent = Accent::of(Some(record));
+            for dark in [true, false] {
+                let tokens = Palette::for_look(dark, true);
+                let held = accent.shade(dark).held(7.0, dark, tokens);
+                let y = oklch::luminance(held.rgb);
+                for ground in [tokens.bg, tokens.surface] {
+                    let g = oklch::luminance(channels(ground));
+                    let ratio = (y.max(g) + 0.05) / (y.min(g) + 0.05);
+                    assert!(ratio >= 7.0, "hue {hue}, dark {dark}: {ratio:.2}");
+                }
+                assert!(held.reads_as_text);
+            }
+        }
+    }
 
     fn hex(rgb: [f64; 3]) -> u32 {
         let [r, g, b] = rgb.map(|v| (v * 255.0).round() as u32);

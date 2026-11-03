@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use crate::theme::wash::{Sleeve, Wash};
-use crate::theme::{self, Accent, KoanTheme};
+use crate::theme::{self, Accent, KoanTheme, Look};
 use koan_ffi::PlayState;
 use koan_kit::app::*;
 use koan_kit::components::{Burst, Prism, SHADED};
@@ -39,6 +39,8 @@ pub struct WindowRoot {
     album: Option<i64>,
     /// "Colours from the record" and the theme tint, as last applied.
     record_colours: bool,
+    /// Less transparency asked for: the window's ground in place of the wash.
+    opaque: bool,
     wash_tint: u32,
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
@@ -86,6 +88,7 @@ impl WindowRoot {
             content: content.into(),
             album: None,
             record_colours,
+            opaque: KoanTheme::opaque(cx),
             wash_tint,
             fetching: None,
             rainbow: false,
@@ -187,6 +190,11 @@ impl WindowRoot {
             self.wash_tint = wash_tint;
             self.wash
                 .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
+        }
+        let opaque = KoanTheme::opaque(cx);
+        if opaque != self.opaque {
+            self.opaque = opaque;
+            cx.notify();
         }
         if record_colours != self.record_colours {
             self.record_colours = record_colours;
@@ -300,12 +308,13 @@ impl Render for WindowRoot {
         div()
             .relative()
             .size_full()
-            .child(
-                div()
-                    .absolute()
-                    .size_full()
-                    .child(self.wash.clone().cached(fill())),
-            )
+            .child(div().absolute().size_full().map(|d| {
+                if self.opaque {
+                    d.bg(Look::of(window, cx).palette.bg.hsla())
+                } else {
+                    d.child(self.wash.clone().cached(fill()))
+                }
+            }))
             .when(prism.is_some(), |root| {
                 root.child(layer(self.prism.wash().size_full().into_any_element()))
             })

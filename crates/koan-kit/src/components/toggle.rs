@@ -8,8 +8,7 @@ use gpui_kit::{
 
 use super::{Handler, accessible, answers_click, child, fade, focus, ring, toggled};
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
-    label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole, label,
 };
 
 /// A square box at the row's trailing edge, the label leading: a `muted`
@@ -80,7 +79,7 @@ impl RenderOnce for Toggle {
                     .relative()
                     .flex_none()
                     .size(px(BOX))
-                    .border(HAIRLINE)
+                    .border(look.hairline)
                     .border_color(super::mix(look.palette.muted.hsla(), accent, on))
                     .child(
                         div()
@@ -179,7 +178,7 @@ impl RenderOnce for IconToggle {
             .child(
                 div()
                     .pb(px(5.0))
-                    .border_b(HAIRLINE)
+                    .border_b(look.hairline)
                     .border_color(look.accent.hsla().opacity(on))
                     .child(
                         KoanIcon::new(self.icon)
