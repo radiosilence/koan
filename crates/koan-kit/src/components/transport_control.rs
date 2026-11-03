@@ -21,6 +21,7 @@ pub struct TransportControl {
     label: SharedString,
     on: Option<bool>,
     help: SharedString,
+    answer: Answer,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -39,8 +40,15 @@ impl TransportControl {
             label: label(text),
             on: None,
             help: help.into(),
+            answer: Answer::Ring,
             on_click: None,
         }
+    }
+
+    /// What a press draws, where a ring would not say it: a skip's streak.
+    pub fn answer(mut self, answer: Answer) -> Self {
+        self.answer = answer;
+        self
     }
 
     /// A control that toggles, and whether it is on.
@@ -83,6 +91,7 @@ impl RenderOnce for TransportControl {
         let accent = look.accent.hsla();
         let tip = self.help.clone();
         let on = self.on;
+        let answer = self.answer;
         accessible(
             div().id(self.id.clone()),
             gpui_kit::Role::Button,
@@ -115,7 +124,7 @@ impl RenderOnce for TransportControl {
         .when_some(self.on_click, move |d, on_click| {
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                answers.start(Answer::Ring, accent, cx);
+                answers.start(answer, accent, cx);
                 on_click(event, window, cx)
             });
             answers_click(d, press.clone())

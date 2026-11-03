@@ -244,6 +244,7 @@ A change the control learns of rather than sees done (a favourite set by a short
 | Control | Answer | Length, curve |
 |---|---|---|
 | `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box | `ARRIVE`, quick-out |
+| `TransportControl` with `answer(Answer::Streak(forward))`: previous and next | a short streak leaving the glyph the way it points | `ARRIVE`, quick-out |
 | `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling | `SETTLE`, quick-out |
 | `Heart` filling, the album tile's included, however the favourite changed | six dots leaving the heart | `SETTLE`, quick-out |
 | `Heart` emptying | a ring closing in on it | `ARRIVE`, ease in and out |
