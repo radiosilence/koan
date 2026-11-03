@@ -339,6 +339,13 @@ impl NavNote {
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // A note that is said keeps one node as its words change, so the
+        // change is announced as the live region's; others are told apart
+        // by their words.
+        let id: ElementId = match &self.said {
+            Some((id, _, _)) => super::child(id, "note"),
+            None => SharedString::from(format!("note-{}", self.text)).into(),
+        };
         let answer = self.said.map(|(id, count, fresh)| {
             let answers = super::Answerer::of(&id, window, cx);
             let accent = look.accent.hsla();
@@ -349,7 +356,6 @@ impl RenderOnce for NavNote {
             }
             answers.layer(window, cx)
         });
-        let id = SharedString::from(format!("note-{}", self.text));
         super::announced(div().id(id), self.text.clone(), self.tone)
             .relative()
             .w_full()
