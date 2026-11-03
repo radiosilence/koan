@@ -257,6 +257,11 @@ impl Queue {
     /// finish: it is a cover about to be on screen, and calling it off on
     /// every re-aim of a fling would ask for it again and again.
     fn give_way(&mut self) -> usize {
+        // Nothing in flight, nothing to call off: every scroll frame with a
+        // warm cache ends here.
+        if self.fetching.is_empty() {
+            return 0;
+        }
         // Each record's most urgent request, once: a record shown at two
         // sizes is one fetch and one cover waiting.
         let mut urgency: HashMap<Art, Priority> = HashMap::with_capacity(self.wanted.len());
@@ -327,25 +332,28 @@ impl Queue {
     /// per round trip, but only while it is what holds fetches back: grown
     /// while the screen asks for fewer, it would climb untested and let a
     /// fast scroll send hundreds at once. A failure, or an answer slower than
-    /// `LATE`, halves it, once per `SETTLE`: a server that slows and stays
-    /// slow is cut every round trip until it answers in time. Answers quick
+    /// `LATE`, halves it, once per round trip: an answer to a fetch `sent`
+    /// before the last cut was asked at the old window, and neither cuts it
+    /// again nor grows it back. A server that slows and stays slow is cut
+    /// every round trip until it answers in time. Answers quick
     /// and slow alike within `LATE` never cut it, since a server answers a
     /// cover it keeps in milliseconds and one it reads off a disk in hundreds,
     /// in runs as long as the grid's order makes them. Returns whether the
     /// window grew by a whole place, which wakes one more fetcher.
-    fn observe(&mut self, took: Duration, ok: bool) -> bool {
+    fn observe(&mut self, took: Duration, sent: Instant, ok: bool) -> bool {
         let before = self.allowed();
         if self.window == 0.0 {
             self.window = WINDOW_START as f64;
         }
+        if self.last_cut.is_some_and(|at| sent <= at) {
+            return false;
+        }
         if !ok || took > LATE {
-            if self.last_cut.is_none_or(|at| at.elapsed() > SETTLE) {
-                self.cut(format_args!(
-                    "a fetch {} after {} ms",
-                    if ok { "answered" } else { "failed" },
-                    took.as_millis()
-                ));
-            }
+            self.cut(format_args!(
+                "a fetch {} after {} ms",
+                if ok { "answered" } else { "failed" },
+                took.as_millis()
+            ));
             return false;
         }
         // This answer's place included: every place the window allows was
@@ -425,9 +433,6 @@ const WINDOW_MIN: usize = 8;
 /// An answer slower than this is the server struggling, not a cover read
 /// off a disk: the window is cut for it as for a failure.
 const LATE: Duration = Duration::from_secs(2);
-/// The least time between two cuts: about a round trip, so the answers of
-/// one round trip cut the window once.
-const SETTLE: Duration = Duration::from_millis(500);
 
 enum Done {
     Decoded {
@@ -1323,6 +1328,9 @@ fn fetch_lane(
                     continue;
                 }
             };
+        // The server's time, not the disk's: a rename waiting on an
+        // eviction is no sign of a congested server.
+        let took = started.elapsed();
         // Written beside its final name and renamed only while the record
         // is still the one fetched. An eviction after the check unlinks the
         // file once the rename is done, and moves the generation, so the
@@ -1346,7 +1354,7 @@ fn fetch_lane(
         });
         let mut queue = shared.queue.lock();
         queue.finish(art, ticket);
-        let grew = queue.observe(started.elapsed(), fetched.is_ok());
+        let grew = queue.observe(took, started, fetched.is_ok());
         let current = queue.generation(art) == generation;
         let mut absent = false;
         match fetched {
@@ -1601,7 +1609,7 @@ mod tests {
         for i in 0..2000 {
             q.fetching = (0..q.allowed() as i64 - 1).map(Art::Album).collect();
             let took = if (i / 200) % 2 == 0 { 40 } else { 900 };
-            q.observe(Duration::from_millis(took), true);
+            q.observe(Duration::from_millis(took), Instant::now(), true);
         }
         assert!(q.allowed() > WINDOW_START * 2, "{}", q.allowed());
     }
@@ -1617,7 +1625,7 @@ mod tests {
         };
         for _ in 0..5000 {
             q.fetching = (0..3).map(Art::Album).collect();
-            q.observe(Duration::from_millis(50), true);
+            q.observe(Duration::from_millis(50), Instant::now(), true);
         }
         assert_eq!(q.window as usize, WINDOW_START);
     }
@@ -1633,22 +1641,24 @@ mod tests {
         };
         for _ in 0..2000 {
             q.fetching = (0..q.window as i64).map(Art::Album).collect();
-            q.observe(Duration::from_millis(100), true);
+            q.observe(Duration::from_millis(100), Instant::now(), true);
         }
         let grown = q.allowed();
         assert!(grown > WINDOW_START, "{grown}");
-        q.observe(Duration::from_millis(2500), true);
+        // Both sent before the cut the first makes.
+        let sent = Instant::now();
+        q.observe(Duration::from_millis(2500), sent, true);
         assert_eq!(q.allowed(), grown / 2, "cut at once");
-        q.observe(Duration::from_millis(2500), true);
+        q.observe(Duration::from_millis(2500), sent, true);
         assert_eq!(q.allowed(), grown / 2, "once per round trip");
         for _ in 0..20 {
             q.last_cut = None;
-            q.observe(Duration::from_millis(2500), true);
+            q.observe(Duration::from_millis(2500), Instant::now(), true);
         }
         assert_eq!(q.allowed(), WINDOW_MIN);
         q.window = 64.0;
         q.last_cut = None;
-        q.observe(Duration::from_secs(30), false);
+        q.observe(Duration::from_secs(30), Instant::now(), false);
         assert_eq!(q.allowed(), 32);
         q.limit = 3;
         assert_eq!(q.allowed(), 3);
