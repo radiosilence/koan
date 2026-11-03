@@ -42,6 +42,7 @@ pub mod image {
 }
 
 /// What a test of a page or the app drives it with.
+#[cfg(any(test, feature = "test-support"))]
 pub mod test {
     pub use gpui_kit::{TestAppContext, VisualTestContext, test};
 }
