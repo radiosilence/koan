@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::Placeholder;
 #[cfg(test)]
@@ -20,12 +20,12 @@ use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
 /// The sleeve as a tile shows it.
 pub enum TileSleeve {
-    /// The picture, `shown` from 0 to 1 while it fades in over `ground`,
-    /// the record's colour shown before it, or over the loading ensō where
-    /// no colour stood in.
+    /// The picture, fading in by `arrival` over `ground`, the record's
+    /// colour shown before it, or over the loading ensō where no colour
+    /// stood in.
     Image {
         image: Arc<RenderImage>,
-        shown: f32,
+        arrival: Option<super::Arrival>,
         ground: Option<Hsla>,
     },
     /// The picture's average colour, standing in while it uploads.
@@ -57,9 +57,12 @@ pub struct TileArt {
     mark: Option<TileMark>,
     playing: Option<AnyElement>,
     on_device: Option<f32>,
-    heart: Option<(bool, bool)>,
+    heart: Option<(bool, bool, bool)>,
+    id: ElementId,
     pick: Option<bool>,
+    sheen: Option<(ElementId, bool)>,
     cursor: bool,
+    spot: Option<super::CursorSpot>,
 }
 
 impl TileArt {
@@ -74,7 +77,9 @@ impl TileArt {
     /// What the play mark dims the sleeve with.
     const DIM: f32 = 0.35;
 
-    pub fn new(side: Pixels, sleeve: TileSleeve) -> Self {
+    /// `id` names which record's art this is, for its heart's answer: tiles
+    /// drawn side by side in one view each need their own.
+    pub fn new(id: impl Into<ElementId>, side: Pixels, sleeve: TileSleeve) -> Self {
         Self {
             side,
             sleeve,
@@ -84,9 +89,19 @@ impl TileArt {
             playing: None,
             on_device: None,
             heart: None,
+            id: id.into(),
             pick: None,
+            sheen: None,
             cursor: false,
+            spot: None,
         }
+    }
+
+    /// Which record's art this is, for its heart's answer: tiles drawn
+    /// side by side in one view each need their own.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// The codec, top right: at tile size a rate is unreadable, and the
@@ -120,10 +135,12 @@ impl TileArt {
         self
     }
 
-    /// The heart: whether it is a favourite, and whether the pointer is on
-    /// the heart's disc.
-    pub fn heart(mut self, heart: Option<(bool, bool)>) -> Self {
-        self.heart = heart;
+    /// The heart: whether it is a favourite, whether the pointer is on the
+    /// heart's disc, and whether it shows (under the pointer, or for a
+    /// favourite). A heart not showing still follows the favourite, and
+    /// shows while it answers a change made elsewhere.
+    pub fn heart(mut self, favourite: bool, on_disc: bool, shows: bool) -> Self {
+        self.heart = Some((favourite, on_disc, shows));
         self
     }
 
@@ -133,10 +150,25 @@ impl TileArt {
         self
     }
 
+    /// The rainbow appearance's sheen over the sleeve, under the id `id`
+    /// (brat's palette when `brat`): for the tile the pointer is on.
+    pub fn sheen(mut self, sheen: Option<(ElementId, bool)>) -> Self {
+        self.sheen = sheen;
+        self
+    }
+
     /// Under the grid's keyboard cursor while the grid holds the keyboard:
     /// the focus ring, inside the sleeve, once the keyboard was used last.
     pub fn cursor(mut self, cursor: bool) -> Self {
         self.cursor = cursor;
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -161,27 +193,38 @@ impl RenderOnce for TileArt {
         match self.sleeve {
             TileSleeve::Image {
                 image,
-                shown,
+                arrival,
                 ground,
             } => {
                 // Arriving: over the record's colour where it stood in, or
-                // over the ensō that was drawing itself.
-                if shown < 1.0 {
-                    art = match ground {
-                        Some(ground) => art.bg(ground),
-                        None => art.child(
+                // over the ensō that was drawing itself, on the GPU.
+                match arrival {
+                    Some(arrival) => {
+                        art = match ground {
+                            Some(ground) => art.bg(ground),
+                            None => art.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(Placeholder::new(side).loading(true)),
+                            ),
+                        };
+                        art = art.child(
                             div()
                                 .absolute()
                                 .inset_0()
-                                .child(Placeholder::new(side).loading(true)),
-                        ),
-                    };
+                                .child(super::arriving(image, &arrival)),
+                        );
+                    }
+                    None => art = art.child(img(ImageSource::Render(image)).size_full()),
                 }
-                art = art.child(img(ImageSource::Render(image)).size_full().opacity(shown));
             }
             TileSleeve::Colour(colour) => art = art.bg(colour),
             TileSleeve::Loading => art = art.child(Placeholder::new(side).loading(true)),
             TileSleeve::Missing => art = art.child(Placeholder::new(side)),
+        }
+        if let Some((id, brat)) = self.sheen {
+            art = art.child(super::Sheen::new(id).brat(brat));
         }
         let badge = |text: SharedString| {
             div()
@@ -208,7 +251,7 @@ impl RenderOnce for TileArt {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(gpui_kit::black().opacity(Self::DIM))
+                    .bg(gpui::black().opacity(Self::DIM))
                     .child(match mark {
                         TileMark::Starting => div()
                             .text_role(TypeRole::TitleSmall, &look)
@@ -248,16 +291,23 @@ impl RenderOnce for TileArt {
                     ),
             );
         }
-        if let (Some((favourite, hovered)), None) = (self.heart, self.pick) {
-            let glyph = if favourite {
-                KoanIcon::new(Icon::Favourited)
-                    .role(TypeRole::Meta)
-                    .color(look.accent.hsla())
-            } else {
-                KoanIcon::new(Icon::Favourite)
-                    .role(TypeRole::Meta)
-                    .color(pal.ink.hsla())
-            };
+        let heart = self
+            .heart
+            .filter(|_| self.pick.is_none())
+            .filter(|&(favourite, _, shows)| {
+                shows
+                    || super::Heart::answering(
+                        super::child(&self.id, "heart"),
+                        favourite,
+                        window,
+                        cx,
+                    )
+            });
+        if let Some((favourite, hovered, _)) = heart {
+            // A mark inside the tile, which takes the click itself and tells
+            // the heart from the sleeve by where it lands.
+            let glyph = super::Heart::new(super::child(&self.id, "heart"), favourite)
+                .rest(crate::theme::Tone::Ink);
             art = art.child(
                 div()
                     .absolute()
@@ -291,18 +341,18 @@ impl RenderOnce for TileArt {
             let tick = if picked {
                 KoanIcon::new(Icon::Picked).fill(look.accent.hsla())
             } else {
-                KoanIcon::new(Icon::Unpicked).fill(gpui_kit::black().opacity(0.25))
+                KoanIcon::new(Icon::Unpicked).fill(gpui::black().opacity(0.25))
             };
             art = art.child(
                 div()
                     .absolute()
                     .top(px(Self::HEART_INSET))
                     .left(px(Self::HEART_INSET))
-                    .child(tick.points(Self::TICK / 1.2).color(gpui_kit::white())),
+                    .child(tick.points(Self::TICK / 1.2).color(gpui::white())),
             );
         }
         if self.cursor && window.last_input_was_keyboard() {
-            art = art.child(super::cursor_ring(&look));
+            art = art.child(super::cursor_ring(&look, self.spot.as_ref()));
         }
         art
     }
@@ -346,6 +396,8 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 
@@ -355,10 +407,15 @@ mod tests {
     use core::prelude::v1::test;
 
     #[test]
-    fn tiles_keep_their_size_and_the_room_around_them_takes_the_width() {
+    fn tiles_keep_their_size_and_the_room_between_them_takes_the_width() {
         let scale = Scale::of(100);
         let narrow = TileGrid::for_width(px(300.0), &scale);
         assert_eq!(narrow.columns, 1);
+        // One tile stands on the margin too, not centred.
+        assert_eq!(
+            narrow.inset,
+            crate::components::RowMetrics::page_margin_on(&scale)
+        );
         let a = TileGrid::for_width(px(1200.0), &scale);
         let b = TileGrid::for_width(px(1240.0), &scale);
         assert_eq!(
@@ -366,7 +423,10 @@ mod tests {
             "a resize moves tiles apart, never grows them"
         );
         assert_eq!(a.columns, b.columns);
-        assert!(b.gap > a.gap && b.inset > a.inset);
+        assert!(b.gap > a.gap);
+        // The grid's edges stand on the page's margin, the header's.
+        let margin = crate::components::RowMetrics::page_margin_on(&scale);
+        assert_eq!((a.inset, b.inset), (margin, margin));
         assert!(a.gap >= px(TileColumns::MIN_GAP));
         for (grid, width) in [(a, 1200.0), (b, 1240.0)] {
             let used = grid.side * grid.columns as f32

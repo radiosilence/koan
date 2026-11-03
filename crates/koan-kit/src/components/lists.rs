@@ -8,12 +8,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::{
+use gpui::{
     Div, ElementId, EntityId, InteractiveElement, IntoElement, Pixels, Point, SharedString,
     Stateful, Styled, canvas, div, px,
 };
 
-pub use gpui_kit::{
+pub use gpui::{
     List, ListAlignment, ListOffset, ListState, ScrollStrategy, UniformList,
     UniformListScrollHandle, list, uniform_list,
 };
@@ -34,27 +34,59 @@ where
 /// What a virtualised list sits in for a screen reader: a list named for
 /// what it holds, its rows (`TableRow::spoken`) its items.
 pub fn spoken_list(id: impl Into<ElementId>, name: impl Into<SharedString>) -> Stateful<Div> {
-    super::accessible(div().id(id), gpui_kit::Role::List, Some(name.into()))
+    super::accessible(div().id(id), gpui::Role::List, Some(name.into()))
 }
 
 /// Scrolls the row past row `ix` of a `uniform_list`'s `count` on screen, the
 /// one before it where `ix` is at the top: a screen reader moving through the
 /// list reaches only rows drawn, so the next one is drawn before it gets
-/// there. The handle keeps one scroll, so only the neighbour the reader is
-/// heading for is asked for.
+/// there. One neighbour only, the one the reader is heading for: a second
+/// scroll could undo the first. The caller draws the list again
+/// (`TableRow::on_reveal` does).
 pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize, count: usize) {
     if count == 0 {
         return;
     }
-    // The row at the top as last laid out: `logical_scroll_top_index` is
-    // GPUI's test support only.
-    let top = handle.0.borrow().base_handle.logical_scroll_top().0;
-    let target = if ix <= top {
+    let top = uniform_top(handle, count);
+    handle.scroll_to_item(neighbour(ix, top, count), ScrollStrategy::Nearest);
+}
+
+/// The row at the top of a `uniform_list` of `count` rows as last laid out,
+/// from its scroll offset and the height of its content. (The handle's
+/// `logical_scroll_top` counts children a uniform list never registers, so
+/// it is always 0.)
+fn uniform_top(handle: &UniformListScrollHandle, count: usize) -> usize {
+    let state = handle.0.borrow();
+    let Some(size) = state.last_item_size else {
+        return 0;
+    };
+    let row = f32::from(size.contents.height) / count as f32;
+    if row <= 0.0 {
+        return 0;
+    }
+    let scrolled = -f32::from(state.base_handle.offset().y);
+    ((scrolled / row).floor().max(0.0) as usize).min(count - 1)
+}
+
+/// The neighbour of row `ix` a reader moving through a list of `count` is
+/// heading for, with `top` the row at the top of the screen: the one before
+/// where `ix` is at or above the top, the one after otherwise.
+pub(crate) fn neighbour(ix: usize, top: usize, count: usize) -> usize {
+    if ix <= top {
         ix.saturating_sub(1)
     } else {
-        (ix + 1).min(count - 1)
-    };
-    handle.scroll_to_item(target, ScrollStrategy::Nearest);
+        (ix + 1).min(count.saturating_sub(1))
+    }
+}
+
+/// `reveal_around` for a `list` of rows that measure themselves.
+pub fn reveal_around_list(state: &ListState, ix: usize) {
+    let count = state.item_count();
+    if count == 0 {
+        return;
+    }
+    let top = state.logical_scroll_top().item_ix;
+    state.scroll_to_reveal_item(neighbour(ix, top, count));
 }
 
 /// A scroll offset `y` down from the top, as a list's handle takes it.

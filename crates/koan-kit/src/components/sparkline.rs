@@ -1,8 +1,8 @@
 //! A line through a series of values, small: an EQ curve's thumbnail on its
 //! stage's block.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 /// `values` from `-range` to `range`, left to right across the line's box,
 /// zero at the middle. Drawn at two points a pixel at most, which is all a

@@ -8,15 +8,16 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
+use gpui_kit::base::FocusTrapElement as _;
 
 use super::{MenuPanel, MenuRow, MenuSeparator};
 use crate::theme::{Icon, KoanStyled, Look, Space};
 
 type Run = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type Build = Rc<dyn Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu>;
-/// A button at a rich row's end, made each time the menu draws.
+/// A control drawn in a menu, made each time the menu draws.
 type Trailing = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// An entry of a menu, built as `PopupMenuItem` is.
@@ -25,16 +26,17 @@ pub struct MenuEntry {
     data: bool,
     icon: Option<Icon>,
     checked: Option<bool>,
+    /// `checked` is a setting's state, not a choice (`toggled`).
+    toggle: bool,
     destructive: bool,
     disabled: bool,
     detail: Option<(SharedString, bool)>,
     rich: bool,
     reach: Option<Icon>,
-    trailing: Vec<Trailing>,
     keys: Option<SharedString>,
     run: Option<Run>,
     stays_open: bool,
-    actions: Vec<(Icon, SharedString, bool, Run)>,
+    actions: Vec<(super::panel::ActionFace, SharedString, bool, Run)>,
 }
 
 impl MenuEntry {
@@ -45,12 +47,12 @@ impl MenuEntry {
             data: false,
             icon: None,
             checked: None,
+            toggle: false,
             destructive: false,
             disabled: false,
             detail: None,
             rich: false,
             reach: None,
-            trailing: Vec::new(),
             keys: None,
             run: None,
             stays_open: false,
@@ -60,15 +62,39 @@ impl MenuEntry {
 
     /// A quiet glyph at the row's end that acts on what the row names
     /// without choosing it ("move here", "forget this device"), with `help`
-    /// as its tooltip. Every row of the menu keeps the same slots, so the
-    /// actions line up.
+    /// as its tooltip. Every row of the menu keeps the same columns, glyphs
+    /// with glyphs and words with words, so the actions line up; → reaches
+    /// them from the keyboard.
     pub fn action(
         mut self,
         icon: Icon,
         help: impl Into<SharedString>,
         run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.actions.push((icon, help.into(), false, Rc::new(run)));
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
+        self
+    }
+
+    /// An action of a word or two, quiet as the glyphs are: "move here". As
+    /// a row's last action it takes the last slot, which every row then
+    /// keeps as wide.
+    pub fn text_action(
+        mut self,
+        text: impl Into<SharedString>,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((
+            super::panel::ActionFace::Text(text.into()),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
         self
     }
 
@@ -81,7 +107,12 @@ impl MenuEntry {
         lit: bool,
         run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.actions.push((icon, help.into(), lit, Rc::new(run)));
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            lit,
+            Rc::new(run),
+        ));
         self
     }
 
@@ -118,6 +149,14 @@ impl MenuEntry {
         self
     }
 
+    /// A setting turned on or off ("group by album"), not a choice among
+    /// others: ticked while `on`, without the ground a chosen place takes.
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.checked = Some(on);
+        self.toggle = true;
+        self
+    }
+
     /// A place to choose, drawn as the Mac's output picker draws one: its
     /// glyph large, the label over `detail`, the chosen one on `surface`.
     pub fn rich(mut self, detail: impl Into<SharedString>) -> Self {
@@ -137,15 +176,6 @@ impl MenuEntry {
     /// A small glyph after the label: how the place is reached.
     pub fn reach(mut self, reach: Icon) -> Self {
         self.reach = Some(reach);
-        self
-    }
-
-    /// A button at the row's end.
-    pub fn trailing(
-        mut self,
-        make: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-    ) -> Self {
-        self.trailing.push(Rc::new(make));
         self
     }
 
@@ -182,6 +212,17 @@ enum Entry {
     },
 }
 
+impl Entry {
+    /// The words a choosable row is known by.
+    fn label(&self) -> Option<&SharedString> {
+        match self {
+            Entry::Item(item) => Some(&item.label),
+            Entry::Submenu { label, .. } => Some(label),
+            _ => None,
+        }
+    }
+}
+
 /// How wide a note's lines run, in points before the text size scales them:
 /// the Mac's output picker's width.
 const NOTE_WIDTH: f32 = 340.;
@@ -189,6 +230,9 @@ const NOTE_WIDTH: f32 = 340.;
 pub struct Menu {
     entries: Vec<Entry>,
     highlighted: Option<usize>,
+    /// The highlighted row's action the keyboard moved onto with →, which
+    /// Return runs in place of the row.
+    acting: Option<usize>,
     focus: FocusHandle,
     /// Where it was drawn last, for the menu it opened from to tell a press
     /// in it from one outside them both.
@@ -196,6 +240,11 @@ pub struct Menu {
     /// The menus it opened from, as a submenu, nearest first: a press in
     /// any of them is not outside.
     ancestors: Vec<Rc<Cell<Option<Bounds<Pixels>>>>>,
+    /// The least the panel is wide, in points, so a menu whose rows change
+    /// while it is open does not change size with them.
+    min_width: Option<f32>,
+    /// `min_width` is its width (`width`).
+    fixed: bool,
     _submenu: Vec<Subscription>,
 }
 
@@ -223,9 +272,12 @@ impl Menu {
             let menu = Menu {
                 entries: Vec::new(),
                 highlighted: None,
+                acting: None,
                 focus: cx.focus_handle(),
                 bounds: Rc::default(),
                 ancestors: Vec::new(),
+                min_width: None,
+                fixed: false,
                 _submenu: Vec::new(),
             };
             build(menu, window, cx)
@@ -268,18 +320,61 @@ impl Menu {
         let empty = Menu {
             entries: Vec::new(),
             highlighted: None,
+            acting: None,
             focus: self.focus.clone(),
             bounds: self.bounds.clone(),
             ancestors: self.ancestors.clone(),
+            min_width: self.min_width,
+            fixed: self.fixed,
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
+        // The row highlighted, known by its words and which of the rows so
+        // worded it is, rather than its place: a row arriving above it moves
+        // it down.
+        let was = self.highlighted.and_then(|i| {
+            let label = self.entries.get(i).and_then(Entry::label)?.clone();
+            let nth = self.entries[..i]
+                .iter()
+                .filter(|e| e.label() == Some(&label))
+                .count();
+            Some((label, nth))
+        });
         self.entries = built.entries;
+        self.min_width = built.min_width;
+        self.fixed = built.fixed;
         self._submenu.clear();
-        self.highlighted = self
-            .highlighted
-            .filter(|&i| i < self.entries.len() && self.choosable(i));
+        self.highlighted = was.and_then(|(label, nth)| {
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.label() == Some(&label))
+                .nth(nth)
+                .map(|(i, _)| i)
+                .filter(|&i| self.choosable(i))
+        });
         cx.notify();
+    }
+
+    /// The width a picker of places (outputs, devices) keeps whatever its
+    /// rows say (`width`): a rich row's glyph, its name over one line of
+    /// detail at its widest, and its actions' slots, a glyph and "move here"
+    /// among them.
+    pub const PICKER_WIDTH: f32 = 470.0;
+
+    /// Keep the panel at least `points` wide, so it holds its size as rows
+    /// come, go and change while it is open.
+    pub fn min_width(mut self, points: f32) -> Self {
+        self.min_width = Some(points);
+        self
+    }
+
+    /// Exactly `points` wide, so it never changes size while open: a name
+    /// that does not fit is cut, as a detail is.
+    pub fn width(mut self, points: f32) -> Self {
+        self.min_width = Some(points);
+        self.fixed = true;
+        self
     }
 
     /// A rule between groups; one at the start, at the end or after another
@@ -341,7 +436,9 @@ impl Menu {
 
     fn choosable(&self, index: usize) -> bool {
         match &self.entries[index] {
-            Entry::Item(item) => !item.disabled && item.run.is_some(),
+            // A row that cannot be chosen is still reached for its actions
+            // (forgetting a device out of reach); Return on it does nothing.
+            Entry::Item(item) => (!item.disabled && item.run.is_some()) || !item.actions.is_empty(),
             Entry::Submenu { .. } => true,
             Entry::Separator | Entry::Heading(_) | Entry::Control(_) | Entry::Note(_) => false,
         }
@@ -364,6 +461,7 @@ impl Menu {
             return;
         }
         self.highlighted = index;
+        self.acting = None;
         // Another row under the pointer or the keys closes an open submenu.
         for (i, entry) in self.entries.iter_mut().enumerate() {
             if let Entry::Submenu { open, .. } = entry
@@ -454,8 +552,50 @@ impl Menu {
         }
     }
 
+    /// How many actions the row at `index` has.
+    fn actions_of(&self, index: Option<usize>) -> usize {
+        match index.map(|i| &self.entries[i]) {
+            Some(Entry::Item(item)) => item.actions.len(),
+            _ => 0,
+        }
+    }
+
+    /// Runs action `k` of row `index`, as its click does.
+    fn act(&mut self, index: usize, k: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Entry::Item(item) = &self.entries[index] else {
+            return;
+        };
+        let Some((.., run)) = item.actions.get(k) else {
+            return;
+        };
+        run.clone()(&ClickEvent::default(), window, cx);
+        // An action that opened a sheet or a question has taken the
+        // keyboard: the menu makes way.
+        if !self.focus.contains_focused(window, cx) {
+            cx.emit(DismissEvent);
+        }
+    }
+
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let actions = self.actions_of(self.highlighted);
         match event.keystroke.key.as_str() {
+            // Along the row onto its actions, and back to the row.
+            "right" if actions > 0 => {
+                let next = self.acting.map_or(0, |k| (k + 1).min(actions - 1));
+                if self.acting != Some(next) {
+                    self.acting = Some(next);
+                    cx.notify();
+                }
+            }
+            "left" if self.acting.is_some() => {
+                self.acting = self.acting.and_then(|k| k.checked_sub(1));
+                cx.notify();
+            }
+            "enter" | "space" if self.acting.is_some() => {
+                if let (Some(index), Some(k)) = (self.highlighted, self.acting) {
+                    self.act(index, k, window, cx);
+                }
+            }
             "down" => {
                 let next = self.step(1);
                 self.highlight(next, cx);
@@ -488,16 +628,42 @@ impl Render for Menu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let menu = cx.entity();
-        let mut panel = MenuPanel::new();
-        let slots = self
-            .entries
-            .iter()
-            .map(|entry| match entry {
-                Entry::Item(item) => item.trailing.len() + item.actions.len(),
-                _ => 0,
+        let mut panel = MenuPanel::new().min_width(self.min_width).fixed(self.fixed);
+        // Every row keeps the menu's columns of actions, glyphs with glyphs
+        // and words with words, each words column as wide as its widest
+        // words; where there are words, a choice's tick stands in them.
+        use super::panel::{ActionColumns, ActionFace, Slot};
+        let kind = |face: &ActionFace| match face {
+            ActionFace::Glyph(_) => Slot::Glyph,
+            ActionFace::Text(_) => Slot::Words,
+        };
+        let items = || {
+            self.entries.iter().filter_map(|entry| match entry {
+                Entry::Item(item) => Some(item),
+                _ => None,
             })
-            .max()
-            .unwrap_or(0);
+        };
+        let mut rows: Vec<Vec<Slot>> = items()
+            .map(|item| item.actions.iter().map(|(face, ..)| kind(face)).collect())
+            .collect();
+        if rows.iter().flatten().any(|k| *k == Slot::Words) {
+            for (row, item) in rows.iter_mut().zip(items()) {
+                if item.checked == Some(true) {
+                    row.push(Slot::Words);
+                }
+            }
+        }
+        let words: Vec<SharedString> = items()
+            .flat_map(|item| item.actions.iter())
+            .filter_map(|(face, ..)| match face {
+                ActionFace::Text(text) => Some(text.clone()),
+                ActionFace::Glyph(_) => None,
+            })
+            .collect();
+        let columns = Rc::new(ActionColumns::of(
+            &rows,
+            super::panel::MenuAction::words_width(&words, window, cx),
+        ));
         for (index, entry) in self.entries.iter().enumerate() {
             let highlighted = self.highlighted == Some(index);
             let hovered = {
@@ -548,7 +714,7 @@ impl Render for Menu {
                     .destructive(item.destructive)
                     .disabled(item.disabled || item.run.is_none());
                     if let Some(checked) = item.checked {
-                        row = row.checked(checked);
+                        row = row.checked(checked).toggle(item.toggle);
                     }
                     if let Some(icon) = item.icon {
                         row = row.icon(icon);
@@ -560,20 +726,32 @@ impl Render for Menu {
                         row = row.reach(reach);
                     }
                     row = row.rich(item.rich);
-                    for make in &item.trailing {
-                        row = row.trailing(make(window, cx));
+                    if highlighted {
+                        row = row.keyed_action(self.acting);
                     }
-                    for (k, (icon, help, lit, run)) in item.actions.iter().enumerate() {
-                        let run = run.clone();
-                        row = row.lit_action(
-                            ("action", index * 8 + k),
-                            *icon,
-                            help.clone(),
-                            *lit,
-                            move |event, window, cx| run(event, window, cx),
-                        );
+                    for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
+                        let (run, menu) = (run.clone(), menu.clone());
+                        let id = ("action", index * 8 + k);
+                        let act = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            run(event, window, cx);
+                            // An action that opened a sheet or a question
+                            // has taken the keyboard: the menu makes way.
+                            menu.update(cx, |menu, cx| {
+                                if !menu.focus.contains_focused(window, cx) {
+                                    cx.emit(DismissEvent);
+                                }
+                            });
+                        };
+                        row = match face {
+                            super::panel::ActionFace::Glyph(icon) => {
+                                row.lit_action(id, *icon, help.clone(), *lit, act)
+                            }
+                            super::panel::ActionFace::Text(text) => {
+                                row.text_action(id, text.clone(), help.clone(), act)
+                            }
+                        };
                     }
-                    row = row.slots(slots);
+                    row = row.columns(columns.clone());
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }
@@ -581,30 +759,44 @@ impl Render for Menu {
                     row = row.on_click(move |_, window, cx| {
                         menu.update(cx, |menu, cx| menu.choose(index, window, cx))
                     });
-                    panel.child(div().id(("hover", index)).on_hover(hovered).child(row))
+                    let label = item.label.clone();
+                    panel.child(
+                        div()
+                            .id(("hover", index))
+                            .debug_selector(move || format!("menu: {label}"))
+                            .on_hover(hovered)
+                            .child(row),
+                    )
                 }
                 Entry::Submenu {
                     label, icon, open, ..
                 } => {
                     let mut row = MenuRow::new(("entry", index), label)
                         .highlighted(highlighted)
-                        .opens(true);
+                        .opens(true)
+                        .expanded(open.is_some());
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }
+                    let name = label.clone();
                     panel.child(
                         div()
                             .id(("hover", index))
+                            .debug_selector(move || format!("menu: {name}"))
                             .relative()
                             .on_hover(hovered)
                             .child(row)
                             .children(open.clone().map(|child| {
-                                // Beside the row, its first row level with it.
+                                // Beside the row, its first row level with it,
+                                // moved back inside the window where it would
+                                // run past an edge.
                                 div()
                                     .absolute()
                                     .left_full()
                                     .top(-look.space(Space::Xs))
-                                    .child(child)
+                                    .child(
+                                        anchored().snap_to_window_with_margin(px(8.)).child(child),
+                                    )
                             })),
                     )
                 }
@@ -632,10 +824,17 @@ impl Render for Menu {
             .occlude()
             .child(panel)
             .child(
+                // Over the panel, from its corner: without an inset an
+                // absolute child sits where the flow would put it, under the
+                // panel, and the bounds it records miss the menu.
                 canvas(move |bounds, _, _| drawn.set(Some(bounds)), |_, _, _, _| {})
                     .absolute()
+                    .top_0()
+                    .left_0()
                     .size_full(),
             )
+            // Tab stays in the open menu rather than reaching the page under it.
+            .focus_trap("menu-trap", &self.focus)
     }
 }
 
@@ -650,6 +849,20 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
     fn koan_context_menu(
         self,
         id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.koan_context_menu_at(id, None, window, cx, build)
+    }
+
+    /// `koan_context_menu`, which the menu key also opens, under the
+    /// element's keyboard cursor (`spot`) where one is laid out, and at the
+    /// pointer otherwise.
+    fn koan_context_menu_at(
+        self,
+        id: impl Into<ElementId>,
+        spot: Option<super::CursorSpot>,
         window: &mut Window,
         cx: &mut App,
         build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
@@ -672,21 +885,15 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                 }
                 // Where the keyboard was, given back as the menu closes: a list's
                 // keys work again after a choice or Escape.
-                let before = window.focused(cx);
                 let own = menu.focus_handle(cx);
+                let before = returns_to(&own, window, cx);
                 opener.update(cx, |open, cx| {
                     let closing = cx.subscribe_in(
                         &menu,
                         window,
                         move |open: &mut Open, _, _: &DismissEvent, window, cx| {
                             open.0 = None;
-                            // Only from the menu: a choice that put up a sheet
-                            // or opened a field keeps the keyboard where it went.
-                            let in_menu =
-                                window.focused(cx).is_none() || own.contains_focused(window, cx);
-                            if in_menu && let Some(before) = &before {
-                                window.focus(before, cx);
-                            }
+                            give_back(&own, &before, window, cx);
                             cx.notify();
                         },
                     );
@@ -701,24 +908,25 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 open(event.position, window, cx)
             })
-            // The menu key: under the keyboard's cursor as the next frame
-            // draws it (the list has revealed the cursor's item, and the key
-            // makes the keyboard the last input, which shows the ring), or
-            // at the pointer where no ring is drawn in that frame. The first
-            // callback runs before that frame draws, the second after it.
+            // The menu key: under the keyboard's cursor, where its ring is
+            // laid out in the frames after the key. Bounds from before it are
+            // not trusted: the list may have scrolled the row away since, or
+            // just revealed it. The first callback runs before the next frame
+            // draws, the second after. At the pointer when there is no cursor
+            // or no ring was drawn.
             .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
-                cx.default_global::<super::CursorAt>().0 = None;
+                let Some(spot) = spot.clone() else {
+                    return by_key(window.mouse_position(), window, cx);
+                };
+                spot.forget_bounds();
                 window.refresh();
                 let by_key = by_key.clone();
                 window.on_next_frame(move |window, _| {
                     window.refresh();
                     window.on_next_frame(move |window, cx| {
-                        let id = window.window_handle().window_id();
-                        let at = cx
-                            .try_global::<super::CursorAt>()
-                            .and_then(|c| c.0)
-                            .filter(|(drawn, _)| *drawn == id)
-                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        let at = spot
+                            .bounds()
+                            .map_or_else(|| window.mouse_position(), |b| b.bottom_left());
                         by_key(at, window, cx)
                     });
                 });
@@ -739,6 +947,69 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
 }
 
 impl<E: InteractiveElement + ParentElement> KoanContextMenu for E {}
+
+/// The menu opened last and where it gives the keyboard back to.
+struct LastMenu {
+    menu: FocusHandle,
+    returns_to: Option<WeakFocusHandle>,
+}
+
+impl Global for LastMenu {}
+
+/// What takes the keyboard when a menu closes and what held it before is
+/// gone: the app's page in front, say.
+struct MenuFallback(super::choice::Run);
+
+impl Global for MenuFallback {}
+
+/// Names what takes the keyboard when a menu closes and what held it as
+/// it opened has since gone, its page left behind.
+pub fn on_menu_focus_lost(fallback: impl Fn(&mut Window, &mut App) + 'static, cx: &mut App) {
+    cx.set_global(MenuFallback(Rc::new(fallback)));
+}
+
+/// Where the keyboard goes once the menu holding `menu` closes: what held
+/// it as the menu opened, or, when that was another menu about to close
+/// under this one, what that menu would have given it back to. Held weakly:
+/// a page the menu outlives does not take the keyboard from the grave.
+fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<WeakFocusHandle> {
+    let mut before = window.focused(cx).map(|f| f.downgrade());
+    if let Some(last) = cx.try_global::<LastMenu>()
+        && window.focused(cx).as_ref() == Some(&last.menu)
+    {
+        before = last.returns_to.clone();
+    }
+    cx.set_global(LastMenu {
+        menu: menu.clone(),
+        returns_to: before.clone(),
+    });
+    before
+}
+
+/// Gives the keyboard back as a menu closes, if it is still the menu's: a
+/// choice that put up a sheet or opened a field keeps it where it went.
+/// When what held it is gone, the app's fallback takes it.
+fn give_back(
+    menu: &FocusHandle,
+    before: &Option<WeakFocusHandle>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let in_menu = window.focused(cx).is_none() || menu.contains_focused(window, cx);
+    if !in_menu {
+        return;
+    }
+    match before.as_ref().and_then(|b| b.upgrade()) {
+        Some(before) => window.focus(&before, cx),
+        // Deferred: a slot's menu closes inside its view's update, and the
+        // fallback may update that view.
+        None => {
+            if let Some(fallback) = cx.try_global::<MenuFallback>().map(|f| f.0.clone()) {
+                window.defer(cx, move |window, cx| fallback(window, cx));
+            }
+        }
+    }
+}
 
 /// Where a set of buttons keeps the menu one of them has open: the
 /// transport's sleep, output and EQ, a toolbar's menus.
@@ -837,10 +1108,17 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                 let was_open = slot(view).pressed.take() == Some(which);
                 slot(view).open = None;
                 if !was_open && let Some(menu) = build(view, window, cx) {
-                    let dismissed = cx.subscribe(&menu, move |view, _, _: &DismissEvent, cx| {
-                        slot(view).open = None;
-                        cx.notify();
-                    });
+                    let own = menu.focus_handle(cx);
+                    let before = returns_to(&own, window, cx);
+                    let dismissed = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |view, _, _: &DismissEvent, window, cx| {
+                            slot(view).open = None;
+                            give_back(&own, &before, window, cx);
+                            cx.notify();
+                        },
+                    );
                     menu.focus_handle(cx).focus(window, cx);
                     slot(view).open = Some((which, menu, dismissed));
                 }
@@ -883,12 +1161,145 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::TestAppContext;
+    use gpui::TestAppContext;
 
     use super::*;
-    // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
+    // `gpui::*` brings GPUI's `test` attribute, which would expand its
     // own `#[test]` into itself.
     use core::prelude::v1::test;
+
+    struct Page {
+        chosen: Rc<Cell<Option<&'static str>>>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let chosen = self.chosen.clone();
+            div()
+                .size_full()
+                .debug_selector(|| "page".into())
+                .koan_context_menu("page-menu", window, cx, move |menu, window, cx| {
+                    let chosen = chosen.clone();
+                    menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        .submenu("add to playlist", window, cx, move |menu, _, _| {
+                            let (first, second) = (chosen.clone(), chosen.clone());
+                            menu.item(
+                                MenuEntry::data("Morning")
+                                    .on_click(move |_, _, _| first.set(Some("Morning"))),
+                            )
+                            .item(
+                                MenuEntry::data("Evening")
+                                    .on_click(move |_, _, _| second.set(Some("Evening"))),
+                            )
+                        })
+                })
+        }
+    }
+
+    /// A playlist chosen with the pointer from "add to playlist" runs its
+    /// choice: the press in the submenu, drawn outside the menu it opened
+    /// from, closes neither before the click completes.
+    #[gpui::test]
+    fn a_choice_in_a_submenu_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::app::platform::init(cx);
+            crate::theme::init(cx);
+        });
+        let chosen = Rc::new(Cell::new(None));
+        let held = chosen.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Page { chosen: held });
+        let cx: &mut gpui::VisualTestContext = cx;
+        cx.run_until_parked();
+        let page = cx.debug_bounds("page").expect("drawn");
+        cx.simulate_mouse_down(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let opener = cx
+            .debug_bounds("menu: add to playlist")
+            .expect("the menu opened");
+        cx.simulate_mouse_move(opener.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        let evening = cx
+            .debug_bounds("menu: Evening")
+            .expect("the submenu opened");
+        cx.simulate_mouse_move(evening.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_click(evening.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(chosen.get(), Some("Evening"));
+        assert!(
+            cx.debug_bounds("menu: Evening").is_none(),
+            "the menus close once something is chosen"
+        );
+    }
+
+    struct Bar {
+        slot: MenuSlot<()>,
+        focused: bool,
+    }
+
+    impl Render for Bar {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.slot.trigger(
+                    (),
+                    div()
+                        .id("trigger")
+                        .debug_selector(|| "trigger".into())
+                        .size(px(40.)),
+                    |bar: &mut Self| &mut bar.slot,
+                    |_, window, cx| {
+                        Some(Menu::build(window, cx, |menu, _, _| {
+                            menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        }))
+                    },
+                    cx,
+                ),
+            )
+        }
+    }
+
+    /// A slot's menu opened with nothing focused, closed by Escape, gives
+    /// the keyboard to the app's fallback, which may update the very view
+    /// holding the slot, as the shell's does, without it being leased.
+    #[gpui::test]
+    fn a_slot_menu_with_nowhere_to_return_runs_the_fallback(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::app::platform::init(cx);
+            crate::theme::init(cx);
+        });
+        let (bar, cx) = cx.add_window_view(|_, _| Bar {
+            slot: MenuSlot::default(),
+            focused: false,
+        });
+        let cx: &mut gpui::VisualTestContext = cx;
+        let weak = bar.downgrade();
+        cx.update(|_, cx| {
+            on_menu_focus_lost(
+                move |_, cx| {
+                    weak.update(cx, |bar, _| bar.focused = true).ok();
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let trigger = cx.debug_bounds("trigger").expect("drawn");
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_some(), "the menu opened");
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_none(), "Escape closed it");
+        assert!(bar.read_with(cx, |bar, _| bar.focused));
+    }
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
         names.iter().fold(menu, |menu, name| {
@@ -897,11 +1308,12 @@ mod tests {
     }
 
     /// Refilled as renderers arrive, the menu keeps the row highlighted
-    /// while it is still there, and drops the highlight when it is gone.
-    #[gpui_kit::test]
+    /// while it is still there, wherever it moves, and drops the highlight
+    /// when it is gone.
+    #[gpui::test]
     fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let window = cx.add_empty_window();
@@ -915,6 +1327,9 @@ mod tests {
                 });
                 assert_eq!(menu.highlighted, Some(1));
                 assert_eq!(menu.entries.len(), 4);
+                // A row arriving above it moves it down with its row.
+                menu.refill(cx, |menu, _| rows(menu, &["den", "mac", "tv", "amp"]));
+                assert_eq!(menu.highlighted, Some(2), "still on tv");
                 menu.refill(cx, |menu, _| rows(menu, &["mac"]));
                 assert_eq!(menu.highlighted, None);
             })

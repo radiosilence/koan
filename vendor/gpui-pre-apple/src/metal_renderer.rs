@@ -135,6 +135,14 @@ pub struct MetalRenderer {
     // KOAN: the last frame drawn as the layers its shaders are drawn
     // between, which each present composes with the shaders (#1641).
     shader_layers: ShaderLayerTextures,
+    // KOAN: each layer group's texture, and the frame they were drawn for
+    // (#1859).
+    group_textures: Vec<Option<metal::Texture>>,
+    group_generation: u64,
+    // KOAN: whether each group moved when last drawn, and the colour slot
+    // table it was drawn against (#1878).
+    group_moving: Vec<bool>,
+    group_slot_generation: u64,
     compose_pipelines: Option<ComposePipelines>,
     /// What a shader with no image is given to sample.
     blank_texture: Option<metal::Texture>,
@@ -436,9 +444,13 @@ impl MetalRenderer {
             shadows_pipeline_state,
             quads_pipeline_state,
             shader_pipelines: Default::default(), // KOAN: #1641.
-            shader_layers: Default::default(), // KOAN: #1641.
-            compose_pipelines: None,           // KOAN: #1641.
-            blank_texture: None,               // KOAN: #1641.
+            shader_layers: Default::default(),    // KOAN: #1641.
+            group_textures: Vec::new(),           // KOAN: #1859.
+            group_generation: 0,
+            group_moving: Vec::new(),
+            group_slot_generation: 0,
+            compose_pipelines: None, // KOAN: #1641.
+            blank_texture: None,     // KOAN: #1641.
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -558,6 +570,11 @@ impl MetalRenderer {
             return;
         };
 
+        // KOAN: each layer group drawn into its texture, once per frame
+        // drawn (#1859).
+        if let Err(error) = self.draw_layer_groups(scene, viewport_size) {
+            log::error!("failed to draw layer groups: {error:#}");
+        }
         // KOAN: a scene with shaders is drawn once as the layers they are
         // drawn between, and each present composes the layers with the
         // shaders, so re-presenting a moving shader costs the shaders and a
@@ -683,6 +700,7 @@ impl MetalRenderer {
         objc2::rc::autoreleasepool(|_| {
             // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size);
+            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
 
             // Create an offscreen texture as render target
             let texture_descriptor = metal::TextureDescriptor::new();
@@ -733,6 +751,7 @@ impl MetalRenderer {
     ) -> Result<RgbaImage> {
         objc2::rc::autoreleasepool(|_| {
             self.update_path_intermediate_textures(size);
+            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
             let texture_descriptor = metal::TextureDescriptor::new();
             texture_descriptor.set_width(size.width.0 as u64);
             texture_descriptor.set_height(size.height.0 as u64);
@@ -846,6 +865,7 @@ impl MetalRenderer {
                     let did_draw = self.draw_paths_to_intermediate(
                         paths,
                         writer,
+                        &instance_bindings.color_slots, // KOAN: #1859.
                         viewport_size,
                         command_buffer,
                     )?;
@@ -892,10 +912,12 @@ impl MetalRenderer {
                 PrimitiveBatch::Shaders {
                     program,
                     texture,
+                    group,
                     range,
                 } => self.draw_shaders(
                     program,
                     texture,
+                    group,
                     range,
                     instance_bindings,
                     viewport_size,
@@ -921,6 +943,7 @@ impl MetalRenderer {
         &self,
         paths: &[Path<ScaledPixels>],
         writer: &mut InstanceBufferWriter,
+        color_slots: &InstanceBinding, // KOAN: #1859.
         viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
     ) -> Result<bool> {
@@ -977,6 +1000,12 @@ impl MetalRenderer {
             Some(&vertex_instance_bindings.buffer),
             vertex_instance_bindings.offset as u64,
         );
+        // KOAN: colour slots (#1859).
+        command_encoder.set_fragment_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&color_slots.buffer),
+            color_slots.offset as u64,
+        );
         command_encoder.draw_primitives(
             metal::MTLPrimitiveType::Triangle,
             0,
@@ -999,6 +1028,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             ShadowInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1052,10 +1087,15 @@ impl MetalRenderer {
         if self.compose_pipelines.is_none() {
             self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
         }
-        if !self
-            .shader_layers
-            .holds(scene.generation, width, height)
-        {
+        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
+        // while one of its slots moves, when the table was written since it
+        // was drawn, and once more after its slots stop, so the last value
+        // lands; the other layers are kept.
+        let now = gpui::present_now();
+        let slot_generation = gpui::color_slots_generation();
+        let held = self.shader_layers.holds(scene.generation, width, height)
+            && self.shader_layers.layers.len() == plan.layers.len();
+        if !held {
             let mut pool = self.shader_layers.take(width, height);
             let mut drawn = Vec::with_capacity(plan.layers.len());
             for (k, layer) in plan.layers.iter().enumerate() {
@@ -1081,10 +1121,34 @@ impl MetalRenderer {
             }
             self.shader_layers = ShaderLayerTextures {
                 generation: scene.generation,
+                slot_generation,
                 width,
                 height,
                 layers: drawn,
+                moving: plan
+                    .layers
+                    .iter()
+                    .map(|l| l.color_slots_moving(now))
+                    .collect(),
             };
+        } else {
+            let written = self.shader_layers.slot_generation != slot_generation;
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.color_slots.is_empty() {
+                    continue;
+                }
+                let moving = layer.color_slots_moving(now);
+                let was_moving = std::mem::replace(&mut self.shader_layers.moving[k], moving);
+                if !(written || moving || was_moving) {
+                    continue;
+                }
+                if let Some(target) = self.shader_layers.layers[k].clone() {
+                    // After the last compose that read it: the same queue.
+                    self.render_frame(layer, &target, viewport_size, k > 0)?
+                        .commit();
+                }
+            }
+            self.shader_layers.slot_generation = slot_generation;
         }
         let pipelines = self
             .compose_pipelines
@@ -1096,7 +1160,8 @@ impl MetalRenderer {
             &self.instance_buffer_pool,
             self.is_unified_memory,
         );
-        let now = std::time::Instant::now();
+        // KOAN: the present clock (#1859).
+        let now = gpui::present_now();
         let shaders = writer.write_iter(
             scene
                 .shaders
@@ -1144,15 +1209,20 @@ impl MetalRenderer {
             while start < group.end {
                 let head = &scene.shaders[start];
                 let key = |s: &gpui::PaintShader| {
-                    (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                    (
+                        s.program.name,
+                        s.image.as_ref().map(|t| t.texture_id),
+                        s.group,
+                    )
                 };
                 let end = scene.shaders[start..group.end]
                     .iter()
-                    .position(|s| key(s) != key(head))
-                    .map_or(group.end, |n| start + n);
+                    .position(|s| key(s) != key(head) || s.group.is_some())
+                    .map_or(group.end, |n| (start + n).max(start + 1));
                 self.draw_shaders(
                     head.program,
                     head.image.as_ref().map(|t| t.texture_id),
+                    head.group,
                     start..end,
                     &bindings,
                     viewport_size,
@@ -1178,6 +1248,96 @@ impl MetalRenderer {
             command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
         }
         Ok(command_buffer)
+    }
+
+    // KOAN: (#1859, #1878) each layer group's scene drawn into a texture of
+    // its own: the visible part of the shader composing it, its content
+    // moved to the texture's origin, or the window's size for one holding
+    // paths or too large. A group is drawn again when the frame is new or
+    // when `Scene::layer_group_stale` says so. Groups nested in others are
+    // drawn first, as their composing shader is in the enclosing group's
+    // scene.
+    fn draw_layer_groups(
+        &mut self,
+        scene: &Scene,
+        viewport_size: Size<DevicePixels>,
+    ) -> Result<()> {
+        if scene.layer_groups.is_empty() {
+            self.group_textures.clear();
+            self.group_moving.clear();
+            return Ok(());
+        }
+        let now = gpui::present_now();
+        let new_frame = self.group_generation != scene.generation;
+        let slot_generation = gpui::color_slots_generation();
+        let slots_written = self.group_slot_generation != slot_generation;
+        let count = scene.layer_groups.len();
+        if new_frame {
+            self.group_moving.clear();
+        }
+        self.group_moving.resize(count, false);
+        let mut redrawn = vec![false; count];
+        let sizes: Vec<Size<DevicePixels>> = scene
+            .layer_group_frames
+            .iter()
+            .map(|frame| match frame {
+                Some(frame) => size(
+                    DevicePixels((frame.size.width.0.ceil() as i32).max(1)),
+                    DevicePixels((frame.size.height.0.ceil() as i32).max(1)),
+                ),
+                None => viewport_size,
+            })
+            .collect();
+        let mut held = std::mem::take(&mut self.group_textures);
+        held.resize(scene.layer_groups.len(), None);
+        for index in (0..scene.layer_groups.len()).rev() {
+            let group = &scene.layer_groups[index];
+            if group.is_blank() {
+                held[index] = None;
+                continue;
+            }
+            let extent = sizes[index];
+            let width = i32::from(extent.width) as u64;
+            let height = i32::from(extent.height) as u64;
+            let fits = held[index]
+                .as_ref()
+                .is_some_and(|t| t.width() == width && t.height() == height);
+            let stale = scene.layer_group_stale(
+                index,
+                now,
+                slots_written,
+                &mut self.group_moving[index],
+                &redrawn,
+            );
+            if fits && !new_frame && !stale {
+                continue;
+            }
+            redrawn[index] = true;
+            let target = match held[index].take().filter(|_| fits) {
+                Some(target) => target,
+                None => {
+                    let descriptor = metal::TextureDescriptor::new();
+                    descriptor.set_width(width);
+                    descriptor.set_height(height);
+                    descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                    descriptor.set_usage(
+                        metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                    );
+                    descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+                    self.device.new_texture(&descriptor)
+                }
+            };
+            // Drawn with the groups so far in place, which a group nested in
+            // this one is (higher indices first). The same queue runs these
+            // before whatever samples them.
+            self.group_textures = held.clone();
+            self.render_frame(group, &target, extent, true)?.commit();
+            held[index] = Some(target);
+        }
+        self.group_textures = held;
+        self.group_generation = scene.generation;
+        self.group_slot_generation = slot_generation;
+        Ok(())
     }
 
     // KOAN: shader quads (#1641). A program's pipeline is compiled from its
@@ -1218,6 +1378,7 @@ impl MetalRenderer {
         &self,
         program: &'static gpui::ShaderProgram,
         texture: Option<AtlasTextureId>,
+        group: Option<usize>,
         shaders: Range<usize>,
         instance_bindings: &impl HasShaders,
         viewport_size: Size<DevicePixels>,
@@ -1234,8 +1395,10 @@ impl MetalRenderer {
         command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
         command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
         command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
-        let image = texture
-            .and_then(|id| self.sprite_atlas.metal_texture(id))
+        // KOAN: a layer group's texture, drawn this frame (#1859).
+        let image = group
+            .and_then(|group| self.group_textures.get(group).cloned().flatten())
+            .or_else(|| texture.and_then(|id| self.sprite_atlas.metal_texture(id)))
             .or_else(|| self.blank_texture.clone());
         command_encoder.set_fragment_texture(0, image.as_deref());
         let viewport = [
@@ -1268,6 +1431,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1381,6 +1550,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             UnderlineInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1431,6 +1606,12 @@ impl MetalRenderer {
             DevicePixels(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1801,17 +1982,26 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
-    shaders: InstanceBinding, // KOAN: #1641.
+    shaders: InstanceBinding,     // KOAN: #1641.
+    color_slots: InstanceBinding, // KOAN: #1859.
 }
+
+// KOAN: the vertex buffer the stock shaders read the colour slots from
+// (#1859).
+const COLOR_SLOTS_INDEX: u64 = 20;
 
 // KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
 // for a blank one, kept while presents compose them.
 #[derive(Default)]
 struct ShaderLayerTextures {
     generation: u64,
+    slot_generation: u64, // KOAN: #1859.
     width: u64,
     height: u64,
     layers: Vec<Option<metal::Texture>>,
+    /// KOAN: whether each layer's colour slots were moving when it was
+    /// last drawn (#1859).
+    moving: Vec<bool>,
 }
 
 impl ShaderLayerTextures {
@@ -1898,7 +2088,11 @@ impl ComposePipelines {
             .map_err(|error| anyhow::anyhow!("{error}"))?;
         let pipeline = |over: bool| {
             let descriptor = metal::RenderPipelineDescriptor::new();
-            descriptor.set_label(if over { "koan_compose_over" } else { "koan_compose_copy" });
+            descriptor.set_label(if over {
+                "koan_compose_over"
+            } else {
+                "koan_compose_copy"
+            });
             descriptor.set_vertex_function(Some(&vertex));
             descriptor.set_fragment_function(Some(&fragment));
             let color = descriptor.color_attachments().object_at(0).unwrap();
@@ -1910,9 +2104,8 @@ impl ComposePipelines {
                 color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
                 color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
                 color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-                color.set_destination_alpha_blend_factor(
-                    metal::MTLBlendFactor::OneMinusSourceAlpha,
-                );
+                color
+                    .set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
             }
             device
                 .new_render_pipeline_state(&descriptor)
@@ -1933,18 +2126,95 @@ using namespace metal;
 struct KoanShaderInstance {
     float4 bounds;
     float4 clip;
-    float4 uniforms[4];
+    float4 uniforms[20];
     float4 time;
     float4 tile;
 };
 
+// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
+float koan_bezier_curve(float a, float b, float s) {
+    float u = 1.0 - s;
+    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+float koan_bezier(float x1, float y1, float x2, float y2, float t) {
+    if (t <= 0.0 || t >= 1.0) {
+        return clamp(t, 0.0, 1.0);
+    }
+    float s = t;
+    for (int i = 0; i < 6; i++) {
+        float u = 1.0 - s;
+        float d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+        if (abs(d) < 1e-5) {
+            break;
+        }
+        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+    }
+    return koan_bezier_curve(y1, y2, s);
+}
+
+float koan_spring(float x0, float v0, float k, float c, float t) {
+    float w = sqrt(max(k, 1e-3));
+    float z = c / (2.0 * w);
+    if (z < 1.0) {
+        float wd = w * sqrt(1.0 - z * z);
+        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    if (z > 1.0001) {
+        float root = sqrt(z * z - 1.0);
+        float r1 = -w * (z - root);
+        float r2 = -w * (z + root);
+        float c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+    }
+    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+// Track `k` of the uniforms at `time`.
+float koan_track(constant float *u, uint k, float time) {
+    constant float *t = u + 16 + k * 8;
+    float from = t[0];
+    float to = t[1];
+    float length = t[3];
+    if (length <= 0.0) {
+        return to;
+    }
+    float e = max(time - t[2], 0.0);
+    uint code = uint(t[4]);
+    uint kind = code % 4;
+    uint repeat = code / 4;
+    if (kind == 2) {
+        return e >= length ? to : to + koan_spring(from - to, t[7], t[5], t[6], e);
+    }
+    float p = e / length;
+    if (repeat == 0) {
+        p = min(p, 1.0);
+    } else if (repeat == 1) {
+        p = fract(p);
+    } else {
+        float q = fmod(p, 2.0);
+        p = q > 1.0 ? 2.0 - q : q;
+    }
+    if (kind == 1) {
+        half2 a = as_type<half2>(t[5]);
+        half2 b = as_type<half2>(t[6]);
+        p = koan_bezier(a.x, a.y, b.x, b.y, p);
+    }
+    return from + (to - from) * p;
+}
+
 // The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-// texels around its tile in the atlas.
+// texels around its tile in the atlas. Past the texture's edge it is clear,
+// as a layer group's texture holds only its visible part (#1878).
 float4 koan_sample(texture2d<float> image, float4 tile, float2 uv) {
     constexpr sampler linear(filter::linear, address::clamp_to_edge);
     float2 extent = float2(image.get_width(), image.get_height());
+    float2 raw = tile.xy + uv * tile.zw;
+    if (any(raw < 0.0) || any(raw > extent)) {
+        return float4(0.0);
+    }
     float2 at = clamp(
-        tile.xy + uv * tile.zw,
+        raw,
         tile.xy + 0.5,
         tile.xy + tile.zw - 0.5
     );
@@ -2005,13 +2275,26 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
         // KOAN: the shaders' uniforms as they are now, when the frame is
         // presented (#1641).
         shaders: {
-            let now = std::time::Instant::now();
+            // KOAN: the present clock (#1859).
+            let now = gpui::present_now();
             writer.write_iter(
                 scene
                     .shaders
                     .iter()
                     .map(|shader| gpui::ShaderInstance::of(shader, now)),
             )?
+        },
+        // KOAN: the colour slots as they stand when the frame is presented
+        // (#1859).
+        color_slots: {
+            thread_local! {
+                static TABLE: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+            }
+            TABLE.with(|table| {
+                let mut table = table.borrow_mut();
+                gpui::color_slots_frame(gpui::present_now(), &mut table);
+                writer.write(&table)
+            })?
         },
     })
 }
@@ -2314,6 +2597,101 @@ mod tests {
         }
     }
 
+    // KOAN: (#1859) the prelude's `koan_track` draws each curve where
+    // `Track::at` says it stands, so a retarget on the CPU starts from what
+    // is on screen.
+    #[test]
+    fn tracks_draw_where_the_cpu_says() {
+        use gpui::{Track, TrackCurve, TrackRepeat};
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-tracks",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    uint k = uint(position.x / size.x * 5.0);
+    return float4(koan_track(u, k, time), 0.0, 0.0, 1.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        let now = uniforms.time_at(gpui::present_now());
+        let track = |t: f32, length: f32, curve, repeat| Track {
+            from: 0.1,
+            to: 0.9,
+            start: now - t,
+            length,
+            curve,
+            repeat,
+        };
+        let tracks = [
+            track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
+            track(
+                20.0,
+                100.0,
+                TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                TrackRepeat::Once,
+            ),
+            track(
+                0.3,
+                5.0,
+                TrackCurve::Spring {
+                    stiffness: 30.0,
+                    damping: 12.0,
+                    velocity: 0.0,
+                },
+                TrackRepeat::Once,
+            ),
+            track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
+            track(
+                160.0,
+                100.0,
+                TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),
+                TrackRepeat::Alternate,
+            ),
+        ];
+        for (k, t) in tracks.iter().enumerate() {
+            uniforms.set_track(k, *t);
+        }
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: size(ScaledPixels(5.0), ScaledPixels(1.0)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds },
+            program: &PROGRAM,
+            uniforms: uniforms.clone(),
+            image: None,
+            group: None,
+            group_inset: Default::default(),
+        });
+        scene.finish();
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        // The render's moment falls between these two, the program compiled
+        // in between: each track is drawn within what it passes through.
+        let before = uniforms.time_at(gpui::present_now());
+        let image = renderer
+            .render_scene_to_image(&scene, size(DevicePixels(5), DevicePixels(1)))
+            .unwrap();
+        let after = uniforms.time_at(gpui::present_now());
+        for (k, t) in tracks.iter().enumerate() {
+            let steps = 64;
+            let levels = (0..=steps).map(|i| {
+                let at = before + (after - before) * i as f32 / steps as f32;
+                (t.at(at) * 255.0).round() as i32
+            });
+            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
+            assert!(
+                drawn >= low - 2 && drawn <= high + 2,
+                "track {k}: drawn {drawn}, expected {low}..={high}"
+            );
+        }
+    }
+
     // KOAN: (#1641) a scene with a shader nothing covers, presented as a
     // window presents it (the base kept, the shaders composed over it), is
     // the same picture as the whole scene drawn at once, and a re-present
@@ -2353,6 +2731,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
                 program: &PROGRAM,
                 uniforms: uniforms.clone(),
                 image: None,
+                group: None,
+                group_inset: Default::default(),
             });
             let over = if cover {
                 rect(30.0, 10.0, 20.0, 4.0)
@@ -2385,15 +2765,109 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             assert_eq!(plan.layers[1].is_blank(), !covered);
             uniforms.set(0, 0.5);
             let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
-            let composed = renderer.compose_scene_to_image(&scene, viewport, 2).unwrap();
+            let composed = renderer
+                .compose_scene_to_image(&scene, viewport, 2)
+                .unwrap();
             assert!(close(&whole, &composed), "covered: {covered}");
 
             uniforms.set(0, 1.0);
-            let moved = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
+            let moved = renderer
+                .compose_scene_to_image(&scene, viewport, 1)
+                .unwrap();
             assert_ne!(moved.as_raw(), composed.as_raw());
             let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
             assert!(close(&whole, &moved), "covered: {covered}, moved");
         }
+    }
+
+    // KOAN: (#1878) a layer group at the identity pose, partly outside the
+    // window, composed through its texture gives the pixels its content does
+    // drawn without a group: the offset, the clipped frame, the tile and the
+    // texture's viewport agree.
+    #[test]
+    fn a_group_at_rest_matches_its_content() {
+        static HALF: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-half",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    return position.x < size.x * u[0] ? float4(1.0, 0.0, 0.0, 0.5) : float4(0.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        static IDENTITY: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-identity",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float4 c = koan_sample(image, tile, position / size);
+    float3 rgb = c.a > 0.0 ? c.rgb / c.a : float3(0.0);
+    return float4(rgb, c.a);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
+            origin: Point::new(ScaledPixels(x), ScaledPixels(y)),
+            size: size(ScaledPixels(w), ScaledPixels(h)),
+        };
+        let quad = |at: Bounds<ScaledPixels>, hue: f32| gpui::Quad {
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            background: gpui::hsla(hue, 0.5, 0.5, 1.0).into(),
+            ..Default::default()
+        };
+        let shader = |at: Bounds<ScaledPixels>, program| gpui::PaintShader {
+            order: 0,
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            program,
+            uniforms: Arc::new(gpui::ShaderUniforms::new()),
+            image: None,
+            group: None,
+            group_inset: Default::default(),
+        };
+        let scene = |grouped: bool| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(quad(rect(0.0, 0.0, 64.0, 32.0), 0.6));
+            if grouped {
+                scene.push_group();
+            }
+            scene.insert_primitive(quad(rect(10.0, 10.0, 20.0, 10.0), 0.3));
+            let half = shader(rect(30.0, 8.0, 24.0, 16.0), &HALF);
+            half.uniforms.set(0, 0.5);
+            scene.insert_primitive(half);
+            if grouped {
+                let mut compose = shader(rect(4.0, 4.0, 80.0, 40.0), &IDENTITY);
+                compose.content_mask = ContentMask {
+                    bounds: rect(0.0, 0.0, 64.0, 32.0),
+                };
+                scene.pop_group(compose);
+            }
+            scene.finish();
+            scene
+        };
+        let grouped = scene(true);
+        assert_eq!(
+            grouped.layer_group_frames[0],
+            Some(rect(4.0, 4.0, 60.0, 28.0))
+        );
+        let viewport = size(DevicePixels(64), DevicePixels(32));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let plain = renderer
+            .compose_scene_to_image(&scene(false), viewport, 1)
+            .unwrap();
+        let composed = renderer
+            .compose_scene_to_image(&grouped, viewport, 1)
+            .unwrap();
+        let worst = plain
+            .as_raw()
+            .iter()
+            .zip(composed.as_raw())
+            .map(|(x, y)| x.abs_diff(*y))
+            .max();
+        assert!(worst <= Some(2), "worst channel difference {worst:?}");
     }
 
     // KOAN: (#1641) something drawn over a shader keeps what is drawn over
@@ -2430,6 +2904,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             program: &PROGRAM,
             uniforms: Arc::new(gpui::ShaderUniforms::new()),
             image: None,
+            group: None,
+            group_inset: Default::default(),
         });
         // A menu over the shader, and its text over the menu, clear of it.
         scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));
@@ -2441,8 +2917,14 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         let viewport = size(DevicePixels(64), DevicePixels(32));
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
         let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
-        let composed = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
-        assert_eq!(whole.get_pixel(36, 16), composed.get_pixel(36, 16), "the text is on top");
+        let composed = renderer
+            .compose_scene_to_image(&scene, viewport, 1)
+            .unwrap();
+        assert_eq!(
+            whole.get_pixel(36, 16),
+            composed.get_pixel(36, 16),
+            "the text is on top"
+        );
         assert!(
             whole
                 .as_raw()
@@ -2486,7 +2968,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 
         #[test]
         fn the_instance_is_aligned_blocks() {
-            assert_eq!(std::mem::size_of::<ShaderInstance>(), 4 * (4 + 4 + SHADER_UNIFORMS + 4 + 4));
+            assert_eq!(
+                std::mem::size_of::<ShaderInstance>(),
+                4 * (4 + 4 + SHADER_UNIFORMS + 4 + 4)
+            );
         }
 
         #[test]
@@ -2513,5 +2998,259 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             let t = u.time_at(epoch);
             assert!((t - 5.0).abs() < 1e-3, "{t}");
         }
+    }
+}
+
+// KOAN: layer groups (#1859, #1878).
+#[cfg(test)]
+mod layer_group_tests {
+    use gpui::{
+        Bounds, ContentMask, Path, Pixels, Quad, ScaledPixels, Scene, ShaderProgram,
+        ShaderUniforms, Size, point, px,
+    };
+
+    static PROGRAM: ShaderProgram = ShaderProgram {
+        name: "test",
+        msl: "",
+        wgsl: "",
+        prepare: None,
+    };
+
+    fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: point(ScaledPixels(x), ScaledPixels(y)),
+            size: Size {
+                width: ScaledPixels(w),
+                height: ScaledPixels(h),
+            },
+        }
+    }
+
+    fn quad(at: Bounds<ScaledPixels>) -> Quad {
+        Quad {
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            ..Default::default()
+        }
+    }
+
+    fn shader(at: Bounds<ScaledPixels>) -> gpui::PaintShader {
+        gpui::PaintShader {
+            order: 0,
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            program: &PROGRAM,
+            uniforms: std::sync::Arc::new(ShaderUniforms::default()),
+            image: None,
+            group: None,
+            group_inset: Default::default(),
+        }
+    }
+
+    /// What is painted in a group, shaders included, is the group's: drawn
+    /// into its texture, so it moves and is clipped with the group. The
+    /// window's scene has only the shader composing it.
+    #[test]
+    fn a_group_holds_what_is_painted_in_it_shaders_too() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        scene.insert_primitive(shader(bounds(120.0, 70.0, 10.0, 10.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert!(scene.quads.is_empty());
+        assert_eq!(scene.shaders.len(), 1);
+        assert_eq!(scene.shaders[0].group, Some(0));
+        let group = &scene.layer_groups[0];
+        assert_eq!((group.quads.len(), group.shaders.len()), (1, 1));
+    }
+
+    fn stale(scene: &Scene, was_moving: &mut bool, written: bool, redrawn: &[bool]) -> bool {
+        scene.layer_group_stale(0, std::time::Instant::now(), written, was_moving, redrawn)
+    }
+
+    /// A group is drawn again while a shader in it is live, once more after,
+    /// and not at all while its shaders rest: a group that never goes away
+    /// costs nothing between frames.
+    #[test]
+    fn a_group_is_drawn_again_while_its_shaders_move_and_once_after() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        let inner = shader(bounds(120.0, 70.0, 10.0, 10.0));
+        let uniforms = inner.uniforms.clone();
+        scene.insert_primitive(inner);
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        let mut was_moving = false;
+        assert!(!stale(&scene, &mut was_moving, false, &[false]));
+        uniforms.set_live(true);
+        assert!(stale(&scene, &mut was_moving, false, &[false]));
+        uniforms.set_live(false);
+        assert!(
+            stale(&scene, &mut was_moving, false, &[false]),
+            "the landing"
+        );
+        assert!(!stale(&scene, &mut was_moving, false, &[false]));
+    }
+
+    /// A group composing one drawn again this present is drawn again too.
+    #[test]
+    fn a_group_follows_a_group_nested_in_it() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(10.0, 10.0, 5.0, 5.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 50.0, 50.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 100.0, 100.0)));
+        scene.finish();
+        let mut was_moving = false;
+        assert!(!stale(&scene, &mut was_moving, false, &[false, false]));
+        assert!(stale(&scene, &mut was_moving, false, &[false, true]));
+    }
+
+    /// A group with no paths draws into a texture its own size: its content
+    /// moved to the texture's origin, the composing shader's tile the whole
+    /// texture.
+    #[test]
+    fn a_group_without_paths_is_drawn_at_its_own_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(
+            scene.layer_group_frames[0],
+            Some(bounds(100.0, 50.0, 200.0, 100.0))
+        );
+        let moved = &scene.layer_groups[0].quads[0];
+        assert_eq!(moved.bounds, bounds(10.0, 10.0, 20.0, 20.0));
+        assert_eq!(moved.content_mask.bounds, bounds(10.0, 10.0, 20.0, 20.0));
+        let tile = gpui::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, 0.0, 200.0, 100.0]);
+    }
+
+    /// Its texture is only the part of it inside its mask, the tile reaching
+    /// back to the bounds' origin; one too large for a device takes the
+    /// window's size.
+    #[test]
+    fn a_group_is_drawn_at_its_visible_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        let mut compose = shader(bounds(100.0, -950.0, 200.0, 20_000.0));
+        compose.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 800.0, 600.0),
+        };
+        scene.pop_group(compose);
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        let mut huge = shader(bounds(0.0, 0.0, 20_000.0, 100.0));
+        huge.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 10_000.0, 100.0),
+        };
+        scene.pop_group(huge);
+        scene.finish();
+        assert_eq!(
+            scene.layer_group_frames[0],
+            Some(bounds(100.0, 0.0, 200.0, 600.0))
+        );
+        assert_eq!(
+            scene.layer_groups[0].quads[0].bounds,
+            bounds(10.0, 60.0, 20.0, 20.0)
+        );
+        let tile = gpui::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, -950.0, 200.0, 20_000.0]);
+        assert_eq!(scene.layer_group_frames[1], None);
+        let tile = gpui::ShaderInstance::of(&scene.shaders[1], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, 0.0, 20_000.0, 100.0]);
+    }
+
+    /// A group at the window's size inside one at its own keeps its tile in
+    /// window coordinates as the outer group's content moves.
+    #[test]
+    fn a_nested_group_with_a_path_keeps_its_tile() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        let mut path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
+        path.line_to(point(px(150.0), px(60.0)));
+        path.line_to(point(px(150.0), px(90.0)));
+        let mut path = path.scale(1.0);
+        path.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 1000.0, 1000.0),
+        };
+        scene.insert_primitive(path);
+        scene.pop_group(shader(bounds(105.0, 55.0, 60.0, 40.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_group_frames[1], None);
+        let inner = &scene.layer_groups[0].shaders[0];
+        assert_eq!(
+            inner.bounds.origin,
+            point(ScaledPixels(5.0), ScaledPixels(5.0))
+        );
+        let tile = gpui::ShaderInstance::of(inner, std::time::Instant::now()).tile;
+        assert_eq!(tile, [105.0, 55.0, 60.0, 40.0]);
+    }
+
+    /// One holding a path stays the window's size, its content where it was
+    /// painted: paths are drawn through a texture the window's size.
+    #[test]
+    fn a_group_with_a_path_is_drawn_at_the_windows_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        let mut path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
+        path.line_to(point(px(150.0), px(60.0)));
+        path.line_to(point(px(150.0), px(90.0)));
+        let mut path = path.scale(1.0);
+        path.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 1000.0, 1000.0),
+        };
+        scene.insert_primitive(path);
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_group_frames[0], None);
+        let tile = gpui::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [100.0, 50.0, 200.0, 100.0]);
+    }
+
+    /// A group inside another is composed in the outer group's scene, so the
+    /// outer group carries it as it moves.
+    #[test]
+    fn a_nested_group_is_composed_inside_the_outer_one() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(10.0, 10.0, 5.0, 5.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 50.0, 50.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 100.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_groups.len(), 2);
+        assert_eq!(scene.shaders.len(), 1);
+        assert_eq!(scene.shaders[0].group, Some(0));
+        assert_eq!(scene.layer_groups[0].shaders[0].group, Some(1));
+        assert_eq!(scene.layer_groups[1].quads.len(), 1);
+    }
+
+    /// A cached view's replay builds the same groups.
+    #[test]
+    fn a_replay_rebuilds_the_groups() {
+        let mut first = Scene::default();
+        first.push_group();
+        first.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        first.insert_primitive(shader(bounds(120.0, 70.0, 10.0, 10.0)));
+        first.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        let ops = first.len();
+        let mut again = Scene::default();
+        again.replay(0..ops, &first);
+        again.finish();
+        assert_eq!(again.layer_groups.len(), 1);
+        assert_eq!(again.layer_groups[0].quads.len(), 1);
+        assert_eq!(again.layer_groups[0].shaders.len(), 1);
+        assert_eq!(again.shaders.len(), 1);
+        assert_eq!(
+            again.layer_group_frames[0],
+            Some(bounds(100.0, 50.0, 200.0, 100.0))
+        );
     }
 }

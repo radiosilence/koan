@@ -32,6 +32,7 @@ import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PlayState
+import cc.blit.koan.ffi.canMoveMusic
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.text
 import cc.blit.koan.ui.theme.KoanButton
@@ -145,21 +146,6 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
             }
         }
     }
-}
-
-/**
- * Whether `to` (this phone for `null`) can take the music the device in view
- * has: both must play from the same library, and there must be something to
- * move.
- */
-internal fun canMoveMusic(to: DeviceInfo?, target: String?, controlled: DeviceInfo?, hasQueue: Boolean): Boolean {
-    if (to?.id == target || to?.problem != null) return false
-    if (controlled != null) {
-        if (!controlled.sameLibrary || controlled.state == PlayState.STOPPED || controlled.problem != null) return false
-    } else if (!hasQueue) {
-        return false
-    }
-    return to?.sameLibrary ?: true
 }
 
 @Composable

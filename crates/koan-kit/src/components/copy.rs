@@ -1,14 +1,16 @@
 //! Copying a value: a button that says what it copies ("copy link"), and a
 //! value that copies itself when clicked (a server's address). Each says
 //! "copied" for a moment after, so the click is seen to have done something,
-//! and keeps that moment itself: a page holds no state for it.
+//! and answers with a line drawn under it (the button's press answers as
+//! every button's does), keeping that moment itself: a page holds no state
+//! for it.
 
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
-use super::{Button, ButtonKind, Tooltip, child};
+use super::{Button, ButtonKind, Tooltip, accessible, child, focus, ring};
 use crate::theme::{Icon, KoanStyled, Look, TypeRole, label};
 
 /// How long "copied" stands in for the label.
@@ -93,8 +95,27 @@ impl RenderOnce for CopyButton {
         let state = moment(&self.id, window, cx);
         let copied = state.read(cx).copied;
         let value = self.value;
+        // The face is monospaced: each word padded either side to the longer
+        // one's length keeps the button's width, and the word centred, as it
+        // says "copied" and back, so what is beside it does not move.
+        let said = label("copied");
+        let width = said.chars().count().max(self.label.chars().count());
+        let held = |text: &SharedString| -> SharedString {
+            let pad = width - text.chars().count();
+            let (before, after) = (pad / 2, pad - pad / 2);
+            format!(
+                "{}{text}{}",
+                "\u{a0}".repeat(before),
+                "\u{a0}".repeat(after)
+            )
+            .into()
+        };
         Button::new(self.id, self.kind)
-            .text(if copied { label("copied") } else { self.label })
+            .text(if copied {
+                held(&said)
+            } else {
+                held(&self.label)
+            })
             .icon(if copied { Icon::Check } else { self.icon })
             .disabled(self.disabled)
             .on_click(move |_, _, cx| copy(&state, &value, cx))
@@ -132,32 +153,50 @@ impl RenderOnce for CopyText {
         let look = Look::of(window, cx);
         let state = moment(&self.id, window, cx);
         let copied = state.read(cx).copied;
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let handle = focus(&self.id, window, cx);
+        let accent = look.accent.hsla();
         let ink = look.palette.ink.hsla();
         let value = self.value;
         let help = self.help.unwrap_or_else(|| label("copy"));
-        div()
-            .id(self.id)
-            .cursor_pointer()
+        // A button to a screen reader, named by what it copies and the value.
+        let name: SharedString = format!("{help}: {value}").into();
+        // GPUI turns Enter and Space on the focused value into a click; the
+        // ring stands outside the text, which clips.
+        accessible(div().id(self.id), gpui::Role::Button, Some(name))
+            .relative()
+            .flex()
             .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
+            .cursor_pointer()
+            .track_focus(&handle)
             .text_role(TypeRole::Control, &look)
             .text_color(look.palette.muted.hsla())
             .hover(move |s| s.text_color(ink))
-            .child(if copied {
-                label("copied")
-            } else {
-                value.clone()
-            })
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(if copied {
+                        label("copied")
+                    } else {
+                        value.clone()
+                    }),
+            )
+            .children(answers.layer(window, cx))
+            .children(ring(&handle, &look, window))
             .tooltip(move |window, cx| Tooltip::view(help.clone(), window, cx))
-            .on_click(move |_, _, cx| copy(&state, &value, cx))
+            .on_click(move |_, _, cx| {
+                answers.start(super::Answer::Sweep, accent, cx);
+                copy(&state, &value, cx)
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
@@ -175,10 +214,10 @@ mod tests {
     }
 
     /// A click puts the value on the clipboard and says so for a moment.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_copy_lands_on_the_clipboard_and_says_so(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|_, _| Page);

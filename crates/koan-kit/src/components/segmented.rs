@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
-use crate::theme::{KoanStyled, Look, Motion, TypeRole, label};
+use super::{Handler, accessible, answers_click, fade, focus, ring, toggled};
+use crate::theme::{KoanStyled, Look, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
 /// one `ink` and underlined in the accent 5 points below. Each option's
@@ -16,6 +16,7 @@ pub struct Segmented {
     id: ElementId,
     options: Vec<SharedString>,
     selected: usize,
+    name: Option<SharedString>,
     on_change: Option<Handler<usize>>,
 }
 
@@ -29,8 +30,16 @@ impl Segmented {
             id: id.into(),
             options: options.into_iter().map(label).collect(),
             selected,
+            name: None,
             on_change: None,
         }
+    }
+
+    /// What it chooses, for a screen reader: "sign in with". Its id, read
+    /// as words, otherwise.
+    pub fn named(mut self, name: impl AsRef<str>) -> Self {
+        self.name = Some(label(name));
+        self
     }
 
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
@@ -46,7 +55,8 @@ impl RenderOnce for Segmented {
         let selected = self.selected;
         let count = self.options.len();
         let accent = look.accent.hsla();
-        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, None)
+        let name = self.name.clone().or_else(|| super::spoken_id(&self.id));
+        let mut row = accessible(div().id(self.id.clone()), gpui::Role::RadioGroup, name)
             .relative()
             .flex()
             .items_center()
@@ -54,10 +64,34 @@ impl RenderOnce for Segmented {
         for (index, option) in self.options.into_iter().enumerate() {
             let key =
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
-            let chosen = fade(key, index == selected, Motion::FAST, window, cx);
+            let answers = super::Answerer::of(&key, window, cx);
+            let chosen = index == selected;
+            // The option coming to be chosen draws its mark in from its
+            // leading edge, by click or by the arrows alike.
+            if chosen {
+                answers.follow(1, super::Answer::Sweep, accent, window, cx);
+            } else {
+                answers.note(0, cx);
+            }
+            let edge = fade(
+                ElementId::NamedChild(Arc::new(key.clone()), "edge".into()),
+                chosen,
+                accent.opacity(0.0),
+                accent,
+                window,
+                cx,
+            );
+            let ink = fade(
+                key,
+                chosen,
+                look.palette.muted.hsla(),
+                look.palette.ink.hsla(),
+                window,
+                cx,
+            );
             let mut option = accessible(
                 div().id(index),
-                gpui_kit::Role::RadioButton,
+                gpui::Role::RadioButton,
                 Some(option.clone()),
             )
             .aria_toggled(toggled(index == selected))
@@ -65,24 +99,22 @@ impl RenderOnce for Segmented {
             .aria_size_of_set(count)
             .pb(px(5.0))
             .border_b(look.hairline)
-            .border_color(accent.opacity(chosen))
+            .border_color(edge)
             .text_role(TypeRole::Control, &look)
-            .text_color(mix(
-                look.palette.muted.hsla(),
-                look.palette.ink.hsla(),
-                chosen,
-            ))
+            .text_color(ink)
             .whitespace_nowrap()
-            .child(option);
+            .relative()
+            .child(option)
+            .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-                let choose: Handler<gpui_kit::ClickEvent> = {
+                let choose: Handler<gpui::ClickEvent> = {
                     let on_change = on_change.clone();
                     Arc::new(move |_, window, cx| on_change(&index, window, cx))
                 };
-                option = answers_click(option, choose)
+                option = answers_click(option, choose.clone())
                     .cursor_pointer()
-                    .on_click(move |_, window, cx| on_change(&index, window, cx));
+                    .on_click(move |event, window, cx| choose(event, window, cx));
             }
             row = row.child(option);
         }

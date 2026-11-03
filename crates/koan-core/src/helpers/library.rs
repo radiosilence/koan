@@ -601,13 +601,13 @@ mod rebuild_tests {
         cfg.remote.cache_dir = Some(dir.path().to_path_buf());
         cfg.remote.cache_limit = Some("1".into());
         let freed = evict_cache(&db, &cfg, &[a].into_iter().collect(), false);
-        assert_eq!(freed, 6000);
+        assert_eq!(freed.downloads, 6000);
         assert!(shared.exists());
         assert!(!other.exists());
 
         // Without the keep, the shared file goes once and both rows forget it.
         let freed = evict_cache(&db, &cfg, &Default::default(), false);
-        assert_eq!(freed, 6000);
+        assert_eq!(freed.downloads, 6000);
         assert!(!shared.exists());
         assert!(
             queries::cached_paths_for(&db.conn, &[a, edition])

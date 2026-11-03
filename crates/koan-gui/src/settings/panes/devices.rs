@@ -6,13 +6,13 @@
 
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_ffi::{ConnectedInfo, ServerQueue};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{ConnectedInfo, ServerQueue};
 
 use super::server::host;
 use crate::settings::Ctx;
-use crate::settings::form::{Row, buttons, item, moment, note, page, section, text};
+use crate::settings::form::{Row, item, moment, note, page, section, text};
 use crate::settings::model::describe;
 use crate::settings::sheet::{Action, Sheet};
 
@@ -35,9 +35,11 @@ impl DevicesPane {
         let field = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
+        // The code's own form, in capitals as the other device shows it; the
+        // rest are the app's words, lowercase.
         let code = field("XXXX-XXXX", window, cx);
         let address = field("host or host:port", window, cx);
-        let grantee = field("Their username on this server", window, cx);
+        let grantee = field("their username on this server", window, cx);
         let subscriptions = vec![
             cx.observe(&ctx.model, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
@@ -52,7 +54,7 @@ impl DevicesPane {
                 |pane, state, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
                         let typed = state.read(cx).value().to_string();
-                        let shown = koan_ffi::format_pair_code(typed.clone());
+                        let shown = koan_runtime::format_pair_code(typed.clone());
                         if shown != typed {
                             state.update(cx, |s, cx| s.set_value(shown, window, cx));
                         }
@@ -140,6 +142,7 @@ impl DevicesPane {
                     let (signed, declined) = (device.clone(), device.clone());
                     let who = username.clone();
                     let sheet = Sheet::new(format!("Sign in {device}?"))
+                        .about(typed.clone())
                         .message(format!(
                             "{origin}\n\nIt will be signed in as {username} on {host_name}. Allow only a device you are setting up yourself: anyone can give a device any name."
                         ))
@@ -478,7 +481,7 @@ impl Render for DevicesPane {
             &look,
         ));
 
-        sections.push(background(&settings, &model, entity.clone(), &look, cx));
+        sections.push(background(&settings, &model, &look, cx));
 
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
@@ -604,12 +607,10 @@ impl Render for DevicesPane {
             .collect();
         let ready = !self.address.read(cx).value().trim().is_empty();
         let pane = entity.clone();
-        addresses.push(buttons(
+        addresses.push(crate::components::form_field(
+            TextField::new(&self.address).into_any_element(),
+            260.0,
             vec![
-                div()
-                    .w(look.spaced(260.0))
-                    .child(TextField::new(&self.address))
-                    .into_any_element(),
                 Button::new("add-address", ButtonKind::Bordered)
                     .label("Add")
                     .disabled(!ready)
@@ -669,12 +670,10 @@ impl Render for DevicesPane {
                 .cloned()
                 .collect();
             let pane = entity.clone();
-            rows.push(buttons(
+            rows.push(crate::components::form_field(
+                TextField::new(&self.grantee).into_any_element(),
+                260.0,
                 vec![
-                    div()
-                        .w(look.spaced(260.0))
-                        .child(TextField::new(&self.grantee))
-                        .into_any_element(),
                     Button::new("share-device", ButtonKind::Bordered)
                         .label("Share")
                         .disabled(typed.is_empty())
@@ -718,9 +717,8 @@ impl Render for DevicesPane {
 /// Staying reachable with the window closed, as the Mac's "In the
 /// background": kept running, and opening at login, which the system owns.
 fn background(
-    settings: &koan_ffi::Settings,
+    settings: &koan_runtime::Settings,
     model: &Entity<crate::settings::model::SettingsModel>,
-    pane: Entity<impl Render>,
     look: &Look,
     cx: &App,
 ) -> AnyElement {
@@ -737,13 +735,17 @@ fn background(
             Toggle::new("keep-running", label, settings.devices_keep_running)
                 .on_change(move |on, _, cx| {
                     let on = *on;
-                    model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_keep_running = on));
-                    residency::apply(on, cx);
+                    // Applied once it is in the file: a write that fails
+                    // leaves kōan as the file says.
+                    model.update(cx, |m, cx| {
+                        m.edit(cx, move |s| s.devices_keep_running = on);
+                        m.when_written(cx, move |_, cx| residency::apply(on, cx));
+                    });
                 })
                 .into_any_element(),
         );
     }
-    let login = residency::login();
+    let login = residency::login(cx);
     if login != Login::Unavailable {
         rows.push(
             Toggle::new(
@@ -751,11 +753,7 @@ fn background(
                 "Open at login",
                 matches!(login, Login::On | Login::NeedsApproval),
             )
-            .on_change(move |on, _, cx| {
-                residency::set_login(*on, cx);
-                // What the system now says shows at once.
-                pane.update(cx, |_, cx| cx.notify());
-            })
+            .on_change(move |on, _, cx| residency::set_login(*on, cx))
             .into_any_element(),
         );
     }

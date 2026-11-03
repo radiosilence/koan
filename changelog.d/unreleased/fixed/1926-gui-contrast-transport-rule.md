@@ -1,0 +1,1 @@
+- **Increase Contrast strengthens the rule over the transport too.** The GUI app doubled every rule's weight with the system's Increase Contrast setting except the one over the transport, which stayed at its thinnest.

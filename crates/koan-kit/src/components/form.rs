@@ -6,8 +6,8 @@
 //! On the Mac a form is a column of sections on the ground, no cards or
 //! boxes, each row its label in a fixed column and what it holds after it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::ScrollArea;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -262,16 +262,37 @@ pub fn form_buttons(children: Vec<AnyElement>, look: &Look) -> AnyElement {
 }
 
 /// A field the width of the form with its verbs after it, on one line: the
-/// Mac's pair-a-device code and Approve. The field takes what the verbs leave.
+/// Mac's pair-a-device code and Approve. The field takes what the verbs leave,
+/// and the verbs stand as tall as the field, whatever their kind's type.
 pub fn form_entry(field: AnyElement, actions: Vec<AnyElement>, look: &Look) -> AnyElement {
-    div()
+    entry(div().flex_1().min_w_0().child(field), actions, look)
         .w_full()
-        .flex()
-        .items_center()
-        .gap(look.space(Space::M))
-        .child(div().flex_1().min_w_0().child(field))
-        .children(actions.into_iter().map(|a| div().flex_none().child(a)))
         .into_any_element()
+}
+
+/// A field `points` wide at 100 % with its verbs after it, as tall as it: a
+/// name to add, an address to add.
+pub fn form_field(
+    field: AnyElement,
+    points: f32,
+    actions: Vec<AnyElement>,
+    look: &Look,
+) -> AnyElement {
+    entry(div().w(look.spaced(points)).child(field), actions, look).into_any_element()
+}
+
+/// A field and its verbs in a row, stretched to one height: a bordered verb's
+/// smaller type no longer leaves it short beside the field.
+fn entry(field: Div, actions: Vec<AnyElement>, look: &Look) -> Div {
+    div()
+        .flex()
+        .gap(look.space(Space::M))
+        .child(field.flex().flex_col().justify_center())
+        .children(
+            actions
+                .into_iter()
+                .map(|a| div().flex_none().flex().child(a)),
+        )
 }
 
 /// A form's list item: a title and a line under it, and controls at the end.

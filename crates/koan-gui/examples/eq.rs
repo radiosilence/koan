@@ -10,6 +10,14 @@
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- target/eq.png
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- --window
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- --profile Warm target/warm.png
+//! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- --sheet manage target/manage.png
+//! KOAN_APPEARANCE__TEXT_SIZE=130 KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- target/eq-130.png
+//!
+//! `--sheet` opens one of the EQ window's sheets over the page: `manage`
+//! (Manage EQ), `autoeq` (the AutoEQ search), `measure` (a measurement's
+//! import) or `role` (the question an import asks of what it made).
+//! The text size is the configuration's, which `KOAN_APPEARANCE__TEXT_SIZE`
+//! sets for a run.
 //! KOAN_CONFIG_DIR=… cargo run --release -p koan-gui --example eq -- --measure
 //!
 //! `--measure` opens Warm's page offscreen, drags its third band's handle
@@ -22,10 +30,10 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{DspStarter, DspTuningEntry, KoanEngine};
 use koan_gui::dsp::{Dsp, EqPage, profile::ProfilePage};
 use koan_gui::theme;
 use koan_kit::app::{AppContext, Bounds};
+use koan_runtime::{DspStarter, DspTuningEntry, KoanEngine};
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, WindowBounds, WindowOptions, px, size};
 
@@ -97,7 +105,7 @@ fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
     block(
         engine
             .clone()
-            .dsp_set_role(hd600.clone(), koan_ffi::DspRole::Correction),
+            .dsp_set_role(hd600.clone(), koan_runtime::DspRole::Correction),
     )?;
     block(
         engine
@@ -142,14 +150,18 @@ fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     throwaway()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let window_mode = args.iter().any(|a| a == "--window");
     let measure = args.iter().any(|a| a == "--measure");
-    let profile = args
-        .iter()
-        .position(|a| a == "--profile")
-        .and_then(|i| args.get(i + 1).cloned());
+    let after = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let profile = after("--profile");
+    let sheet = after("--sheet");
     let out = args
         .iter()
         .rev()
@@ -176,15 +188,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 koan_gui::app::install(&engine, cx);
                 let dsp = Dsp::new(engine.clone(), cx);
                 let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT)), cx);
-                // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-                koan_kit::raw::open_window(
+                cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
-                    cx,
                     move |window, cx| {
-                        cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx))
+                        let page =
+                            cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
+                        koan_kit::components::host(page, window, cx)
                     },
                 )
                 .expect("the EQ window opens");
@@ -208,12 +220,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_gui::app::install(&engine, cx);
     });
     let dsp = cx.update(|cx| Dsp::new(engine.clone(), cx));
+    if sheet.as_deref() == Some("role") {
+        cx.update(|cx| {
+            dsp.update(cx, |d, cx| {
+                d.ask_role = Some(koan_gui::dsp::model::RoleAsk {
+                    names: vec!["HD 600".into()],
+                    profiles: vec!["HD 600".into()],
+                    into: None,
+                });
+                cx.notify();
+            })
+        });
+    }
     if measure {
         return drag(&mut cx, dsp);
     }
     let mut shots = Vec::new();
     for dark in [true, false] {
-        let (dsp, profile) = (dsp.clone(), profile.clone());
+        let (dsp, profile, sheet) = (dsp.clone(), profile.clone(), sheet.clone());
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |window, cx| {
             let page = cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
             if let Some(name) = profile {
@@ -230,8 +254,50 @@ fn main() -> Result<(), Box<dyn Error>> {
                 });
                 sheets.update(cx, |s, cx| s.view(view, cx));
             }
-            // gpui-component's focus and click extensions, for the shell's own handling.
-            cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
+            let sheets = page.read(cx).sheets.clone();
+            let view: Option<koan_kit::app::AnyView> = match sheet.as_deref() {
+                Some("manage") => Some(
+                    cx.new(|cx| {
+                        koan_gui::dsp::manage::ManageEq::new(
+                            dsp.clone(),
+                            sheets.clone(),
+                            Some(DEVICE.into()),
+                            window,
+                            cx,
+                        )
+                    })
+                    .into(),
+                ),
+                Some("autoeq") => Some(
+                    cx.new(|cx| {
+                        koan_gui::dsp::flows::AutoEqSearch::new(
+                            dsp.clone(),
+                            sheets.clone(),
+                            "HD 600".into(),
+                            window,
+                            cx,
+                        )
+                    })
+                    .into(),
+                ),
+                Some("measure") => Some(
+                    cx.new(|cx| {
+                        koan_gui::dsp::flows::MeasurementFlow::new(
+                            dsp.clone(),
+                            sheets.clone(),
+                            "HD 600".into(),
+                            window,
+                            cx,
+                        )
+                    })
+                    .into(),
+                ),
+                _ => None,
+            };
+            if let Some(view) = view {
+                sheets.update(cx, |s, cx| s.view(view, cx));
+            }
+            koan_kit::components::host(page, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(dark), window, cx)
@@ -273,8 +339,7 @@ fn drag(
         });
         graph = Some(view.read(cx).graph());
         sheets.update(cx, |s, cx| s.view(view, cx));
-        // gpui-component's focus and click extensions, for the shell's own handling.
-        cx.new(|cx| koan_kit::raw::base::Root::new(page, window, cx))
+        koan_kit::components::host(page, window, cx)
     })?;
     let graph = graph.expect("the profile page has a graph");
     cx.allow_parking();

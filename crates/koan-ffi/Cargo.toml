@@ -4,47 +4,27 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "uniffi bindings for koan-core — drives native GUI clients in-process."
+description = "uniffi bindings for kōan's engine (koan-runtime), for the Swift and Kotlin apps."
 keywords = ["audio", "music", "ffi", "uniffi"]
 categories = ["multimedia::audio"]
 publish = false
 
+# A Rust library only: the desktop app links it as one, and Cargo builds every
+# crate type a dependency lists. The native apps ask for theirs as they build
+# it, `staticlib` for the Apple apps (`just macos-ffi`, `ios-ffi`, `tv-ffi`)
+# and `cdylib` for Android (Gradle's `koanFfi`), with `cargo rustc
+# --crate-type`.
+
 [lib]
 name = "koan_ffi"
-crate-type = ["staticlib", "cdylib", "lib"]
 
 [dependencies]
-# Config is written back from the settings window.
-toml = "1.1"
-koan-core = { workspace = true }
-# Sharing this device's library: see `serve.rs`.
-koan-server = { workspace = true }
-crossbeam-channel = "0.5"
-getrandom = "0.4"
-# Local cover art scaled to the size a client asks for (`fit_cover`). Already
-# linked through koan-server.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-# The open file limit, raised when the engine opens.
-libc = "0.2"
+koan-runtime = { path = "../koan-runtime" }
 log = "0.4"
-nucleo = "0.5"
-parking_lot = "0.13"
-rusqlite = { workspace = true }
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] }
 uniffi = "0.32"
-uuid = { version = "1", features = ["v7"] }
-chrono = "0.4"
-# Invite links as QR codes, on Android, which has no encoder of its own.
-qrcode = { version = "0.14.1", default-features = false }
 
 # The app's Context, handed to reqwest's certificate verification: see
 # `android.rs`.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
 rustls-platform-verifier = "0.7"
-
-[dev-dependencies]
-futures-lite = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tempfile = "3"

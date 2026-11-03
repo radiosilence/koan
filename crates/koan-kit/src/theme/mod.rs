@@ -19,16 +19,15 @@ pub mod wash;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::time::Instant;
 
-use gpui_kit::{
-    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
-    WindowAppearance, WindowId, px,
+use gpui::{
+    App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
+    Subscription, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
-pub use accent::{Accent, AccentState, Shade};
+pub use accent::{Accent, Shade};
 /// A colour as the theme hands it out, for passing a role's colour along.
-pub use gpui_kit::Hsla;
+pub use gpui::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
     DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
@@ -53,9 +52,17 @@ pub struct KoanTheme {
     /// The wash and the accent take their colour from the record playing;
     /// off, there is no wash and the accent is mint.
     pub record_colours: bool,
+    /// A wash painted from something other than the record (the rainbow's
+    /// sheen), which runs whatever "colours from the record" says.
+    pub painted_wash: bool,
     /// "Theme tint", in percent: how far the wash is held to its contrast
     /// limit.
     pub wash_tint: u32,
+    /// How fast the wash drifts, in percent of its own pace: 0 holds it
+    /// still.
+    pub wash_drift: u32,
+    /// How far the wash turns either way as it drifts, in degrees.
+    pub wash_turn: u32,
     /// "Wash the whole window": the wash runs under the sidebar and the
     /// toolbar as well as the page, and they draw no ground of their own.
     pub wash_window: bool,
@@ -73,7 +80,15 @@ pub struct KoanTheme {
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
+    /// The hidden rainbow appearance, while it is drawn, and whether in
+    /// brat's palette: what may carry the palette as a gradient (a progress
+    /// fill, the chosen tab) does.
+    pub prism: Option<bool>,
 }
+
+/// `KoanTheme::prism` as a number, for `prism_now`: 0 put away, 1 the
+/// palette, 2 brat's.
+static PRISM: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 impl Global for KoanTheme {}
 
@@ -83,13 +98,17 @@ impl Default for KoanTheme {
             text_size: 100,
             icons: true,
             record_colours: true,
+            painted_wash: false,
             wash_tint: 100,
+            wash_drift: 100,
+            wash_turn: 3,
             wash_window: true,
             low_power: false,
             contrast: false,
             opaque: false,
             system_text: 1.0,
             pinned: HashMap::new(),
+            prism: None,
         }
     }
 }
@@ -103,21 +122,23 @@ const FACES: [&[u8]; 3] = [
 /// Registers Geist Mono, sets the theme global, reads the system's motion,
 /// contrast, transparency and text size settings and
 /// dresses gpui-component's own theme (which the text field draws with) in
-/// the tokens. Call after `gpui_kit::init`.
+/// the tokens. Call after `gpui::init`.
 pub fn init(cx: &mut App) {
     cx.text_system()
         .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())
         .expect("Geist Mono is bundled and loads");
     cx.set_global(KoanTheme::default());
-    let feed = cx.new(|_| AccentFeed {
-        state: AccentState::default(),
-    });
+    let feed = cx.new(|_| AccentFeed::new());
     cx.set_global(AccentHandle(feed));
     read_system_settings(cx);
     #[cfg(target_os = "macos")]
     watch_system_settings(cx);
+    // The portal answers over D-Bus from threads of its own, which the
+    // deterministic test scheduler refuses as activity it cannot order.
     #[cfg(target_os = "linux")]
-    watch_desktop_settings(cx);
+    if !cx.is_test() {
+        watch_desktop_settings(cx);
+    }
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 
@@ -197,10 +218,25 @@ fn set_system_display(
     cx.refresh_windows();
 }
 
+/// Whether GNOME's text scaling factor is already in the window's scale:
+/// GNOME on X11, where gnome-settings-daemon folds it into `Xft.dpi`, which
+/// GPUI scales an X11 window by. Other desktops on X11 (XFCE, Cinnamon,
+/// MATE) leave `Xft.dpi` alone, and Wayland never folds it in.
+#[cfg(target_os = "linux")]
+fn text_scaled_by_dpi() -> bool {
+    let x11 =
+        std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some();
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")));
+    x11 && gnome
+}
+
 /// High contrast and GNOME's text scaling factor, through the desktop
 /// portal's settings, and again whenever the portal says either changed.
 /// A desktop without the portal, or without either key, leaves both as
-/// they are.
+/// they are. Where the factor is already in the window's scale
+/// (`text_scaled_by_dpi`), applying the portal's too would scale text twice,
+/// so it is left out.
 #[cfg(target_os = "linux")]
 fn watch_desktop_settings(cx: &mut App) {
     use ashpd::desktop::settings::{Contrast, Settings};
@@ -218,11 +254,13 @@ fn watch_desktop_settings(cx: &mut App) {
             return;
         };
         let contrast = settings.contrast().await.ok().map(|c| c == Contrast::High);
+        let scaled_by_dpi = text_scaled_by_dpi();
         let text = settings
             .read::<f64>(INTERFACE, SCALING)
             .await
             .ok()
-            .map(|t| t as f32);
+            .map(|t| t as f32)
+            .filter(|_| !scaled_by_dpi);
         cx.update(|cx| set_system_display(contrast, None, text, cx));
         let contrasts: BoxStream<Change> = match settings.receive_contrast_changed().await {
             Ok(changes) => changes
@@ -243,6 +281,7 @@ fn watch_desktop_settings(cx: &mut App) {
         while let Some(change) = changes.next().await {
             cx.update(|cx| match change {
                 Change::Contrast(on) => set_system_display(Some(on), None, None, cx),
+                Change::Text(_) if scaled_by_dpi => {}
                 Change::Text(factor) => set_system_display(None, None, Some(factor), cx),
             });
         }
@@ -334,11 +373,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
     let palette = Palette::for_look(dark, koan.contrast);
-    let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
-    if koan.contrast {
-        accent = accent.held(CONTRAST_ACCENT, dark, palette);
-    }
-    let accent = accent.hsla();
+    let accent = accent_shade(dark, koan.contrast, cx).hsla();
     let size = TypeRole::Control.points() * koan.scale().text;
     sync_scrollbar(&palette, cx);
     let current = Theme::global(cx);
@@ -431,18 +466,30 @@ impl KoanTheme {
     /// every change lands.
     pub fn set_accent(accent: Accent, ease: bool, cx: &mut App) {
         let ease = ease && !cx.reduce_motion();
+        let contrast = cx.global::<KoanTheme>().contrast;
         let feed = cx.global::<AccentHandle>().0.clone();
         feed.update(cx, |feed, cx| {
-            if feed.state.target() != accent {
-                feed.state.set(accent, ease, Instant::now());
+            if feed.target == accent {
+                return;
+            }
+            feed.target = accent;
+            feed.aim(contrast, ease);
+            // Everything drawn in the accent names its slots (fills, text,
+            // paths, a caret, shader uniforms) and a fade reads a slot as it
+            // starts, so a turn redraws no view: the rainbow's every step
+            // included. Only without slots does a view draw the colour
+            // itself, and need drawing again.
+            if feed.slots.is_none() {
                 cx.notify();
             }
         });
-    }
-
-    /// The accent the record has, once it has arrived.
-    pub fn accent_target(cx: &App) -> Accent {
-        accent_state(cx).target()
+        // A window at rest presents nothing by itself: one present each, and
+        // a window drawing with the slots keeps presenting while they move.
+        for window in cx.windows() {
+            window
+                .update(cx, |_, window, _| window.request_present())
+                .ok();
+        }
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
@@ -450,6 +497,47 @@ impl KoanTheme {
             percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());
         sync_components(is_dark(cx.window_appearance()), cx);
         cx.refresh_windows();
+    }
+
+    /// The rainbow appearance drawn, in brat's palette or not, or put away.
+    /// The one place it is kept: the windows' roots observe the theme for it.
+    pub fn set_prism(prism: Option<bool>, cx: &mut App) {
+        if cx.global::<KoanTheme>().prism != prism {
+            PRISM.store(
+                match prism {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            cx.global_mut::<KoanTheme>().prism = prism;
+            cx.refresh_windows();
+        }
+    }
+
+    /// Whether the rainbow is drawn, and in brat's palette.
+    pub fn prism(cx: &App) -> Option<bool> {
+        cx.try_global::<KoanTheme>().and_then(|t| t.prism)
+    }
+
+    /// The same, for elements built where the app is not to hand, such as
+    /// the playing bars inside a row: they are drawn again whenever it
+    /// changes, since it refreshes the windows.
+    pub fn prism_now() -> Option<bool> {
+        match PRISM.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
+        }
+    }
+
+    /// The palette's gradient, where a component may draw one: the rainbow
+    /// is drawn, shaders are, and motion is allowed.
+    pub fn prism_gradient(cx: &App) -> Option<bool> {
+        cx.global::<KoanTheme>()
+            .prism
+            .filter(|_| crate::components::SHADED && Self::motion_allowed(cx))
     }
 
     pub fn set_icons(icons: bool, cx: &mut App) {
@@ -468,16 +556,39 @@ impl KoanTheme {
         }
     }
 
+    /// A wash is painted, or no longer, from something other than the
+    /// record: the rainbow's sheen runs with "colours from the record" off.
+    pub fn set_painted_wash(on: bool, cx: &mut App) {
+        if cx.global::<KoanTheme>().painted_wash == on {
+            return;
+        }
+        let before = Self::washes_window(cx);
+        cx.global_mut::<KoanTheme>().painted_wash = on;
+        if Self::washes_window(cx) != before {
+            cx.refresh_windows();
+        }
+    }
+
     /// Whether the wash runs under the whole window: "wash the whole
-    /// window" on, and a wash to run, which "colours from the record" off
-    /// takes away.
+    /// window" on, and a wash to run: the record's, which "colours from the
+    /// record" off takes away, or one painted from elsewhere.
     pub fn washes_window(cx: &App) -> bool {
         let theme = cx.global::<KoanTheme>();
-        theme.wash_window && theme.record_colours && !theme.opaque
+        theme.wash_window && (theme.record_colours || theme.painted_wash) && !theme.opaque
     }
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
+    }
+
+    /// The wash's drift: its pace in percent (0 still, up to 200) and how far
+    /// it turns either way, in degrees (up to 10). The wash reads them when it
+    /// is next drawn: whoever calls this draws the windows' washes again, as
+    /// koan-gui's roots do when the pair changes.
+    pub fn set_wash_drift(percent: u32, degrees: u32, cx: &mut App) {
+        let theme = cx.global_mut::<KoanTheme>();
+        theme.wash_drift = percent.min(200);
+        theme.wash_turn = degrees.min(10);
     }
 
     /// Moves the window's grounds, which sit in cached views: every window
@@ -491,39 +602,121 @@ impl KoanTheme {
 
     /// What a window's root view calls as it renders: dresses gpui-component's
     /// theme for this window (windows render one at a time, so each one's
-    /// text fields read their own appearance, and the caret follows the
-    /// accent as it settles), and while the accent settles, notifies the
-    /// feed once a frame so the views observing it redraw, and only those.
-    /// The root asks for its own next frame too, so the ease runs to its end
-    /// in a window where no view observes the feed. Costs a few comparisons
-    /// once it is at rest.
+    /// text fields read their own appearance). Costs a few comparisons.
     pub fn drive(window: &mut Window, cx: &mut App) {
         sync_components(Look::of(window, cx).dark, cx);
-        if accent_state(cx).settling(Instant::now()) {
-            let feed = cx.global::<AccentHandle>().0.clone();
-            window.on_next_frame(move |_, cx| feed.update(cx, |_, cx| cx.notify()));
-            window.request_animation_frame();
-        }
     }
 }
 
 /// The record's accent as it settles. An entity rather than part of the
 /// global so that a change reaches the views that draw it, not every window.
 pub struct AccentFeed {
-    state: AccentState,
+    target: Accent,
+    /// The accent as drawn: per appearance, a colour slot for fills and one
+    /// for text, mixed by the GPU in OKLab as a new record's accent settles,
+    /// so the hue turns rather than passing through grey and no frame is
+    /// drawn for it. `None` when every slot was taken; the accent then lands
+    /// with each record.
+    slots: Option<[[ColorSlot; 2]; 2]>,
+    /// The contrast the slots were last aimed for, and the target as held
+    /// for it, dark then light: what every `Look` reads, worked out once per
+    /// aim rather than looked up per call.
+    contrast: std::cell::Cell<bool>,
+    held: std::cell::Cell<[Shade; 2]>,
+}
+
+impl AccentFeed {
+    fn new() -> Self {
+        let target = Accent::MINT;
+        let claim = || ColorSlot::claim(target.dark.rgba());
+        let slots = (|| Some([[claim()?, claim()?], [claim()?, claim()?]]))();
+        let feed = Self {
+            target,
+            slots,
+            contrast: std::cell::Cell::new(false),
+            held: std::cell::Cell::new([target.shade(true), target.shade(false)]),
+        };
+        feed.aim(false, false);
+        feed
+    }
+
+    /// Whether the accent is still turning to its target.
+    fn turning(&self) -> bool {
+        let now = gpui_kit::present_now();
+        self.slots
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|slot| slot.moving(now))
+    }
+
+    /// Sends the slots to the target as it is drawn with `contrast`: as the
+    /// wash dissolves to the record (`Motion::DISSOLVE`, in-out) when `ease`,
+    /// at once otherwise.
+    fn aim(&self, contrast: bool, ease: bool) {
+        self.contrast.set(contrast);
+        self.held
+            .set([true, false].map(|dark| held(self.target.shade(dark), dark, contrast)));
+        let Some(slots) = &self.slots else {
+            return;
+        };
+        let track = Track {
+            from: 0.0,
+            to: 1.0,
+            start: 0.0,
+            length: Motion::DISSOLVE.as_secs_f32(),
+            curve: crate::components::curve(crate::components::Ease::InOut),
+            repeat: TrackRepeat::Once,
+        };
+        for ((dark, [fill, text]), shade) in
+            [true, false].into_iter().zip(slots).zip(self.held.get())
+        {
+            let ink = Palette::for_look(dark, contrast).ink.hsla();
+            let to = [shade.rgba(), shade.text_hsla(ink).to_rgb()];
+            for (slot, to) in [fill, text].into_iter().zip(to) {
+                if ease {
+                    slot.to_oklab(to, track);
+                } else {
+                    slot.hold(to);
+                }
+            }
+        }
+    }
+}
+
+/// `shade` as drawn with `contrast`: held to `CONTRAST_ACCENT` when asked.
+fn held(shade: Shade, dark: bool, contrast: bool) -> Shade {
+    if contrast {
+        shade.held(CONTRAST_ACCENT, dark, Palette::for_look(dark, contrast))
+    } else {
+        shade
+    }
+}
+
+/// The accent a window draws, through the feed's slots where it has them.
+/// A change of contrast lands the slots on the held shade at once, as does
+/// motion stopping (Reduce Motion, Low Power Mode) mid-turn.
+fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
+    let feed = cx.global::<AccentHandle>().0.read(cx);
+    if feed.contrast.get() != contrast || (!KoanTheme::motion_allowed(cx) && feed.turning()) {
+        feed.aim(contrast, false);
+    }
+    let mut shade = feed.held.get()[usize::from(!dark)];
+    shade.slot = feed.slots.as_ref().map(|slots| {
+        let [fill, text] = &slots[usize::from(!dark)];
+        [fill.hsla(1.0), text.hsla(1.0)]
+    });
+    shade
 }
 
 struct AccentHandle(Entity<AccentFeed>);
 
 impl Global for AccentHandle {}
 
-fn accent_state(cx: &App) -> &AccentState {
-    &cx.global::<AccentHandle>().0.read(cx).state
-}
-
-/// Redraws a view whenever the accent moves. A cached view that draws the
-/// accent holds the subscription for as long as it lives; an uncached one
-/// redraws with its parent and needs none.
+/// Redraws a view when the accent changes in a way the colour slots cannot
+/// carry: where no slots could be claimed, each record's accent. A cached
+/// view that draws the accent holds the subscription for as long as it
+/// lives; an uncached one redraws with its parent and needs none.
 pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
     let feed = cx.global::<AccentHandle>().0.clone();
     cx.observe(&feed, |_, _, cx| cx.notify())
@@ -569,10 +762,7 @@ impl Look {
             .unwrap_or_else(|| is_dark(window.appearance()));
         let contrast = theme.contrast;
         let palette = Palette::for_look(dark, contrast);
-        let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
-        if contrast {
-            accent = accent.held(CONTRAST_ACCENT, dark, palette);
-        }
+        let accent = accent_shade(dark, contrast, cx);
         Look {
             dark,
             contrast,
@@ -600,7 +790,7 @@ impl Look {
     /// which reads in `ink` instead.
     pub fn text_color(&self, tone: Tone) -> Hsla {
         match tone {
-            Tone::Accent if !self.accent.reads_as_text => self.palette.ink.hsla(),
+            Tone::Accent => self.accent.text_hsla(self.palette.ink.hsla()),
             tone => self.color(tone),
         }
     }
@@ -622,6 +812,12 @@ impl Look {
     /// that are not steps of the scale (a prominent button's 12 × 20).
     pub fn spaced(&self, points: f32) -> Pixels {
         px(points * self.scale.space)
+    }
+
+    /// A width that holds text, in points at 100 %, grown with the text
+    /// size rather than the spacing.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.scale.size)
     }
 
     pub fn font_size(&self, role: TypeRole) -> Pixels {

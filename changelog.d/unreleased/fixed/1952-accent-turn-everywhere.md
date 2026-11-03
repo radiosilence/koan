@@ -1,0 +1,1 @@
+- **The accent turns everywhere at once.** In the kōan GUI app a new record's accent now moves in windows at rest (the EQ window, Settings), in the EQ graph's strokes and in a text field's caret, rather than snapping when the turn ends, and the rainbow's colours reach everything that draws them.

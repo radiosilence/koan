@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -93,7 +93,7 @@ impl RenderOnce for Stepper {
         // step either way.
         let mut row = accessible(
             div().id(child(&self.id, "spin")),
-            gpui_kit::Role::SpinButton,
+            gpui::Role::SpinButton,
             Some(self.title.clone()),
         )
         .aria_disabled(disabled)
@@ -104,8 +104,8 @@ impl RenderOnce for Stepper {
         .when_some(self.shown.clone(), |d, shown| d.aria_value(shown));
         if let Some(on_change) = self.on_change.clone().filter(|_| !disabled) {
             for (action, to) in [
-                (gpui_kit::AccessibleAction::Increment, up),
-                (gpui_kit::AccessibleAction::Decrement, down),
+                (gpui::AccessibleAction::Increment, up),
+                (gpui::AccessibleAction::Decrement, down),
             ] {
                 let set = on_change.clone();
                 row = row.on_a11y_action(action, move |_, window, cx| set(&to, window, cx));
@@ -159,6 +159,8 @@ impl RenderOnce for StepButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let accent = look.accent.hsla();
         let label = self.label.clone();
         let to = self.to;
         div()
@@ -181,12 +183,14 @@ impl RenderOnce for StepButton {
             // A button keeps the keyboard at its end of the range, so the
             // person who stepped it there is not left without focus.
             .when(!self.disabled, |button| button.track_focus(&handle))
+            .children(answers.layer(window, cx))
             .when_some(
                 self.on_change.filter(|_| !self.inert),
-                |button, on_change| {
-                    button
-                        .cursor_pointer()
-                        .on_click(move |_, window, cx| on_change(&to, window, cx))
+                move |button, on_change| {
+                    button.cursor_pointer().on_click(move |_, window, cx| {
+                        answers.start(super::Answer::Lift, accent, cx);
+                        on_change(&to, window, cx)
+                    })
                 },
             )
             .children(ring(&handle, &look, window))

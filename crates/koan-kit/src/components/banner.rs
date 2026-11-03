@@ -2,8 +2,8 @@
 //! every page until it is put right: the server this device cannot use. The
 //! Mac's `ServerBanner`.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind, Handler};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};

@@ -4,6 +4,8 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
+float4 koan_rgba(Hsla hsla, constant float *slots);  // KOAN: colour slots (#1859).
+float3 koan_oklab_to_srgb(float3 lab);  // KOAN: #1859.
 float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
@@ -70,14 +72,15 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     constant Quad *quads
                                     [[buffer(QuadInputIndex_Quads)]],
                                     constant Size_DevicePixels *viewport_size
-                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
+                                    [[buffer(QuadInputIndex_ViewportSize)]],
+                                    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position =
       to_device_position(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
-  float4 border_color = hsla_to_rgba(quad.border_color);
+  float4 border_color = koan_rgba(quad.border_color, koan_slots);  // KOAN: colour slots (#1859).
 
   GradientColor gradient = prepare_fill_color(
     quad.background.tag,
@@ -86,6 +89,9 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
     quad.background.colors[0].color,
     quad.background.colors[1].color
   );
+  if (quad.background.tag != 1 && quad.background.solid.h >= 2.0) {
+    gradient.solid = koan_rgba(quad.background.solid, koan_slots);  // KOAN: colour slots (#1859).
+  }
 
   return QuadVertexOutput{
       quad_id,
@@ -464,7 +470,8 @@ vertex ShadowVertexOutput shadow_vertex(
     constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+    [[buffer(ShadowInputIndex_ViewportSize)]],
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
@@ -485,7 +492,7 @@ vertex ShadowVertexOutput shadow_vertex(
       to_device_position(unit_vertex, bounds, viewport_size);
   float4 clip_distance =
       distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
-  float4 color = hsla_to_rgba(shadow.color);
+  float4 color = koan_rgba(shadow.color, koan_slots);  // KOAN: colour slots (#1859).
 
   return ShadowVertexOutput{
       device_position,
@@ -572,14 +579,15 @@ vertex UnderlineVertexOutput underline_vertex(
     constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+    [[buffer(ShadowInputIndex_ViewportSize)]],
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
   float4 device_position =
       to_device_position(unit_vertex, underline.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                  underline.content_mask.bounds);
-  float4 color = hsla_to_rgba(underline.color);
+  float4 color = koan_rgba(underline.color, koan_slots);  // KOAN: colour slots (#1859).
   return UnderlineVertexOutput{
       device_position,
       color,
@@ -639,7 +647,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     constant Size_DevicePixels *viewport_size
     [[buffer(SpriteInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
-    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
@@ -647,7 +656,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-  float4 color = hsla_to_rgba(sprite.color);
+  float4 color = koan_rgba(sprite.color, koan_slots);  // KOAN: colour slots (#1859).
   return MonochromeSpriteVertexOutput{
       device_position,
       tile_position,
@@ -771,7 +780,8 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant float *koan_slots [[buffer(20)]]  // KOAN: colour slots (#1859).
 ) {
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
@@ -799,6 +809,10 @@ fragment float4 path_rasterization_fragment(
     background.colors[0].color,
     background.colors[1].color
   );
+  // KOAN: a path drawn in a colour slot follows it as it moves (#1859).
+  if (background.tag != 1 && background.solid.h >= 2.0) {
+    gradient_color.solid = koan_rgba(background.solid, koan_slots);
+  }
 
   float4 color = fill_color(
     background,
@@ -1276,4 +1290,113 @@ float4 fill_color(Background background,
   }
 
   return color;
+}
+
+// KOAN: colour slots (#1859). A colour whose hue is 2 or more names slot
+// `hue - 2` of the table at buffer 20: the time, three floats of padding,
+// then per slot the `from` colour, the `to` colour and a track from 0 to 1,
+// evaluated as gpui's `Track::at` and the shader prelude's `koan_track` are.
+float koan_slot_bezier_curve(float a, float b, float s) {
+  float u = 1.0 - s;
+  return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+float koan_slot_bezier(float x1, float y1, float x2, float y2, float t) {
+  if (t <= 0.0 || t >= 1.0) {
+    return clamp(t, 0.0, 1.0);
+  }
+  float s = t;
+  for (int i = 0; i < 6; i++) {
+    float u = 1.0 - s;
+    float d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+    if (abs(d) < 1e-5) {
+      break;
+    }
+    s = clamp(s - (koan_slot_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+  }
+  return koan_slot_bezier_curve(y1, y2, s);
+}
+
+float koan_slot_spring(float x0, float v0, float k, float c, float t) {
+  float w = sqrt(max(k, 1e-3));
+  float z = c / (2.0 * w);
+  if (z < 1.0) {
+    float wd = w * sqrt(1.0 - z * z);
+    return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+  }
+  if (z > 1.0001) {
+    float root = sqrt(z * z - 1.0);
+    float r1 = -w * (z - root);
+    float r2 = -w * (z + root);
+    float c1 = (v0 - r2 * x0) / (r1 - r2);
+    return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+  }
+  return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+float koan_slot_track(constant float *t, float time) {
+  float from = t[0];
+  float to = t[1];
+  float length = t[3];
+  if (length <= 0.0) {
+    return to;
+  }
+  float e = max(time - t[2], 0.0);
+  // KOAN: 16 marks a colour mixed in OKLab, not part of the track (#1859).
+  uint code = uint(t[4]) % 16;
+  uint kind = code % 4;
+  uint repeat = code / 4;
+  if (kind == 2) {
+    return e >= length ? to : to + koan_slot_spring(from - to, t[7], t[5], t[6], e);
+  }
+  float p = e / length;
+  if (repeat == 0) {
+    p = min(p, 1.0);
+  } else if (repeat == 1) {
+    p = fract(p);
+  } else {
+    float q = fmod(p, 2.0);
+    p = q > 1.0 ? 2.0 - q : q;
+  }
+  if (kind == 1) {
+    half2 a = as_type<half2>(t[5]);
+    half2 b = as_type<half2>(t[6]);
+    p = koan_slot_bezier(a.x, a.y, b.x, b.y, p);
+  }
+  return from + (to - from) * p;
+}
+
+float4 koan_rgba(Hsla hsla, constant float *slots) {
+  if (hsla.h < 2.0) {
+    return hsla_to_rgba(hsla);
+  }
+  uint index = min(uint(hsla.h - 2.0), 254u);
+  constant float *slot = slots + 4 + index * 16;
+  float t = koan_slot_track(slot + 8, slots[0]);
+  float4 color = mix(float4(slot[0], slot[1], slot[2], slot[3]),
+                     float4(slot[4], slot[5], slot[6], slot[7]), t);
+  // KOAN: a slot mixed in OKLab holds its ends as OKLab, so its hue turns
+  // rather than passing through grey (#1859).
+  if (uint(slot[12]) >= 16) {
+    color.rgb = koan_oklab_to_srgb(color.rgb);
+  }
+  color = clamp(color, 0.0, 1.0);
+  color.a *= hsla.a;
+  return color;
+}
+
+float3 koan_oklab_to_srgb(float3 lab) {
+  float l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+  float m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+  float s = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+  l = l * l * l;
+  m = m * m * m;
+  s = s * s * s;
+  float3 linear_rgb = float3(
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+  linear_rgb = clamp(linear_rgb, 0.0, 1.0);
+  return select(1.055 * pow(linear_rgb, float3(1.0 / 2.4)) - 0.055, 12.92 * linear_rgb,
+                linear_rgb <= 0.0031308);
 }

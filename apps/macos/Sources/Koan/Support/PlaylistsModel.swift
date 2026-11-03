@@ -209,34 +209,46 @@ final class PlaylistsModel {
         dropped.withSources(using: engine) { self.add(sources: $0, to: id) }
     }
 
-    /// The same, landing where they were dropped rather than at the end. The
-    /// engine adds and reorders in one go — doing it in two from here would be
-    /// reordering against the list as it was before the add landed.
-    func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
+    /// The same, landing just before the entry `before` (the end when nil)
+    /// rather than at the end. The engine adds and places in one go, among
+    /// all of the playlist's entries: offline the rows shown are only those
+    /// with a file here, so a place is named by entry, never by index.
+    func insert(dropped: [PlayableTransfer], into id: Int64, before: Int64?) {
         let dropped = dropped.filter { $0.origin?.playlistId != id }
         guard !dropped.isEmpty, fillable(id) else { return }
         dropped.withSources(using: engine) { sources in
             self.act {
-                _ = try await $0.insertIntoPlaylist(
-                    playlistId: id, sources: sources, at: UInt32(position)
+                _ = try await $0.insertIntoPlaylistBefore(
+                    playlistId: id, sources: sources, before: before
                 )
             }
         }
     }
 
-    /// Put the entries in this order. Ids survive, so the queue keeps knowing
-    /// which row each of its items came from.
-    ///
-    /// Applied locally first, so the rows stay where they were dropped and a
-    /// second move is made against the first rather than a round trip behind.
-    func reorder(entryIds: [Int64], in id: Int64) {
+    /// Move the entries named to just before the entry `before` (the end
+    /// when nil), among all of the playlist's entries, those not shown
+    /// offline included. `shown` is the rows' order afterwards, applied
+    /// locally first so a second move is made against the first.
+    func move(entryIds: [Int64], before: Int64?, shown: [Int64], in id: Int64) {
         guard fillable(id) else { return }
         if openId == id {
             let byId = Dictionary(entries.map { ($0.entryId, $0) }, uniquingKeysWith: { a, _ in a })
-            entries = entryIds.compactMap { byId[$0] }
+            entries = shown.compactMap { byId[$0] }
         }
-        act {
-            try await $0.reorderPlaylist(playlistId: id, entryIds: entryIds)
+        let engine = self.engine
+        Task {
+            do {
+                try await engine.movePlaylistEntries(playlistId: id, entryIds: entryIds, before: before)
+            } catch {
+                // The rows shown were moved here first; refused (the place
+                // named has gone on another device), they go back to what the
+                // playlist holds, read again since nothing else will say so.
+                report?(SettingsModel.describe(error))
+                if openId == id {
+                    openStamp = nil
+                    await prepare(id: id)
+                }
+            }
         }
     }
 
@@ -341,7 +353,7 @@ final class PlaylistsModel {
             do {
                 try await body(engine)
             } catch {
-                report?(String(describing: error))
+                report?(SettingsModel.describe(error))
             }
         }
     }

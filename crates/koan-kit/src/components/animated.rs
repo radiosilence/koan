@@ -1,32 +1,34 @@
 //! Animation the GPU draws: an element whose pixels come from a fragment
-//! program, moved by values the app writes from any thread or by the clock,
-//! with no GPUI frame drawn while it moves.
+//! program, moved by keyframes the app writes from any thread, with no GPUI
+//! frame drawn while it moves.
 //!
 //! A page declares one with `AnimatedQuad::new(&PROGRAM, &animated)` and
-//! keeps the `Animated` handle, writing into it what moves the drawing: the
-//! levels of the playing bars, a download's progress, the anchor of a seek
-//! bar's playhead. Each frame is presented with the values as they are then;
-//! the page and the views around it are not drawn again.
+//! keeps the `Animated` handle, writing into it what moves the drawing when
+//! the data changes: the levels of the playing bars, a download's progress,
+//! the anchor of a seek bar's playhead. A plain value is a uniform (`set`); a
+//! moving one is a track (`to`, `segment`, `hold`): from, to, start, length
+//! and curve, which the program reads at present time (`koan_track`), so the
+//! page and the views around it are not drawn again while it moves.
 //!
 //! What the kit takes care of:
-//! - **The frame loop.** Driven by values, a change wakes the window to
-//!   present once (`Animated::set`); nothing runs between changes. Driven by
-//!   the clock (`Animated::run`), the window presents every refresh while it
-//!   runs, and `time` in the program counts from the origin set. A
-//!   transition runs for its length and stops by itself (`run_for`).
-//! - **Parking.** A window with nothing changing or running parks, as an
-//!   idle window does. A hidden or occluded window is not woken, and a quad
-//!   off screen is not in the scene, so it costs nothing.
-//! - **Reduce Motion.** A `decorative` quad's clock stops while the person
-//!   has asked for less motion; its values still show as they change.
+//! - **The frame loop.** A change wakes the window to present; a track
+//!   presents at the display's rate while it moves and once more as it
+//!   lands, then the window parks. `run` keeps the clock going for a drawing
+//!   that moves with `time` itself (the prism).
+//! - **Parking.** A window with nothing changing or moving parks, as an idle
+//!   window does. A hidden or occluded window is not woken, and a quad off
+//!   screen is not in the scene, so it costs nothing.
+//! - **Reduce Motion.** A `decorative` quad's tracks stand at their ends
+//!   while the person has asked for less motion; its values still show as
+//!   they change.
+//! - **Long uptime.** Track times are seconds from an origin that moves to
+//!   now every hour, so f32 keeps its precision.
 //!
 //! Programs are MSL and WGSL source of one `shade` function (GPUI's
 //! `ShaderProgram`), given the pixel's position and the quad's size in
-//! device pixels, `time`, sixteen uniforms and an optional image, and
-//! returning the pixel's straight-alpha colour. A `prepare` function may work
-//! out per present, on the CPU, what every pixel would otherwise compute
-//! alike. Where the renderer draws no shaders (`SHADED` is false), a page
-//! draws its fallback itself.
+//! device pixels, `time`, the uniforms and tracks, and an optional image,
+//! and returning the pixel's straight-alpha colour. Where the renderer draws
+//! no shaders (`SHADED` is false), a page draws its fallback itself.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,10 +37,31 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui_kit::*;
+use gpui::*;
 use parking_lot::Mutex;
 
-pub use gpui_kit::{SHADER_UNIFORMS, ShaderProgram};
+pub use gpui::{
+    SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS, ShaderProgram, Track, TrackCurve,
+    TrackRepeat as Repeat,
+};
+
+/// How a track moves between its ends (#1859).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ease {
+    Linear,
+    /// Core Animation's `easeInEaseOut`, `cubic-bezier(0.42, 0, 0.58, 1)`.
+    InOut,
+    /// The theme's quick-out, `cubic-bezier(0.2, 0.9, 0.3, 1)`.
+    QuickOut,
+    /// A CSS cubic Bézier, `cubic-bezier(x1, y1, x2, y2)`.
+    Bezier(f32, f32, f32, f32),
+    /// A damped spring of unit mass; a retarget carries its velocity on, and
+    /// its length is how long it takes to settle.
+    Spring {
+        stiffness: f32,
+        damping: f32,
+    },
+}
 
 use crate::theme::KoanTheme;
 
@@ -58,11 +81,56 @@ struct Inner {
     /// changes.
     waker: Mutex<Option<Waker>>,
     running: AtomicBool,
+    /// When a `run_for` stops by itself.
+    until: Mutex<Option<Instant>>,
+    /// Decorative and the person asked for less motion: tracks hold their
+    /// ends.
+    still: AtomicBool,
+}
+
+/// An `Animated` held without keeping it alive: a clock that follows
+/// another's running for as long as its quad is drawn.
+#[derive(Clone)]
+pub struct WeakAnimated(std::sync::Weak<Inner>);
+
+impl WeakAnimated {
+    pub fn upgrade(&self) -> Option<Animated> {
+        self.0.upgrade().map(Animated)
+    }
+
+    /// Whether it is the handle `animated` was taken from.
+    pub fn is(&self, animated: &Animated) -> bool {
+        std::sync::Weak::ptr_eq(&self.0, &Arc::downgrade(&animated.0))
+    }
 }
 
 impl Animated {
+    pub fn downgrade(&self) -> WeakAnimated {
+        WeakAnimated(Arc::downgrade(&self.0))
+    }
+
     pub fn new() -> Self {
-        Self::default()
+        let animated = Self::default();
+        animated.0.uniforms.set_origin(Instant::now());
+        animated
+    }
+
+    /// Track times are seconds from the uniforms' origin, in f32: an hour on,
+    /// the origin moves to now and every track with it, so a koan open for
+    /// days still reckons its motion to the frame. Called inside the write's
+    /// publish, so the shift is made once and seen whole.
+    fn rebase(&self) {
+        let now = Instant::now();
+        let shift = self.0.uniforms.time_at(now);
+        if shift < 3600.0 {
+            return;
+        }
+        self.0.uniforms.set_origin(now);
+        for k in 0..SHADER_TRACKS {
+            let mut track = self.0.uniforms.track(k);
+            track.start -= shift;
+            self.0.uniforms.set_track(k, anchored(track, 0.0));
+        }
     }
 
     /// Uniform `index`; a change is presented at the next refresh.
@@ -72,12 +140,198 @@ impl Animated {
         }
     }
 
+    /// The clock tracks are reckoned in: when a frame made now reaches the
+    /// screen. What a retarget samples a moving value at.
+    pub fn now() -> Instant {
+        gpui::present_now()
+    }
+
+    /// Where track `k` stands at `at`, as the program draws it.
+    pub fn at(&self, k: usize, at: Instant) -> f32 {
+        let uniforms = &self.0.uniforms;
+        uniforms.read(|| uniforms.track(k).at(uniforms.time_at(at)))
+    }
+
+    /// Whether a track is moving now.
+    pub fn moving(&self) -> bool {
+        self.0.uniforms.tracks_moving(Self::now())
+    }
+
+    /// How long until every track stands still: `None` while one repeats.
+    pub fn settled_in(&self) -> Option<Duration> {
+        let t = self.0.uniforms.time_at(Self::now());
+        let mut last = 0.0_f32;
+        for k in 0..SHADER_TRACKS {
+            last = last.max(self.0.uniforms.track(k).end()? - t);
+        }
+        Some(Duration::from_secs_f32(last.max(0.0)))
+    }
+
+    /// Track `k` as it was last written.
+    pub fn track(&self, k: usize) -> Track {
+        self.0.uniforms.track(k)
+    }
+
+    /// Track `k` standing at `value`.
+    pub fn hold(&self, k: usize, value: f32) {
+        self.0.uniforms.publish(|| {
+            self.rebase();
+            self.put(k, Track::hold(value));
+        });
+        self.wake();
+    }
+
+    /// Track `k` moving from where it stands now to `to` over `length`: a
+    /// retarget mid-flight starts from the value, and with a spring the
+    /// velocity, it had reached.
+    pub fn to(&self, k: usize, to: f32, length: Duration, ease: Ease) {
+        // One publish: the rebase, the reading of where the track stands and
+        // the new track, so a write from another thread cannot fall between.
+        self.0
+            .uniforms
+            .publish(|| self.to_unpublished(k, to, length, ease));
+        self.wake();
+    }
+
+    fn to_unpublished(&self, k: usize, to: f32, length: Duration, ease: Ease) {
+        // Before any time is read, so the new track is in the new base.
+        self.rebase();
+        let now = Self::now();
+        let current = self.0.uniforms.track(k);
+        let t = self.0.uniforms.time_at(now);
+        let from = current.at(t);
+        let (curve, length) = match ease {
+            Ease::Spring { stiffness, damping } => {
+                let dt = 1.0 / 240.0;
+                let velocity = (current.at(t + dt) - from) / dt;
+                (
+                    TrackCurve::Spring {
+                        stiffness,
+                        damping,
+                        velocity,
+                    },
+                    gpui::spring_length(from - to, velocity, stiffness, damping),
+                )
+            }
+            ease => (curve(ease), length.as_secs_f32()),
+        };
+        self.put(
+            k,
+            Track {
+                from,
+                to,
+                start: t,
+                length,
+                curve,
+                repeat: Repeat::Once,
+            },
+        );
+    }
+
+    /// Track `k` as a whole segment, for a value whose start is known: an
+    /// analyser frame at its own time, a playhead from its anchor, a drift
+    /// that breathes (`Repeat::Alternate`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn segment(
+        &self,
+        k: usize,
+        from: f32,
+        to: f32,
+        start: Instant,
+        length: Duration,
+        ease: Ease,
+        repeat: Repeat,
+    ) {
+        self.0
+            .uniforms
+            .publish(|| self.segment_unpublished(k, from, to, start, length, ease, repeat));
+        self.wake();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn segment_unpublished(
+        &self,
+        k: usize,
+        from: f32,
+        to: f32,
+        start: Instant,
+        length: Duration,
+        ease: Ease,
+        repeat: Repeat,
+    ) {
+        self.rebase();
+        let (curve, length) = match ease {
+            Ease::Spring { stiffness, damping } => (
+                TrackCurve::Spring {
+                    stiffness,
+                    damping,
+                    velocity: 0.0,
+                },
+                gpui::spring_length(from - to, 0.0, stiffness, damping),
+            ),
+            ease => (curve(ease), length.as_secs_f32()),
+        };
+        // A repeat starts at its latest whole cycle, worked out on instants
+        // so a start long ago keeps its phase exactly.
+        let period = match repeat {
+            Repeat::Once => 0.0,
+            Repeat::Loop => length as f64,
+            Repeat::Alternate => 2.0 * length as f64,
+        };
+        let now = Instant::now();
+        let start = match now.checked_duration_since(start) {
+            Some(ago) if period > 0.0 => {
+                let cycles = (ago.as_secs_f64() / period).floor();
+                start + Duration::from_secs_f64(cycles * period)
+            }
+            _ => start,
+        };
+        self.put(
+            k,
+            Track {
+                from,
+                to,
+                start: self.0.uniforms.time_at(start),
+                length,
+                curve,
+                repeat,
+            },
+        );
+    }
+
+    fn put(&self, k: usize, track: Track) {
+        let track = if self.0.still.load(Ordering::Relaxed) {
+            Track::hold(match track.repeat {
+                Repeat::Once => track.to,
+                _ => track.from,
+            })
+        } else {
+            track
+        };
+        // The caller wakes the window once its publish has closed, so the
+        // refresh never meets the block still being written.
+        self.0.uniforms.set_track(k, track);
+    }
+
+    /// `color` into the four uniforms from `index`, as red, green, blue and
+    /// alpha. A colour naming a colour slot (the accent) is read from the
+    /// slot at each present, so it moves in the program with no frame drawn.
+    pub fn set_color(&self, index: usize, color: Hsla) {
+        if self.0.uniforms.set_color(index, color) {
+            self.wake();
+        }
+    }
+
     /// Uniforms from `start` on.
     pub fn set_all(&self, start: usize, values: &[f32]) {
-        let mut changed = false;
-        for (i, value) in values.iter().enumerate() {
-            changed |= self.0.uniforms.set(start + i, *value);
-        }
+        let uniforms = &self.0.uniforms;
+        let changed = uniforms.publish(|| {
+            let mut changed = false;
+            for (i, value) in values.iter().enumerate() {
+                changed |= uniforms.set(start + i, *value);
+            }
+            changed
+        });
         if changed {
             self.wake();
         }
@@ -99,6 +353,7 @@ impl Animated {
     /// drawing that moves with `time`.
     pub fn run(&self, running: bool) {
         self.0.uniforms.set_live_until(None);
+        *self.0.until.lock() = None;
         if self.0.running.swap(running, Ordering::Relaxed) != running {
             self.0.uniforms.set_continuous(running);
             self.0.uniforms.set_live(running);
@@ -109,17 +364,30 @@ impl Animated {
     /// Runs the clock for `length` from now and then stops by itself, with
     /// nothing to stop it: a transition.
     pub fn run_for(&self, length: Duration) {
-        self.0
-            .uniforms
-            .set_live_until(Some(Instant::now() + length));
+        let until = Instant::now() + length;
+        self.0.uniforms.set_live_until(Some(until));
+        *self.0.until.lock() = Some(until);
         self.0.running.store(true, Ordering::Relaxed);
         self.0.uniforms.set_continuous(true);
         self.0.uniforms.set_live(true);
         self.wake();
     }
 
+    /// Whether the clock runs; a `run_for` past its length has stopped.
     pub fn is_running(&self) -> bool {
-        self.0.running.load(Ordering::Relaxed)
+        if !self.0.running.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut until = self.0.until.lock();
+        if until.is_some_and(|until| Instant::now() >= until) {
+            *until = None;
+            self.0.running.store(false, Ordering::Relaxed);
+            self.0.uniforms.set_live_until(None);
+            self.0.uniforms.set_continuous(false);
+            self.0.uniforms.set_live(false);
+            return false;
+        }
+        true
     }
 
     fn wake(&self) {
@@ -134,9 +402,43 @@ impl Animated {
     pub fn attach(&self, decorative: bool, window: &mut Window, cx: &mut App) {
         *self.0.waker.lock() = Some(waker(window, cx));
         let still = decorative && !motion_allowed(cx);
+        self.0.still.store(still, Ordering::Relaxed);
+        self.0.uniforms.publish(|| {
+            // A track not written for hours keeps its precision.
+            self.rebase();
+            // Written before it was known: what moves stands at its end, or
+            // a repeat at its start.
+            if still {
+                for k in 0..SHADER_TRACKS {
+                    let track = self.0.uniforms.track(k);
+                    if track.length > 0.0 {
+                        self.0.uniforms.set_track(
+                            k,
+                            Track::hold(match track.repeat {
+                                Repeat::Once => track.to,
+                                _ => track.from,
+                            }),
+                        );
+                    }
+                }
+            }
+        });
         let running = self.is_running() && !still;
         self.0.uniforms.set_continuous(running);
         self.0.uniforms.set_live(running);
+    }
+
+    /// Paints what `paint` paints into a texture of its own, composed over
+    /// `bounds` by `program` sampling it (#1859).
+    pub fn paint_layer(
+        &self,
+        program: &'static ShaderProgram,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        paint: impl FnOnce(&mut Window, &mut App),
+    ) {
+        window.paint_layer_group(bounds, program, self.0.uniforms.clone(), cx, paint);
     }
 
     /// Paints the quad over `bounds`, drawn by `program`, sampling `image`.
@@ -156,6 +458,31 @@ impl Animated {
             }
             None => window.paint_shader(bounds, program, uniforms),
         }
+    }
+}
+
+/// A repeating track's start moved up to its latest whole cycle at or
+/// before `now`, seconds of shader time: the same motion, with times kept
+/// small, so f32 reckons them to the frame however long ago it began.
+fn anchored(mut track: Track, now: f32) -> Track {
+    let period = match track.repeat {
+        Repeat::Once => return track,
+        Repeat::Loop => track.length,
+        Repeat::Alternate => 2.0 * track.length,
+    };
+    if period > 0.0 && track.start < now {
+        track.start += ((now - track.start) / period).floor() * period;
+    }
+    track
+}
+
+pub(crate) fn curve(ease: Ease) -> TrackCurve {
+    match ease {
+        Ease::Linear => TrackCurve::Linear,
+        Ease::InOut => TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),
+        Ease::QuickOut => TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+        Ease::Bezier(x1, y1, x2, y2) => TrackCurve::Bezier(x1, y1, x2, y2),
+        Ease::Spring { .. } => TrackCurve::Linear,
     }
 }
 
@@ -182,16 +509,28 @@ impl Waker {
     }
 }
 
-/// Each window's waker, made the first time a quad is painted in it.
+/// Each window's waker, made the first time a quad is painted in it, and
+/// let go as its window closes.
 #[derive(Default)]
-struct Wakers(HashMap<WindowId, Waker>);
+struct Wakers {
+    by_window: HashMap<WindowId, Waker>,
+    /// Windows closing are heard, once for the app.
+    observing: bool,
+}
 
 impl Global for Wakers {}
 
 fn waker(window: &mut Window, cx: &mut App) -> Waker {
     let id = window.window_handle().window_id();
-    if let Some(waker) = cx.default_global::<Wakers>().0.get(&id) {
+    if let Some(waker) = cx.default_global::<Wakers>().by_window.get(&id) {
         return waker.clone();
+    }
+    if !cx.default_global::<Wakers>().observing {
+        cx.default_global::<Wakers>().observing = true;
+        cx.on_window_closed(|cx, closed| {
+            cx.default_global::<Wakers>().by_window.remove(&closed);
+        })
+        .detach();
     }
     let (send, mut woken) = unbounded();
     let waker = Waker {
@@ -200,6 +539,9 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
     };
     let pending = waker.pending.clone();
     let handle = window.window_handle();
+    // A clone of the sender can outlive the app (an analyser feed held by
+    // an engine that outlives it, as in the benches): a window that cannot
+    // be reached ends the task without touching the app, which may be gone.
     cx.spawn(async move |cx| {
         while woken.next().await.is_some() {
             pending.store(false, Ordering::Release);
@@ -207,15 +549,14 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
                 .update_window(handle, |_, window, _| window.request_present())
                 .is_err()
             {
-                break;
+                return;
             }
         }
-        cx.update(|cx| {
-            cx.default_global::<Wakers>().0.remove(&id);
-        });
     })
     .detach();
-    cx.default_global::<Wakers>().0.insert(id, waker.clone());
+    cx.default_global::<Wakers>()
+        .by_window
+        .insert(id, waker.clone());
     waker
 }
 

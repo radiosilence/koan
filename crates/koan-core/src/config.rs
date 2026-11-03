@@ -75,6 +75,12 @@ pub struct AppearanceConfig {
     /// sleeve's own colours. Values between blend the two; above 100 reads
     /// as 100.
     pub wash_tint: u16,
+    /// In the kōan theme, how fast the wash drifts while music plays, in
+    /// percent of its own pace: 0 holds it still, 200 is twice as fast.
+    pub wash_drift: u16,
+    /// In the kōan theme, how far the wash turns either way as it drifts, in
+    /// degrees (0 to 10): the Apple apps turn it 3.
+    pub wash_turn: u16,
 }
 
 impl Default for AppearanceConfig {
@@ -87,6 +93,8 @@ impl Default for AppearanceConfig {
             rainbow: false,
             text_size: 100,
             wash_tint: 100,
+            wash_drift: 100,
+            wash_turn: 3,
         }
     }
 }
@@ -1717,6 +1725,8 @@ impl Config {
         *cache = None;
         drop(cache);
         crate::signal::config_changed().bump();
+        // The cover preload's setting may have gone off.
+        crate::remote::client::wake_cover_waiters();
     }
 
     /// Load from a specific TOML file (no env var overlay).

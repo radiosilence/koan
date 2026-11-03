@@ -4,9 +4,9 @@
 
 use crate::components::{Button, ButtonKind, CopyButton, CopyText, Spinner, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_ffi::{Assistants, ScrobblingConnection};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{Assistants, ScrobblingConnection};
 
 use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{count, describe};
@@ -35,7 +35,7 @@ impl IntegrationsPane {
     pub fn new(ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let token = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("ListenBrainz user token")
+                .placeholder(crate::theme::label("ListenBrainz user token"))
                 .masked(true)
         });
         let mut pane = Self {
@@ -197,7 +197,11 @@ impl IntegrationsPane {
                 footer = error.clone();
                 tone = Tone::Ink;
             }
-            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
+            None => rows.push(
+                Spinner::new(look.font_size(TypeRole::Body))
+                    .announced("assistants-loading", "loading assistants")
+                    .into_any_element(),
+            ),
         }
         div()
             .child(section(Some("Assistants"), rows, None, look))
@@ -248,7 +252,11 @@ impl IntegrationsPane {
                     look,
                 ));
             }
-            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
+            None => rows.push(
+                Spinner::new(look.font_size(TypeRole::Body))
+                    .announced("scrobbling-loading", "loading scrobbling")
+                    .into_any_element(),
+            ),
             // The server could not say whether the account is connected, so
             // neither state is shown.
             Some(Err(_)) => rows.push(buttons(

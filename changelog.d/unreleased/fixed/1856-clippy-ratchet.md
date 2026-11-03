@@ -1,0 +1,1 @@
+- **Clippy and the theme ratchet pass on main again.** Two type lints in koan-kit, and the rainbow's test harness counted in `theme-leaks.toml`.

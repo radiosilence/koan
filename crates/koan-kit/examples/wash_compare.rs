@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::{
     AppContext, Context, Corners, HeadlessAppContext, IntoElement, ParentElement, Render,
     RenderImage, Styled, Window, canvas, div, point, px, size,
 };
@@ -63,7 +63,7 @@ impl Render for Baked {
                 let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                 let side = w.max(h) * NEAR;
                 let centre = bounds.center();
-                let square = gpui_kit::Bounds::new(
+                let square = gpui::Bounds::new(
                     point(centre.x - px(side / 2.0), centre.y - px(side / 2.0)),
                     size(px(side), px(side)),
                 );
@@ -93,14 +93,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "target/wash-compare.png".into());
-    let text_system = gpui_kit::platform::current_platform(true).text_system();
+    let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
-        gpui_kit::platform::current_headless_renderer,
+        gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let sleeve = sleeve();
@@ -116,25 +116,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let bg = Palette::of(dark).bg.hsla().to_rgb();
         let animated = Animated::new();
-        // At rest, whole, laid over the ground: amplitude and opacity ramps
-        // standing still, the appearance and a full hold.
+        // At rest, whole, laid over the ground: no drift, full opacity, the
+        // appearance and a full hold.
         animated.set_all(
             0,
             &[
-                0.0,
-                0.0,
-                f32::NAN,
-                1.0,
-                1.0,
-                f32::NAN,
                 1.0,
                 if dark { 1.0 } else { 0.0 },
                 bg.r,
                 bg.g,
                 bg.b,
                 1.0,
+                wash::tone_limit(dark),
             ],
         );
+        animated.hold(0, 0.0);
+        animated.hold(1, 1.0);
+        animated.hold(2, 1.0);
         let shaded = field.clone();
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |_, cx| {
             cx.new(|_| Shaded(shaded, animated))

@@ -1,0 +1,1 @@
+- **Screen readers in the kōan GUI app.** A track in a grouped queue or playlist is read with its place among the tracks, not among the rows with record headings counted; an artist page's tiles are numbered through their section rather than restarting each row; a shelf counts only the tiles it shows; and the sidebar's notice is announced as it changes.

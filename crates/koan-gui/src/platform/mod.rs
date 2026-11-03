@@ -19,12 +19,11 @@ pub mod startup_error;
 pub mod status_item;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
-use koan_ffi::KoanEngine;
 use koan_kit::app::{App, AsyncApp, Global};
+use koan_runtime::KoanEngine;
 
 use instance::Opened;
 
@@ -99,18 +98,12 @@ pub fn init(
     // by then and nothing waits on the thread. The log's last lines follow in
     // the future.
     //
-    // Only a session this process restored is saved: one it could not read,
-    // or quit before reading, would be replaced by whatever it held instead.
-    let restored_ok = Arc::new(AtomicBool::new(false));
+    // The engine saves the session only once this run has read it back, or
+    // the person has changed the queue since (`save_session`).
     cx.on_app_quit({
         let engine = engine.clone();
-        let restored_ok = restored_ok.clone();
         move |cx| {
-            if restored_ok.load(Ordering::Acquire) {
-                save_on_leaving(&engine);
-            } else {
-                log::info!("quit: the session was never restored, so it is left as it was");
-            }
+            save_on_leaving(&engine);
             engine.release_output();
             engine.flush_settings();
             engine.release_funnel();
@@ -123,9 +116,6 @@ pub fn init(
     let (restored, restoring) = futures_channel::oneshot::channel();
     cx.spawn(async move |cx: &mut AsyncApp| {
         let outcome = restore_session(&engine).await;
-        if outcome.is_some() {
-            restored_ok.store(true, Ordering::Release);
-        }
         let _ = restored.send(outcome);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
@@ -167,13 +157,12 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
 /// Bring the app and its window to the front.
 pub fn to_front(cx: &mut App) {
     cx.activate(true);
-    // Kept running with the main window closed: it opens again.
-    if residency::keep_running(cx)
-        && crate::app::main_window(cx).is_none()
-        && crate::app::show_window(cx)
-    {
+    // The main window to the front, or open again where it was left: kept
+    // running with it closed, or another window (Settings, EQ) still open.
+    if crate::app::show_window(cx) {
         return;
     }
+    // Before launching has decided about the main window: whatever shows.
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }

@@ -1,0 +1,1 @@
+- **QR codes never take the window down.** In the kōan GUI app a QR code given fewer modules than its grid draws the missing ones light rather than crashing.

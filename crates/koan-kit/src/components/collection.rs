@@ -19,8 +19,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{EmptyState, PageHeader, Pill, RowMetrics, ScrollArea, SectionHeading, TileGrid};
 use crate::theme::{Look, Space};
@@ -53,7 +53,6 @@ enum Items {
 pub struct CollectionSection {
     heading: SectionHeading,
     items: Items,
-    reveal: Option<usize>,
 }
 
 impl CollectionSection {
@@ -67,7 +66,6 @@ impl CollectionSection {
                     .map(IntoElement::into_any_element)
                     .collect(),
             ),
-            reveal: None,
         }
     }
 
@@ -81,7 +79,6 @@ impl CollectionSection {
         Self {
             heading,
             items: Items::Tiles(grid, tiles.into_iter().collect()),
-            reveal: None,
         }
     }
 
@@ -91,15 +88,7 @@ impl CollectionSection {
         Self {
             heading,
             items: Items::Rows(rows.into_iter().collect()),
-            reveal: None,
         }
-    }
-
-    /// Scrolls item `ix` of this section into view when it changes: the
-    /// one under the page's keyboard cursor.
-    pub fn reveal(mut self, ix: Option<usize>) -> Self {
-        self.reveal = ix;
-        self
     }
 
     fn is_empty(&self) -> bool {
@@ -116,6 +105,7 @@ pub struct Collection {
     header: Option<PageHeader>,
     sections: Vec<CollectionSection>,
     empty: Option<EmptyState>,
+    follow: Option<super::CursorSpot>,
 }
 
 impl Collection {
@@ -126,7 +116,15 @@ impl Collection {
             header: None,
             sections: Vec::new(),
             empty: None,
+            follow: None,
         }
+    }
+
+    /// Brings the page's keyboard cursor into view as the keys move it,
+    /// wherever it is laid out: a pill in its flow, a tile in its row.
+    pub fn follow(mut self, spot: &super::CursorSpot) -> Self {
+        self.follow = Some(spot.clone());
+        self
     }
 
     pub fn header(mut self, header: PageHeader) -> Self {
@@ -155,10 +153,13 @@ impl RenderOnce for Collection {
         let margin = RowMetrics::page_margin(&look);
         let cell = self.width.0.clone();
         let measure = canvas(
-            move |bounds, window, cx| {
+            move |bounds, window, _| {
+                // A notify from inside the frame that measured is cleared with
+                // that frame; the next one is asked for instead, which draws
+                // the tiles at the width just found.
                 if cell.get() != Some(bounds.size.width) {
                     cell.set(Some(bounds.size.width));
-                    cx.notify(window.current_view());
+                    window.request_animation_frame();
                 }
             },
             |_, _, _, _| {},
@@ -177,13 +178,10 @@ impl RenderOnce for Collection {
                 .pb(RowMetrics::header_gap(&look))
                 .into_any_element()
         }));
-        let mut reveal = None;
         for section in self.sections {
             lines.push(inset(section.heading.into_any_element()).into_any_element());
-            let first = lines.len();
             match section.items {
                 Items::Pills(pills) => {
-                    reveal = reveal.or(section.reveal.map(|_| first));
                     lines.push(
                         inset(
                             div()
@@ -198,12 +196,10 @@ impl RenderOnce for Collection {
                 }
                 Items::Tiles(grid, tiles) => {
                     let columns = grid.columns.max(1);
-                    reveal = reveal.or(section.reveal.map(|ix| first + ix / columns));
                     let mut tiles = tiles.into_iter().peekable();
                     while tiles.peek().is_some() {
-                        // On the grid's own inset: the page's margin and a
-                        // share of the spare width, so the tiles keep their
-                        // size as the window resizes.
+                        // On the grid's inset, the page's margin: the first
+                        // column is level with the heading above it.
                         lines.push(
                             div()
                                 .w_full()
@@ -217,7 +213,6 @@ impl RenderOnce for Collection {
                     }
                 }
                 Items::Rows(rows) => {
-                    reveal = reveal.or(section.reveal.map(|ix| first + ix));
                     lines.extend(
                         rows.into_iter()
                             .map(|row| div().w_full().child(row).into_any_element()),
@@ -240,14 +235,20 @@ impl RenderOnce for Collection {
                         .child(div().w_full().flex().flex_col().children(lines))
                         .child(div().flex_1().flex().child(state)),
                 ),
-                _ => d.child(ScrollArea::items(self.id, lines).reveal(reveal)),
+                _ => {
+                    let area = ScrollArea::items(self.id, lines);
+                    d.child(match &self.follow {
+                        Some(spot) => area.follow(spot),
+                        None => area,
+                    })
+                }
             })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
@@ -290,10 +291,10 @@ mod tests {
     /// The collection measures itself, so the page's tiles come on the
     /// next frame in as many columns as fit, one more than fits wrapping to
     /// a row of its own.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn tiles_fill_the_measured_columns_and_wrap(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (page, cx) = cx.add_window_view(|_, _| Page {
@@ -307,6 +308,8 @@ mod tests {
         });
         let columns = columns.expect("measured after the first frame");
         assert!(columns > 1);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
         let first = cx.debug_bounds("tile-0").expect("tiles drawn");
         let second = cx.debug_bounds("tile-1").unwrap();
         let wrapped = cx

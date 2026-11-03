@@ -1,0 +1,1 @@
+- **Main passes its format and lint checks again.** An unused import, two files formatted, and the theme ratchet lowered to what the EQ graph now holds.

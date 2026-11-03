@@ -1,11 +1,13 @@
 use gpui_kit::component::input::{Input, InputState};
 
+use gpui::prelude::FluentBuilder;
+use gpui::{
+    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
+};
 /// What a `TextField` edits and what it reports: the page owns the state,
 /// made with `cx.new(|cx| InputState::new(window, cx))`, and subscribes to
 /// its `InputEvent`s.
 pub use gpui_kit::component::input::{InputEvent, InputState as FieldState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{App, Entity, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
 
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
@@ -26,6 +28,7 @@ pub struct TextField {
     state: Entity<InputState>,
     ground: bool,
     disabled: bool,
+    role: TypeRole,
 }
 
 impl TextField {
@@ -34,12 +37,20 @@ impl TextField {
             state: state.clone(),
             ground: true,
             disabled: false,
+            role: TypeRole::Control,
         }
     }
 
     /// Not editable, and faded: while what it feeds is under way.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Its text in `role` rather than `control`: a search box's large
+    /// query.
+    pub fn role(mut self, role: TypeRole) -> Self {
+        self.role = role;
         self
     }
 
@@ -53,7 +64,17 @@ impl TextField {
 impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let line = look.line_height(TypeRole::Control);
+        let line = look.line_height(self.role);
+        let id = gpui::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
+        let answers = super::Answerer::of(&id, window, cx);
+        let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
+        let was = window.use_keyed_state(super::child(&id, "focused"), cx, |_, _| focused);
+        if *was.read(cx) != focused {
+            was.update(cx, |was, _| *was = focused);
+            if focused {
+                answers.start(super::Answer::Sweep, look.accent.hsla(), cx);
+            }
+        }
         div()
             .relative()
             .flex()
@@ -74,8 +95,40 @@ impl RenderOnce for TextField {
                     .px(px(0.0))
                     .py(px(0.0))
                     .h(line)
-                    .text_role(TypeRole::Control, &look)
+                    .text_role(self.role, &look)
                     .text_color(look.palette.ink.hsla()),
             )
+            .children(answers.layer(window, cx))
+    }
+}
+
+/// What a `TextArea` edits: the page owns it, made with
+/// `cx.new(|cx| AreaState::new(window, cx).rows(6))`.
+pub use gpui_kit::component::input::TextareaState as AreaState;
+
+/// Several lines of text pasted or typed (a measurement's rows): `control`
+/// type in `ink` on a square `surface` ground, as a `TextField`.
+#[derive(IntoElement)]
+pub struct TextArea {
+    state: Entity<AreaState>,
+}
+
+impl TextArea {
+    pub fn new(state: &Entity<AreaState>) -> Self {
+        Self {
+            state: state.clone(),
+        }
+    }
+}
+
+impl RenderOnce for TextArea {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .p(look.space(Space::S))
+            .bg(look.palette.surface.hsla())
+            .text_role(TypeRole::Control, &look)
+            .text_color(look.palette.ink.hsla())
+            .child(gpui_kit::component::input::Textarea::new(&self.state).appearance(false))
     }
 }

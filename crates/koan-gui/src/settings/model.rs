@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use koan_ffi::{KoanEngine, KoanError, Settings};
-use koan_kit::app::{Context, SharedString, Subscription, Task};
+use koan_kit::app::{App, Context, SharedString, Subscription, Task};
+use koan_runtime::{KoanEngine, KoanError, Settings};
 
 use crate::mirror::{Mirror, Slice};
 
@@ -64,6 +64,9 @@ pub(crate) struct Draft {
     /// Writes landed so far. A read of the file that began before the last
     /// of them may have read the file before it, and is not applied.
     writes: u64,
+    /// A write in the chain under way failed, though a later one may have
+    /// landed.
+    chain_failed: bool,
 }
 
 impl Draft {
@@ -73,6 +76,7 @@ impl Draft {
             writing: Vec::new(),
             queued: Vec::new(),
             writes: 0,
+            chain_failed: false,
         }
     }
 
@@ -120,7 +124,14 @@ impl Draft {
     /// file holds. True when edits are waiting for another.
     pub(crate) fn failed(&mut self) -> bool {
         self.writing.clear();
+        self.chain_failed = true;
         !self.queued.is_empty()
+    }
+
+    /// The chain of writes is done, nothing waiting: true when every write
+    /// in it landed, so what waited on it may run.
+    pub(crate) fn chain_done(&mut self) -> bool {
+        !std::mem::take(&mut self.chain_failed)
     }
 
     /// The file read again, by a read that began after `writes` writes had
@@ -136,6 +147,8 @@ impl Draft {
 
 /// Work that waits for the writes under way to land.
 type Then = Box<dyn FnOnce(&mut SettingsModel, &mut Context<SettingsModel>)>;
+/// What runs once the file has first been read.
+type Loaded = Box<dyn FnOnce(&mut App)>;
 
 /// What a sign-in is called while it runs, by which the pane knows one is.
 pub const SIGNING_IN: &str = "Signing in";
@@ -152,6 +165,9 @@ pub struct SettingsModel {
     shown: Option<Settings>,
     /// Edits made before the file was first read, applied once it has been.
     early: Vec<Edit>,
+    /// What waits for the file's first read: a link that launched the app
+    /// is answered as the settings stand, not as signed out.
+    loaded: Vec<Loaded>,
     /// What waits for the writes under way to land.
     written: Vec<Then>,
     /// The error shown is a write's.
@@ -186,6 +202,7 @@ impl SettingsModel {
             draft: None,
             shown: None,
             early: Vec::new(),
+            loaded: Vec::new(),
             written: Vec::new(),
             write_failed: false,
             last_error: None,
@@ -267,7 +284,15 @@ impl SettingsModel {
                         if start {
                             model.write(cx);
                         }
+                        for then in std::mem::take(&mut model.loaded) {
+                            cx.defer(then);
+                        }
                     }
+                }
+                // Kept running as the file says now, edited here or by
+                // the terminal UI or by hand.
+                if let Some(shown) = model.draft.as_ref().map(Draft::drawn) {
+                    crate::platform::residency::follow_file(shown.devices_keep_running, cx);
                 }
                 model.redraw(cx);
             })
@@ -296,9 +321,23 @@ impl SettingsModel {
         }
     }
 
+    /// Runs `then` once the file has been read: now, if it has. Outside the
+    /// model's update, so it may update the model and its windows.
+    pub(crate) fn when_loaded(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut App) + 'static,
+    ) {
+        if self.draft.is_some() {
+            cx.defer(then);
+        } else {
+            self.loaded.push(Box::new(then));
+        }
+    }
+
     /// Runs `then` once the edits made so far are in the file: now, if none
     /// are waiting.
-    fn when_written(
+    pub(crate) fn when_written(
         &mut self,
         cx: &mut Context<Self>,
         then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
@@ -349,15 +388,23 @@ impl SettingsModel {
                 if more {
                     model.write(cx);
                 } else {
-                    // What waited on a write that failed does not run: a scan
-                    // of a folder that was not saved would clear the error
-                    // saying so.
+                    // What waited on a write that failed does not run, even
+                    // where a later write in the chain landed: a scan of a
+                    // folder that was not saved would clear the error saying
+                    // so.
+                    let whole = model.draft.as_mut().is_none_or(Draft::chain_done);
                     let waiting = std::mem::take(&mut model.written);
-                    if !model.write_failed {
+                    if whole {
                         for then in waiting {
                             then(model, cx);
                         }
                     }
+                    // What was written is the read with the edits over it,
+                    // and only the changed fields went to the file: a sign-in
+                    // landing between the read and the write is in the file
+                    // and not in the draft. Read once the chain is done, so
+                    // no write landing after it drops the read.
+                    model.reload(cx);
                 }
             })
             .ok();
@@ -455,7 +502,7 @@ impl SettingsModel {
             for path in &paths {
                 if !s.library_folders.iter().any(|f| &f.path == path) {
                     // The scan this starts fills the count in.
-                    s.library_folders.push(koan_ffi::LibraryFolder {
+                    s.library_folders.push(koan_runtime::LibraryFolder {
                         path: path.clone(),
                         tracks: 0,
                     });
@@ -550,7 +597,7 @@ impl SettingsModel {
     }
 
     /// Signs in through an invite, then loads the library.
-    pub fn join_invite(&mut self, invite: koan_ffi::Invite, cx: &mut Context<Self>) {
+    pub fn join_invite(&mut self, invite: koan_runtime::Invite, cx: &mut Context<Self>) {
         let host = invite.server.clone();
         self.run(
             SIGNING_IN,
@@ -753,7 +800,7 @@ mod tests {
             devices_keep_running: false,
             share_enabled: false,
             share_port: port,
-            share_invite_to: koan_ffi::InviteTo::Network,
+            share_invite_to: koan_runtime::InviteTo::Network,
             share_url: String::new(),
         }
     }
@@ -761,7 +808,7 @@ mod tests {
     fn add(path: &'static str) -> Edit {
         Rc::new(move |s: &mut Settings| {
             if !s.library_folders.iter().any(|f| f.path == path) {
-                s.library_folders.push(koan_ffi::LibraryFolder {
+                s.library_folders.push(koan_runtime::LibraryFolder {
                     path: path.into(),
                     tracks: 0,
                 });
@@ -806,7 +853,7 @@ mod tests {
     #[test]
     fn an_append_already_in_the_file_is_not_doubled() {
         let mut base = settings(1);
-        base.library_folders.push(koan_ffi::LibraryFolder {
+        base.library_folders.push(koan_runtime::LibraryFolder {
             path: "/music".into(),
             tracks: 10,
         });
@@ -830,6 +877,27 @@ mod tests {
         draft.take();
         assert!(!draft.failed());
         assert!(paths(&draft.drawn()).is_empty());
+    }
+
+    /// A write that failed keeps the chain from counting as written, though
+    /// a write queued behind it landed: what waits on the chain (a scan of
+    /// an unsaved folder) does not run. The next chain starts clean.
+    #[test]
+    fn a_failed_write_spoils_its_chain() {
+        let mut draft = Draft::new(settings(1));
+        draft.edit(add("/a"));
+        draft.take();
+        draft.edit(add("/b"));
+        assert!(draft.failed(), "/b waits");
+        let edits = draft.take();
+        let mut written = settings(1);
+        edits.iter().for_each(|e| e(&mut written));
+        assert!(!draft.wrote(written.clone()));
+        assert!(!draft.chain_done());
+        draft.edit(add("/c"));
+        draft.take();
+        assert!(!draft.wrote(written));
+        assert!(draft.chain_done());
     }
 
     #[test]

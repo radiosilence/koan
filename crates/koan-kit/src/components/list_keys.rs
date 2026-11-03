@@ -12,7 +12,7 @@
 //! out where each key leaves the cursor and what it picks. The app binds the
 //! keys, from the table its shortcuts sheet lists.
 
-use gpui_kit::actions;
+use gpui::actions;
 
 actions!(
     list,
@@ -61,11 +61,13 @@ pub struct ListCursor {
     pub anchor: Option<usize>,
 }
 
-/// What a key did: the row the cursor is on now, and the rows to pick, in
-/// order, inclusive: the one row, or from the anchor to it.
+/// What a key did: the row the cursor is on now, where the pick extends
+/// from (the anchor, or the row itself), and the rows to pick, in order,
+/// inclusive: the one row, or from the anchor to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Moved {
     pub to: usize,
+    pub from: usize,
     pub pick: (usize, usize),
 }
 
@@ -99,8 +101,43 @@ impl ListCursor {
         self.anchor = Some(anchor);
         Moved {
             to,
+            from: anchor,
             pick: (anchor.min(to), anchor.max(to)),
         }
+    }
+
+    /// A click put the cursor on `at`: the keys carry on from there, and a
+    /// ⇧ pick extends from it.
+    pub fn place(&mut self, at: usize) {
+        self.at = Some(at);
+        self.anchor = Some(at);
+    }
+
+    /// A click put the cursor on `at`. A ⇧-click extends the pick from the
+    /// anchor, which it keeps, so ⇧ and the arrows go on from the same
+    /// origin; any other click is the new origin.
+    pub fn click(&mut self, at: usize, extend: bool) {
+        if !extend || self.anchor.is_none() {
+            self.anchor = Some(at);
+        }
+        self.at = Some(at);
+    }
+
+    /// The rows changed under the cursor (a reload, new rows above it): the
+    /// cursor and the anchor stay on the rows they were on, found by key
+    /// from `old` in `new`; one whose row is gone keeps its place, held
+    /// within the new length.
+    pub fn relocate<K: PartialEq>(&mut self, old: &[K], new: &[K]) {
+        let find = |at: Option<usize>| {
+            at.map(|a| {
+                old.get(a)
+                    .and_then(|key| new.iter().position(|n| n == key))
+                    .unwrap_or(a)
+            })
+        };
+        self.at = find(self.at);
+        self.anchor = find(self.anchor);
+        self.clamp(new.len());
     }
 
     /// A list changed under the cursor: held within its new length, or
@@ -121,6 +158,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_shift_click_keeps_the_origin() {
+        let mut c = ListCursor::default();
+        c.click(5, false);
+        c.click(8, true);
+        assert_eq!((c.at, c.anchor), (Some(8), Some(5)));
+        let m = c.step(-5, 10, true).unwrap();
+        assert_eq!(
+            (m.from, m.to, m.pick),
+            (5, 3, (3, 5)),
+            "back past the origin"
+        );
+        c.click(2, false);
+        assert_eq!((c.at, c.anchor), (Some(2), Some(2)));
+        let mut fresh = ListCursor::default();
+        fresh.click(4, true);
+        assert_eq!(fresh.anchor, Some(4), "nothing to extend from");
+    }
+
+    #[test]
+    fn the_cursor_follows_its_row_through_a_reload() {
+        let mut c = ListCursor {
+            at: Some(1),
+            anchor: Some(0),
+        };
+        // Two new rows above, and the anchor's row gone.
+        c.relocate(&[10, 11, 12], &[20, 21, 11, 12]);
+        assert_eq!((c.at, c.anchor), (Some(2), Some(0)));
+        // The cursor's row gone and the list shorter: held at its end.
+        c.relocate(&[20, 21, 11, 12], &[20]);
+        assert_eq!((c.at, c.anchor), (Some(0), Some(0)));
+        c.relocate(&[20], &[] as &[i32]);
+        assert_eq!(c, ListCursor::default(), "an empty list has no cursor");
+    }
+
+    #[test]
     fn the_cursor_steps_and_extends_within_the_list() {
         let mut c = ListCursor::default();
         assert_eq!(c.step(1, 0, false), None, "an empty list has nowhere");
@@ -129,6 +201,7 @@ mod tests {
             c.step(1, 5, false).unwrap(),
             Moved {
                 to: 1,
+                from: 1,
                 pick: (1, 1)
             }
         );
@@ -136,6 +209,7 @@ mod tests {
             c.step(2, 5, true).unwrap(),
             Moved {
                 to: 3,
+                from: 1,
                 pick: (1, 3)
             }
         );
@@ -143,6 +217,7 @@ mod tests {
             c.step(-3, 5, true).unwrap(),
             Moved {
                 to: 0,
+                from: 1,
                 pick: (0, 1)
             }
         );

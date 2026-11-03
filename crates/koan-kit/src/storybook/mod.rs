@@ -10,12 +10,13 @@
 //! alone.
 
 mod more;
+mod playground;
 
 use std::sync::Arc;
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use crate::components::{
     Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Cover, CoverArt,
@@ -49,10 +50,12 @@ pub enum Story {
     Lists,
     Panels,
     Motion,
+    Rainbow,
+    Playground,
 }
 
 impl Story {
-    pub const ALL: [Story; 16] = [
+    pub const ALL: [Story; 18] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -69,6 +72,8 @@ impl Story {
         Story::Lists,
         Story::Panels,
         Story::Motion,
+        Story::Rainbow,
+        Story::Playground,
     ];
 
     /// Its name in the sidebar, and its PNG's.
@@ -90,6 +95,8 @@ impl Story {
             Story::Lists => "tables and lists",
             Story::Panels => "panels and sheets",
             Story::Motion => "motion and drag",
+            Story::Rainbow => "rainbow",
+            Story::Playground => "motion playground",
         }
     }
 
@@ -181,6 +188,7 @@ pub struct StoryContent {
     tooltip: Entity<Tooltip>,
     outputs: Entity<Menu>,
     more: more::State,
+    playground: playground::State,
     _accent: Subscription,
 }
 
@@ -231,6 +239,7 @@ impl StoryContent {
                     .note("Living room plays the original files. ReplayGain and fades don't apply.")
             }),
             more: more::State::new(window, cx),
+            playground: playground::State::new(),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -357,7 +366,8 @@ impl StoryContent {
                 .gap(look.space(Space::M))
         };
         match self.story {
-            Story::Collections | Story::Lists | Story::Panels | Story::Motion => {
+            Story::Playground => self.playground(look, window, cx),
+            Story::Collections | Story::Lists | Story::Panels | Story::Motion | Story::Rainbow => {
                 self.more(look, window, cx)
             }
             Story::Type => {
@@ -796,7 +806,7 @@ impl StoryContent {
             ],
             Story::Covers => {
                 let side = look.spaced(120.0);
-                let warm = gpui_kit::hsla(0.05, 0.6, 0.45, 1.0);
+                let warm = gpui::hsla(0.05, 0.6, 0.45, 1.0);
                 vec![
                     SectionHeader::new("Covers").into_any_element(),
                     row()
@@ -813,19 +823,28 @@ impl StoryContent {
                     SectionHeader::new("Record tiles").into_any_element(),
                     row()
                         .child(
-                            TileArt::new(side, TileSleeve::Colour(warm))
+                            TileArt::new(("story-tile", 1usize), side, TileSleeve::Colour(warm))
                                 .codec(Some("FLAC".into()))
                                 .badge(Some("Deluxe".into()))
-                                .heart(Some((true, false))),
+                                .heart(true, false, true),
                         )
-                        .child(TileArt::new(side, TileSleeve::Loading).mark(Some(TileMark::Play)))
                         .child(
-                            TileArt::new(side, TileSleeve::Missing)
+                            TileArt::new(("story-tile", 2usize), side, TileSleeve::Loading)
+                                .mark(Some(TileMark::Play)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 3usize), side, TileSleeve::Missing)
                                 .on_device(Some(0.4))
                                 .mark(Some(TileMark::Starting)),
                         )
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(true)))
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(false)))
+                        .child(
+                            TileArt::new(("story-tile", 4usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(true)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 5usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(false)),
+                        )
                         .into_any_element(),
                 ]
             }

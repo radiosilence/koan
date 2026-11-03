@@ -6,15 +6,24 @@
 //! (`appearance.rainbow`). A Charli XCX track brings it out for itself one
 //! time in four, in brat's lime, and puts it away when the next track starts.
 //!
-//! Off, it costs nothing. On, its one timer, the accent's step every two
-//! seconds, runs only while a window of the app is in front and motion is
-//! allowed (neither Reduce Motion nor Low Power), and stops or starts as
-//! those change.
+//! On, it also goes out on the GPU (koan-kit's `prism`): each window's root
+//! lays a layer over the wash that flows with the analyser's bands, a pulse
+//! at the edges on the beat and a mirror ball; the playing bars become
+//! ribbons, the seek bar a rainbow trail, the tile under the pointer and the
+//! playing title shimmer; confetti flies when it comes out and from a heart
+//! as it is favourited, and a sweep of colour crosses the window when the
+//! record changes.
+//!
+//! Off, it costs nothing: no quad of it is mounted and the analyser is not
+//! read for it. On, its one timer, the accent's step every two seconds, and
+//! the prism's clock run only while a window of the app is in front and
+//! motion is allowed (neither Reduce Motion nor Low Power), and stop or
+//! start as those change.
 
 use std::time::Duration;
 
-use koan_ffi::QueueItem;
 use koan_kit::app::*;
+use koan_runtime::QueueItem;
 
 use crate::engine::engine;
 use crate::mirror::Mirror;
@@ -73,13 +82,21 @@ pub struct Rainbow {
 
 impl Global for Rainbow {}
 
-/// What the windows paint: nothing of the rainbow, its own palette, or
-/// brat's. Changed only when that changes, so a window's root, which
-/// observes it, is not woken by a key pressed or a step of the cycle.
+/// Moves each time something is worth confetti: the window in front throws
+/// it from the pointer.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub struct Painted(pub Option<bool>);
+pub struct Celebration(pub u64);
 
-impl Global for Painted {}
+impl Global for Celebration {}
+
+/// Confetti from the pointer in the window in front, while the rainbow is
+/// drawn: a heart just favourited.
+pub fn celebrate(cx: &mut App) {
+    if Rainbow::drawn(cx) {
+        let next = cx.try_global::<Celebration>().map_or(1, |c| c.0 + 1);
+        cx.set_global(Celebration(next));
+    }
+}
 
 impl Rainbow {
     /// Whether the rainbow is drawn: switched on, or brought out by a track.
@@ -160,7 +177,6 @@ pub fn install(cx: &mut App) {
         active: true,
         ..Default::default()
     });
-    cx.set_global(Painted::default());
     listen(toggle, cx).detach();
     // Reduce Motion or Low Power switched while it is on: the cycle stops
     // or starts again.
@@ -175,9 +191,10 @@ pub fn install(cx: &mut App) {
 }
 
 /// How much of the code is in before the keys it goes on with are held back
-/// from the app: the first ↑ ↑ still move a list, and from the first ↓ on,
-/// what continues the code does nothing else until it is done or broken.
-const HOLD: usize = 2;
+/// from the app: every arrow, since ↑ ↑ ↓ ↓ ← → ← → is ordinary use of a
+/// list or a grid and always moves it. Only B and A, once the arrows are in,
+/// do nothing else.
+const HOLD: usize = 8;
 
 /// How much of the code `recent` ends in: the longest of its ends that the
 /// code starts with.
@@ -194,9 +211,9 @@ fn matched(recent: &[String]) -> usize {
 }
 
 /// Every key pressed in the app's windows, before anything takes it,
-/// against `CODE`; `then` runs when it has been typed. Once `HOLD` keys of
-/// it are in, a key that carries it on is kept from the app (a list's
-/// arrows, a hotkey's letter); a key that breaks it goes through as usual.
+/// against `CODE`; `then` runs when it has been typed. Once its arrows are
+/// in (`HOLD`), B and A are kept from the app, so a hotkey on either does
+/// not run; a key that breaks it goes through as usual.
 /// Typing in a field is typing, and a key held with Control, Option, Command
 /// or Fn is a shortcut: neither is part of a code, and either starts it
 /// over. Shift is not: a capital B is still B.
@@ -281,6 +298,9 @@ pub fn set_active(active: bool, cx: &mut App) {
 /// windows, and sets the accent now.
 fn refresh(cx: &mut App) {
     let drawn = Rainbow::drawn(cx);
+    // The sheen is a wash whatever "colours from the record" says, so the
+    // panels clear for it as they do for the record's.
+    KoanTheme::set_painted_wash(drawn, cx);
     let cycling = drawn && cx.global::<Rainbow>().active && KoanTheme::motion_allowed(cx);
     if drawn {
         let r = cx.global::<Rainbow>();
@@ -314,14 +334,12 @@ fn refresh(cx: &mut App) {
         cx.update_global::<Rainbow, _>(|r, _| r.cycle = None);
     }
     // The windows' roots take the wash, and the record's accent back when it
-    // goes.
-    let painted = Painted(drawn.then(|| {
+    // goes: the theme keeps it, and they observe the theme.
+    let painted = drawn.then(|| {
         let r = cx.global::<Rainbow>();
         r.for_track && !r.on
-    }));
-    if cx.try_global::<Painted>() != Some(&painted) {
-        cx.set_global(painted);
-    }
+    });
+    KoanTheme::set_prism(painted, cx);
 }
 
 #[cfg(test)]
@@ -332,8 +350,7 @@ mod tests {
     use crate::components::list_actions as list;
     use core::prelude::v1::test;
 
-    // GPUI's test harness: a window driven with simulated input.
-    use koan_kit::raw::TestAppContext;
+    use koan_kit::app::test::TestAppContext;
 
     static TYPED: AtomicUsize = AtomicUsize::new(0);
 
@@ -343,6 +360,8 @@ mod tests {
 
     /// The arrows the page's list took.
     static MOVED: AtomicUsize = AtomicUsize::new(0);
+    /// The B presses a hotkey on it took.
+    static BOUND: AtomicUsize = AtomicUsize::new(0);
 
     impl Render for Page {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -355,21 +374,23 @@ mod tests {
                 .on_action(|_: &list::Down, _, _| {
                     MOVED.fetch_add(1, Ordering::SeqCst);
                 })
+                .on_action(|_: &list::Pick, _, _| {
+                    BOUND.fetch_add(1, Ordering::SeqCst);
+                })
                 .size_full()
         }
     }
 
     /// The code is heard while a list holds the keyboard, with B and A typed
     /// as capitals too, and holds back the arrows that carry it on.
-    // GPUI's test harness: a window driven with simulated input.
-    #[koan_kit::raw::test]
+    #[koan_kit::app::test::test]
     fn the_code_is_heard_over_a_list(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-            koan_kit::raw::init(cx);
+            koan_kit::app::platform::init(cx);
             cx.bind_keys([
                 KeyBinding::new("up", list::Up, Some("List")),
                 KeyBinding::new("down", list::Down, Some("List")),
+                KeyBinding::new("b", list::Pick, Some("List")),
             ]);
             listen(
                 |_| {
@@ -388,15 +409,16 @@ mod tests {
         assert_eq!(TYPED.load(Ordering::SeqCst), 1);
         assert_eq!(
             MOVED.load(Ordering::SeqCst),
-            2,
-            "the first two arrows move the list, the rest are held for the code"
+            4,
+            "every arrow of the code moves the list"
         );
-        cx.simulate_keystrokes("up up up");
         assert_eq!(
-            MOVED.load(Ordering::SeqCst),
-            5,
-            "a third ↑ breaks it and moves the list"
+            BOUND.load(Ordering::SeqCst),
+            0,
+            "B, after the arrows, is held for the code"
         );
+        cx.simulate_keystrokes("b");
+        assert_eq!(BOUND.load(Ordering::SeqCst), 1, "B alone is the hotkey");
         cx.simulate_keystrokes("escape");
         cx.simulate_keystrokes("up up down down left right left right shift-b shift-a");
         assert_eq!(TYPED.load(Ordering::SeqCst), 2);

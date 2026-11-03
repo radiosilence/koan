@@ -70,9 +70,9 @@ mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
 
-use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
+use self::a11y::{A11y, CapturedA11y};
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -1040,6 +1040,12 @@ pub(crate) struct DeferredDraw {
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    // KOAN: (#1899) Wormhole's a11y replay, for deferred draws.
+    /// The accessibility nodes the element's prepaint added, kept when it ran while the tree was
+    /// being built. A deferred draw that is reused (it sits in a cached view) doesn't prepaint
+    /// again, so this is what puts its nodes back in the tree. Shared, since the draw is copied
+    /// into every frame that reuses it.
+    a11y: Option<Rc<CapturedA11y>>,
 }
 
 pub(crate) struct Frame {
@@ -1281,6 +1287,10 @@ pub struct Window {
         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    // KOAN: the colour slot table's generation as last presented, and
+    // whether a slot the scene draws with was moving then (#1859).
+    color_slot_generation: Cell<u64>,
+    color_slot_moving: Cell<bool>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1298,6 +1308,9 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    // KOAN: draws so far, which a cached view's ranges are checked against
+    // (`view.rs`).
+    pub(crate) frames_drawn: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -1918,7 +1931,10 @@ impl Window {
                     // uniforms read afresh, with no frame drawn (#1641).
                     || handle
                         .update(&mut cx, |_, window, _| {
-                            window.rendered_frame.scene.take_shader_present()
+                            // KOAN: or a colour slot it draws with moved
+                            // (#1859).
+                            let slots = window.take_color_slot_present();
+                            window.rendered_frame.scene.take_shader_present() | slots
                         })
                         .unwrap_or(false)
                 {
@@ -1930,7 +1946,9 @@ impl Window {
                 // KOAN: a live shader keeps the frames coming (#1641).
                 let live = handle
                     .update(&mut cx, |_, window, _| {
-                        let live = window.rendered_frame.scene.has_live_shaders();
+                        let live = window.rendered_frame.scene.has_live_shaders()
+                            // KOAN: so does a moving colour slot (#1859).
+                            || window.color_slot_moving.get();
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
                             || live
@@ -2196,6 +2214,8 @@ impl Window {
             visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
+            color_slot_generation: Cell::new(0), // KOAN: #1859.
+            color_slot_moving: Cell::new(false), // KOAN: #1859.
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -2213,6 +2233,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             focus_generation: 0,
+            frames_drawn: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -2730,6 +2751,14 @@ impl Window {
         AsyncWindowContext::new_context(cx.to_async(), self.handle)
     }
 
+    // KOAN: (#1871) a frame number for work spread over frames.
+    /// The number of the frame being drawn, counted from the window's first:
+    /// what work spread over several frames, such as uploads, can be
+    /// budgeted by.
+    pub fn frame_number(&self) -> u64 {
+        self.frames_drawn
+    }
+
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
@@ -2909,6 +2938,17 @@ impl Window {
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_quads(&self) -> Vec<Quad> {
         self.rendered_frame.scene.quads.clone()
+    }
+
+    // KOAN: the shader quads in the most recently rendered frame's scene,
+    // layer groups included, so tests can hold what draws at rest (#1741).
+    /// The number of shader quads in the most recently rendered frame's scene.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_shader_count(&self) -> usize {
+        fn count(scene: &Scene) -> usize {
+            scene.shaders.len() + scene.layer_groups.iter().map(count).sum::<usize>()
+        }
+        count(&self.rendered_frame.scene)
     }
 
     /// Returns the underlines in the most recently rendered frame's scene.
@@ -3451,6 +3491,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.frames_drawn += 1; // KOAN: view.rs.
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3630,6 +3671,23 @@ impl Window {
         self.invalidator.replace_views(views);
     }
 
+    // KOAN: whether this refresh should present for the colour slots the
+    // scene draws with: one moves, one was written since the last present,
+    // or the motion has just ended and its last value is still to be shown
+    // (#1859).
+    fn take_color_slot_present(&self) -> bool {
+        let scene = &self.rendered_frame.scene;
+        if scene.color_slots.is_empty() {
+            self.color_slot_moving.set(false);
+            return false;
+        }
+        let generation = crate::color_slots_generation();
+        let changed = self.color_slot_generation.replace(generation) != generation;
+        let moving = scene.color_slots_moving(crate::present_now());
+        let landing = self.color_slot_moving.replace(moving) && !moving;
+        changed || moving || landing
+    }
+
     #[profiling::function]
     fn present(&mut self) {
         #[cfg(feature = "profiler")]
@@ -3639,6 +3697,14 @@ impl Window {
         // KOAN: what this present shows of the shaders is taken as shown
         // (#1641).
         self.rendered_frame.scene.take_shader_present();
+        // KOAN: the colour slots as this present shows them (#1859).
+        self.color_slot_generation
+            .set(crate::color_slots_generation());
+        let scene = &self.rendered_frame.scene;
+        let moving = !scene.color_slots.is_empty() && scene.color_slots_moving(crate::present_now());
+        if moving {
+            self.color_slot_moving.set(true);
+        }
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
@@ -3882,6 +3948,13 @@ impl Window {
             // case, instead update the tooltip's visibility here.
             let is_visible =
                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
+            // KOAN: a tooltip asked for and whether it was drawn (#1814).
+            log::debug!(
+                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
+                mouse_position,
+                self.mouse_position(),
+                tooltip_bounds
+            );
             if !is_visible {
                 continue;
             }
@@ -3928,7 +4001,15 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (
+                    element,
+                    parent_node,
+                    current_view,
+                    rem_size,
+                    absolute_offset,
+                    prepaint_range,
+                    a11y,
+                ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -3941,12 +4022,16 @@ impl Window {
                         deferred_draw.rem_size,
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
+                        deferred_draw.a11y.take(),
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
+                    // Like a cached view, a deferred draw that is reused later must be able to
+                    // put its nodes back: they are added here, outside of any view's prepaint.
+                    let a11y_mark = self.a11y.is_active().then(|| self.a11y.mark());
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
@@ -3954,9 +4039,17 @@ impl Window {
                             });
                         });
                     });
-                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
+                    let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                    deferred_draw.element = Some(element);
+                    deferred_draw.a11y = a11y_mark.map(|mark| Rc::new(self.a11y.capture(&mark)));
                 } else {
                     self.reuse_prepaint(prepaint_range);
+                    if self.a11y.is_active()
+                        && let Some(a11y) = &a11y
+                    {
+                        self.a11y.replay(a11y, self.focus);
+                    }
+                    self.next_frame.deferred_draws[deferred_draw_ix].a11y = a11y;
                 }
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
@@ -4000,6 +4093,11 @@ impl Window {
                 })
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
+                if self.a11y.is_active()
+                    && let Some(a11y) = &deferred_draw.a11y
+                {
+                    self.a11y.reuse_action_listeners(a11y);
+                }
             }
             let paint_end = self.paint_index();
             deferred_draw.paint_range = paint_start..paint_end;
@@ -4073,6 +4171,7 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
+                    a11y: deferred_draw.a11y.clone(),
                 }),
         );
     }
@@ -4555,6 +4654,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+            a11y: None,
         });
     }
 
@@ -4732,8 +4832,41 @@ impl Window {
             program,
             uniforms,
             image: None,
+            group: None,
+            group_inset: Default::default(),
         };
         self.next_frame.scene.insert_primitive(shader);
+    }
+
+    // KOAN: a layer group (#1859).
+    /// Paints what `paint` paints into a texture of its own, which `program`
+    /// composes over `bounds` at each present, sampling it with
+    /// `koan_sample`: content drawn once, moved, clipped or faded by the
+    /// program's tracks with no frame drawn.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_layer_group(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        program: &'static crate::ShaderProgram,
+        uniforms: Arc<crate::ShaderUniforms>,
+        cx: &mut App,
+        paint: impl FnOnce(&mut Self, &mut App),
+    ) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.scene.push_group();
+        paint(self, cx);
+        let shader = crate::PaintShader {
+            order: 0,
+            bounds: self.snap_bounds(bounds),
+            content_mask: self.snapped_content_mask(),
+            program,
+            uniforms,
+            image: None,
+            group: None,
+            group_inset: Default::default(),
+        };
+        self.next_frame.scene.pop_group(shader);
     }
 
     // KOAN: shader quads (#1641).
@@ -4769,6 +4902,8 @@ impl Window {
             program,
             uniforms,
             image: Some(tile),
+            group: None,
+            group_inset: Default::default(),
         };
         self.next_frame.scene.insert_primitive(shader);
         Ok(())
@@ -7133,6 +7268,30 @@ impl Window {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
+    }
+
+    /// Pretend that an assistive technology connected to (or left) this window, as the
+    /// platform's adapter reports it, which the test platform has none of. The next frame
+    /// builds the accessibility tree, or stops building it. (A platform's activation also
+    /// refreshes the window; call [`Self::refresh`] for that.)
+    #[cfg(any(test, feature = "test-support"))]
+    // KOAN: (#1899) Wormhole's test hooks for the a11y replay.
+    pub fn simulate_a11y_active(&mut self, active: bool) {
+        self.a11y.set_active_flag(active);
+    }
+
+    /// The accessibility tree of the last frame that built one, as it was sent to the platform's
+    /// adapter, with the real node ids.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_a11y_tree_update(&self) -> Option<accesskit::TreeUpdate> {
+        self.a11y.last_tree_update().cloned()
+    }
+
+    /// Deliver an action request to the window as the platform's adapter does when an assistive
+    /// technology performs one on a node of the tree.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        self.handle_a11y_action(request, cx);
     }
 
     /// Debug representation of the last frame's accessibility information.

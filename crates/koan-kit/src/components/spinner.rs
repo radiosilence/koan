@@ -18,13 +18,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
+
+use futures::FutureExt as _;
+use futures::future::Shared;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 use smallvec::SmallVec;
 
 use super::placeholder::TRACE;
-use super::{Animated, AnimatedQuad, SHADED, ShaderProgram};
+use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, ShaderProgram};
 use crate::theme::{KoanTheme, Look};
 
 /// One loop: drawn, then undrawn.
@@ -42,6 +45,8 @@ pub struct Spinner {
     /// arrives: the spinner is centred in it.
     reserve: Option<Size<Pixels>>,
     color: Option<Hsla>,
+    /// What a screen reader announces while it shows, under its id.
+    announce: Option<(ElementId, SharedString)>,
 }
 
 impl Spinner {
@@ -51,7 +56,17 @@ impl Spinner {
             side,
             reserve: None,
             color: None,
+            announce: None,
         }
+    }
+
+    /// Standing for content on its way, as a loading pane's spinner does:
+    /// a screen reader announces `label` ("loading keys") politely as it
+    /// appears. A spinner beside words that already say so, or in a control
+    /// that has its own name, stays decorative.
+    pub fn announced(mut self, id: impl Into<ElementId>, label: impl AsRef<str>) -> Self {
+        self.announce = Some((id.into(), crate::theme::label(label)));
+        self
     }
 
     /// Drawn in `color` rather than `muted`: the placeholder's faded mark.
@@ -194,9 +209,9 @@ static START: OnceLock<Instant> = OnceLock::new();
 const FIELD: u32 = 128;
 
 /// The stroke as a fragment program sampling the field. Uniforms: 0 whether
-/// it turns (else the whole mark), 1 a loop's length in seconds, 2 the
-/// stroke's length and 3 the brush's half-width, both in device pixels, 4
-/// the field's distance range in device pixels; 8..12 the colour.
+/// it turns (else the whole mark), 2 the stroke's length and 3 the brush's
+/// half-width, both in device pixels, 4 the field's distance range in device
+/// pixels; 8..12 the colour. Track 0 the turn's phase, looping 0 to 1.
 static ENSO: ShaderProgram = ShaderProgram {
     name: "koan-enso",
     msl: r#"
@@ -206,7 +221,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float away = field.g * u[4];
     float cover = clamp(u[3] - away + 0.5, 0.0, 1.0);
     if (u[0] > 0.5) {
-        float phase = fract(time / u[1]);
+        float phase = koan_track(u, 0, time);
         float head = phase < 0.5 ? smoothstep(0.0, 1.0, phase * 2.0) : 1.0;
         float tail = phase < 0.5 ? 0.0 : smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
         cover *= clamp((head - along) * u[2] + 0.5, 0.0, 1.0);
@@ -216,13 +231,13 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let field = koan_sample(tile, position / size);
     let along = field.r;
     let away = field.g * u[1].x;
     var cover = clamp(u[0].w - away + 0.5, 0.0, 1.0);
     if (u[0].x > 0.5) {
-        let phase = fract(time / u[0].y);
+        let phase = koan_track(u, 0u, time);
         var head = 1.0;
         var tail = 0.0;
         if (phase < 0.5) {
@@ -250,8 +265,42 @@ struct Field {
     half_brush: f32,
 }
 
-thread_local! {
-    static FIELD_IMAGE: Rc<Field> = Rc::new(bake_field());
+/// The field, baked once for every spinner.
+static FIELD_IMAGE: OnceLock<Field> = OnceLock::new();
+
+/// The bake in flight, for each spinner drawn before it lands to wait on.
+struct Baking(Shared<Task<()>>);
+
+impl Global for Baking {}
+
+/// The field, once baked. The bake measures every texel against every
+/// segment of the trace, too long for the main thread, so the first spinner
+/// starts it on the background executor and draws its square empty; the
+/// view that drew it is drawn again when the field lands.
+fn baked(window: &mut Window, cx: &mut App) -> Option<&'static Field> {
+    if let Some(field) = FIELD_IMAGE.get() {
+        return Some(field);
+    }
+    let baking = match cx.try_global::<Baking>() {
+        Some(baking) => baking.0.clone(),
+        None => {
+            let task = cx
+                .background_executor()
+                .spawn(async {
+                    FIELD_IMAGE.get_or_init(bake_field);
+                })
+                .shared();
+            cx.set_global(Baking(task.clone()));
+            task
+        }
+    };
+    let view = window.current_view();
+    cx.spawn(async move |cx| {
+        baking.await;
+        cx.update(|cx| cx.notify(view));
+    })
+    .detach();
+    None
 }
 
 /// For each texel of a unit square holding the ensō as `lay_out` fits it,
@@ -330,24 +379,47 @@ impl RenderOnce for Spinner {
         let look = Look::of(window, cx);
         let color = self.color.unwrap_or(look.palette.muted.hsla());
         let moving = KoanTheme::motion_allowed(cx);
+        let announce = self.announce.clone();
+        let mark = self.mark(color, moving, window, cx);
+        match announce {
+            Some((id, label)) => super::announced(div().id(id), label, crate::theme::Tone::Muted)
+                .flex_none()
+                .child(mark)
+                .into_any_element(),
+            None => mark,
+        }
+    }
+}
+
+impl Spinner {
+    fn mark(self, color: Hsla, moving: bool, window: &mut Window, cx: &mut App) -> AnyElement {
         if SHADED {
-            let field = FIELD_IMAGE.with(Rc::clone);
+            let Some(field) = baked(window, cx) else {
+                return reserving(div().size(self.side).flex_none(), self.reserve);
+            };
             let side = f32::from(self.side) * window.scale_factor();
-            let rgba = color.to_rgb();
             let animated = Animated::new();
             animated.set_all(
                 0,
                 &[
                     if moving { 1.0 } else { 0.0 },
-                    TURN.as_secs_f32(),
+                    0.0,
                     field.length * side,
                     field.half_brush * side,
                     field.range * side,
                 ],
             );
-            animated.set_all(8, &[rgba.r, rgba.g, rgba.b, rgba.a]);
-            animated.set_origin(*START.get_or_init(Instant::now));
-            animated.run(moving);
+            animated.set_color(8, color);
+            // Every spinner turns in step, from the first one drawn.
+            animated.segment(
+                0,
+                0.0,
+                1.0,
+                *START.get_or_init(Instant::now),
+                TURN,
+                Ease::Linear,
+                Repeat::Loop,
+            );
             let mark = AnimatedQuad::new(&ENSO, &animated)
                 .image(field.image.clone())
                 .decorative()

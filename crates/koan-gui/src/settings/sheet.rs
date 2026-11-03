@@ -9,10 +9,6 @@ use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's focus and click extensions, for the shell's own handling.
-use koan_kit::raw::base::FocusTrapElement as _;
-// a sheet's height as a share of its window's.
-use koan_kit::raw::relative;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
@@ -65,6 +61,9 @@ pub struct Sheet {
     /// Shown only this once (a key, a password in an invite): another sheet
     /// waits behind it rather than replacing it.
     kept: bool,
+    /// What it asks about, for a question settled elsewhere to take it down
+    /// (`Sheets::withdraw`).
+    about: Option<SharedString>,
 }
 
 impl Sheet {
@@ -78,7 +77,14 @@ impl Sheet {
             dismiss: label("Cancel"),
             dismissed: None,
             kept: false,
+            about: None,
         }
+    }
+
+    /// What it asks about: a pairing, by its code.
+    pub fn about(mut self, about: impl Into<SharedString>) -> Self {
+        self.about = Some(about.into());
+        self
     }
 
     /// What it shows is shown only this once: a sheet put up meanwhile waits
@@ -144,7 +150,7 @@ pub fn field(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputState> {
-    let placeholder = SharedString::from(placeholder.to_owned());
+    let placeholder = crate::theme::label(placeholder);
     cx.new(|cx| {
         InputState::new(window, cx)
             .placeholder(placeholder)
@@ -211,7 +217,9 @@ impl Sheets {
         cx.notify();
     }
 
-    /// Takes the sheet down and gives the keyboard back to where it was.
+    /// Takes the sheet down and gives the keyboard back to where it was. A
+    /// sheet waiting is not put up yet: what was answered may put up one of
+    /// its own, which would replace it (`next`).
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
         self.focus = None;
@@ -219,10 +227,17 @@ impl Sheets {
         if let Some(before) = self.before.take() {
             window.focus(&before, cx);
         }
-        if let Some(next) = self.waiting.pop_front() {
+        cx.notify();
+    }
+
+    /// The next sheet waiting, once what closed the last has run: unless
+    /// that put one up, which the waiting ones follow in turn.
+    fn next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.is_none()
+            && let Some(next) = self.waiting.pop_front()
+        {
             self.show(next, window, cx);
         }
-        cx.notify();
     }
 
     /// The way out, and what it answers where it does.
@@ -236,6 +251,7 @@ impl Sheets {
         if let Some(dismissed) = dismissed {
             dismissed(window, cx);
         }
+        this.update(cx, |sheets, cx| sheets.next(window, cx));
     }
 
     /// Runs an action with what the fields hold now, if it can run with
@@ -258,6 +274,18 @@ impl Sheets {
         let run = action.run.clone();
         this.update(cx, |sheets, cx| sheets.close(window, cx));
         run(&values, window, cx);
+        this.update(cx, |sheets, cx| sheets.next(window, cx));
+    }
+
+    /// Takes down the sheets asking about `about`, up or waiting, without
+    /// answering them: the question was answered elsewhere.
+    pub fn withdraw(&mut self, about: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let asks = |sheet: &Sheet| sheet.about.as_deref() == Some(about);
+        self.waiting.retain(|sheet| !asks(sheet));
+        if self.open.as_ref().is_some_and(asks) {
+            self.close(window, cx);
+            self.next(window, cx);
+        }
     }
 
     pub fn is_open(&self) -> bool {
@@ -337,8 +365,7 @@ impl Sheets {
             );
         }
 
-        let panel = div()
-            .id("sheet")
+        let panel = crate::components::sheet::panel(sheet.title.as_ref(), look)
             .track_focus(&focus)
             .key_context("SettingsSheet")
             // Before a focused field sees it, which may take Escape for its
@@ -352,16 +379,10 @@ impl Sheets {
                     }
                 }
             })
-            .w(look.spaced(460.0))
-            .max_h(relative(0.9))
+            .w(look.sized(460.0))
             .overflow_y_scroll()
-            .flex()
-            .flex_col()
             .gap(look.space(Space::S))
             .p(look.space(Space::L))
-            .bg(look.palette.bg.hsla())
-            .border(look.hairline)
-            .border_color(look.palette.rule.hsla())
             .child(
                 div()
                     .text_role(TypeRole::TitleSmall, look)
@@ -388,8 +409,8 @@ impl Sheets {
                     .child(TextField::new(state))
             }))
             .children(extra)
-            .child(buttons)
-            .focus_trap("sheet-trap", &focus);
+            .child(buttons);
+        let panel = crate::components::sheet::trap_focus(panel, &focus);
 
         Some(
             div()

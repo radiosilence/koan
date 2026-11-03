@@ -189,8 +189,395 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git b/NOTICE b/NOTICE
+new file mode 100644
+index 0000000..51c3bc3
+--- /dev/null
++++ b/NOTICE
+@@ -0,0 +1,5 @@
++gpui-pre 0.3.10, modified
++
++This is a copy of the gpui-pre 0.3.10 crate as published on crates.io (Zed's GPUI, https://github.com/zed-industries/zed), licensed under the Apache License 2.0 (LICENSE-APACHE), with changes made by the kōan project (https://github.com/radiosilence/koan). Each change is marked with a `KOAN:` comment; vendor/patches/gpui-pre.patch in that repository is the whole of it.
++
++The accessibility replay for reused views (src/view.rs, src/window.rs, src/window/a11y.rs, src/window/a11y/debug.rs) is the Wormhole project's change to gpui-pre 0.3.9 (https://github.com/wormhole-terminal/gpui-pre, commit 7b47af1, "view: a reused view keeps its accessibility nodes and action listeners"), modified by the Wormhole project and licensed under the Apache License 2.0.
+diff --git a/src/color.rs b/src/color.rs
+index 3bd893f..e757f27 100644
+--- a/src/color.rs
++++ b/src/color.rs
+@@ -193,6 +193,10 @@ impl Serialize for Rgba {
+ 
+ impl From<Hsla> for Rgba {
+     fn from(color: Hsla) -> Self {
++        // KOAN: a colour naming a slot is the colour the slot shows now (#1859).
++        if let Some(index) = crate::color_slot_of(&color) {
++            return crate::color_slot_rgba(index, color.a);
++        }
+         let h = color.h;
+         let s = color.s;
+         let l = color.l;
+diff --git b/src/color_slots.rs b/src/color_slots.rs
+new file mode 100644
+index 0000000..fbb968f
+--- /dev/null
++++ b/src/color_slots.rs
+@@ -0,0 +1,355 @@
++// KOAN: colours that move on the GPU (#1859).
++//
++// A colour slot is one entry of an app-wide table of moving colours: a
++// colour at each end and a track from 0 to 1 between them. Any quad, shadow,
++// underline or monochrome sprite may name a slot instead of a fixed colour,
++// by an `Hsla` whose hue is 2 or more (`ColorSlot::hsla`): the stock shaders
++// read the table at present time and mix the two ends by the track, so a
++// colour fading moves on a present with no frame drawn. The alpha of that
++// `Hsla` still scales the colour's, so element opacity composes with it.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::Instant;
++
++use parking_lot::Mutex;
++
++use crate::{Hsla, Rgba, Track, TrackRepeat, present_now};
++
++/// How many slots the table holds: as many as fit, with the header, in the
++/// 16 KiB every renderer guarantees a uniform buffer.
++pub const COLOR_SLOTS: usize = 255;
++/// Floats per slot: the `from` colour, the `to` colour, then the track.
++pub const COLOR_SLOT_FLOATS: usize = 16;
++/// Floats before the slots in a frame's table: the time, then padding.
++pub const COLOR_SLOTS_HEADER: usize = 4;
++
++/// The hue at which slot hues start.
++const SLOT_HUE: f32 = 2.0;
++
++struct Table {
++    data: Box<[[f32; COLOR_SLOT_FLOATS]; COLOR_SLOTS]>,
++    used: Box<[bool; COLOR_SLOTS]>,
++    /// When the slot's track stops moving, in table seconds; `f32::INFINITY`
++    /// for one that repeats, and negative for one at rest.
++    ends: Box<[f32; COLOR_SLOTS]>,
++    origin: Instant,
++}
++
++static TABLE: Mutex<Option<Table>> = Mutex::new(None);
++/// Moves whenever a slot is written, so a renderer uploads the table only
++/// when it changed and a window presents once more for the change.
++static GENERATION: AtomicU64 = AtomicU64::new(1);
++
++fn with_table<R>(f: impl FnOnce(&mut Table) -> R) -> R {
++    let mut table = TABLE.lock();
++    let table = table.get_or_insert_with(|| Table {
++        data: Box::new([[0.0; COLOR_SLOT_FLOATS]; COLOR_SLOTS]),
++        used: Box::new([false; COLOR_SLOTS]),
++        ends: Box::new([-1.0; COLOR_SLOTS]),
++        origin: Instant::now(),
++    });
++    f(table)
++}
++
++fn seconds(table: &Table, at: Instant) -> f32 {
++    match at.checked_duration_since(table.origin) {
++        Some(after) => after.as_secs_f32(),
++        None => -table.origin.duration_since(at).as_secs_f32(),
++    }
++}
++
++/// One slot of the table, held while something draws with it, and freed
++/// when dropped.
++#[derive(Debug)]
++pub struct ColorSlot(u16);
++
++impl ColorSlot {
++    /// A free slot standing at `color`, or `None` when every slot is taken.
++    pub fn claim(color: Rgba) -> Option<Self> {
++        let index = with_table(|table| {
++            let Some(index) = table.used.iter().position(|used| !used) else {
++                log::error!("every colour slot is taken: a colour drawn now does not move");
++                return None;
++            };
++            table.used[index] = true;
++            table.ends[index] = -1.0;
++            let rgba = [color.r, color.g, color.b, color.a];
++            let track = Track::hold(1.0).encode();
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&rgba);
++            slot[4..8].copy_from_slice(&rgba);
++            slot[8..16].copy_from_slice(&track);
++            Some(index)
++        })?;
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++        Some(Self(index as u16))
++    }
++
++    /// The colour to draw with: this slot, its alpha scaled by `alpha`.
++    pub fn hsla(&self, alpha: f32) -> Hsla {
++        Hsla {
++            h: SLOT_HUE + self.0 as f32,
++            s: 0.0,
++            l: 0.0,
++            a: alpha,
++        }
++    }
++
++    /// The colour the slot shows at `at`.
++    pub fn at(&self, at: Instant) -> Rgba {
++        with_table(|table| shown(table, self.0 as usize, at))
++    }
++
++    /// Moves from the colour shown now to `to`, along `track`'s curve over
++    /// its length, starting now; `track`'s ends and start are replaced.
++    pub fn to(&self, to: Rgba, track: Track) {
++        let now = present_now();
++        let from = self.at(now);
++        with_table(|table| {
++            rebase(table, now);
++            let start = seconds(table, now);
++            let track = Track {
++                from: 0.0,
++                to: 1.0,
++                start,
++                ..track
++            };
++            let index = self.0 as usize;
++            table.ends[index] = match track.repeat {
++                _ if track.length <= 0.0 => -1.0,
++                TrackRepeat::Once => start + track.length,
++                _ => f32::INFINITY,
++            };
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&[from.r, from.g, from.b, from.a]);
++            slot[4..8].copy_from_slice(&[to.r, to.g, to.b, to.a]);
++            slot[8..16].copy_from_slice(&track.encode());
++        });
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++    }
++
++    /// Moves from the colour shown now to `to` as `to` does, mixed in OKLab:
++    /// the hue turns rather than passing through grey, as the accent does
++    /// when a record arrives.
++    pub fn to_oklab(&self, to: Rgba, track: Track) {
++        let now = present_now();
++        let from = self.at(now);
++        with_table(|table| {
++            rebase(table, now);
++            let start = seconds(table, now);
++            let track = Track {
++                from: 0.0,
++                to: 1.0,
++                start,
++                ..track
++            };
++            let index = self.0 as usize;
++            table.ends[index] = match track.repeat {
++                _ if track.length <= 0.0 => -1.0,
++                TrackRepeat::Once => start + track.length,
++                _ => f32::INFINITY,
++            };
++            let [fl, fa, fb] = srgb_to_oklab([from.r, from.g, from.b]);
++            let [tl, ta, tb] = srgb_to_oklab([to.r, to.g, to.b]);
++            let mut encoded = track.encode();
++            encoded[4] += 16.0;
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&[fl, fa, fb, from.a]);
++            slot[4..8].copy_from_slice(&[tl, ta, tb, to.a]);
++            slot[8..16].copy_from_slice(&encoded);
++        });
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++    }
++
++    /// Stands at `color`.
++    pub fn hold(&self, color: Rgba) {
++        self.to(color, Track::hold(1.0));
++    }
++
++    /// Whether the slot moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        with_table(|table| table.ends[self.0 as usize] > seconds(table, at))
++    }
++}
++
++impl Drop for ColorSlot {
++    fn drop(&mut self) {
++        with_table(|table| {
++            table.used[self.0 as usize] = false;
++            table.ends[self.0 as usize] = -1.0;
++        });
++    }
++}
++
++fn shown(table: &Table, index: usize, at: Instant) -> Rgba {
++    let slot = &table.data[index];
++    let t = Track::decode(&slot[8..16]).at(seconds(table, at));
++    let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
++    let mixed = [mix(0), mix(1), mix(2)];
++    // KOAN: ends held as OKLab, flagged by 16 in the track's code.
++    let [r, g, b] = if slot[12] as u32 >= 16 {
++        oklab_to_srgb(mixed)
++    } else {
++        mixed
++    };
++    // As the stock shaders clamp it: a curve that overshoots (a spring, a
++    // Bezier past its ends) mixes past the ends, never past a colour.
++    Rgba {
++        r: r.clamp(0.0, 1.0),
++        g: g.clamp(0.0, 1.0),
++        b: b.clamp(0.0, 1.0),
++        a: mix(3).clamp(0.0, 1.0),
++    }
++}
++
++/// Track starts are seconds from the table's origin, in f32: an hour on, the
++/// origin moves to now and every slot with it, so the table keeps its
++/// precision for a koan open for days.
++fn rebase(table: &mut Table, now: Instant) {
++    let shift = seconds(table, now);
++    if shift < 3600.0 {
++        return;
++    }
++    table.origin = now;
++    for (slot, end) in table.data.iter_mut().zip(table.ends.iter_mut()) {
++        slot[10] -= shift;
++        if end.is_finite() && *end >= 0.0 {
++            *end -= shift;
++        }
++    }
++}
++
++/// The slot a colour names, if it names one.
++pub fn color_slot_of(color: &Hsla) -> Option<usize> {
++    (color.h >= SLOT_HUE).then(|| ((color.h - SLOT_HUE) as usize).min(COLOR_SLOTS - 1))
++}
++
++/// The colour slot `index` shows now, its alpha scaled by `alpha`: what a
++/// colour naming a slot is wherever the CPU reads it.
++pub fn color_slot_rgba(index: usize, alpha: f32) -> Rgba {
++    color_slot_rgba_at(index, alpha, present_now())
++}
++
++/// The colour slot `index` shows at `at`, its alpha scaled by `alpha`.
++pub fn color_slot_rgba_at(index: usize, alpha: f32, at: Instant) -> Rgba {
++    let mut rgba = with_table(|table| shown(table, index, at));
++    rgba.a *= alpha;
++    rgba
++}
++
++/// Whether colour slot `index` moves at `at`.
++pub fn color_slot_moving(index: usize, at: Instant) -> bool {
++    with_table(|table| table.ends[index] > seconds(table, at))
++}
++
++/// Bytes of a frame's table.
++pub const COLOR_SLOTS_BYTES: usize = (COLOR_SLOTS_HEADER + COLOR_SLOTS * COLOR_SLOT_FLOATS) * 4;
++
++/// The slots a scene draws with, as a bit set.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct ColorSlotSet(Box<[u64; COLOR_SLOTS.div_ceil(64)]>);
++
++impl ColorSlotSet {
++    /// Notes the slot `color` names, if any.
++    pub fn note(&mut self, color: &Hsla) {
++        if let Some(index) = color_slot_of(color) {
++            self.0[index / 64] |= 1 << (index % 64);
++        }
++    }
++
++    /// Whether the set names no slot.
++    pub fn is_empty(&self) -> bool {
++        self.0.iter().all(|word| *word == 0)
++    }
++
++    /// Names no slot.
++    pub fn clear(&mut self) {
++        *self.0 = [0; COLOR_SLOTS.div_ceil(64)];
++    }
++
++    /// Adds every slot `other` names.
++    pub fn extend(&mut self, other: &Self) {
++        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
++            *a |= *b;
++        }
++    }
++
++    /// Whether any slot in the set moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        if self.is_empty() {
++            return false;
++        }
++        with_table(|table| {
++            let now = seconds(table, at);
++            self.0.iter().enumerate().any(|(w, word)| {
++                let mut bits = *word;
++                while bits != 0 {
++                    let index = w * 64 + bits.trailing_zeros() as usize;
++                    if table.ends[index] > now {
++                        return true;
++                    }
++                    bits &= bits - 1;
++                }
++                false
++            })
++        })
++    }
++}
++
++/// The table as the stock shaders read it at `at`: the time, padding, then
++/// every slot. Written into `out`, which is cleared first.
++pub fn color_slots_frame(at: Instant, out: &mut Vec<f32>) {
++    out.clear();
++    with_table(|table| {
++        out.push(seconds(table, at));
++        out.extend([0.0; COLOR_SLOTS_HEADER - 1]);
++        for slot in table.data.iter() {
++            out.extend_from_slice(slot);
++        }
++    });
++}
++
++/// Moves whenever any slot is written.
++pub fn color_slots_generation() -> u64 {
++    GENERATION.load(Ordering::Relaxed)
++}
++
++// KOAN: sRGB and OKLab, for slots mixed in OKLab (#1859): the same
++// matrices as the stock shaders' `koan_oklab_to_srgb`.
++fn srgb_to_oklab(c: [f32; 3]) -> [f32; 3] {
++    let linear = c.map(|v| {
++        if v <= 0.04045 {
++            v / 12.92
++        } else {
++            ((v + 0.055) / 1.055).powf(2.4)
++        }
++    });
++    let [r, g, b] = linear;
++    let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
++    let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
++    let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
++    [
++        0.2104542553 * l + 0.7936177850 * m - 0.0040720426 * s,
++        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
++        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
++    ]
++}
++
++fn oklab_to_srgb([l0, a, b]: [f32; 3]) -> [f32; 3] {
++    let l = (l0 + 0.3963377774 * a + 0.2158037573 * b).powi(3);
++    let m = (l0 - 0.1055613458 * a - 0.0638541728 * b).powi(3);
++    let s = (l0 - 0.0894841775 * a - 1.2914855480 * b).powi(3);
++    let linear = [
++        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
++        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
++        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
++    ];
++    linear.map(|v| {
++        let v = v.clamp(0.0, 1.0);
++        if v <= 0.0031308 {
++            12.92 * v
++        } else {
++            1.055 * v.powf(1.0 / 2.4) - 0.055
++        }
++    })
++}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..2c5b9ec 100644
+index 11f0b72..cbd672e 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -240,31 +627,99 @@ index 11f0b72..2c5b9ec 100644
          if let Some(value) = self.aria.numeric_value {
              node.set_numeric_value(value);
          }
+@@ -3830,6 +3856,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
+                         window,
+                         cx,
+                     ) {
++                        // KOAN: (#1814) as for a hover, the element's own view draws
++                        // again, in case it is cached.
++                        cx.notify(current_view);
+                         long_press_tooltip_active.set(true);
+                         window.prevent_default();
+                         cx.stop_propagation();
+@@ -3931,6 +3960,17 @@ fn handle_tooltip_mouse_move(
+         }
+     };
+ 
++    // KOAN: what the pointer did to the tooltip, as it changes (#1814).
++    match action {
++        Action::None => {}
++        Action::CancelShow => log::debug!("tooltip: cancel show, view {current_view:?}"),
++        Action::ScheduleShow => log::debug!(
++            "tooltip: schedule show, view {current_view:?}, mouse {:?}, keyboard last {}",
++            window.mouse_position(),
++            window.last_input_was_keyboard()
++        ),
++        Action::CheckVisible => log::debug!("tooltip: check visible, view {current_view:?}"),
++    }
+     match action {
+         Action::None => {}
+         Action::CancelShow => {
+@@ -3948,7 +3988,7 @@ fn handle_tooltip_mouse_move(
+                         return;
+                     };
+                     cx.update(|window, cx| {
+-                        show_tooltip(
++                        let shown = show_tooltip(
+                             &active_tooltip,
+                             &build_tooltip,
+                             &check_is_hovered_during_prepaint,
+@@ -3956,6 +3996,16 @@ fn handle_tooltip_mouse_move(
+                             window,
+                             cx,
+                         );
++                        // KOAN: the delay passed (#1814).
++                        log::debug!(
++                            "tooltip: delay passed, view {current_view:?}, built {shown}, still over {}",
++                            check_is_hovered_during_prepaint(window)
++                        );
++                        // KOAN: a refresh replays a cached view's last
++                        // prepaint, made before the tooltip was active, so
++                        // the tooltip of an element in one never showed. Its
++                        // own view draws again and asks for it.
++                        cx.notify(current_view);
+                     })
+                     .ok();
+                 }
 diff --git a/src/gpui.rs b/src/gpui.rs
-index 2328e95..5b5e7bc 100644
+index 2328e95..f00ef65 100644
 --- a/src/gpui.rs
 +++ b/src/gpui.rs
-@@ -52,6 +52,7 @@ pub mod queue;
+@@ -52,6 +52,8 @@ pub mod queue;
  #[cfg(any(test, feature = "bench-support"))]
  pub mod randomized_element_tree;
  mod scene;
 +mod shader; // KOAN: #1641.
++mod color_slots; // KOAN: #1859.
  #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
  mod seeds;
  mod shared_uri;
-@@ -200,6 +201,7 @@ pub use profiler::*;
+@@ -200,6 +202,8 @@ pub use profiler::*;
  pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
  pub use refineable::*;
  pub use scene::*;
 +pub use shader::*; // KOAN: #1641.
++pub use color_slots::*; // KOAN: #1859.
  pub use shared_uri::*;
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..40e041a 100644
+index 6cb3387..fc3b2d5 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,29 @@ pub struct Scene {
+@@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+ #[expect(missing_docs)]
+ pub type DrawOrder = u32;
+ 
++// KOAN: the largest layer group texture made to the group's size, in device
++// pixels: wgpu's default limit, under Metal's. A larger group takes the
++// window's size (#1878).
++const MAX_GROUP_EXTENT: f32 = 8192.0;
++
+ /// A boolean stored as a `u32` so that GPU-facing structs contain no
+ /// compiler-inserted padding bytes, which would be undefined behavior to
+ /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
+@@ -50,6 +55,42 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -277,6 +732,19 @@ index 6cb3387..40e041a 100644
 +    // re-present composes them rather than drawing the whole scene; `None`
 +    // where the shaders cannot be drawn apart from the rest (#1641).
 +    pub shader_layers: Option<Box<ShaderLayers>>,
++    // KOAN: the colour slots this scene draws with, so a window presents
++    // while one of them moves and a renderer redraws the layers holding it
++    // (#1859).
++    pub color_slots: crate::ColorSlotSet,
++    // KOAN: what was painted inside each layer group, as a scene of its own
++    // that a renderer draws into a texture for its shader to compose (#1859).
++    pub layer_groups: Vec<Scene>,
++    // KOAN: where each group's content lies, when its texture is the size
++    // of the shader composing it and its content is moved to its origin;
++    // `None` for one drawn the window's size, as a group holding paths is
++    // (their intermediate texture is the window's) (#1878).
++    pub layer_group_frames: Vec<Option<Bounds<ScaledPixels>>>,
++    group_stack: Vec<usize>,
 +}
 +
 +/// A scene split where its shaders are drawn (#1641).
@@ -294,30 +762,174 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +89,22 @@ impl Scene {
+@@ -66,6 +107,149 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
 +        self.shaders.clear(); // KOAN: shader quads (#1641).
++        self.layer_groups.clear(); // KOAN: #1859.
++        self.layer_group_frames.clear(); // KOAN: #1878.
++        self.group_stack.clear();
++        self.color_slots.clear(); // KOAN: #1859.
++    }
++
++    // KOAN: whether a colour slot this scene draws with moves at `at`
++    // (#1859).
++    pub fn color_slots_moving(&self, at: std::time::Instant) -> bool {
++        self.color_slots.moving(at)
++    }
++
++    // KOAN: the colour slots the primitives name (#1859).
++    fn collect_color_slots(&self) -> crate::ColorSlotSet {
++        let mut set = crate::ColorSlotSet::default();
++        for quad in &self.quads {
++            set.note(&quad.border_color);
++            set.note(&quad.background.solid);
++            for stop in &quad.background.colors {
++                set.note(&stop.color);
++            }
++        }
++        for shadow in &self.shadows {
++            set.note(&shadow.color);
++        }
++        for underline in &self.underlines {
++            set.note(&underline.color);
++        }
++        for sprite in &self.monochrome_sprites {
++            set.note(&sprite.color);
++        }
++        for sprite in &self.subpixel_sprites {
++            set.note(&sprite.color);
++        }
++        for path in &self.paths {
++            set.note(&path.color.solid);
++        }
++        set
 +    }
 +
 +    // KOAN: whether a shader on screen asks for the window to present every
 +    // refresh (#1641).
 +    pub fn has_live_shaders(&self) -> bool {
 +        self.shaders.iter().any(|shader| shader.uniforms.is_live())
++            // KOAN: and in a layer group (#1878).
++            || self.layer_groups.iter().any(Scene::has_live_shaders)
++    }
++
++    // KOAN: whether group `group`, held from an earlier present, is drawn
++    // again at this one, as `compose_frame` decides for its layers (#1878):
++    // while a shader in it is live or a colour slot it draws with moves, once
++    // more after they stop so the last value lands, when the slot table was
++    // written since (a held write, as under Reduce Motion), and when a group
++    // nested in it was drawn again. `was_moving` is the group's from the last
++    // present, updated here; `redrawn` holds the groups drawn this present.
++    pub fn layer_group_stale(
++        &self,
++        group: usize,
++        at: std::time::Instant,
++        slots_written: bool,
++        was_moving: &mut bool,
++        redrawn: &[bool],
++    ) -> bool {
++        let Some(group) = self.layer_groups.get(group) else {
++            return false;
++        };
++        let moving = group.shaders.iter().any(|shader| shader.uniforms.is_live())
++            || group.color_slots_moving(at);
++        let landing = std::mem::replace(was_moving, moving);
++        moving
++            || landing
++            || (slots_written && !group.color_slots.is_empty())
++            || group.shaders.iter().any(|shader| {
++                shader
++                    .group
++                    .is_some_and(|nested| redrawn.get(nested).copied().unwrap_or(false))
++            })
++    }
++
++    // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
++    // group's content to its texture's origin (#1878).
++    pub fn offset(&mut self, dx: ScaledPixels, dy: ScaledPixels) {
++        let by = |b: &mut Bounds<ScaledPixels>| {
++            b.origin.x += dx;
++            b.origin.y += dy;
++        };
++        for quad in &mut self.quads {
++            by(&mut quad.bounds);
++            by(&mut quad.content_mask.bounds);
++        }
++        for shadow in &mut self.shadows {
++            by(&mut shadow.bounds);
++            by(&mut shadow.content_mask.bounds);
++            by(&mut shadow.element_bounds);
++        }
++        for underline in &mut self.underlines {
++            by(&mut underline.bounds);
++            by(&mut underline.content_mask.bounds);
++        }
++        for sprite in &mut self.monochrome_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for sprite in &mut self.subpixel_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for sprite in &mut self.polychrome_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for surface in &mut self.surfaces {
++            by(&mut surface.bounds);
++            by(&mut surface.content_mask.bounds);
++        }
++        for shader in &mut self.shaders {
++            by(&mut shader.bounds);
++            by(&mut shader.content_mask.bounds);
++        }
++        for path in &mut self.paths {
++            by(&mut path.bounds);
++            by(&mut path.content_mask.bounds);
++            for vertex in &mut path.vertices {
++                vertex.xy_position.x += dx;
++                vertex.xy_position.y += dy;
++                by(&mut vertex.content_mask.bounds);
++            }
++        }
 +    }
 +
 +    // KOAN: whether this refresh should present again: a live shader moved
 +    // or moves with time (#1641). Asks every shader, so each one's change is
 +    // taken once.
 +    pub fn take_shader_present(&self) -> bool {
++        let groups = self
++            .layer_groups
++            .iter()
++            .fold(false, |any, group| group.take_shader_present() | any);
 +        self.shaders
 +            .iter()
 +            .fold(false, |any, shader| shader.uniforms.take_present() | any)
++            | groups
      }
  
      pub fn len(&self) -> usize {
-@@ -133,6 +172,11 @@ impl Scene {
+@@ -86,6 +270,16 @@ impl Scene {
+ 
+     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+         let mut primitive = primitive.into();
++        // KOAN: painted inside a layer group: into its scene, recorded here
++        // so a cached view replays it (#1859). Shaders too: a group holding
++        // one is drawn again at each present, so it moves and is clipped
++        // with the group (#1878).
++        if let Some(&group) = self.group_stack.last() {
++            self.layer_groups[group].insert_primitive(primitive.clone());
++            self.paint_operations
++                .push(PaintOperation::Primitive(primitive));
++            return;
++        }
+         let clipped_bounds = primitive
+             .bounds()
+             .intersect(&primitive.content_mask().bounds);
+@@ -133,17 +327,71 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -329,7 +941,67 @@ index 6cb3387..40e041a 100644
          }
          self.paint_operations
              .push(PaintOperation::Primitive(primitive));
-@@ -160,6 +204,171 @@ impl Scene {
+     }
+ 
++    // KOAN: opens a layer group: what is painted until `pop_group` is drawn
++    // into a texture of its own (#1859).
++    pub fn push_group(&mut self) -> usize {
++        let group = self.layer_groups.len();
++        self.layer_groups.push(Scene::default());
++        self.layer_group_frames.push(None);
++        self.group_stack.push(group);
++        self.paint_operations.push(PaintOperation::StartGroup);
++        group
++    }
++
++    // KOAN: closes the open group, composed by `shader` sampling its texture
++    // (#1859).
++    pub fn pop_group(&mut self, mut shader: crate::PaintShader) {
++        let Some(group) = self.group_stack.pop() else {
++            return;
++        };
++        shader.group = Some(group);
++        self.paint_operations
++            .push(PaintOperation::EndGroup(shader.clone()));
++        // The texture is the visible part of the group's bounds, its content
++        // at its origin, unless it holds paths or would pass the largest
++        // texture a device is sure to make (#1878). Content outside the mask
++        // is clipped by its own masks already.
++        let frame = shader.bounds.intersect(&shader.content_mask.bounds);
++        let local = self.layer_groups[group].paths.is_empty()
++            && frame.size.width.0 <= MAX_GROUP_EXTENT
++            && frame.size.height.0 <= MAX_GROUP_EXTENT;
++        let origin = if local {
++            frame.origin
++        } else {
++            Point::default()
++        };
++        shader.group_inset = point(
++            ScaledPixels(shader.bounds.origin.x.0 - origin.x.0),
++            ScaledPixels(shader.bounds.origin.y.0 - origin.y.0),
++        );
++        self.layer_group_frames[group] = local.then_some(frame);
++        // Into the enclosing group's scene, or this one. Its operation is
++        // already recorded, as the EndGroup's: not twice.
++        let ops = self.paint_operations.len();
++        self.insert_primitive(shader);
++        self.paint_operations.truncate(ops);
++    }
++
+     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+         for operation in &prev_scene.paint_operations[range] {
+             match operation {
+                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                 PaintOperation::EndLayer => self.pop_layer(),
++                PaintOperation::StartGroup => {
++                    self.push_group();
++                }
++                PaintOperation::EndGroup(shader) => self.pop_group(shader.clone()),
+             }
+         }
+     }
+@@ -160,6 +408,197 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -345,6 +1017,24 @@ index 6cb3387..40e041a 100644
 +        // KOAN: (#1641).
 +        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 +        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
++        // KOAN: each group drawn whole into its texture (#1859), moved to
++        // its texture's origin where it is the group's size (#1878); the
++        // colour slots its content draws with are this scene's too, so a
++        // fade inside a group presents.
++        for (group, frame) in self.layer_groups.iter_mut().zip(&self.layer_group_frames) {
++            if let Some(frame) = frame {
++                group.offset(
++                    ScaledPixels(-frame.origin.x.0),
++                    ScaledPixels(-frame.origin.y.0),
++                );
++            }
++            group.finish();
++            group.shader_layers = None;
++        }
++        for group in &self.layer_groups {
++            self.color_slots.extend(&group.color_slots);
++        }
 +        self.shader_layers = self.plan_shader_layers().map(Box::new);
 +    }
 +
@@ -437,7 +1127,8 @@ index 6cb3387..40e041a 100644
 +            }
 +            (after, before)
 +        };
-+        let placed: Vec<(usize, usize)> = drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
++        let placed: Vec<(usize, usize)> =
++            drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
 +        // A primitive also follows every earlier one it overlaps, so a menu's
 +        // text stays over the menu's ground wherever each is placed. Only
 +        // what sits above the lowest layer anything was placed in can raise
@@ -491,17 +1182,24 @@ index 6cb3387..40e041a 100644
 +            polychrome_sprites => PolychromeSprite,
 +            surfaces => Surface
 +        );
-+        for (path, layer) in self.paths.iter().zip(&layers_by_kind[PrimitiveKind::Path as usize]) {
++        for (path, layer) in self
++            .paths
++            .iter()
++            .zip(&layers_by_kind[PrimitiveKind::Path as usize])
++        {
 +            let paths = &mut layers[*layer].paths;
 +            let mut path = path.clone();
 +            path.id = PathId(paths.len());
 +            paths.push(path);
 +        }
++        for layer in &mut layers {
++            layer.color_slots = layer.collect_color_slots(); // KOAN: #1859.
++        }
 +        Some(ShaderLayers { layers, groups })
      }
  
      #[cfg_attr(
-@@ -187,6 +396,8 @@ impl Scene {
+@@ -187,6 +626,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -510,7 +1208,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -209,6 +420,7 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +650,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -518,7 +1216,17 @@ index 6cb3387..40e041a 100644
  }
  
  pub(crate) enum PaintOperation {
-@@ -228,6 +440,7 @@ pub enum Primitive {
+     Primitive(Primitive),
+     StartLayer(Bounds<ScaledPixels>),
+     EndLayer,
++    // KOAN: a layer group's start, and its end with the shader that
++    // composes it (#1859).
++    StartGroup,
++    EndGroup(crate::PaintShader),
+ }
+ 
+ #[derive(Clone)]
+@@ -228,6 +674,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -526,7 +1234,7 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +455,7 @@ impl Primitive {
+@@ -242,6 +689,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -534,7 +1242,7 @@ index 6cb3387..40e041a 100644
          }
      }
  
-@@ -255,6 +469,7 @@ impl Primitive {
+@@ -255,6 +703,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -542,7 +1250,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -283,6 +498,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +732,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -552,7 +1260,7 @@ index 6cb3387..40e041a 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +534,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +768,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -564,15 +1272,18 @@ index 6cb3387..40e041a 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +684,33 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +918,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
 +            // KOAN: shader quads (#1641): one batch per run of one program.
 +            PrimitiveKind::Shader => {
 +                let first = self.shaders_iter.peek().unwrap();
-+                let (program, texture) =
-+                    (first.program, first.image.as_ref().map(|t| t.texture_id));
++                let (program, texture, group) = (
++                    first.program,
++                    first.image.as_ref().map(|t| t.texture_id),
++                    first.group,
++                );
 +                let shaders_start = self.shaders_start;
 +                let mut shaders_end = shaders_start + 1;
 +                self.shaders_iter.next();
@@ -583,6 +1294,9 @@ index 6cb3387..40e041a 100644
 +                            && std::ptr::eq(shader.program, program)
 +                            && shader.image.as_ref().map(|t| t.texture_id)
 +                                == texture
++                            // KOAN: each group's texture its own (#1859).
++                            && shader.group == group
++                            && group.is_none()
 +                    })
 +                    .is_some()
 +                {
@@ -592,13 +1306,14 @@ index 6cb3387..40e041a 100644
 +                Some(PrimitiveBatch::Shaders {
 +                    program,
 +                    texture,
++                    group,
 +                    range: shaders_start..shaders_end,
 +                })
 +            }
          }
      }
  }
-@@ -493,6 +743,12 @@ pub enum PrimitiveBatch {
+@@ -493,6 +984,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -606,12 +1321,14 @@ index 6cb3387..40e041a 100644
 +    Shaders {
 +        program: &'static crate::ShaderProgram,
 +        texture: Option<AtlasTextureId>,
++        // KOAN: the layer group it composes (#1859).
++        group: Option<usize>,
 +        range: Range<usize>,
 +    },
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +781,10 @@ impl PrimitiveBatch {
+@@ -525,6 +1024,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -622,12 +1339,17 @@ index 6cb3387..40e041a 100644
          }
      }
  }
+@@ -947,3 +1450,4 @@ impl PathVertex<Pixels> {
+         }
+     }
+ }
++
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..c799f78
+index 0000000..9e6cb57
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,1070 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -639,13 +1361,301 @@ index 0000000..c799f78
 +#![allow(missing_docs)]
 +
 +use std::sync::OnceLock;
-+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 +use std::time::Instant;
 +
-+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
++use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Point, Primitive, ScaledPixels};
 +
-+/// How many floats a shader's uniform block holds.
-+pub const SHADER_UNIFORMS: usize = 16;
++/// How many plain floats a shader's uniform block holds, written by the app
++/// when they change: colours, sizes, flags.
++pub const SHADER_PLAIN: usize = 16;
++/// How many tracks follow them: values the GPU moves itself.
++pub const SHADER_TRACKS: usize = 8;
++/// The floats one track takes: `from, to, start, length` and
++/// `kind + 4 * repeat, a, b, c`.
++pub const TRACK_FLOATS: usize = 8;
++/// How many floats a shader's uniform block holds: the plain values, then
++/// the tracks (#1859).
++pub const SHADER_UNIFORMS: usize = SHADER_PLAIN + SHADER_TRACKS * TRACK_FLOATS;
++
++// KOAN: tracks (#1859). A track is one segment of a moving value, evaluated
++// by the program at present time through the prelude's `koan_track`, so the
++// CPU writes it when the value's target changes and never per frame. The
++// same evaluation is here, for the app to read where a track stands (a
++// retarget starts from there) and for the renderer's liveness.
++
++/// How a track moves between its ends.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackCurve {
++    Linear,
++    /// A CSS cubic Bézier timing function, `cubic-bezier(x1, y1, x2, y2)`.
++    Bezier(f32, f32, f32, f32),
++    /// A damped spring of unit mass, set off with `velocity` (units of the
++    /// value per second). Its `length` is how long it takes to settle.
++    Spring {
++        stiffness: f32,
++        damping: f32,
++        velocity: f32,
++    },
++}
++
++/// What a track does at its end.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackRepeat {
++    /// Holds `to`.
++    Once,
++    /// Starts again from `from`.
++    Loop,
++    /// Goes back to `from`, and on again: a breath.
++    Alternate,
++}
++
++/// One segment of a value the GPU moves: from `from` to `to` over `length`
++/// seconds from `start`, seconds of the shader's time, along `curve`.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Track {
++    pub from: f32,
++    pub to: f32,
++    pub start: f32,
++    pub length: f32,
++    pub curve: TrackCurve,
++    pub repeat: TrackRepeat,
++}
++
++impl Track {
++    /// Standing at `value`.
++    pub fn hold(value: f32) -> Self {
++        Self {
++            from: value,
++            to: value,
++            start: 0.0,
++            length: 0.0,
++            curve: TrackCurve::Linear,
++            repeat: TrackRepeat::Once,
++        }
++    }
++
++    /// Where it stands at `time`, seconds of the shader's time: what the
++    /// prelude's `koan_track` draws.
++    pub fn at(&self, time: f32) -> f32 {
++        if self.length <= 0.0 {
++            return self.to;
++        }
++        let elapsed = (time - self.start).max(0.0);
++        if let TrackCurve::Spring {
++            stiffness,
++            damping,
++            velocity,
++        } = self.curve
++        {
++            if elapsed >= self.length {
++                return self.to;
++            }
++            return self.to + spring(self.from - self.to, velocity, stiffness, damping, elapsed);
++        }
++        let mut phase = elapsed / self.length;
++        match self.repeat {
++            TrackRepeat::Once => phase = phase.min(1.0),
++            TrackRepeat::Loop => phase = phase.fract(),
++            TrackRepeat::Alternate => {
++                let p = phase.rem_euclid(2.0);
++                phase = if p > 1.0 { 2.0 - p } else { p };
++            }
++        }
++        let eased = match self.curve {
++            TrackCurve::Linear => phase,
++            TrackCurve::Bezier(x1, y1, x2, y2) => bezier(x1, y1, x2, y2, phase),
++            TrackCurve::Spring { .. } => phase,
++        };
++        self.from + (self.to - self.from) * eased
++    }
++
++    /// When it stops moving, in seconds of the shader's time; `None` for one
++    /// that repeats.
++    pub fn end(&self) -> Option<f32> {
++        match self.repeat {
++            TrackRepeat::Once => Some(self.start + self.length.max(0.0)),
++            _ if self.length <= 0.0 => Some(self.start),
++            _ => None,
++        }
++    }
++
++    pub(crate) fn encode(&self) -> [f32; TRACK_FLOATS] {
++        let repeat = match self.repeat {
++            TrackRepeat::Once => 0.0,
++            TrackRepeat::Loop => 1.0,
++            TrackRepeat::Alternate => 2.0,
++        };
++        let (kind, a, b, c) = match self.curve {
++            TrackCurve::Linear => (0.0, 0.0, 0.0, 0.0),
++            TrackCurve::Bezier(x1, y1, x2, y2) => {
++                (1.0, pack_halves(x1, y1), pack_halves(x2, y2), 0.0)
++            }
++            TrackCurve::Spring {
++                stiffness,
++                damping,
++                velocity,
++            } => (2.0, stiffness, damping, velocity),
++        };
++        [
++            self.from,
++            self.to,
++            self.start,
++            self.length,
++            kind + 4.0 * repeat,
++            a,
++            b,
++            c,
++        ]
++    }
++
++    pub(crate) fn decode(f: &[f32]) -> Self {
++        // KOAN: 16 and above flags a colour slot mixed in OKLab, as the
++        // shaders read it (`code % 16`) (#1859).
++        let code = f[4] as u32 % 16;
++        let repeat = match code / 4 {
++            1 => TrackRepeat::Loop,
++            2 => TrackRepeat::Alternate,
++            _ => TrackRepeat::Once,
++        };
++        let curve = match code % 4 {
++            1 => {
++                let (x1, y1) = unpack_halves(f[5]);
++                let (x2, y2) = unpack_halves(f[6]);
++                TrackCurve::Bezier(x1, y1, x2, y2)
++            }
++            2 => TrackCurve::Spring {
++                stiffness: f[5],
++                damping: f[6],
++                velocity: f[7],
++            },
++            _ => TrackCurve::Linear,
++        };
++        Self {
++            from: f[0],
++            to: f[1],
++            start: f[2],
++            length: f[3],
++            curve,
++            repeat,
++        }
++    }
++}
++
++/// How long a spring takes to come within a thousandth of the distance it
++/// set off from (or of a ten-thousandth of a unit, for one set off from its
++/// end): the first moment a bound on how far it can still be falls under
++/// that, for each regime's own motion.
++pub fn spring_length(distance: f32, velocity: f32, stiffness: f32, damping: f32) -> f32 {
++    let (x0, v0) = (distance as f64, velocity as f64);
++    let omega = (stiffness.max(1e-3) as f64).sqrt();
++    let zeta = damping as f64 / (2.0 * omega);
++    let epsilon = (x0.abs() * 1e-3).max(1e-4);
++    // How far from its end it can be at `t`, at most.
++    let bound = |t: f64| -> f64 {
++        if zeta < 1.0 {
++            let wd = omega * (1.0 - zeta * zeta).sqrt();
++            let reach = (x0 * x0 + ((v0 + zeta * omega * x0) / wd).powi(2)).sqrt();
++            reach * (-zeta * omega * t).exp()
++        } else if zeta > 1.0 + 1e-4 {
++            let root = (zeta * zeta - 1.0).sqrt();
++            let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
++            let c1 = (v0 - r2 * x0) / (r1 - r2);
++            c1.abs() * (r1 * t).exp() + (x0 - c1).abs() * (r2 * t).exp()
++        } else {
++            (x0.abs() + (v0 + omega * x0).abs() * t) * (-omega * t).exp()
++        }
++    };
++    let step = 1.0 / 480.0;
++    let mut t = 0.0;
++    while t < 10.0 && bound(t) > epsilon {
++        t += step;
++    }
++    t as f32
++}
++
++/// The displacement of a unit-mass spring `t` seconds after it set off from
++/// `x0` with velocity `v0`.
++fn spring(x0: f32, v0: f32, stiffness: f32, damping: f32, t: f32) -> f32 {
++    let omega = stiffness.max(1e-3).sqrt();
++    let zeta = damping / (2.0 * omega);
++    if zeta < 1.0 {
++        let wd = omega * (1.0 - zeta * zeta).sqrt();
++        let envelope = (-zeta * omega * t).exp();
++        envelope * (x0 * (wd * t).cos() + (v0 + zeta * omega * x0) / wd * (wd * t).sin())
++    } else if zeta > 1.0 + 1e-4 {
++        let root = (zeta * zeta - 1.0).sqrt();
++        let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
++        let c1 = (v0 - r2 * x0) / (r1 - r2);
++        c1 * (r1 * t).exp() + (x0 - c1) * (r2 * t).exp()
++    } else {
++        (x0 + (v0 + omega * x0) * t) * (-omega * t).exp()
++    }
++}
++
++/// A CSS cubic Bézier timing function: the curve's y where its x is `t`, by
++/// Newton's method from `t`, as the prelude's `koan_bezier` finds it.
++fn bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
++    if t <= 0.0 || t >= 1.0 {
++        return t.clamp(0.0, 1.0);
++    }
++    let curve = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
++    };
++    let slope = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * a + 6.0 * u * s * (b - a) + 3.0 * s * s * (1.0 - b)
++    };
++    let mut s = t;
++    for _ in 0..6 {
++        let d = slope(x1, x2, s);
++        if d.abs() < 1e-5 {
++            break;
++        }
++        s = (s - (curve(x1, x2, s) - t) / d).clamp(0.0, 1.0);
++    }
++    curve(y1, y2, s)
++}
++
++/// Two numbers as half floats in one float's bits: a Bézier's control point.
++fn pack_halves(a: f32, b: f32) -> f32 {
++    f32::from_bits(to_half(a) as u32 | (to_half(b) as u32) << 16)
++}
++
++fn unpack_halves(v: f32) -> (f32, f32) {
++    let bits = v.to_bits();
++    (from_half(bits as u16), from_half((bits >> 16) as u16))
++}
++
++fn to_half(v: f32) -> u16 {
++    let bits = v.to_bits();
++    let sign = ((bits >> 16) & 0x8000) as u16;
++    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
++    let mantissa = bits & 0x7f_ffff;
++    if exponent <= 0 {
++        return sign;
++    }
++    if exponent >= 31 {
++        return sign | 0x7c00;
++    }
++    // Rounded to the nearest half.
++    // Added, not ORed: a mantissa that rounds up past its top carries into
++    // the exponent.
++    let rounded = ((exponent as u32) << 10) + ((mantissa + 0x1000) >> 13);
++    sign | rounded.min(0x7bff) as u16
++}
++
++fn from_half(h: u16) -> f32 {
++    let sign = ((h & 0x8000) as u32) << 16;
++    let exponent = ((h >> 10) & 0x1f) as u32;
++    let mantissa = (h & 0x3ff) as u32;
++    if exponent == 0 {
++        return f32::from_bits(sign)
++            + (mantissa as f32) * 2f32.powi(-24) * if sign != 0 { -1.0 } else { 1.0 };
++    }
++    f32::from_bits(sign | (exponent + 127 - 15) << 23 | mantissa << 13)
++}
 +
 +/// A fragment program, written once for each renderer.
 +///
@@ -656,7 +1666,7 @@ index 0000000..c799f78
 +///   where `koan_sample(image, tile, uv)` reads the shader's image
 +///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 +///   kept to its edge
-+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
++/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32>`,
 +///   where `koan_sample(tile, uv)` reads the image the same way
 +///
 +/// `position` is the pixel's centre within the quad and `size` the quad's
@@ -684,6 +1694,33 @@ index 0000000..c799f78
 +    *EPOCH.get_or_init(Instant::now)
 +}
 +
++// KOAN: the present clock (#1859).
++static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
++
++/// The moment the frame being made now will reach the screen: what a
++/// shader's `time` is reckoned at, and what a retarget samples a track at,
++/// so motion neither jitters with encode latency nor jumps when retargeted.
++///
++/// Monotonic: displays at different refresh rates report different leads,
++/// and a frame's time never steps back when one link's report follows
++/// another's.
++pub fn present_now() -> Instant {
++    static LATEST: AtomicI64 = AtomicI64::new(i64::MIN);
++    let lead = PRESENT_LEAD.load(Ordering::Relaxed).max(0) as u64;
++    let at = Instant::now() + std::time::Duration::from_nanos(lead);
++    let nanos = since_epoch(at);
++    let latest = LATEST.fetch_max(nanos, Ordering::Relaxed).max(nanos);
++    shader_epoch() + std::time::Duration::from_nanos(latest.max(0) as u64)
++}
++
++/// How far ahead of now a frame encoded now is shown, as the platform's
++/// display link reports it.
++pub fn set_present_lead(lead: std::time::Duration) {
++    PRESENT_LEAD.store(
++        lead.as_nanos().min(i64::MAX as u128) as i64,
++        Ordering::Relaxed,
++    );
++}
 +
 +/// Signed nanoseconds from [`shader_epoch`] to `at`.
 +fn since_epoch(at: Instant) -> i64 {
@@ -703,7 +1740,7 @@ index 0000000..c799f78
 +/// While any shader on screen is `live` the window keeps its refreshes
 +/// coming; otherwise it parks, and a change is seen at the next refresh,
 +/// which `Window::request_present` asks for.
-+#[derive(Debug, Default)]
++#[derive(Debug)]
 +pub struct ShaderUniforms {
 +    values: [AtomicU32; SHADER_UNIFORMS],
 +    live: AtomicBool,
@@ -720,6 +1757,103 @@ index 0000000..c799f78
 +    /// A lapse not yet presented: the present that lands a transition at
 +    /// its end, however early the last refresh before it fell.
 +    landing: AtomicBool,
++    // KOAN: #1859.
++    /// Nanoseconds from [`shader_epoch`] until which a track moves; 0 for
++    /// none, `u64::MAX` for one that repeats.
++    moving_until: AtomicU64,
++    /// The present that lands the last track at its end.
++    track_landing: AtomicBool,
++    /// Per plain uniform, the colour slot the four floats from it draw, plus
++    /// one; 0 for a plain colour. Resolved as each present is made, so a
++    /// slot's colour moves in the program with no frame drawn.
++    colors: [AtomicU16; SHADER_PLAIN],
++    /// How many of `colors` name a slot: none, as for most shaders, and a
++    /// write or a present does no colour work at all.
++    colored: AtomicU32,
++    /// Whether a slot the uniforms name was moving at the last present: the
++    /// present after it stops lands it.
++    colors_moved: AtomicBool,
++    /// A sequence lock over the values and the origin: odd while a write is
++    /// being made, so a reader on another thread (the presenter) takes the
++    /// block as one publish, never half a track or a track in one base and
++    /// the origin in another.
++    sequence: AtomicU64,
++    /// Held by the thread writing, reentrantly, so writers from several
++    /// threads publish one after another and a write made of reads and
++    /// writes (a rebase, a retarget) is one publish.
++    writer: parking_lot::ReentrantMutex<std::cell::Cell<u32>>,
++    /// The thread publishing, by `thread_number`; 0 for none. A read on that
++    /// thread is inside its own publish and reads as it stands, with no lock.
++    owner: AtomicU64,
++    /// The block as the last present took it: what a present shows again
++    /// when a writer holds the block, so the present path never waits.
++    /// Touched only by presents.
++    presented: parking_lot::Mutex<Option<Taken>>,
++    /// The last present showed `presented` in place of a block a writer
++    /// held: live until a present reads it whole, so the frames keep coming
++    /// whatever the writer wakes.
++    stale: AtomicBool,
++}
++
++/// The block as one publish left it: the origin, every value, and the slot
++/// each colour names.
++type Taken = (i64, [f32; SHADER_UNIFORMS], [u16; SHADER_PLAIN]);
++
++// KOAN: a number for each thread, from 1, for `ShaderUniforms::owner`.
++fn thread_number() -> u64 {
++    static NEXT: AtomicU64 = AtomicU64::new(1);
++    thread_local! {
++        static NUMBER: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
++    }
++    NUMBER.with(|n| *n)
++}
++
++// KOAN: closes a publish however `write` ends, unwinding included: the depth
++// restored, and the outermost publish's sequence made even again.
++struct Published<'a> {
++    uniforms: &'a ShaderUniforms,
++    held: parking_lot::ReentrantMutexGuard<'a, std::cell::Cell<u32>>,
++    depth: u32,
++}
++
++impl Drop for Published<'_> {
++    fn drop(&mut self) {
++        self.held.set(self.depth);
++        if self.depth == 0 {
++            self.uniforms.owner.store(0, Ordering::Relaxed);
++            self.uniforms.sequence.fetch_add(1, Ordering::Release);
++        }
++    }
++}
++
++/// How many times a reader looks again at a publish in progress before it
++/// waits for the writer instead.
++const READ_SPINS: u32 = 64;
++
++// KOAN: written out, since an array of eighty has no derived default
++// (#1859).
++impl Default for ShaderUniforms {
++    fn default() -> Self {
++        Self {
++            values: std::array::from_fn(|_| AtomicU32::new(0)),
++            live: AtomicBool::new(false),
++            continuous: AtomicBool::new(false),
++            changed: AtomicBool::new(false),
++            origin: AtomicI64::new(0),
++            until: AtomicU64::new(0),
++            landing: AtomicBool::new(false),
++            moving_until: AtomicU64::new(0),
++            track_landing: AtomicBool::new(false),
++            colors: std::array::from_fn(|_| AtomicU16::new(0)),
++            colored: AtomicU32::new(0),
++            colors_moved: AtomicBool::new(false),
++            sequence: AtomicU64::new(0),
++            writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
++            owner: AtomicU64::new(0),
++            presented: parking_lot::Mutex::new(None),
++            stale: AtomicBool::new(false),
++        }
++    }
 +}
 +
 +impl ShaderUniforms {
@@ -727,8 +1861,98 @@ index 0000000..c799f78
 +        Self::default()
 +    }
 +
-+    /// Whether the value changed.
++    /// Runs `write` as one publish: what it writes is seen by a reader all
++    /// at once, and no other thread writes in between. Reentrant: a write
++    /// inside it joins it.
++    pub fn publish<R>(&self, write: impl FnOnce() -> R) -> R {
++        let held = self.writer.lock();
++        let depth = held.get();
++        if depth == 0 {
++            // Odd before any value is stored: the fence keeps the stores
++            // that follow from being seen ahead of it (as crossbeam's
++            // sequence lock does).
++            self.sequence.fetch_add(1, Ordering::Acquire);
++            std::sync::atomic::fence(Ordering::Release);
++            self.owner.store(thread_number(), Ordering::Relaxed);
++        }
++        held.set(depth + 1);
++        let _published = Published {
++            uniforms: self,
++            held,
++            depth,
++        };
++        write()
++    }
++
++    /// Runs `read` until it saw one whole publish: what a reader on another
++    /// thread calls to take several values together. Within a `publish` on
++    /// this thread it reads as it stands.
++    pub fn read<R>(&self, read: impl Fn() -> R) -> R {
++        if self.owner.load(Ordering::Relaxed) == thread_number() {
++            return read();
++        }
++        for _ in 0..READ_SPINS {
++            let before = self.sequence.load(Ordering::Acquire);
++            if before % 2 == 1 {
++                std::hint::spin_loop();
++                continue;
++            }
++            let result = read();
++            std::sync::atomic::fence(Ordering::Acquire);
++            if self.sequence.load(Ordering::Acquire) == before {
++                return result;
++            }
++        }
++        // A writer descheduled mid-publish: wait for it rather than spin.
++        // Writers hold the lock for the whole publish, so what is read under
++        // it is whole.
++        let _held = self.writer.lock();
++        read()
++    }
++
++    /// `read`, for a present, which never waits: `None` when a writer still
++    /// holds the block after the spins.
++    fn try_read<R>(&self, read: impl Fn() -> R) -> Option<R> {
++        if self.owner.load(Ordering::Relaxed) == thread_number() {
++            return Some(read());
++        }
++        for _ in 0..READ_SPINS {
++            let before = self.sequence.load(Ordering::Acquire);
++            if before % 2 == 1 {
++                std::hint::spin_loop();
++                continue;
++            }
++            let result = read();
++            std::sync::atomic::fence(Ordering::Acquire);
++            if self.sequence.load(Ordering::Acquire) == before {
++                return Some(result);
++            }
++        }
++        let _held = self.writer.try_lock()?;
++        Some(read())
++    }
++
++    /// Whether the value changed. A colour slot whose four floats `index`
++    /// falls in is let go: the value written stands as written.
 +    pub fn set(&self, index: usize, value: f32) -> bool {
++        self.publish(|| self.set_unpublished(index, value))
++    }
++
++    fn set_unpublished(&self, index: usize, value: f32) -> bool {
++        // KOAN: #1859.
++        let mut moved = false;
++        if self.colored.load(Ordering::Relaxed) != 0 {
++            for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
++                moved |= self.put_color(colour, 0);
++            }
++        }
++        if moved {
++            self.changed.store(true, Ordering::Relaxed);
++        }
++        self.write(index, value) || moved
++    }
++
++    fn write(&self, index: usize, value: f32) -> bool {
 +        let bits = value.to_bits();
 +        let changed = self.values[index].swap(bits, Ordering::Relaxed) != bits;
 +        if changed {
@@ -744,6 +1968,10 @@ index 0000000..c799f78
 +    /// The moment `time` counts from in the program: where an anchor was
 +    /// taken, so the program reckons from it.
 +    pub fn set_origin(&self, origin: Instant) -> bool {
++        self.publish(|| self.set_origin_unpublished(origin))
++    }
++
++    fn set_origin_unpublished(&self, origin: Instant) -> bool {
 +        let nanos = since_epoch(origin);
 +        let changed = self.origin.swap(nanos, Ordering::Relaxed) != nanos;
 +        if changed {
@@ -754,6 +1982,10 @@ index 0000000..c799f78
 +
 +    /// Seconds from the origin to `now`, as the program reads `time`.
 +    pub fn time_at(&self, now: Instant) -> f32 {
++        self.read(|| self.time_at_unpublished(now))
++    }
++
++    fn time_at_unpublished(&self, now: Instant) -> f32 {
 +        ((since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9) as f32
 +    }
 +
@@ -762,15 +1994,25 @@ index 0000000..c799f78
 +    }
 +
 +    pub fn is_live(&self) -> bool {
-+        self.live.load(Ordering::Relaxed)
-+            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
++        (self.live.load(Ordering::Relaxed)
++            && (!self.lapsed() || self.landing.load(Ordering::Relaxed)))
++            // KOAN: a moving track keeps the window presenting (#1859).
++            || self.tracks_moving(present_now())
++            || self.track_landing.load(Ordering::Relaxed)
++            || self.colors_moving(present_now())
++            || self.colors_moved.load(Ordering::Relaxed)
++            // KOAN: shown stale while a writer held the block (#1859).
++            || self.stale.load(Ordering::Relaxed)
 +    }
 +
 +    /// Whether a deadline was set and has passed.
 +    fn lapsed(&self) -> bool {
 +        let until = self.until.load(Ordering::Relaxed);
 +        until != 0
-+            && (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) >= until
++            && (Instant::now()
++                .saturating_duration_since(shader_epoch())
++                .as_nanos() as u64)
++                >= until
 +    }
 +
 +    /// Live until `deadline` and no longer; `None` for as long as `live` is
@@ -791,14 +2033,241 @@ index 0000000..c799f78
 +    /// Whether this refresh should present: changed since the last time
 +    /// this was asked, or live and continuous.
 +    pub fn take_present(&self) -> bool {
-+        let changed = self.changed.swap(false, Ordering::Relaxed);
++        // KOAN: the last present was stale: present again (#1859).
++        let changed = self.changed.swap(false, Ordering::Relaxed)
++            || self.stale.load(Ordering::Relaxed);
 +        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
-+        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
++        // KOAN: a track moves with time; the present after its end lands it
++        // (#1859).
++        let now = present_now();
++        let moving = self.tracks_moving(now);
++        let track_landed = !moving && self.track_landing.swap(false, Ordering::Relaxed);
++        let colors = self.colors_moving(now);
++        let colors_landed = self.colors_moved.swap(colors, Ordering::Relaxed) && !colors;
++        changed
++            || landed
++            || moving
++            || track_landed
++            || colors
++            || colors_landed
++            || (self.is_live() && self.continuous.load(Ordering::Relaxed))
 +    }
 +
 +    /// Every value, as a renderer copies them into a frame.
 +    pub fn snapshot(&self) -> [f32; SHADER_UNIFORMS] {
++        self.read(|| self.snapshot_unpublished())
++    }
++
++    fn snapshot_unpublished(&self) -> [f32; SHADER_UNIFORMS] {
 +        std::array::from_fn(|i| self.get(i))
++    }
++
++    // KOAN: #1859.
++    /// Puts `track` in slot `k`: the program draws it from the next present
++    /// on, and the window presents while it moves.
++    pub fn set_track(&self, k: usize, track: Track) {
++        self.publish(|| self.set_track_unpublished(k, track))
++    }
++
++    fn set_track_unpublished(&self, k: usize, track: Track) {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        for (i, value) in track.encode().into_iter().enumerate() {
++            self.set_unpublished(base + i, value);
++        }
++        let origin = self.origin.load(Ordering::Relaxed);
++        let until = (0..SHADER_TRACKS)
++            .map(|k| self.track_unpublished(k))
++            .filter(|t| t.length > 0.0)
++            .map(|t| match t.end() {
++                None => u64::MAX,
++                Some(end) => (origin + (end as f64 * 1e9) as i64).max(1) as u64,
++            })
++            .max()
++            .unwrap_or(0);
++        self.moving_until.store(until, Ordering::Relaxed);
++        self.track_landing.store(until != 0, Ordering::Relaxed);
++    }
++
++    /// The track in slot `k`.
++    pub fn track(&self, k: usize) -> Track {
++        self.read(|| self.track_unpublished(k))
++    }
++
++    fn track_unpublished(&self, k: usize) -> Track {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
++        Track::decode(&floats)
++    }
++
++    /// The colour `color` into the four plain uniforms from `index`, as
++    /// red, green, blue and alpha. A colour naming a slot is read from the
++    /// slot as each present is made, its alpha scaling the slot's. Whether
++    /// anything changed.
++    pub fn set_color(&self, index: usize, color: Hsla) -> bool {
++        self.publish(|| self.set_color_unpublished(index, color))
++    }
++
++    fn set_color_unpublished(&self, index: usize, color: Hsla) -> bool {
++        let slot = crate::color_slot_of(&color).map_or(0, |slot| slot as u16 + 1);
++        let rgba = if slot == 0 {
++            crate::Rgba::from(color)
++        } else {
++            // The alpha, kept to scale the slot's by.
++            crate::Rgba {
++                r: 0.0,
++                g: 0.0,
++                b: 0.0,
++                a: color.a,
++            }
++        };
++        // Any other colour these floats overlap stands no more.
++        let mut changed = false;
++        for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
++            if other != index {
++                changed |= self.put_color(other, 0);
++            }
++        }
++        for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
++            changed |= self.write(index + i, value);
++        }
++        changed |= self.put_color(index, slot);
++        if changed {
++            self.changed.store(true, Ordering::Relaxed);
++        }
++        changed
++    }
++
++    /// Whether a colour slot the uniforms draw is moving at `at`.
++    /// Names `slot` (plus one; 0 for none) at plain uniform `index`, keeping
++    /// `colored`'s count. Whether it changed.
++    fn put_color(&self, index: usize, slot: u16) -> bool {
++        let old = self.colors[index].swap(slot, Ordering::Relaxed);
++        match (old != 0, slot != 0) {
++            (false, true) => {
++                self.colored.fetch_add(1, Ordering::Relaxed);
++            }
++            (true, false) => {
++                self.colored.fetch_sub(1, Ordering::Relaxed);
++            }
++            _ => {}
++        }
++        old != slot
++    }
++
++    fn colors_moving(&self, at: Instant) -> bool {
++        if self.colored.load(Ordering::Relaxed) == 0 {
++            return false;
++        }
++        self.colors.iter().any(|slot| {
++            let slot = slot.load(Ordering::Relaxed);
++            slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
++        })
++    }
++
++    /// Every value as the program reads it at `now`: a colour naming a slot
++    /// replaced by the colour the slot shows then.
++    pub fn snapshot_at(&self, now: Instant) -> [f32; SHADER_UNIFORMS] {
++        self.taken_at(now).1
++    }
++
++    fn take_unpublished(&self) -> Taken {
++        let colored = self.colored.load(Ordering::Relaxed) != 0;
++        (
++            self.origin.load(Ordering::Relaxed),
++            self.snapshot_unpublished(),
++            std::array::from_fn(|i| {
++                if colored {
++                    self.colors[i].load(Ordering::Relaxed)
++                } else {
++                    0
++                }
++            }),
++        )
++    }
++
++    /// The origin and every value, taken as one publish, with each colour
++    /// naming a slot replaced by the colour the slot shows at `now`.
++    fn taken_at(&self, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
++        Self::resolved(self.read(|| self.take_unpublished()), now)
++    }
++
++    /// `taken_at`, for a present, which never waits on a writer: with the
++    /// block held, the last present's copy, and the next refresh presents
++    /// again for what the writer wrote.
++    fn presented_at(&self, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
++        let mut presented = self.presented.lock();
++        let taken = match self.try_read(|| self.take_unpublished()) {
++            Some(taken) => {
++                self.stale.store(false, Ordering::Relaxed);
++                taken
++            }
++            None => {
++                self.stale.store(true, Ordering::Relaxed);
++                match *presented {
++                    Some(taken) => taken,
++                    // Never presented: nothing to show in its place.
++                    None => self.read(|| self.take_unpublished()),
++                }
++            }
++        };
++        *presented = Some(taken);
++        Self::resolved(taken, now)
++    }
++
++    fn resolved((origin, mut values, colors): Taken, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
++        for (index, slot) in colors.into_iter().enumerate() {
++            if slot != 0 {
++                let rgba = crate::color_slot_rgba_at(slot as usize - 1, values[index + 3], now);
++                values[index..index + 4].copy_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
++            }
++        }
++        (origin, values)
++    }
++
++    // KOAN: (#1741) `time` grows from the origin for as long as a quad is
++    // drawn, and an f32 of days is coarser than a frame.
++    /// What the program is handed at `now`: `time` and every track's start
++    /// as seconds from the last whole hour of `time`, and a repeating
++    /// track's start moved up to its latest whole cycle, all worked out in
++    /// f64. The program reckons the same motion, to the frame, however long
++    /// the quad has been drawn; nothing stored changes, so writers on other
++    /// threads never see a base move under them. A program reading `time`
++    /// alone sees it fall back by an hour once an hour.
++    pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
++        const BASE: f64 = 3600.0;
++        // KOAN: the origin and the tracks from one publish, never waiting
++        // on a writer (#1859).
++        let (origin, mut values) = self.presented_at(now);
++        let t = (since_epoch(now) - origin) as f64 / 1e9;
++        let base = (t / BASE).floor() * BASE;
++        if base == 0.0 {
++            return (t as f32, values);
++        }
++        for k in 0..SHADER_TRACKS {
++            let at = SHADER_PLAIN + k * TRACK_FLOATS;
++            let mut track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            if track.length <= 0.0 {
++                continue;
++            }
++            let mut start = track.start as f64;
++            let period = match track.repeat {
++                TrackRepeat::Once => 0.0,
++                TrackRepeat::Loop => track.length as f64,
++                TrackRepeat::Alternate => 2.0 * track.length as f64,
++            };
++            if period > 0.0 && start < t {
++                start += ((t - start) / period).floor() * period;
++            }
++            track.start = (start - base) as f32;
++            values[at..at + TRACK_FLOATS].copy_from_slice(&track.encode());
++        }
++        ((t - base) as f32, values)
++    }
++
++    /// Whether a track is moving at `now`.
++    pub fn tracks_moving(&self, now: Instant) -> bool {
++        let until = self.moving_until.load(Ordering::Relaxed);
++        until != 0 && (since_epoch(now).max(0) as u64) < until
 +    }
 +}
 +
@@ -812,6 +2281,16 @@ index 0000000..c799f78
 +    pub uniforms: std::sync::Arc<ShaderUniforms>,
 +    /// The image the program samples, in the sprite atlas.
 +    pub image: Option<AtlasTile>,
++    // KOAN: the layer group the shader composes, as its image: what was
++    // painted inside `Window::paint_layer_group`, drawn into a texture of
++    // its own (#1859).
++    pub group: Option<usize>,
++    // KOAN: where the shader's origin sits in its group's texture: the
++    // texture is the visible part of the shader's bounds, its content moved
++    // to the texture's origin, or the window's size, its content where it was
++    // painted. Taken when the group closes, so an enclosing group moving the
++    // shader leaves it as it is (#1878).
++    pub group_inset: Point<ScaledPixels>,
 +}
 +
 +impl From<PaintShader> for Primitive {
@@ -823,7 +2302,7 @@ index 0000000..c799f78
 +/// One shader as a renderer hands it to the GPU: its quad, its clip and its
 +/// uniforms and time as they were when the frame was presented. Laid out for
 +/// both Metal and WGSL: blocks of 16-byte aligned floats.
-+#[derive(Clone, Copy, Debug, Default)]
++#[derive(Clone, Copy, Debug)]
 +#[repr(C)]
 +pub struct ShaderInstance {
 +    /// x, y, width, height.
@@ -837,43 +2316,605 @@ index 0000000..c799f78
 +    pub tile: [f32; 4],
 +}
 +
++impl Default for ShaderInstance {
++    fn default() -> Self {
++        Self {
++            bounds: [0.0; 4],
++            clip: [0.0; 4],
++            uniforms: [0.0; SHADER_UNIFORMS],
++            time: [0.0; 4],
++            tile: [0.0; 4],
++        }
++    }
++}
++
 +impl ShaderInstance {
 +    pub fn of(shader: &PaintShader, now: Instant) -> Self {
-+        let time = shader.uniforms.time_at(now);
-+        let mut uniforms = shader.uniforms.snapshot();
++        // KOAN: time and tracks from a recent base (#1741).
++        let (time, mut uniforms) = shader.uniforms.present_at(now);
 +        if let Some(prepare) = shader.program.prepare {
 +            prepare(&mut uniforms, time);
 +        }
 +        let rect = |b: &Bounds<ScaledPixels>| {
-+            [
-+                b.origin.x.0,
-+                b.origin.y.0,
-+                b.size.width.0,
-+                b.size.height.0,
-+            ]
++            [b.origin.x.0, b.origin.y.0, b.size.width.0, b.size.height.0]
 +        };
 +        Self {
 +            bounds: rect(&shader.bounds),
 +            clip: rect(&shader.content_mask.bounds),
 +            uniforms,
 +            time: [time, 0.0, 0.0, 0.0],
-+            tile: shader.image.as_ref().map_or([0.0; 4], |tile| {
-+                let b = tile.bounds;
-+                [
-+                    b.origin.x.0 as f32,
-+                    b.origin.y.0 as f32,
-+                    b.size.width.0 as f32,
-+                    b.size.height.0 as f32,
-+                ]
-+            }),
++            // A group's texture holds the quad's bounds from its inset
++            // (#1878).
++            tile: match (&shader.image, shader.group) {
++                (Some(tile), _) => {
++                    let b = tile.bounds;
++                    [
++                        b.origin.x.0 as f32,
++                        b.origin.y.0 as f32,
++                        b.size.width.0 as f32,
++                        b.size.height.0 as f32,
++                    ]
++                }
++                (None, Some(_)) => [
++                    shader.group_inset.x.0,
++                    shader.group_inset.y.0,
++                    shader.bounds.size.width.0,
++                    shader.bounds.size.height.0,
++                ],
++                (None, None) => [0.0; 4],
++            },
 +        }
 +    }
 +}
++
++// KOAN: (#1741).
++#[cfg(test)]
++mod present_tests {
++    use super::*;
++    use std::time::Duration;
++
++    /// Three days on, a loop drawn since the origin is handed to the program
++    /// at the phase f64 reckons, within a millisecond's motion.
++    #[test]
++    fn a_quad_drawn_for_days_is_reckoned_to_the_frame() {
++        let uniforms = ShaderUniforms::new();
++        let origin = Instant::now();
++        uniforms.set_origin(origin);
++        uniforms.set_track(
++            0,
++            Track {
++                from: 0.0,
++                to: 1.0,
++                start: 0.0,
++                length: 1.0,
++                curve: TrackCurve::Linear,
++                repeat: TrackRepeat::Loop,
++            },
++        );
++        for offset in [0.25, 0.5, 0.75] {
++            let now = origin + Duration::from_secs_f64(3.0 * 86_400.0 + offset);
++            let (time, values) = uniforms.present_at(now);
++            let at = SHADER_PLAIN;
++            let track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            let drawn = track.at(time);
++            assert!(
++                (drawn - offset as f32).abs() < 1e-3,
++                "{offset}s into a cycle drew {drawn}"
++            );
++            assert!((0.0..3600.0).contains(&time), "time {time} kept its base");
++        }
++    }
++}
++
++#[cfg(test)]
++mod half_tests {
++    use super::*;
++
++    /// KOAN: a value whose mantissa rounds up carries into the exponent:
++    /// just under 0.5 packs as 0.5, not 0.25.
++    #[test]
++    fn a_rounding_carry_reaches_the_exponent() {
++        for v in [0.49995_f32, 0.24999, 0.062499, 0.999_99, 0.3, 0.75] {
++            let (a, _) = unpack_halves(pack_halves(v, 0.0));
++            assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
++        }
++    }
++}
+diff --git a/src/view.rs b/src/view.rs
+index 76688b7..1430c75 100644
+--- a/src/view.rs
++++ b/src/view.rs
+@@ -2,13 +2,12 @@ use crate::{
+     AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
+     Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
+     LayoutId, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Size, Style,
+-    StyleRefinement, TextStyle, WeakEntity,
++    StyleRefinement, TextStyle, WeakEntity, window::a11y::CapturedA11y,
+ };
+ use crate::{Empty, Window};
+ use anyhow::Result;
+ use collections::FxHashSet;
+ use refineable::Refineable;
+-use std::mem;
+ use std::{
+     any::{TypeId, type_name},
+     fmt,
+@@ -322,9 +321,18 @@ impl<V: View> IntoElement for ViewElement<V> {
+ 
+ struct ViewElementState {
+     prepaint_range: Range<PrepaintStateIndex>,
++    // KOAN: the draws `prepaint_range` and `paint_range` were recorded in.
++    // A cached ancestor reused whole carries this state into the next frame
++    // without moving the ranges, which then point into a frame that is gone.
++    prepaint_frame: u64,
++    paint_frame: u64,
+     paint_range: Range<PaintIndex>,
+     cache_key: ViewElementCacheKey,
+     accessed_entities: FxHashSet<EntityId>,
++    /// The accessibility nodes the prepaint added, when it ran while the tree was being built.
++    /// A frame that builds the tree can only reuse the view if it has them: the tree starts
++    /// empty in every frame and the reused prepaint doesn't run.
++    a11y: Option<CapturedA11y>,
+ }
+ 
+ struct ViewElementCacheKey {
+@@ -549,19 +557,39 @@ fn prepaint_view(
+                     && element_state.cache_key.text_style == text_style
+                     && !window.dirty_views.contains(&entity_id)
+                     && !window.refreshing
++                    // KOAN: reused only from the frame just drawn, the one
++                    // its ranges index into.
++                    && element_state.prepaint_frame + 1 == window.frames_drawn
++                    && element_state.paint_frame + 1 == window.frames_drawn
++                    // KOAN: (#1899) after Wormhole's gpui-pre patch: a view
++                    // reused while the accessibility tree is built adds the
++                    // nodes it recorded, so it needs to have recorded them.
++                    && (element_state.a11y.is_some() || !window.a11y.is_active())
+                 {
+                     let prepaint_start = window.prepaint_index();
+                     window.reuse_prepaint(element_state.prepaint_range.clone());
++                    if window.a11y.is_active()
++                        && let Some(a11y) = &element_state.a11y
++                    {
++                        let focus = window.focus;
++                        window.a11y.replay(a11y, focus);
++                    }
+                     cx.entities
+                         .extend_accessed(&element_state.accessed_entities);
+                     let prepaint_end = window.prepaint_index();
+                     element_state.prepaint_range = prepaint_start..prepaint_end;
++                    element_state.prepaint_frame = window.frames_drawn;
+ 
+                     return (None, element_state);
+                 }
+ 
+-                let refreshing = mem::replace(&mut window.refreshing, true);
++                // KOAN: a view drawn again leaves the cached views inside it
++                // to their own keys: one that is neither dirty nor moved is
++                // reused, so a change redraws its own view and its ancestors
++                // and nothing beside them. Only a refresh of the window draws
++                // everything again.
+                 let prepaint_start = window.prepaint_index();
++                let a11y_mark = window.a11y.is_active().then(|| window.a11y.mark());
+                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                     let mut element = render(window, cx);
+                     element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
+@@ -570,13 +598,16 @@ fn prepaint_view(
+                 });
+ 
+                 let prepaint_end = window.prepaint_index();
+-                window.refreshing = refreshing;
++                let a11y = a11y_mark.map(|mark| window.a11y.capture(&mark));
+ 
+                 (
+                     Some(element),
+                     ViewElementState {
+                         accessed_entities,
++                        a11y,
+                         prepaint_range: prepaint_start..prepaint_end,
++                        prepaint_frame: window.frames_drawn,
++                        paint_frame: 0,
+                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                         cache_key: ViewElementCacheKey {
+                             bounds,
+@@ -623,15 +654,21 @@ fn paint_view(
+                     let paint_start = window.paint_index();
+ 
+                     if let Some(element) = element {
+-                        let refreshing = mem::replace(&mut window.refreshing, true);
++                        // KOAN: as in prepaint, the cached views inside are
++                        // left to their own keys.
+                         element.paint(window, cx);
+-                        window.refreshing = refreshing;
+                     } else {
+                         window.reuse_paint(element_state.paint_range.clone());
++                        if window.a11y.is_active()
++                            && let Some(a11y) = &element_state.a11y
++                        {
++                            window.a11y.reuse_action_listeners(a11y);
++                        }
+                     }
+ 
+                     let paint_end = window.paint_index();
+                     element_state.paint_range = paint_start..paint_end;
++                    element_state.paint_frame = window.frames_drawn; // KOAN: as prepaint_frame.
+ 
+                     ((), element_state)
+                 },
+@@ -653,3 +690,355 @@ fn paint_component(
+         element.as_mut().unwrap().paint(window, cx);
+     });
+ }
++
++#[cfg(test)]
++mod tests {
++    use std::{cell::Cell, rc::Rc};
++
++    use accesskit::{Action, ActionRequest, NodeId, Role, TreeId, TreeUpdate};
++
++    use crate::{
++        AnyWindowHandle, AppContext as _, Context, FocusHandle, InteractiveElement as _,
++        IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, StyleRefinement,
++        Styled as _, TestAppContext, Window, deferred, div, px,
++    };
++
++    /// The cached view: a button with an action listener, and a row of two more nodes. With a
++    /// popup it also holds a deferred element (as a popover does) with a button of its own.
++    struct Inner {
++        renders: Rc<Cell<usize>>,
++        clicks: Rc<Cell<usize>>,
++        focus: FocusHandle,
++        popup: Option<Popup>,
++    }
++
++    struct Popup {
++        clicks: Rc<Cell<usize>>,
++        focus: FocusHandle,
++    }
++
++    impl Render for Inner {
++        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
++            self.renders.set(self.renders.get() + 1);
++            let clicks = self.clicks.clone();
++            let popup = self.popup.as_ref().map(|popup| {
++                let clicks = popup.clicks.clone();
++                deferred(
++                    div().id("popup").role(Role::Menu).size(px(40.)).child(
++                        div()
++                            .id("popup-button")
++                            .role(Role::MenuItem)
++                            .aria_label("Popup")
++                            .track_focus(&popup.focus)
++                            .on_a11y_action(Action::Click, move |_, _, _| {
++                                clicks.set(clicks.get() + 1)
++                            })
++                            .size(px(20.)),
++                    ),
++                )
++                .with_priority(1)
++            });
++            let mut root = div()
++                .id("inner")
++                .role(Role::Group)
++                .size(px(100.))
++                .child(
++                    div()
++                        .id("button")
++                        .role(Role::Button)
++                        .aria_label("Go")
++                        .track_focus(&self.focus)
++                        .on_a11y_action(Action::Click, move |_, _, _| clicks.set(clicks.get() + 1))
++                        .size(px(20.)),
++                )
++                .child(div().id("label").role(Role::Label).size(px(20.)));
++            if let Some(popup) = popup {
++                root = root.child(popup);
++            }
++            root
++        }
++    }
++
++    struct Outer {
++        inner: crate::Entity<Inner>,
++    }
++
++    impl Render for Outer {
++        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
++            div().id("outer").role(Role::Toolbar).size_full().child(
++                self.inner
++                    .clone()
++                    .cached(StyleRefinement::default().size(px(100.))),
++            )
++        }
++    }
++
++    fn tree(window: &Window) -> TreeUpdate {
++        window.last_a11y_tree_update().expect("a tree was built")
++    }
++
++    /// The ids of the nodes in `tree`, sorted, with each node's children.
++    fn shape(tree: &TreeUpdate) -> Vec<(NodeId, Vec<NodeId>)> {
++        let mut shape: Vec<_> = tree
++            .nodes
++            .iter()
++            .map(|(id, node)| (*id, node.children().to_vec()))
++            .collect();
++        shape.sort_by_key(|(id, _)| id.0);
++        shape
++    }
++
++    fn node_with_role(tree: &TreeUpdate, role: Role) -> NodeId {
++        tree.nodes
++            .iter()
++            .find(|(_, node)| node.role() == role)
++            .map(|(id, _)| *id)
++            .expect("a node with the role")
++    }
++
++    fn node_with_label(tree: &TreeUpdate, label: &str) -> NodeId {
++        tree.nodes
++            .iter()
++            .find(|(_, node)| node.label() == Some(label))
++            .map(|(id, _)| *id)
++            .expect("a node with the label")
++    }
++
++    struct Fixture {
++        window: AnyWindowHandle,
++        renders: Rc<Cell<usize>>,
++        clicks: Rc<Cell<usize>>,
++        popup_clicks: Rc<Cell<usize>>,
++        inner: crate::Entity<Inner>,
++    }
++
++    impl Fixture {
++        fn new(cx: &mut TestAppContext) -> Self {
++            Self::build(cx, false)
++        }
++
++        fn with_popup(cx: &mut TestAppContext) -> Self {
++            Self::build(cx, true)
++        }
++
++        fn build(cx: &mut TestAppContext, with_popup: bool) -> Self {
++            let renders = Rc::new(Cell::new(0));
++            let clicks = Rc::new(Cell::new(0));
++            let popup_clicks = Rc::new(Cell::new(0));
++            let inner = cx.new(|cx| Inner {
++                renders: renders.clone(),
++                clicks: clicks.clone(),
++                focus: cx.focus_handle(),
++                popup: with_popup.then(|| Popup {
++                    clicks: popup_clicks.clone(),
++                    focus: cx.focus_handle(),
++                }),
++            });
++            let window = cx
++                .add_window({
++                    let inner = inner.clone();
++                    |_, _| Outer { inner }
++                })
++                .into();
++            // Adding the window drew it once, without the tree.
++            renders.set(0);
++            Self {
++                window,
++                renders,
++                clicks,
++                popup_clicks,
++                inner,
++            }
++        }
++
++        /// Draw a frame; the tree it sent, if it built one.
++        fn draw(&self, cx: &mut TestAppContext) -> Option<TreeUpdate> {
++            cx.update_window(self.window, |_, window, cx| {
++                window.draw(cx).clear(cx);
++                window.is_a11y_active().then(|| tree(window))
++            })
++            .expect("draw")
++        }
++
++        fn simulate_tree(&self, cx: &mut TestAppContext, active: bool) {
++            cx.update_window(self.window, |_, window, _| {
++                window.simulate_a11y_active(active)
++            })
++            .expect("simulate");
++        }
++
++        fn click(&self, cx: &mut TestAppContext, node: NodeId) {
++            cx.update_window(self.window, |_, window, cx| {
++                window.simulate_a11y_action(
++                    ActionRequest {
++                        action: Action::Click,
++                        target_tree: TreeId::ROOT,
++                        target_node: node,
++                        data: None,
++                    },
++                    cx,
++                )
++            })
++            .expect("click");
++        }
++    }
++
++    #[gpui::test]
++    fn a_reused_view_keeps_its_a11y_nodes(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        fixture.simulate_tree(cx, true);
++
++        let first = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        let shape_first = shape(&first);
++        let button = node_with_role(&first, Role::Button);
++        let outer = node_with_role(&first, Role::Toolbar);
++        let group = node_with_role(&first, Role::Group);
++        assert!(
++            first
++                .nodes
++                .iter()
++                .any(|(id, node)| *id == outer && node.children() == [group]),
++            "the cached view's top node is a child of the node it sits in"
++        );
++
++        // Nothing changed: the view's prepaint is replayed, not run, and the tree is whole.
++        let second = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1, "the view was reused");
++        assert_eq!(shape(&second), shape_first);
++
++        // A reused frame keeps the view's action listeners, frame after frame.
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 1);
++        let third = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        assert_eq!(shape(&third), shape_first);
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 2);
++
++        // Notified, the view renders again and the tree is the same.
++        fixture.inner.update(cx, |_, cx| cx.notify());
++        let fourth = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 2);
++        assert_eq!(shape(&fourth), shape_first);
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 3);
++    }
++
++    #[gpui::test]
++    fn a_view_prepainted_without_the_tree_is_rendered_when_it_is_built(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        let button;
++        {
++            fixture.simulate_tree(cx, true);
++            let first = fixture.draw(cx).expect("a tree");
++            button = node_with_role(&first, Role::Button);
++        }
++
++        // Frames without the tree reuse the view as before.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        assert_eq!(fixture.renders.get(), 1);
++        fixture.inner.update(cx, |_, cx| cx.notify());
++        assert!(fixture.draw(cx).is_none());
++        assert_eq!(fixture.renders.get(), 2, "rendered while the tree was off");
++
++        // That prepaint left no nodes to replay: the first frame with the tree renders it.
++        fixture.simulate_tree(cx, true);
++        let tree = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3);
++        assert_eq!(node_with_role(&tree, Role::Button), button);
++        let again = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3, "and the next one reuses it");
++        assert_eq!(shape(&again), shape(&tree));
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 1);
++
++        // A view prepainted with the tree and reused without it is whole when it is built again.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        fixture.simulate_tree(cx, true);
++        let back = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3);
++        assert_eq!(shape(&back), shape(&tree));
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 2);
++    }
++
++    #[gpui::test]
++    fn a_reused_view_reports_the_focus_it_holds(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        fixture.simulate_tree(cx, true);
++        let button = node_with_role(&fixture.draw(cx).expect("a tree"), Role::Button);
++        cx.update_window(fixture.window, |_, window, cx| {
++            let focus = fixture.inner.read(cx).focus.clone();
++            window.focus(&focus, cx);
++        })
++        .expect("focus");
++        fixture.draw(cx);
++        let renders = fixture.renders.get();
++        let reused = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), renders, "the view was reused");
++        assert_eq!(reused.focus, button);
++    }
++
++    #[gpui::test]
++    fn a_deferred_popup_in_a_reused_view_keeps_its_nodes(cx: &mut TestAppContext) {
++        let fixture = Fixture::with_popup(cx);
++        fixture.simulate_tree(cx, true);
++
++        let first = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        let popup = node_with_label(&first, "Popup");
++        let menu = node_with_role(&first, Role::Menu);
++        assert!(
++            first
++                .nodes
++                .iter()
++                .any(|(id, node)| *id == menu && node.children() == [popup]),
++            "the popup's button is a child of its menu"
++        );
++        let shape_first = shape(&first);
++
++        cx.update_window(fixture.window, |_, window, cx| {
++            let focus = match &fixture.inner.read(cx).popup {
++                Some(popup) => popup.focus.clone(),
++                None => unreachable!("the fixture has a popup"),
++            };
++            window.focus(&focus, cx);
++        })
++        .expect("focus");
++        fixture.draw(cx);
++
++        // Frames that reuse the view reuse the deferred draw too, and the popup stays whole.
++        for round in 1..=3 {
++            let renders = fixture.renders.get();
++            let reused = fixture.draw(cx).expect("a tree");
++            assert_eq!(
++                fixture.renders.get(),
++                renders,
++                "round {round}: the view was reused"
++            );
++            assert_eq!(shape(&reused), shape_first, "round {round}");
++            assert_eq!(
++                reused.focus, popup,
++                "round {round}: the popup's focus is reported"
++            );
++            fixture.click(cx, popup);
++            assert_eq!(
++                fixture.popup_clicks.get(),
++                round,
++                "round {round}: its action works"
++            );
++        }
++
++        // The tree off and on again: the next frame with it is whole.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        fixture.simulate_tree(cx, true);
++        let back = fixture.draw(cx).expect("a tree");
++        assert_eq!(shape(&back), shape_first);
++        fixture.click(cx, popup);
++        assert_eq!(fixture.popup_clicks.get(), 4);
++    }
++}
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
-index ae98aa5..ea0f6a4 100644
+index ae98aa5..86bec5a 100644
 --- a/src/window/a11y/debug.rs
 +++ b/src/window/a11y/debug.rs
-@@ -268,6 +268,14 @@ fn node_to_json(
+@@ -91,6 +91,12 @@ impl A11yDebug {
+         });
+     }
+ 
++    #[cfg(any(test, feature = "test-support"))]
++    // KOAN: (#1899) Wormhole's a11y replay, for tests.
++    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
++        self.last_tree_update.as_ref()
++    }
++
+     #[cfg(debug_assertions)]
+     pub(crate) fn capture_node_info(&mut self, node_info: &FxHashMap<NodeId, NodeDebugInfo>) {
+         self.last_node_info = node_info.clone();
+@@ -268,6 +274,14 @@ fn node_to_json(
      if let Some(v) = node.toggled() {
          aria.insert("toggled".into(), json!(format!("{v:?}")));
      }
@@ -889,10 +2930,51 @@ index ae98aa5..ea0f6a4 100644
          aria.insert("orientation".into(), json!(format!("{v:?}")));
      }
 diff --git a/src/window/a11y.rs b/src/window/a11y.rs
-index 5b63821..d5794cd 100644
+index 5b63821..e2888a3 100644
 --- a/src/window/a11y.rs
 +++ b/src/window/a11y.rs
-@@ -221,6 +221,13 @@ impl A11y {
+@@ -107,6 +107,7 @@ use accesskit::{Action, NodeId, TreeUpdate};
+ use collections::{FxHashMap, FxHashSet};
+ use smallvec::SmallVec;
+ use std::hash::{Hash, Hasher};
++use std::mem;
+ use std::sync::{
+     Arc,
+     atomic::{AtomicBool, Ordering},
+@@ -149,6 +150,10 @@ pub(crate) struct A11y {
+     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
+     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
++    /// The previous frame's [`Self::action_listeners`]. Listeners are registered while painting,
++    /// which a reused view skips, so [`Self::reuse_action_listeners`] moves its nodes' listeners
++    /// from here into the frame being built.
++    retired_action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+     /// The window's title, used to label the root node so assistive
+     /// technology can tell windows apart.
+     window_title: Option<SharedString>,
+@@ -177,6 +182,7 @@ impl A11y {
+             focus_ids: FxHashMap::default(),
+             node_bounds: FxHashMap::default(),
+             action_listeners: FxHashMap::default(),
++            retired_action_listeners: FxHashMap::default(),
+             window_title,
+             last_focus_without_node: None,
+             debug: debug::A11yDebug::default(),
+@@ -213,6 +219,13 @@ impl A11y {
+         self.active_this_frame = self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
+     }
+ 
++    // KOAN: (#1899) Wormhole's a11y replay, from here to `CapturedA11y`.
++    /// The tree sent in the last frame that built one.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
++        self.debug.last_tree_update()
++    }
++
+     pub(crate) fn is_enabled(&self) -> bool {
+         !self.force_disabled
+     }
+@@ -221,6 +234,13 @@ impl A11y {
          self.active_this_frame
      }
  
@@ -906,11 +2988,227 @@ index 5b63821..d5794cd 100644
      pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
          self.focus_ids.insert(node_id, focus_id);
      }
+@@ -275,10 +295,104 @@ impl A11y {
+     pub(crate) fn begin_frame(&mut self) {
+         self.focus_ids.clear();
+         self.node_bounds.clear();
++        mem::swap(
++            &mut self.action_listeners,
++            &mut self.retired_action_listeners,
++        );
+         self.action_listeners.clear();
+         self.nodes.begin_frame(self.window_title.as_ref());
+     }
+ 
++    /// Note where a view's prepaint starts, to [`Self::capture`] what it adds to the tree.
++    // KOAN: (#1899) Wormhole's a11y replay: mark, capture, replay, listeners.
++    pub(crate) fn mark(&self) -> A11yMark {
++        A11yMark {
++            nodes: self.nodes.all_nodes.len(),
++            parent_children: self
++                .nodes
++                .nodes_stack
++                .last()
++                .map_or(0, |parent| parent.children().len()),
++            active_descendant: self.nodes.active_descendant,
++        }
++    }
++
++    /// Everything added to the tree since `mark`, for [`Self::replay`] when the view is reused.
++    ///
++    /// Must be called with the same node on top of the stack as at `mark`, after every node
++    /// pushed in between has been popped.
++    pub(crate) fn capture(&self, mark: &A11yMark) -> CapturedA11y {
++        let nodes = self.nodes.all_nodes[mark.nodes..].to_vec();
++        let roots = self
++            .nodes
++            .nodes_stack
++            .last()
++            .and_then(|parent| parent.children().get(mark.parent_children..))
++            .unwrap_or_default()
++            .iter()
++            .copied()
++            .collect();
++        let bounds = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, *self.node_bounds.get(id)?)))
++            .collect();
++        let focusable = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, *self.focus_ids.get(id)?)))
++            .collect();
++        // The claim only counts while the node that was focused when it was made still is.
++        let active_descendant = self
++            .nodes
++            .active_descendant
++            .filter(|id| mark.active_descendant != Some(*id))
++            .zip(self.nodes.focus);
++        #[cfg(debug_assertions)]
++        let info = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, self.nodes.node_info.get(id)?.clone())))
++            .collect();
++        CapturedA11y {
++            nodes,
++            roots,
++            bounds,
++            focusable,
++            active_descendant,
++            #[cfg(debug_assertions)]
++            info,
++        }
++    }
++
++    /// Add a [`Self::capture`]d subtree to the tree being built, as the view's prepaint did when it
++    /// ran: its top-level nodes become children of the node on top of the stack. `focus` is the
++    /// window's focused element, which decides whether a replayed node reports focus.
++    pub(crate) fn replay(&mut self, captured: &CapturedA11y, focus: Option<FocusId>) {
++        self.nodes.replay(captured);
++        for (id, bounds) in &captured.bounds {
++            self.node_bounds.insert(*id, *bounds);
++        }
++        for (id, focus_id) in &captured.focusable {
++            self.set_focusable(*id, *focus_id);
++            if focus == Some(*focus_id) {
++                self.set_focus(*id);
++            }
++        }
++        if let Some((id, anchor)) = captured.active_descendant
++            && self.nodes.focus == Some(anchor)
++        {
++            self.nodes.set_active_descendant(id);
++        }
++    }
++
++    /// Keep the action listeners of `captured`'s nodes for the frame being built. Listeners are
++    /// registered while painting, so a view whose paint is reused calls this instead.
++    pub(crate) fn reuse_action_listeners(&mut self, captured: &CapturedA11y) {
++        for (id, _) in &captured.nodes {
++            if let Some(listeners) = self.retired_action_listeners.remove(id) {
++                self.action_listeners.insert(*id, listeners);
++            }
++        }
++    }
++
+     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
+     pub(crate) fn end_frame(&mut self, frame: debug::FrameDebugInfo) -> TreeUpdate {
+         let update = self.nodes.finalize();
+@@ -299,6 +413,36 @@ impl A11y {
+     }
+ }
+ 
++/// Where a view's prepaint started in the tree being built. See [`A11y::mark`].
++// KOAN: (#1899) Wormhole's a11y replay.
++pub(crate) struct A11yMark {
++    nodes: usize,
++    parent_children: usize,
++    active_descendant: Option<NodeId>,
++}
++
++/// The accessibility nodes one view's prepaint added to the tree, kept with the view so that a
++/// frame which reuses its prepaint (a [cached view]) can add them again. A view's own prepaint
++/// is skipped in such a frame, and the tree is rebuilt from nothing every frame.
++///
++/// Action listeners are not kept here, as they cannot be cloned: see
++/// [`A11y::reuse_action_listeners`].
++///
++/// [cached view]: crate::Entity::cached
++// KOAN: (#1899) Wormhole's a11y replay.
++pub(crate) struct CapturedA11y {
++    /// Every node the view pushed, children before their parents.
++    nodes: Vec<(NodeId, accesskit::Node)>,
++    /// The view's top-level nodes: the ones that became children of the node it was embedded in.
++    roots: SmallVec<[NodeId; 4]>,
++    bounds: Vec<(NodeId, Bounds<Pixels>)>,
++    focusable: Vec<(NodeId, FocusId)>,
++    /// A node claiming to be the active descendant, and the node that was focused at the time.
++    active_descendant: Option<(NodeId, NodeId)>,
++    #[cfg(debug_assertions)]
++    info: Vec<(NodeId, debug::NodeDebugInfo)>,
++}
++
+ /// Builder API for synthetic children. See the docs for
+ /// [`Element::a11y_synthetic_children`].
+ pub struct A11ySubtreeBuilder<'a> {
+@@ -456,6 +600,28 @@ impl A11yNodeBuilder {
+         true
+     }
+ 
++    /// Add the nodes of a view that is reused, with its top-level nodes as children of the
++    /// current top-of-stack node. A node whose id is already in the tree is dropped, as in
++    /// [`Self::push`].
++    fn replay(&mut self, captured: &CapturedA11y) {
++        for (id, node) in &captured.nodes {
++            if self.seen_ids.insert(*id) {
++                self.all_nodes.push((*id, node.clone()));
++            } else {
++                debug_assert!(false, "Duplicate a11y node id: {id:?}");
++            }
++        }
++        if let Some(parent) = self.nodes_stack.last_mut() {
++            for id in &captured.roots {
++                parent.push_child(*id);
++            }
++        }
++        #[cfg(debug_assertions)]
++        for (id, info) in &captured.info {
++            self.node_info.insert(*id, info.clone());
++        }
++    }
++
+     pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {
+         self.nodes_stack.last_mut()
+     }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..de0eb09 100644
+index c559412..464139e 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -1913,28 +1913,40 @@ impl Window {
+@@ -70,9 +70,9 @@ mod prompts;
+ 
+ pub use a11y::A11ySubtreeBuilder;
+ 
+-use self::a11y::A11y;
+ #[cfg(not(target_family = "wasm"))]
+ use self::a11y::ROOT_NODE_ID;
++use self::a11y::{A11y, CapturedA11y};
+ use crate::util::{
+     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
+@@ -1040,6 +1040,12 @@ pub(crate) struct DeferredDraw {
+     absolute_offset: Point<Pixels>,
+     prepaint_range: Range<PrepaintStateIndex>,
+     paint_range: Range<PaintIndex>,
++    // KOAN: (#1899) Wormhole's a11y replay, for deferred draws.
++    /// The accessibility nodes the element's prepaint added, kept when it ran while the tree was
++    /// being built. A deferred draw that is reused (it sits in a cached view) doesn't prepaint
++    /// again, so this is what puts its nodes back in the tree. Shared, since the draw is copied
++    /// into every frame that reuses it.
++    a11y: Option<Rc<CapturedA11y>>,
+ }
+ 
+ pub(crate) struct Frame {
+@@ -1281,6 +1287,10 @@ pub struct Window {
+         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
+     hovered: Rc<Cell<bool>>,
+     pub(crate) needs_present: Rc<Cell<bool>>,
++    // KOAN: the colour slot table's generation as last presented, and
++    // whether a slot the scene draws with was moving then (#1859).
++    color_slot_generation: Cell<u64>,
++    color_slot_moving: Cell<bool>,
+     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
+     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+@@ -1298,6 +1308,9 @@ pub struct Window {
+     /// Incremented every time focus moves. Used to invalidate a
+     /// pending keyboard activation state when focus changes.
+     pub(crate) focus_generation: u64,
++    // KOAN: draws so far, which a cached view's ranges are checked against
++    // (`view.rs`).
++    pub(crate) frames_drawn: u64,
+     pending_input: Option<PendingInput>,
+     pending_modifier: ModifierState,
+     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
+@@ -1913,28 +1926,45 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -920,7 +3218,10 @@ index c559412..de0eb09 100644
 +                    // uniforms read afresh, with no frame drawn (#1641).
 +                    || handle
 +                        .update(&mut cx, |_, window, _| {
-+                            window.rendered_frame.scene.take_shader_present()
++                            // KOAN: or a colour slot it draws with moved
++                            // (#1859).
++                            let slots = window.take_color_slot_present();
++                            window.rendered_frame.scene.take_shader_present() | slots
 +                        })
 +                        .unwrap_or(false)
 +                {
@@ -933,7 +3234,9 @@ index c559412..de0eb09 100644
 +                // KOAN: a live shader keeps the frames coming (#1641).
 +                let live = handle
                      .update(&mut cx, |_, window, _| {
-+                        let live = window.rendered_frame.scene.has_live_shaders();
++                        let live = window.rendered_frame.scene.has_live_shaders()
++                            // KOAN: so does a moving colour slot (#1859).
++                            || window.color_slot_moving.get();
                          if window.invalidator.is_dirty()
                              || !window.next_frame_callbacks.borrow().is_empty()
 +                            || live
@@ -955,17 +3258,201 @@ index c559412..de0eb09 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -3624,6 +3636,9 @@ impl Window {
+@@ -2184,6 +2214,8 @@ impl Window {
+             visibility_observers: SubscriberSet::new(),
+             hovered,
+             needs_present,
++            color_slot_generation: Cell::new(0), // KOAN: #1859.
++            color_slot_moving: Cell::new(false), // KOAN: #1859.
+             input_rate_tracker,
+             #[cfg(feature = "profiler")]
+             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+@@ -2201,6 +2233,7 @@ impl Window {
+             focus: None,
+             focus_enabled: true,
+             focus_generation: 0,
++            frames_drawn: 0,
+             pending_input: None,
+             pending_modifier: ModifierState::default(),
+             pending_input_observers: SubscriberSet::new(),
+@@ -2718,6 +2751,14 @@ impl Window {
+         AsyncWindowContext::new_context(cx.to_async(), self.handle)
+     }
+ 
++    // KOAN: (#1871) a frame number for work spread over frames.
++    /// The number of the frame being drawn, counted from the window's first:
++    /// what work spread over several frames, such as uploads, can be
++    /// budgeted by.
++    pub fn frame_number(&self) -> u64 {
++        self.frames_drawn
++    }
++
+     /// Schedule the given closure to be run directly after the current frame is rendered.
+     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
+         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+@@ -2899,6 +2940,17 @@ impl Window {
+         self.rendered_frame.scene.quads.clone()
+     }
+ 
++    // KOAN: the shader quads in the most recently rendered frame's scene,
++    // layer groups included, so tests can hold what draws at rest (#1741).
++    /// The number of shader quads in the most recently rendered frame's scene.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn painted_shader_count(&self) -> usize {
++        fn count(scene: &Scene) -> usize {
++            scene.shaders.len() + scene.layer_groups.iter().map(count).sum::<usize>()
++        }
++        count(&self.rendered_frame.scene)
++    }
++
+     /// Returns the underlines in the most recently rendered frame's scene.
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn painted_underlines(&self) -> Vec<Underline> {
+@@ -3439,6 +3491,7 @@ impl Window {
+     /// the contents of the new [`Scene`], use [`Self::present`].
+     #[profiling::function]
+     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
++        self.frames_drawn += 1; // KOAN: view.rs.
+         // Drain every draw in profiler builds so a previous frame's
+         // first-invalidation timestamp can't be attributed to this one.
+         #[cfg(feature = "profiler")]
+@@ -3618,12 +3671,40 @@ impl Window {
+         self.invalidator.replace_views(views);
+     }
+ 
++    // KOAN: whether this refresh should present for the colour slots the
++    // scene draws with: one moves, one was written since the last present,
++    // or the motion has just ended and its last value is still to be shown
++    // (#1859).
++    fn take_color_slot_present(&self) -> bool {
++        let scene = &self.rendered_frame.scene;
++        if scene.color_slots.is_empty() {
++            self.color_slot_moving.set(false);
++            return false;
++        }
++        let generation = crate::color_slots_generation();
++        let changed = self.color_slot_generation.replace(generation) != generation;
++        let moving = scene.color_slots_moving(crate::present_now());
++        let landing = self.color_slot_moving.replace(moving) && !moving;
++        changed || moving || landing
++    }
++
+     #[profiling::function]
+     fn present(&mut self) {
+         #[cfg(feature = "profiler")]
          let _foreground_turn = profiler::journal::foreground_turn();
          #[cfg(feature = "profiler")]
          let present_start = Instant::now();
 +        // KOAN: what this present shows of the shaders is taken as shown
 +        // (#1641).
 +        self.rendered_frame.scene.take_shader_present();
++        // KOAN: the colour slots as this present shows them (#1859).
++        self.color_slot_generation
++            .set(crate::color_slots_generation());
++        let scene = &self.rendered_frame.scene;
++        let moving = !scene.color_slots.is_empty() && scene.color_slots_moving(crate::present_now());
++        if moving {
++            self.color_slot_moving.set(true);
++        }
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4705,75 @@ impl Window {
+@@ -3867,6 +3948,13 @@ impl Window {
+             // case, instead update the tooltip's visibility here.
+             let is_visible =
+                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
++            // KOAN: a tooltip asked for and whether it was drawn (#1814).
++            log::debug!(
++                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
++                mouse_position,
++                self.mouse_position(),
++                tooltip_bounds
++            );
+             if !is_visible {
+                 continue;
+             }
+@@ -3913,7 +4001,15 @@ impl Window {
+             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+ 
+             for deferred_draw_ix in traversal_order {
+-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
++                let (
++                    element,
++                    parent_node,
++                    current_view,
++                    rem_size,
++                    absolute_offset,
++                    prepaint_range,
++                    a11y,
++                ) = {
+                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                     self.element_id_stack
+                         .clone_from(&deferred_draw.element_id_stack);
+@@ -3926,12 +4022,16 @@ impl Window {
+                         deferred_draw.rem_size,
+                         deferred_draw.absolute_offset,
+                         deferred_draw.prepaint_range.clone(),
++                        deferred_draw.a11y.take(),
+                     )
+                 };
+                 self.next_frame.dispatch_tree.set_active_node(parent_node);
+ 
+                 let prepaint_start = self.prepaint_index();
+                 if let Some(mut element) = element {
++                    // Like a cached view, a deferred draw that is reused later must be able to
++                    // put its nodes back: they are added here, outside of any view's prepaint.
++                    let a11y_mark = self.a11y.is_active().then(|| self.a11y.mark());
+                     self.with_rendered_view(current_view, |window| {
+                         window.with_rem_size(Some(rem_size), |window| {
+                             window.with_absolute_element_offset(absolute_offset, |window| {
+@@ -3939,9 +4039,17 @@ impl Window {
+                             });
+                         });
+                     });
+-                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
++                    let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
++                    deferred_draw.element = Some(element);
++                    deferred_draw.a11y = a11y_mark.map(|mark| Rc::new(self.a11y.capture(&mark)));
+                 } else {
+                     self.reuse_prepaint(prepaint_range);
++                    if self.a11y.is_active()
++                        && let Some(a11y) = &a11y
++                    {
++                        self.a11y.replay(a11y, self.focus);
++                    }
++                    self.next_frame.deferred_draws[deferred_draw_ix].a11y = a11y;
+                 }
+                 let prepaint_end = self.prepaint_index();
+                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
+@@ -3985,6 +4093,11 @@ impl Window {
+                 })
+             } else {
+                 self.reuse_paint(deferred_draw.paint_range.clone());
++                if self.a11y.is_active()
++                    && let Some(a11y) = &deferred_draw.a11y
++                {
++                    self.a11y.reuse_action_listeners(a11y);
++                }
+             }
+             let paint_end = self.paint_index();
+             deferred_draw.paint_range = paint_start..paint_end;
+@@ -4058,6 +4171,7 @@ impl Window {
+                     absolute_offset: deferred_draw.absolute_offset,
+                     prepaint_range: deferred_draw.prepaint_range.clone(),
+                     paint_range: deferred_draw.paint_range.clone(),
++                    a11y: deferred_draw.a11y.clone(),
+                 }),
+         );
+     }
+@@ -4540,6 +4654,7 @@ impl Window {
+             absolute_offset,
+             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
+             paint_range: PaintIndex::default()..PaintIndex::default(),
++            a11y: None,
+         });
+     }
+ 
+@@ -4690,6 +4805,110 @@ impl Window {
          }
      }
  
@@ -996,8 +3483,41 @@ index c559412..de0eb09 100644
 +            program,
 +            uniforms,
 +            image: None,
++            group: None,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
++    }
++
++    // KOAN: a layer group (#1859).
++    /// Paints what `paint` paints into a texture of its own, which `program`
++    /// composes over `bounds` at each present, sampling it with
++    /// `koan_sample`: content drawn once, moved, clipped or faded by the
++    /// program's tracks with no frame drawn.
++    ///
++    /// This method should only be called as part of the paint phase of element drawing.
++    pub fn paint_layer_group(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        program: &'static crate::ShaderProgram,
++        uniforms: Arc<crate::ShaderUniforms>,
++        cx: &mut App,
++        paint: impl FnOnce(&mut Self, &mut App),
++    ) {
++        self.invalidator.debug_assert_paint();
++        self.next_frame.scene.push_group();
++        paint(self, cx);
++        let shader = crate::PaintShader {
++            order: 0,
++            bounds: self.snap_bounds(bounds),
++            content_mask: self.snapped_content_mask(),
++            program,
++            uniforms,
++            image: None,
++            group: None,
++            group_inset: Default::default(),
++        };
++        self.next_frame.scene.pop_group(shader);
 +    }
 +
 +    // KOAN: shader quads (#1641).
@@ -1033,6 +3553,8 @@ index c559412..de0eb09 100644
 +            program,
 +            uniforms,
 +            image: Some(tile),
++            group: None,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +        Ok(())
@@ -1041,7 +3563,38 @@ index c559412..de0eb09 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7158,22 @@ impl Window {
+@@ -7051,6 +7270,30 @@ impl Window {
+         self.a11y.is_active()
+     }
+ 
++    /// Pretend that an assistive technology connected to (or left) this window, as the
++    /// platform's adapter reports it, which the test platform has none of. The next frame
++    /// builds the accessibility tree, or stops building it. (A platform's activation also
++    /// refreshes the window; call [`Self::refresh`] for that.)
++    #[cfg(any(test, feature = "test-support"))]
++    // KOAN: (#1899) Wormhole's test hooks for the a11y replay.
++    pub fn simulate_a11y_active(&mut self, active: bool) {
++        self.a11y.set_active_flag(active);
++    }
++
++    /// The accessibility tree of the last frame that built one, as it was sent to the platform's
++    /// adapter, with the real node ids.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn last_a11y_tree_update(&self) -> Option<accesskit::TreeUpdate> {
++        self.a11y.last_tree_update().cloned()
++    }
++
++    /// Deliver an action request to the window as the platform's adapter does when an assistive
++    /// technology performs one on a node of the tree.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn simulate_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
++        self.handle_a11y_action(request, cx);
++    }
++
+     /// Debug representation of the last frame's accessibility information.
+     pub fn debug_a11y_tree_json(&self) -> Option<String> {
+         self.a11y.debug_tree_json()
+@@ -7074,6 +7317,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

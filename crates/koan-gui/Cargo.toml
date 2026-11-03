@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The kōan GUI app, drawn with GPUI over koan-ffi: macOS and Linux for now."
+description = "The kōan GUI app, drawn with GPUI over koan-runtime: macOS and Linux for now."
 publish = false
 
 [lib]
@@ -27,22 +27,22 @@ runtime-shaders = ["koan-kit/runtime-shaders"]
 ctrlc = { version = "3", features = ["termination"] }
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
 # apps drive through uniffi, without the bindings.
-koan-ffi = { path = "../koan-ffi" }
+koan-runtime = { path = "../koan-runtime" }
 chrono = "0.4"
 futures-channel = "0.3"
 futures-lite = "2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The design system, and GPUI through it.
 koan-kit = { path = "../koan-kit" }
-# Only so the code GPUI's macros write, which names `gpui::`, resolves:
-# gpui-kit's own advice is to alias it as `gpui`. Pages reach GPUI through
-# `koan_kit::raw`, and `just gui-theme-leaks` forbids `gpui::` in source.
-gpui = { package = "gpui-kit", version = "0.8.1" }
+# Only so the code GPUI's macros write, which names `gpui::`, resolves.
+# Pages reach GPUI through `koan_kit::raw`, and `just gui-theme-leaks`
+# forbids `gpui::` in source.
+gpui = { package = "gpui-pre", version = "=0.3.10" }
 # The platform cache directory for artwork.
 dirs = "7"
-# Decoding and resizing sleeves for the library, the accent and the wash, and
-# the frames GPUI draws, in the version GPUI itself builds against; PNG for
-# offscreen renders; JPEG, WebP and GIF for sleeves.
+# Decoding sleeves for the library's covers, and the playing record's,
+# scaled down, for its accent and the wash, in the version GPUI itself builds against; PNG for the examples' offscreen
+# renders; JPEG, WebP and GIF for sleeves.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 koan-core = { workspace = true }
 log = "0.4"
@@ -62,9 +62,9 @@ koan-kit = { path = "../koan-kit", features = ["test-support"] }
 # The scroll benches (benches/album_grid.rs): GPUI's own harness, drawing
 # through the headless Metal renderer with nothing on screen.
 criterion = "0.8"
-# Switches on GPUI's bench and test support, which the benches reach
-# through gpui-kit's re-export as `gpui::`.
-gpui_pre = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
+# Switches on GPUI's bench and test support, which the benches reach as
+# `gpui::`.
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["bench-support"] }
 # The large test library's tags (examples/gen_library.rs).
 lofty = "0.25"
@@ -74,16 +74,18 @@ tempfile = "3"
 name = "album_grid"
 harness = false
 
-# Reduce Motion and Low Power Mode, which GPUI does not read, and the
-# notifications that say when either changes.
+# The About panel, the menu bar's status item and whether the app shows in
+# the Dock, which GPUI does not reach.
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6"
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", features = [
-  "NSNotification",
-  "NSOperation",
-  "NSProcessInfo",
-  "NSString",
-  "block2",
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-app-kit = { version = "0.3.2", features = [
+  "NSApplication",
+  "NSImage",
+  "NSMenu",
+  "NSMenuItem",
+  "NSResponder",
+  "NSRunningApplication",
+  "NSStatusBar",
+  "NSStatusItem",
 ] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString"] }

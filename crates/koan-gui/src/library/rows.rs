@@ -8,19 +8,17 @@
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
 
-use koan_ffi::{Track, TransferState};
 use koan_kit::app::*;
-// text measured or shaped at runtime.
-use koan_kit::raw::font;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
+use koan_runtime::{Track, TransferState};
 
+use super::Lib;
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
+use super::nav::Page;
 use super::selection::Selection;
-use super::tokens::{Paint, Type};
+use super::tokens::Paint;
 use crate::components::{
     AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
 };
@@ -43,12 +41,29 @@ pub fn art_height(p: &Paint) -> Pixels {
 /// A gathered row's sleeve, in points at 100 % (`RowMetrics::sleeve`).
 pub const SLEEVE: f32 = 32.0;
 
+/// Where a click on a track's row landed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowPart {
+    /// The row itself, which each list answers in its own way.
     Row,
     Artist(i64),
     Album(i64),
     Heart,
+}
+
+impl RowPart {
+    /// What a click on a row's link or heart does, the same in every list:
+    /// the artist's or the record's page, or the track's favourite.
+    pub fn follow(self, track: i64, lib: &Lib, cx: &mut App) {
+        match self {
+            RowPart::Row => {}
+            RowPart::Artist(id) => lib.nav.update(cx, |n, cx| n.open(Page::Artist(id), cx)),
+            RowPart::Album(id) => lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
+            RowPart::Heart => lib
+                .feed
+                .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
+        }
+    }
 }
 
 pub trait TrackList: actions::Menus {
@@ -87,8 +102,9 @@ pub struct RowState {
     /// A glyph before the figures, with what it means under the pointer: a
     /// play another client scrobbled in, in the history.
     pub note: Option<(crate::theme::Icon, &'static str)>,
-    /// Under the list's keyboard cursor.
-    pub cursor: bool,
+    /// Under the list's keyboard cursor: where its ring tells the list it
+    /// was laid out.
+    pub cursor: Option<crate::components::CursorSpot>,
     /// Its place in the list, of how many, for a screen reader.
     pub place: Option<(usize, usize)>,
     /// Where it sits in a list that draws only what is on screen, to scroll
@@ -100,15 +116,18 @@ pub struct RowState {
 pub enum Reveal {
     Rows(crate::components::RowListState, usize),
     Uniform(crate::components::UniformListScrollHandle, usize, usize),
+    /// An item of a `list` of mixed items, as the artist page's.
+    List(crate::components::ListState, usize),
 }
 
 impl Reveal {
-    fn run(&self) {
+    pub fn run(&self) {
         match self {
             Reveal::Rows(list, ix) => list.reveal_around(*ix),
             Reveal::Uniform(handle, ix, count) => {
                 crate::components::reveal_around(handle, *ix, *count)
             }
+            Reveal::List(list, ix) => crate::components::reveal_around_list(list, *ix),
         }
     }
 }
@@ -125,6 +144,10 @@ pub fn track_row<V: TrackList>(
 ) -> AnyElement {
     let p = &p.picked(state.selected);
     let id = track.id;
+    // The row's parts are known by the track and its place in the list: a
+    // list such as the history draws one track several times, and rows
+    // sharing ids would share their pointer's state.
+    let key = (id as u64 & 0xffff_ffff) | ((index as u64 & 0xff_ffff) << 32);
     let view = cx.weak_entity();
     let click = |part: RowPart| {
         super::listen(
@@ -147,8 +170,9 @@ pub fn track_row<V: TrackList>(
             .ok();
         }
     };
-    let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
+    let lead = RowNumber::new(("row-play", key), state.lead.clone())
         .current(state.current)
+        .picked(state.selected)
         .when(state.current, |n| n.bars(crate::levels::bars(p.accent)))
         .on_play(play);
 
@@ -159,7 +183,7 @@ pub fn track_row<V: TrackList>(
     if names_artist {
         detail = detail.children(track.artist_credit.iter().enumerate().map(|(i, part)| {
             let span = div()
-                .id(("row-credit", (id as u64) << 8 | i as u64))
+                .id(("row-credit", key << 8 | i as u64))
                 .flex_none()
                 .child(part.text.clone());
             match part.artist_id {
@@ -179,7 +203,7 @@ pub fn track_row<V: TrackList>(
             .child(div().flex_none().child("\u{a0}·\u{a0}"))
             .child(
                 div()
-                    .id(("row-album", id as u64))
+                    .id(("row-album", key))
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Album(album)))
@@ -187,15 +211,11 @@ pub fn track_row<V: TrackList>(
             );
     }
 
-    let heart = div()
-        .id(("row-heart", id as u64))
-        .cursor_pointer()
-        .text_color(if state.favourite { p.accent } else { p.muted })
+    let heart = crate::components::Heart::new(("row-heart", key), state.favourite)
         .when(!state.favourite, |d| {
             d.invisible().group_hover(ROW_GROUP, |s| s.visible())
         })
-        .on_click(click(RowPart::Heart))
-        .child(super::tile::heart_glyph(p, state.favourite));
+        .on_click(click(RowPart::Heart));
 
     let drag = state.drag;
     let target = actions::MenuTarget {
@@ -234,7 +254,7 @@ pub fn track_row<V: TrackList>(
             if state.favourite { "favourite" } else { "" },
         ])
     });
-    TableRow::new(("row", id as u64), state.kind)
+    TableRow::new(("row", key), state.kind)
         .when_some(spoken, |row, spoken| row.spoken(spoken))
         .when_some(state.place.filter(|_| p.a11y), |row, (ix, count)| {
             row.place(ix, count)
@@ -243,7 +263,8 @@ pub fn track_row<V: TrackList>(
             row.on_reveal(move |_, _| reveal.run())
         })
         .selected(state.selected)
-        .cursor(state.cursor)
+        .cursor(state.cursor.is_some())
+        .when_some(state.cursor.as_ref(), |row, spot| row.spot(spot))
         .lead_exact(state.lead_width, lead)
         .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))
         .title(
@@ -256,7 +277,7 @@ pub fn track_row<V: TrackList>(
             row.figure(
                 16.0,
                 div()
-                    .id(("row-note", id as u64))
+                    .id(("row-note", key))
                     .flex()
                     .justify_center()
                     .tooltip(move |window, cx| {
@@ -273,7 +294,7 @@ pub fn track_row<V: TrackList>(
                 track.on_disk,
                 state.transfer,
             ))
-            .id(("row-availability", track.id as u64))
+            .id(("row-availability", key))
             .picked(state.selected),
         )
         .figure(20.0, heart)
@@ -288,15 +309,7 @@ pub fn track_row<V: TrackList>(
 /// A lead column wide enough for the longest number in a list of `count`,
 /// measured in the face the numbers are drawn in.
 pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
-    let digits = count.max(1).to_string().len().max(2) as f32;
-    let text = window.text_system();
-    let font = text.resolve_font(&font(crate::theme::FONT_FAMILY));
-    let size = p.look.font_size(Type::Meta);
-    let digit = text
-        .advance(font, size, '0')
-        .map(|size| size.width)
-        .unwrap_or(size * 0.6);
-    digit * digits + px(4.0)
+    crate::components::RowMetrics::lead_width(count, &p.look, window)
 }
 
 /// What a click on a row does to a list's selection: picks it alone, ⌘ adds

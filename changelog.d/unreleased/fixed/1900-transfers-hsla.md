@@ -1,0 +1,1 @@
+- **The desktop app builds again.** Download rings keep their colour type in scope.

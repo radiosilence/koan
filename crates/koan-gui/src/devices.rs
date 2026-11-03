@@ -10,8 +10,8 @@
 //! and the queue only) the engine enforces at the other end; the picker
 //! offers the same rows for both.
 
-use koan_ffi::{DeviceInfo, DeviceReach, PlayState};
 use koan_kit::app::*;
+use koan_runtime::{DeviceInfo, DeviceReach, PlayState};
 
 use crate::components::{Menu, MenuEntry};
 use crate::engine::{engine, reported};
@@ -68,14 +68,6 @@ impl ControlView {
         self.devices.iter().find(|d| &d.id == target)
     }
 
-    /// The device controlled, by name, while it is not this one.
-    pub fn controlled_name(&self) -> Option<String> {
-        self.target.as_ref().map(|_| {
-            self.controlled()
-                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
-        })
-    }
-
     /// The device controlled cannot be reached: commands fail until it is
     /// back.
     pub fn out_of_reach(&self) -> bool {
@@ -83,7 +75,12 @@ impl ControlView {
     }
 
     fn can_move(&self, to: Option<&DeviceInfo>) -> bool {
-        koan_ffi::can_move_music(to.cloned(), self.controlled().cloned(), self.has_queue)
+        koan_runtime::can_move_music(
+            to.cloned(),
+            self.target.clone(),
+            self.controlled().cloned(),
+            self.has_queue,
+        )
     }
 }
 
@@ -120,24 +117,26 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
         .stays_open()
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
-        this = this.action(
-            Icon::Move,
-            "move here: bring what the other device is playing back here",
+        this = this.text_action(
+            "move here",
+            "bring what the other device is playing back here",
             |_, _, cx| move_music(None, cx),
         );
     }
-    let mut menu = menu.section("control");
+    let mut menu = menu.width(Menu::PICKER_WIDTH).section("control");
     // The system keeps the app off the local network until the person allows
     // it, and says nothing otherwise: without this the list would just be
     // short.
     if view.network_blocked {
-        menu = menu.item(
-            MenuEntry::new("kōan can't see this network")
-                .icon(Icon::NetworkBlocked)
-                .rich("Allow Local Network for kōan in System Settings → Privacy & Security to find devices here.")
-                .warns(true)
-                .disabled(true),
-        );
+        // The instruction as a note, wrapped and read whole, not a row's
+        // detail cut to one line.
+        menu = menu
+            .item(
+                MenuEntry::new("kōan can't see this network")
+                    .icon(Icon::NetworkBlocked)
+                    .disabled(true),
+            )
+            .note("Allow Local Network for kōan in System Settings → Privacy & Security to find devices here.");
     }
     let mut menu = menu.item(this);
     for device in &view.devices {
@@ -217,10 +216,10 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
         }
         if view.can_move(Some(device)) {
             let to = device.id.clone();
-            entry = entry.action(
-                Icon::Move,
+            entry = entry.text_action(
+                "move here",
                 format!(
-                    "move here: send what is playing to {}, and control it there",
+                    "send what is playing to {}, and control it there",
                     device.name
                 ),
                 move |_, _, cx| move_music(Some(to.clone()), cx),
@@ -273,7 +272,7 @@ fn move_music(to: Option<String>, cx: &mut App) {
 }
 
 fn moved_notice(
-    moved: &koan_ffi::MoveResult,
+    moved: &koan_runtime::MoveResult,
     here: bool,
     name: &str,
     from: Option<&str>,
@@ -303,9 +302,13 @@ fn moved_notice(
     }
     if !moved.started {
         return Some((
-            format!(
-                "Sent to {name}, which has not started it yet. It may when it wakes; until then the music is paused where it was."
-            ),
+            if here {
+                format!("The music came here from {source} but has not started.")
+            } else {
+                format!(
+                    "Sent to {name}, which has not started it yet. It may when it wakes; until then the music is paused where it was."
+                )
+            },
             Tone::Muted,
         ));
     }
@@ -397,8 +400,8 @@ fn detail(device: &DeviceInfo, now: i64) -> String {
 mod tests {
     use super::*;
 
-    fn moved(started: bool, queued: bool, left_out: u32) -> koan_ffi::MoveResult {
-        koan_ffi::MoveResult {
+    fn moved(started: bool, queued: bool, left_out: u32) -> koan_runtime::MoveResult {
+        koan_runtime::MoveResult {
             left_out,
             started,
             queued,

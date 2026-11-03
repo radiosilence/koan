@@ -5,20 +5,14 @@
 
 use std::time::{Duration, Instant};
 
-use koan_ffi::{
+use koan_kit::app::*;
+use koan_runtime::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
-use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, px};
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
-    MenuSlot, SHADED, Slider, TransportMetrics,
+    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
+    TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -36,6 +30,9 @@ pub struct Transport {
     /// Where F6 brings the keyboard: the bar, from which Tab reaches its
     /// controls.
     focus: FocusHandle,
+    /// What had the keyboard when the pointer went down on the bar, given
+    /// back once the control under it has taken the focus.
+    before_press: std::rc::Rc<std::cell::RefCell<Option<FocusHandle>>>,
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     /// The renderer played to, for why its last track was skipped.
@@ -43,6 +40,8 @@ pub struct Transport {
     /// The device controlled, to name it while it has not said what it
     /// plays through.
     devices: Entity<Slice<Devices>>,
+    /// What the control button shows of the devices, last drawn.
+    controlled_shown: ControlledShown,
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
@@ -50,6 +49,8 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: CoverArt,
+    /// The display's scale as of the last frame, which sizes the sleeve.
+    scale: f32,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -163,14 +164,20 @@ impl Transport {
                 cx.observe(&mirror.renderers, |this, _, cx| this.refill_output(cx)),
                 // The control button names the device controlled, and its
                 // menu follows the devices while it is open.
-                cx.observe(&mirror.devices, |this, _, cx| {
+                cx.observe(&mirror.devices, |this, devices, cx| {
                     if let Some(menu) = this.menus.menu(Menu::Devices).cloned() {
                         let view = crate::devices::ControlView::read(cx);
                         menu.update(cx, |menu, cx| {
                             menu.refill(cx, |menu, _| crate::devices::control_menu(menu, &view))
                         });
                     }
-                    cx.notify();
+                    // Other devices report their playheads through this
+                    // slice; the bar redraws only when what it shows moves.
+                    let shown = controlled_shown(&devices.read(cx).0);
+                    if shown != this.controlled_shown {
+                        this.controlled_shown = shown;
+                        cx.notify();
+                    }
                 }),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
@@ -183,7 +190,7 @@ impl Transport {
                             .entry
                             .as_ref()
                             .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, cx).is_some() {
+                        if covers::image(album, COVER, this.scale, cx).is_some() {
                             cx.notify();
                         }
                     }
@@ -205,12 +212,15 @@ impl Transport {
                 }),
             ],
             focus: cx.focus_handle(),
+            before_press: Default::default(),
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
+            controlled_shown: controlled_shown(&mirror.devices.read(cx).0),
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
+            scale: 2.0,
             eq: None,
             eq_profile: None,
             eq_library: mirror.library.read(cx).version,
@@ -339,12 +349,12 @@ impl Transport {
         help: String,
         enabled: bool,
         p: &Paint,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         self.menus.trigger(
             which,
-            text_button(icon, label, p)
-                .id(label)
+            text_button(icon, label, p, window, cx)
                 .tooltip(tip(help))
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
@@ -357,11 +367,11 @@ impl Transport {
     /// controlled its name beside it in an accent badge, since everything the
     /// window shows is then that device's. A device out of reach turns the
     /// glyph into a warning in `bad`.
-    fn control_button(&self, p: &Paint, cx: &mut Context<Self>) -> Div {
+    fn control_button(&self, p: &Paint, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let view = &self.devices.read(cx).0;
         let away = matches!(
             view.target_reach,
-            Some(koan_ffi::DeviceReach::OutOfReach { .. })
+            Some(koan_runtime::DeviceReach::OutOfReach { .. })
         );
         let name = view.target.as_ref().map(|t| {
             view.devices
@@ -377,6 +387,7 @@ impl Transport {
                 "play on another device".to_owned(),
                 true,
                 p,
+                window,
                 cx,
             );
         };
@@ -391,8 +402,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Devices,
-            trailing_item(p)
-                .id("devices")
+            trailing_item(div().id("devices"), p, false)
                 .tooltip(tip(if away {
                     format!("{name} is out of reach")
                 } else {
@@ -409,24 +419,36 @@ impl Transport {
 
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
-    fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
+    fn eq_button(
+        &self,
+        eq: &EqState,
+        p: &Paint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let plain = eq.flat || eq.off;
-        let color = if plain { p.ink } else { p.accent_text };
+        // The glyph, or with icons off the word, in `ink` or the accent:
+        // quieter under the pointer, back over `LEAVE` once it has gone.
+        let rest = match (plain, p.look.icons) {
+            (true, _) => p.ink,
+            (false, true) => p.accent,
+            (false, false) => p.accent_text,
+        };
+        let (base, color) =
+            crate::components::hover_tint("eq", rest, rest.opacity(0.8), window, cx);
         let summary: SharedString = help(&eq.summary(), &ShowEq, cx).into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(if plain { p.ink } else { p.accent })
+                .color(color)
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()
         };
         self.menus.trigger(
             Menu::Eq,
-            trailing_item(p)
-                .id("eq")
+            trailing_item(base, p, p.look.icons)
                 .text_color(color)
-                .hover(|s| s.opacity(0.8))
                 .child(child)
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
@@ -464,7 +486,7 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
 /// whenever one of them moves while it is open.
 struct OutputView {
     /// `None` while the device controlled has not said what it plays through.
-    outputs: Option<koan_ffi::OutputsInfo>,
+    outputs: Option<koan_runtime::OutputsInfo>,
     /// Why the renderer played to skipped its last track, until one plays.
     problem: Option<String>,
     /// The EQ profile the stream playing goes through.
@@ -482,12 +504,17 @@ struct OutputView {
 /// has its EQ button, in the accent while an EQ is in force there. Under the
 /// renderer in use, its own volume and what it is sent.
 fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
+    let menu = menu.width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
-        let name = view.controlled.as_deref().unwrap_or("That device");
-        return menu.note(format!(
-            "{name} has not said what it plays through. It may need updating."
-        ));
+        // This device's own outputs are on their way; another device that
+        // never says is one from before outputs were reported.
+        return menu.note(match view.controlled.as_deref() {
+            Some(name) => {
+                format!("{name} has not said what it plays through. It may need updating.")
+            }
+            None => "This device's outputs are still being read.".to_owned(),
+        });
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry
@@ -505,7 +532,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
             crate::dsp::window::open(Some(id.clone()), cx);
         })
     };
-    let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
+    let preset = |o: &koan_runtime::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
         (Some(preset), false) => preset.clone(),
         (None, true) => "unsaved".into(),
@@ -698,115 +725,60 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
 /// How far an arrow key moves the seek bar.
 const SEEK_KEY_MS: u64 = 5_000;
 
-/// The theme's text button: the label in `muted`, `ink` under the pointer.
-/// The control's glyph with icons on, its label without: the theme's two
-/// variants. The label is what the plain variant shows, so it is lowercase.
-fn glyph_or_label(
+/// The theme's text button, or with icons its icon button: `muted`, `ink`
+/// under the pointer, leaving over `LEAVE` as the kit's controls do.
+fn text_button(
     icon: Icon,
     label: &'static str,
-    role: TypeRole,
-    color: Hsla,
     p: &Paint,
-) -> AnyElement {
-    if p.look.icons {
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let (base, color) = crate::components::hover_tint(label, p.muted, p.ink, window, cx);
+    let child = if p.look.icons {
         KoanIcon::new(icon)
-            .role(role)
+            .points(TransportMetrics::trailing_icon(&p.look))
             .color(color)
             .into_any_element()
     } else {
         div().child(label).into_any_element()
-    }
-}
-
-/// The theme's text button, or with icons its icon button: `muted`, `ink`
-/// under the pointer.
-fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
-    let ink = p.ink;
-    let child = if p.look.icons {
-        KoanIcon::new(icon)
-            .points(TransportMetrics::trailing_icon(&p.look))
-            .color(p.muted)
-            .hover_color(TEXT_BUTTON, ink)
-            .into_any_element()
-    } else {
-        div().child(label).into_any_element()
     };
-    trailing_item(p)
-        .group(TEXT_BUTTON)
-        .text_color(p.muted)
-        .hover(move |s| s.text_color(ink))
+    trailing_item(base, p, p.look.icons)
+        .text_color(color)
         .child(child)
 }
 
 /// One of the trailing group's items, as the Mac lays them out: as wide as
 /// what it shows, the full bar's height and half the gap either side to hit.
-fn trailing_item(p: &Paint) -> Div {
-    let reach = TransportMetrics::trailing_gap(&p.look) / 2.;
-    div()
-        .flex()
+/// A glyph alone reaches further, over the gap, so it is at least `HIT` wide
+/// to click: padding taken back by an equal negative margin, so the item's
+/// own bounds grow and nothing moves.
+fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<Div> {
+    let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
+    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
+    let reach = if glyph_only {
+        gap.max((theme::HIT - glyph) / 2.)
+    } else {
+        gap
+    };
+    // A glyph's reach can pass its neighbour's at small gaps: each item
+    // blocks the ones drawn before it, so a press in the overlap goes to
+    // one item, never two.
+    base.flex()
         .items_center()
         .justify_center()
         .h(theme::HIT)
         .px(reach)
         .mx(-reach)
+        .occlude()
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
 }
-
-/// The group a text button's glyph follows the pointer by.
-const TEXT_BUTTON: &str = "transport-text-button";
 
 /// A transport control's tooltip.
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = SharedString::from(text);
     move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
-}
-
-/// A transport control: `on` for the two that toggle, underlined in the
-/// accent while on and `muted` while off, as an icon toggle is.
-fn control(
-    id: &'static str,
-    icon: Icon,
-    label: &'static str,
-    on: Option<bool>,
-    p: &Paint,
-    window: &mut Window,
-    cx: &mut App,
-) -> Stateful<Div> {
-    // A stop in the window's Tab order, which Return and Space click.
-    let focus = crate::components::tab_stop(&id.into(), window, cx);
-    let ring = crate::components::focus_ring(&focus, window, cx);
-    let (color, underline) = match on {
-        Some(true) => (p.ink, Some(p.accent)),
-        Some(false) => (p.muted, None),
-        None => (p.ink, None),
-    };
-    // 44 points wide to hit, as the spec asks, but only the glyph's width in
-    // the layout: the rest of the hit area reaches into the gaps beside it,
-    // so the glyphs sit as far apart as the Mac's. As tall as the controls'
-    // row, which the transport's metrics keep clear of the seek bar.
-    let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
-    let reach = (theme::HIT - glyph) / 2.;
-    div()
-        .id(id)
-        .relative()
-        .track_focus(&focus)
-        .w(theme::HIT)
-        .mx(-reach)
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_role(TypeRole::Control, &p.look)
-        .text_color(color)
-        .hover(|s| s.opacity(0.8))
-        .child(
-            div()
-                .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
-        )
-        .children(ring)
 }
 
 fn format_badge(format: &StreamFormat) -> String {
@@ -830,7 +802,8 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
+        self.scale = window.scale_factor();
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, self.scale, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -849,7 +822,7 @@ impl Render for Transport {
 
         let left = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(p.space(Space::M))
@@ -903,12 +876,12 @@ impl Render for Transport {
                     })
                     .flex()
                     .flex_col()
-                    .min_w(px(0.))
+                    .min_w_0()
                     // The title and the record lead to the record, each
                     // credited artist to the artist.
                     .children(entry.map(|e| {
                         let album = e.album_id.map(crate::navigator::Route::Album);
-                        links::names(
+                        let names = links::names(
                             vec![
                                 links::link(
                                     "np-title".into(),
@@ -922,7 +895,24 @@ impl Render for Transport {
                             TypeRole::Meta,
                             p.strong,
                             &p,
-                        )
+                        );
+                        // The rainbow's shimmer through the playing title,
+                        // over it while the rainbow is drawn; the title
+                        // otherwise stands as it is.
+                        match crate::theme::KoanTheme::prism(cx) {
+                            Some(brat) => div()
+                                .relative()
+                                .min_w_0()
+                                .child(names)
+                                .child(
+                                    crate::components::Sheen::new("np-title-sheen")
+                                        .brat(brat)
+                                        .strength(0.35)
+                                        .glitch(true),
+                                )
+                                .into_any_element(),
+                            None => names.into_any_element(),
+                        }
                     }))
                     .children(entry.map(|e| {
                         let mut detail = links::credit(
@@ -956,10 +946,16 @@ impl Render for Transport {
 
         // The one control reached for without looking: outlined, as the
         // Mac's is.
-        let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
-            .icon(if playing { Icon::Pause } else { Icon::Play })
-            .label(if playing { "pause" } else { "play" })
-            .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
+        let play_pause = Button::icon_outlined(
+            "play-pause",
+            if playing { Icon::Pause } else { Icon::Play },
+            help(
+                if playing { "pause" } else { "play" },
+                &crate::platform::actions::TogglePlayPause,
+                cx,
+            ),
+        )
+        .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         // The controls and the seek bar placed by koan-kit's metrics: centred
         // in the bar as the Mac's, the controls' hit row never reaching the
@@ -981,58 +977,60 @@ impl Render for Transport {
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        control(
+                        TransportControl::new(
                             "shuffle",
                             Icon::Shuffle,
                             "shuffle",
-                            Some(shuffle),
-                            &p,
-                            window,
-                            cx,
+                            theme::label(if shuffle {
+                                "shuffle: on"
+                            } else {
+                                "shuffle: off"
+                            }),
                         )
-                        .tooltip(tip(if shuffle {
-                            "shuffle: on"
-                        } else {
-                            "shuffle: off"
-                        }
-                        .to_owned()))
+                        .on(shuffle)
                         .on_click(move |_, _, cx| {
                             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
                         }),
                     )
                     .child(
-                        control("previous", Icon::Previous, "prev", None, &p, window, cx)
-                            .tooltip(tip(help("previous track", &Previous, cx)))
-                            .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
+                        TransportControl::new(
+                            "previous",
+                            Icon::Previous,
+                            "prev",
+                            help("previous track", &Previous, cx),
+                        )
+                        .answer(crate::components::Answer::Streak(false))
+                        .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", Icon::Next, "next", None, &p, window, cx)
-                            .tooltip(tip(help("next track", &Next, cx)))
-                            .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
+                        TransportControl::new(
+                            "next",
+                            Icon::Next,
+                            "next",
+                            help("next track", &Next, cx),
+                        )
+                        .answer(crate::components::Answer::Streak(true))
+                        .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
-                        control(
+                        TransportControl::new(
                             "repeat",
                             repeat_icon,
                             repeat_label,
-                            Some(now.repeat_mode != RepeatMode::Off),
-                            &p,
-                            window,
-                            cx,
+                            theme::label(match now.repeat_mode {
+                                RepeatMode::Off => "repeat: off",
+                                RepeatMode::Queue => "repeat: the queue",
+                                RepeatMode::One => "repeat: this track",
+                            }),
                         )
-                        .tooltip(tip(match now.repeat_mode {
-                            RepeatMode::Off => "repeat: off",
-                            RepeatMode::Queue => "repeat: the queue",
-                            RepeatMode::One => "repeat: this track",
-                        }
-                        .to_owned()))
+                        .on(now.repeat_mode != RepeatMode::Off)
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
                         }),
                     ),
             )
-            // Its own cached view. A tick re-renders the slider and the views
+            // Its own cached view. A second of the clock re-renders the slider and the views
             // that hold it (the bar, the shell), whose other cached children
             // replay their last frame rather than laying out again.
             .child(
@@ -1053,7 +1051,7 @@ impl Render for Transport {
 
         let right = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .justify_end()
@@ -1082,9 +1080,10 @@ impl Render for Transport {
                 },
                 true,
                 &p,
+                window,
                 cx,
             ))
-            .child(self.control_button(&p, cx))
+            .child(self.control_button(&p, window, cx))
             .child(self.menu_button(
                 Menu::Output,
                 Icon::Speaker,
@@ -1092,6 +1091,7 @@ impl Render for Transport {
                 "output".to_owned(),
                 true,
                 &p,
+                window,
                 cx,
             ))
             // This device's own output's EQ; another device's is chosen there.
@@ -1109,7 +1109,7 @@ impl Render for Transport {
                             // output to the other one.
                             .is_some_and(|o| o.owner.is_none())
                     })
-                    .map(|eq| self.eq_button(&eq, &p, cx)),
+                    .map(|eq| self.eq_button(&eq, &p, window, cx)),
             );
 
         let ring = crate::components::focus_ring(&self.focus, window, cx);
@@ -1117,6 +1117,35 @@ impl Render for Transport {
             .id("transport")
             .relative()
             .track_focus(&self.focus)
+            // F6 brings the keyboard here; a click on a control leaves it
+            // where it was, with the list it was working. The control takes
+            // the focus as the press bubbles up from it, before the bar
+            // hears it, so the bar notes the focus on the way down and gives
+            // it back on the way up. Preventing the default instead would
+            // also keep the controls from drawing as pressed.
+            .capture_any_mouse_down({
+                let before = self.before_press.clone();
+                // The left button alone: a right press opens a menu that
+                // takes the keyboard on purpose.
+                move |e: &MouseDownEvent, window, cx| {
+                    *before.borrow_mut() = (e.button == MouseButton::Left)
+                        .then(|| window.focused(cx))
+                        .flatten();
+                }
+            })
+            .on_any_mouse_down({
+                let (before, bar) = (self.before_press.clone(), self.focus.clone());
+                move |_, window, cx| {
+                    if let Some(before) = before.borrow_mut().take()
+                        && !bar.contains(&before, window)
+                    {
+                        window.focus(&before, cx);
+                        // The bar's own focus-on-press runs after this, on a
+                        // press no control took (a gap, a link, the cover).
+                        window.prevent_default();
+                    }
+                }
+            })
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()
@@ -1125,7 +1154,7 @@ impl Render for Transport {
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
             .bg(p.bg)
-            .border_t(theme::HAIRLINE)
+            .border_t(p.look.hairline)
             .border_color(p.rule)
             .child(left)
             .child(centre)
@@ -1145,6 +1174,31 @@ const LANDING: Duration = Duration::from_secs(1);
 /// How near the engine's playhead must come to a seek's target to be its
 /// answer.
 const NEAR_MS: u64 = 250;
+
+/// Where the times put the playhead: reckoned from the anchor shown, or at
+/// the engine's whole second its own reading, so the times step as it says
+/// rather than a moment behind. A reading counts only while it agrees with
+/// the anchor, within `NEAR_MS`: one from before a seek (backward too), or
+/// one in flight as a new anchor arrives, is of another place.
+fn shown_position(
+    reckoned: u64,
+    heard: Option<(u64, Instant)>,
+    playing: bool,
+    now: Instant,
+    duration: u64,
+) -> u64 {
+    match heard {
+        Some((heard, at)) if playing => {
+            let heard = (heard + now.duration_since(at).as_millis() as u64).min(duration);
+            if heard.abs_diff(reckoned) < NEAR_MS {
+                reckoned.max(heard)
+            } else {
+                reckoned
+            }
+        }
+        _ => reckoned,
+    }
+}
 
 /// A seek sent and not yet heard back, however it was made (the slider, the
 /// skip keys, a lyric's line, the media keys): the playhead it sets. Until
@@ -1167,27 +1221,28 @@ pub fn land(target_ms: u64, cx: &mut App) {
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. Where the renderer
-/// draws shaders, the slider glides: the anchor is handed to it (`Glide`) and
-/// the GPU reckons the fill per present, so it moves continuously with no
-/// frame drawn, and a new anchor (a seek, a pause, the next track) corrects
-/// it. While it runs, one timer is set for the next moment the times would
-/// read differently (the next second), and elsewhere for the fill's next
-/// pixel too; paused or stopped, nothing is set and nothing presents, so a
-/// koan at rest costs nothing.
+/// The position is reckoned from the playhead's anchor. The slider glides:
+/// the anchor is handed to it (`Glide`) and the GPU reckons the fill per
+/// present, so it moves with no frame drawn, and a new anchor (a seek, a
+/// pause, the next track) corrects it. The times follow the engine's clock
+/// (`ClockStream`), which wakes the view at each whole second while the
+/// track plays and at each new anchor; paused, stopped or past the track's
+/// end it says nothing, so a koan at rest costs nothing.
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
     /// Whether the window shows: hidden, no timer runs.
     visible: bool,
-    tick: Option<Task<()>>,
+    /// Following the engine's clock while the window shows.
+    clock: Option<Task<()>>,
+    /// The playhead as the engine's clock last reported it, and when: the
+    /// times show at least this while it agrees with the anchor shown, since
+    /// the anchor is stamped a little later than the engine took it.
+    heard: Option<(u64, Instant)>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
     /// Wakes the slider when a seek's target lapses unanswered.
     lapse: Option<Task<()>>,
-    /// The slider's width as last painted, for when its fill next moves a
-    /// pixel.
-    width: std::rc::Rc<std::cell::Cell<f32>>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1218,10 +1273,10 @@ impl Seek {
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
-            tick: None,
+            clock: None,
+            heard: None,
             dragging: None,
             lapse: None,
-            width: Default::default(),
             glide: Glide::new(),
         };
         seek.schedule(cx);
@@ -1285,10 +1340,27 @@ impl Seek {
     }
 
     fn schedule(&mut self, cx: &mut Context<Self>) {
-        self.tick = None;
         let anchor = self.anchor(cx);
         let duration = self.duration_ms(cx);
         let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        // The times follow the engine's clock, which wakes this at each
+        // whole second while it plays; nothing of its own counts.
+        if self.visible != self.clock.is_some() {
+            self.clock = self.visible.then(|| {
+                let clock = engine(cx).clock_stream();
+                cx.spawn(async move |this, cx| {
+                    while let Some(position) = clock.next().await {
+                        let heard = this.update(cx, |this, cx| {
+                            this.heard = Some((position, Instant::now()));
+                            cx.notify();
+                        });
+                        if heard.is_err() {
+                            break;
+                        }
+                    }
+                })
+            });
+        }
         if duration > 0 {
             self.glide.set(
                 (anchor.position_ms as f64 / duration as f64) as f32,
@@ -1301,27 +1373,6 @@ impl Seek {
             );
         }
         self.glide.set_moving(moving);
-        if !self.visible || !anchor.playing || duration == 0 {
-            return;
-        }
-        let position = anchor.at(Instant::now(), duration);
-        if position >= duration {
-            return;
-        }
-        let to_second = 1000 - position % 1000;
-        let width = self.width.get();
-        let to_pixel = if width > 0.0 && !SHADED {
-            (duration as f32 / width).ceil() as u64
-        } else {
-            to_second
-        };
-        // No more often than a 60 Hz frame: a short track on a wide slider
-        // would otherwise step its fill faster than the display shows it.
-        let wait = Duration::from_millis(to_second.min(to_pixel).max(16));
-        self.tick = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            this.update(cx, |this, cx| this.moved(cx)).ok();
-        }));
     }
 
     fn commit(&mut self, cx: &mut Context<Self>) {
@@ -1351,7 +1402,10 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.shown(cx).0.at(Instant::now(), duration);
+        let (anchor, _) = self.shown(cx);
+        let now = Instant::now();
+        let reckoned = anchor.at(now, duration);
+        let position = shown_position(reckoned, self.heard, anchor.playing, now, duration);
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,
@@ -1366,13 +1420,6 @@ impl Render for Seek {
         // seek's target until it lands there (`SharedPlayerState::request_seek`,
         // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
-        let width = self.width.clone();
-        let measure = canvas(
-            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
         // How far a track still downloading can be played, moving as its
         // bytes arrive; nothing once the file is all here.
         let reach = self
@@ -1384,12 +1431,14 @@ impl Render for Seek {
             .and_then(|e| e.track_id)
             .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
+            .named("seek")
             .compact()
             // An arrow key moves five seconds, not a twentieth of the track.
             .when(duration > 0, |s| {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .prism(crate::theme::KoanTheme::prism(cx))
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
@@ -1411,6 +1460,73 @@ impl Render for Seek {
             .flex()
             .items_center()
             .child(div().w_full().child(slider))
-            .child(measure)
+    }
+}
+
+/// What the control button draws from the devices: the device controlled,
+/// how it can be reached, and its name.
+type ControlledShown = (
+    Option<String>,
+    Option<koan_runtime::DeviceReach>,
+    Option<String>,
+);
+
+fn controlled_shown(view: &Devices) -> ControlledShown {
+    let name = view.target.as_ref().and_then(|t| {
+        view.devices
+            .iter()
+            .find(|d| &d.id == t)
+            .map(|d| d.name.clone())
+    });
+    (view.target.clone(), view.target_reach.clone(), name)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::shown_position;
+
+    const TRACK: u64 = 240_000;
+
+    #[test]
+    fn the_engines_reading_steps_the_times_when_it_agrees() {
+        let now = Instant::now();
+        // The anchor is stamped a little late, reckoning 4,960 at the
+        // engine's whole second: the times show its 5,000.
+        let heard = Some((5_000, now));
+        assert_eq!(shown_position(4_960, heard, true, now, TRACK), 5_000);
+        // A reading carries on from when it was heard.
+        let later = now + Duration::from_millis(300);
+        assert_eq!(shown_position(5_260, heard, true, later, TRACK), 5_300);
+    }
+
+    #[test]
+    fn a_backward_seek_is_not_held_at_the_old_place() {
+        let now = Instant::now();
+        let heard = Some((90_000, now - Duration::from_millis(200)));
+        assert_eq!(shown_position(10_000, heard, true, now, TRACK), 10_000);
+    }
+
+    #[test]
+    fn a_reading_in_flight_does_not_override_a_new_anchor() {
+        let now = Instant::now();
+        // Read before a forward seek to 60 s, arriving after it.
+        let heard = Some((12_000, now));
+        assert_eq!(shown_position(60_000, heard, true, now, TRACK), 60_000);
+    }
+
+    #[test]
+    fn paused_the_anchor_alone_is_shown() {
+        let now = Instant::now();
+        let heard = Some((5_000, now - Duration::from_millis(500)));
+        assert_eq!(shown_position(4_990, heard, false, now, TRACK), 4_990);
+    }
+
+    #[test]
+    fn a_reading_never_runs_past_the_track() {
+        let now = Instant::now();
+        let heard = Some((TRACK - 100, now - Duration::from_millis(400)));
+        assert_eq!(shown_position(TRACK - 50, heard, true, now, TRACK), TRACK);
     }
 }

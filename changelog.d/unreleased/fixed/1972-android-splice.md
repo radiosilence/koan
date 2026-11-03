@@ -1,0 +1,1 @@
+- **Reordering a playlist offline on Android.** Moving a track in a playlist while some of its tracks are not on the phone keeps the others where they were, instead of moving them to the end and sending that order to the server.

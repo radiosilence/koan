@@ -378,7 +378,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `,` | Back 10 seconds |
 | `.` | Forward 10 seconds |
 | `f` | Favourite the current track |
-| `p` | Add music (the ⇧⌘K picker) |
+| `p` | The search box, as ⇧⌘K |
 | `/` | Search the library |
 | `l` or `a` | Albums |
 | `r` | Artists |
@@ -392,7 +392,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | Key | Action |
 |-----|--------|
 | `⌘K` | Search the library |
-| `⇧⌘K` | Add music |
+| `⇧⌘K` | The search box (find and play) |
 | `⌘1`–`⌘7` | Queue, Albums, Artists, Favourites, History, Recently Played, Tracks |
 | `⌘[` / `⌘]` | Back / forward |
 | `⌘F` | Filter what's on screen (albums, artists), otherwise search the library |

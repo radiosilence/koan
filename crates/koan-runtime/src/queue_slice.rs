@@ -1,0 +1,659 @@
+//! The queue as clients are sent it: whole when its rows change, and otherwise
+//! as the rows that read differently since.
+//!
+//! A queue is edited when someone does something, but its rows' statuses move
+//! on their own: the cursor advancing, a download landing, a track failing.
+//! Sending tens of thousands of rows across the boundary for each of those,
+//! and having the client decode and regroup them all, is what made a large
+//! queue unusable. So the rows go whole (`StateSlice::Queue`) only when the
+//! queue's content changes, and between those a `StateSlice::QueuePatch` says
+//! which rows now read differently from that base.
+//!
+//! The patch is whole too, relative to its base: it holds every row that
+//! differs, not the ones that changed since the last patch. A client that
+//! missed a patch loses nothing by applying the next one.
+
+use std::collections::HashMap;
+
+use koan_core::db::queries::Place;
+use koan_core::helpers::{ListCredits, RecordOf, RowCredits, record_runs};
+use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
+
+use crate::state::StateSlice;
+use crate::types::{Credits, EntryStatus, QueueItem, RunRole};
+
+/// Past this many differing rows, the whole queue again: a client applies
+/// that as cheaply as a patch the size of the queue, and a base that has
+/// drifted far makes every later patch carry the drift.
+pub(crate) const PATCH_MAX: usize = 512;
+
+/// What the library says about each queued track: its place (record and
+/// artists), where its bytes are (on a server, on this machine), and the
+/// artists its credit and its record's credit name.
+#[derive(Default)]
+pub(crate) struct Joins {
+    pub places: HashMap<i64, Place>,
+    pub sources: HashMap<i64, (bool, bool)>,
+    pub credits: ListCredits,
+}
+
+impl Joins {
+    /// A row's artist and record artist with each credited artist linked.
+    pub(crate) fn credits(
+        &self,
+        track: Option<i64>,
+        artist: &str,
+        album_artist: &str,
+    ) -> RowCredits {
+        self.credits
+            .row(track, self.place(track), artist, album_artist)
+    }
+
+    pub(crate) fn place(&self, track: Option<i64>) -> Place {
+        track
+            .and_then(|id| self.places.get(&id))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn sources(&self, track: Option<i64>) -> (bool, bool) {
+        track
+            .and_then(|id| self.sources.get(&id))
+            .copied()
+            .unwrap_or((false, false))
+    }
+}
+
+/// The queue as last sent whole, and what is needed to tell what has moved
+/// since.
+#[derive(Default)]
+pub(crate) struct QueueSender {
+    base: Option<Base>,
+    /// The last base's version. Owned here rather than taken from the
+    /// playlist, which does not move when the library does: two bases with one
+    /// version would let a client apply the older one's patch to the newer.
+    sent: u64,
+}
+
+struct Base {
+    version: u64,
+    content: u64,
+    ids: Vec<QueueItemId>,
+    items: Vec<QueueItem>,
+    /// The library's reading of each row, in queue order, as of the last time
+    /// it moved. Kept aligned with the rows so a pass over them hashes nothing.
+    library: Vec<Library>,
+    /// What `library` was read from, for a rebuild that need not ask again.
+    joins: Joins,
+}
+
+/// What the library says about one row.
+struct Library {
+    place: Place,
+    on_server: bool,
+    on_disk: bool,
+    /// The row's artist and record artist credits, only where they now read
+    /// differently from the row as sent: a pass over the rows compares no
+    /// strings.
+    credits: Option<Credits>,
+    /// The row's place among the queue's records: a record id the library
+    /// moved can join or split runs.
+    run: RunRole,
+}
+
+impl Library {
+    /// The library's reading of `track`, where `sent` is the row as last sent
+    /// whole, if it differs in its credits.
+    fn of(track: Option<i64>, joins: &Joins, sent: Option<&QueueItem>, run: RunRole) -> Self {
+        let (on_server, on_disk) = joins.sources(track);
+        let credits = sent.and_then(|sent| {
+            let now = joins.credits(track, &sent.artist, &sent.album_artist);
+            (sent.artist_credit != now.artist || sent.album_artist_credit != now.album_artist)
+                .then(|| now.into())
+        });
+        Self {
+            place: joins.place(track),
+            on_server,
+            on_disk,
+            credits,
+            run,
+        }
+    }
+}
+
+/// Each row's place among the records of the queue, as the library now files
+/// its tracks.
+fn runs<'a>(
+    rows: impl Iterator<Item = (Option<i64>, &'a str, &'a str, &'a str)>,
+    joins: &Joins,
+) -> Vec<RunRole> {
+    let records: Vec<RecordOf> = rows
+        .map(|(track, album, album_artist, title)| RecordOf {
+            album_id: joins.place(track).album_id,
+            album,
+            album_artist,
+            title,
+        })
+        .collect();
+    record_runs(&records).into_iter().map(Into::into).collect()
+}
+
+impl QueueSender {
+    /// Forget what was sent, so the next update sends the queue whole. For a
+    /// change of the device in view, after which the client holds another
+    /// device's queue.
+    pub(crate) fn reset(&mut self) {
+        self.base = None;
+    }
+
+    /// Transfers have just settled: where these tracks are now, from the
+    /// library, for the rows that hold them. The next `update` sends the rows
+    /// that moved. Cheaper than re-reading the whole queue's join, which waits
+    /// for the library's own change.
+    pub(crate) fn settled(&mut self, sources: HashMap<i64, (bool, bool)>) {
+        let Some(base) = self.base.as_mut() else {
+            return;
+        };
+        for (row, library) in base.items.iter().zip(base.library.iter_mut()) {
+            if let Some(&(on_server, on_disk)) = row.track_id.and_then(|id| sources.get(&id)) {
+                library.on_server = on_server;
+                library.on_disk = on_disk;
+            }
+        }
+        base.joins.sources.extend(sources);
+    }
+
+    /// The slices that bring a client up to date with `state`'s queue.
+    ///
+    /// `library_moved` re-asks the library through `joins`; nothing in the
+    /// player says when a download has written a track's file.
+    pub(crate) fn update(
+        &mut self,
+        state: &SharedPlayerState,
+        library_moved: bool,
+        joins: impl FnOnce(&[i64]) -> Joins,
+    ) -> Vec<StateSlice> {
+        // Read before the rows: an edit landing in between moves it again,
+        // and the next update sends the queue whole once more.
+        let content = state.content_version();
+        let Some(base) = self.base.as_mut().filter(|b| b.content == content) else {
+            return self.rebuild(state, content, joins);
+        };
+
+        let readings = state.queue_readings();
+        let same_rows = readings.len() == base.ids.len()
+            && readings.iter().zip(&base.ids).all(|(r, id)| r.id == *id);
+        if !same_rows {
+            return self.rebuild(state, content, joins);
+        }
+        if library_moved {
+            let track_ids: Vec<i64> = readings.iter().filter_map(|r| r.db_id).collect();
+            base.joins = joins(&track_ids);
+            let runs = runs(
+                readings.iter().zip(&base.items).map(|(r, sent)| {
+                    let (album, artist, title) = (&sent.album, &sent.album_artist, &sent.title);
+                    (r.db_id, album.as_str(), artist.as_str(), title.as_str())
+                }),
+                &base.joins,
+            );
+            base.library = readings
+                .iter()
+                .zip(&base.items)
+                .zip(runs)
+                .map(|((r, sent), run)| Library::of(r.db_id, &base.joins, Some(sent), run))
+                .collect();
+        }
+
+        let mut items = Vec::new();
+        for ((reading, sent), library) in readings.iter().zip(&base.items).zip(&base.library) {
+            if let Some(row) = moved(sent, reading, library) {
+                items.push(row);
+                if items.len() > PATCH_MAX {
+                    break;
+                }
+            }
+        }
+        if items.len() <= PATCH_MAX {
+            return vec![StateSlice::QueuePatch {
+                base: base.version,
+                items,
+            }];
+        }
+        // What the library said is still what it says: the rebuild need not
+        // ask it again.
+        let held = std::mem::take(&mut base.joins);
+        self.rebuild(state, content, |_| held)
+    }
+
+    fn rebuild(
+        &mut self,
+        state: &SharedPlayerState,
+        content: u64,
+        joins: impl FnOnce(&[i64]) -> Joins,
+    ) -> Vec<StateSlice> {
+        self.sent += 1;
+        let version = self.sent;
+        let entries = state.derive_visible_queue().entries;
+        let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        let joins = joins(&track_ids);
+        let runs = runs(
+            entries.iter().map(|e| {
+                (
+                    e.db_id,
+                    e.album.as_str(),
+                    e.album_artist.as_str(),
+                    e.title.as_str(),
+                )
+            }),
+            &joins,
+        );
+        let items: Vec<QueueItem> = entries
+            .iter()
+            .zip(&runs)
+            .map(|(e, run)| QueueItem::from_entry(e, &joins, *run))
+            .collect();
+        let slices = vec![
+            StateSlice::Queue {
+                items: items.clone(),
+                version,
+            },
+            StateSlice::QueuePatch {
+                base: version,
+                items: Vec::new(),
+            },
+        ];
+        self.base = Some(Base {
+            version,
+            content,
+            ids: entries.iter().map(|e| e.id).collect(),
+            library: entries
+                .iter()
+                .zip(runs)
+                .map(|(e, run)| Library::of(e.db_id, &joins, None, run))
+                .collect(),
+            items,
+            joins,
+        });
+        slices
+    }
+}
+
+/// `sent` as it reads now, if that differs. Only what can move without the
+/// queue's content changing is taken from the reading; the text stays as sent.
+fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<QueueItem> {
+    let status: EntryStatus = reading.status.into();
+    let same = status == sent.status
+        && reading.duration_ms == sent.duration_ms
+        && reading.error == sent.failure_reason
+        && library.on_server == sent.on_server
+        && library.on_disk == sent.on_disk
+        && library.place.album_id == sent.album_id
+        && library.place.artist_id == sent.artist_id
+        && library.place.album_artist_id == sent.album_artist_id
+        && library.run == sent.run
+        && library.credits.is_none();
+    (!same).then(|| {
+        let credits = library.credits.clone().unwrap_or_else(|| Credits {
+            artist: sent.artist_credit.clone(),
+            album_artist: sent.album_artist_credit.clone(),
+            differ: sent.credit_differs,
+        });
+        QueueItem {
+            status,
+            duration_ms: reading.duration_ms,
+            failure_reason: reading.error.clone(),
+            on_server: library.on_server,
+            on_disk: library.on_disk,
+            album_id: library.place.album_id,
+            artist_id: library.place.artist_id,
+            album_artist_id: library.place.album_artist_id,
+            credit_differs: credits.differ,
+            artist_credit: credits.artist,
+            album_artist_credit: credits.album_artist,
+            run: library.run,
+            ..sent.clone()
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::EngineState;
+    use crate::types::CreditPart;
+    use koan_core::player::state::{ItemState, PlaylistItem};
+    use std::time::{Duration, Instant};
+
+    const ROWS: usize = 50_000;
+
+    fn item(i: usize, state: ItemState) -> PlaylistItem {
+        PlaylistItem {
+            uid: None,
+            id: QueueItemId::new(),
+            db_id: Some(i as i64),
+            playlist_entry_id: None,
+            path: format!(
+                "/music/An Artist/Record {}/{:02} Track {i}.flac",
+                i / 12,
+                i % 12
+            )
+            .into(),
+            title: format!("Track {i}"),
+            artist: "An Artist Whose Name Is Of Ordinary Length".into(),
+            album_artist: "An Artist Whose Name Is Of Ordinary Length".into(),
+            album: format!("A Record With A Reasonably Long Title {}", i / 12),
+            year: Some("1994".into()),
+            codec: Some("FLAC".into()),
+            track_number: Some((i % 12) as i64 + 1),
+            disc: Some(1),
+            duration_ms: Some(240_000),
+            state,
+            played: false,
+        }
+    }
+
+    fn queue(n: usize) -> (std::sync::Arc<SharedPlayerState>, Vec<QueueItemId>) {
+        queue_of(n, ItemState::Pending)
+    }
+
+    fn queue_of(
+        n: usize,
+        state_of: ItemState,
+    ) -> (std::sync::Arc<SharedPlayerState>, Vec<QueueItemId>) {
+        let state = SharedPlayerState::new();
+        let items: Vec<PlaylistItem> = (0..n).map(|i| item(i, state_of.clone())).collect();
+        let ids = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        (state, ids)
+    }
+
+    /// A track on `album`, by the record's own artist.
+    fn record(album: i64) -> Place {
+        Place {
+            album_id: Some(album),
+            artist_id: Some(7),
+            album_artist_id: Some(7),
+        }
+    }
+
+    /// Half the queue's tracks on disk, as a library with a cache would say.
+    fn joins(ids: &[i64]) -> Joins {
+        Joins {
+            places: ids.iter().map(|&id| (id, record(id / 12))).collect(),
+            sources: ids.iter().map(|&id| (id, (true, id % 2 == 0))).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// What a client holds: the base, with the latest patch applied.
+    #[derive(Default)]
+    struct Client {
+        version: u64,
+        base: Vec<QueueItem>,
+        rows: Vec<QueueItem>,
+        patched: Vec<usize>,
+    }
+
+    impl Client {
+        fn apply(&mut self, slices: Vec<StateSlice>) {
+            for slice in slices {
+                match slice {
+                    StateSlice::Queue { items, version } => {
+                        self.version = version;
+                        self.rows = items.clone();
+                        self.base = items;
+                        self.patched.clear();
+                    }
+                    StateSlice::QueuePatch { base, items } if base == self.version => {
+                        for i in self.patched.drain(..) {
+                            self.rows[i] = self.base[i].clone();
+                        }
+                        for row in items {
+                            let i = self
+                                .base
+                                .iter()
+                                .position(|b| b.queue_item_id == row.queue_item_id)
+                                .unwrap();
+                            self.rows[i] = row;
+                            self.patched.push(i);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// The same library once every track has landed, and the first record
+    /// has been split off into an album of its own.
+    fn landed(ids: &[i64]) -> Joins {
+        Joins {
+            places: ids
+                .iter()
+                .map(|&id| (id, record(if id < 12 { 1_000 } else { id / 12 })))
+                .collect(),
+            sources: ids.iter().map(|&id| (id, (true, true))).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn whole(state: &SharedPlayerState) -> Vec<QueueItem> {
+        whole_with(state, joins)
+    }
+
+    fn whole_with(state: &SharedPlayerState, joins: fn(&[i64]) -> Joins) -> Vec<QueueItem> {
+        let entries = state.derive_visible_queue().entries;
+        let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        let j = joins(&ids);
+        let runs = runs(
+            entries.iter().map(|e| {
+                (
+                    e.db_id,
+                    e.album.as_str(),
+                    e.album_artist.as_str(),
+                    e.title.as_str(),
+                )
+            }),
+            &j,
+        );
+        entries
+            .iter()
+            .zip(runs)
+            .map(|(e, run)| QueueItem::from_entry(e, &j, run))
+            .collect()
+    }
+
+    /// What a batch weighs, as its Debug text: a few times what the
+    /// bindings lower it to, which is the comparison that matters here.
+    fn sent_bytes(slices: &[StateSlice]) -> usize {
+        format!("{slices:?}").len()
+    }
+
+    #[test]
+    fn a_row_links_each_artist_its_credit_names() {
+        let joins = Joins {
+            places: HashMap::from([(1, record(5))]),
+            credits: ListCredits {
+                albums: HashMap::from([(5, vec![(1, "A".into()), (2, "B".into())])]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // A track naming no artists of its own, credited as its record is,
+        // takes the record's.
+        let row: Credits = joins.credits(Some(1), "A × B", "A × B").into();
+        let ids: Vec<_> = row.artist.iter().map(|p| p.artist_id).collect();
+        assert_eq!(ids, [Some(1), None, Some(2)]);
+        assert_eq!(row.artist, row.album_artist);
+        // Credited otherwise, it leads where it is filed.
+        let row: Credits = joins.credits(Some(1), "A", "A × B").into();
+        assert_eq!(
+            row.artist,
+            [CreditPart {
+                text: "A".into(),
+                artist_id: Some(7)
+            }]
+        );
+    }
+
+    #[test]
+    fn a_client_applying_patches_holds_the_queue_as_it_is() {
+        let (state, ids) = queue(40);
+        let mut sender = QueueSender::default();
+        let mut client = Client::default();
+        client.apply(sender.update(&state, false, joins));
+        assert_eq!(client.rows, whole(&state));
+
+        state.set_cursor(Some(ids[3]));
+        let slices = sender.update(&state, false, joins);
+        assert!(matches!(slices[..], [StateSlice::QueuePatch { .. }]));
+        client.apply(slices);
+        assert_eq!(client.rows, whole(&state));
+
+        // A track failing, and the cursor moving on past it: the later patch
+        // still carries the earlier change, since both differ from the base.
+        state.update_item_state(ids[4], ItemState::Failed("gone".into()));
+        let _missed = sender.update(&state, false, joins);
+        state.set_cursor(Some(ids[5]));
+        client.apply(sender.update(&state, false, joins));
+        assert_eq!(client.rows, whole(&state));
+
+        // Moving back puts the rows the last patch changed back as they were.
+        state.set_cursor(Some(ids[0]));
+        state.update_item_state(ids[4], ItemState::Pending);
+        client.apply(sender.update(&state, false, joins));
+        assert_eq!(client.rows, whole(&state));
+    }
+
+    /// The library saying something new about the queue's tracks reaches a
+    /// client as a patch of the rows it changed; and a patch for a base the
+    /// client no longer holds changes nothing there.
+    #[test]
+    fn a_library_move_reaches_the_rows_it_changed() {
+        let (state, _) = queue(40);
+        let mut sender = QueueSender::default();
+        let mut client = Client::default();
+        client.apply(sender.update(&state, false, joins));
+
+        let moved = sender.update(&state, true, landed);
+        assert!(
+            matches!(&moved[..], [StateSlice::QueuePatch { items, .. }] if items.len() == 26),
+            "{moved:?}"
+        );
+        client.apply(moved.clone());
+        assert_eq!(client.rows, whole_with(&state, landed));
+
+        // Forgotten, as on a change of the device in view: sent whole again.
+        sender.reset();
+        let again = sender.update(&state, false, joins);
+        assert!(matches!(again[0], StateSlice::Queue { .. }));
+        client.apply(again);
+        assert_eq!(client.rows, whole(&state));
+        client.apply(moved);
+        assert_eq!(client.rows, whole(&state));
+    }
+
+    #[test]
+    fn an_edit_sends_the_queue_whole() {
+        let (state, _) = queue(10);
+        let mut sender = QueueSender::default();
+        sender.update(&state, false, joins);
+        state.add_items(vec![item(10, ItemState::Pending)]);
+        let slices = sender.update(&state, false, joins);
+        assert!(matches!(
+            &slices[..],
+            [StateSlice::Queue { items, .. }, StateSlice::QueuePatch { .. }] if items.len() == 11
+        ));
+    }
+
+    #[test]
+    fn a_patch_past_its_bound_sends_the_queue_whole() {
+        let (state, ids) = queue_of(PATCH_MAX * 3, ItemState::Ready);
+        let mut sender = QueueSender::default();
+        sender.update(&state, false, joins);
+        for &id in &ids[..PATCH_MAX * 2] {
+            state.mark_played(id);
+        }
+        let slices = sender.update(&state, false, joins);
+        assert!(matches!(slices[0], StateSlice::Queue { .. }));
+    }
+
+    /// What a change to a 50,000-row queue costs, and what it puts across the
+    /// boundary. Run with `--nocapture` for the figures.
+    ///
+    /// Before patches, every track change and every download landing sent the
+    /// queue whole: derived, every row's text copied twice, compared against
+    /// the last, copied out to each client, and lowered across the FFI for the
+    /// client to decode. Now that happens on an edit alone; a track change
+    /// costs one pass over the rows' statuses and sends the two that moved.
+    ///
+    /// The time ceilings are loose on purpose, to catch an order of magnitude
+    /// on a busy CI box. The byte bounds are exact in kind: a patch is a
+    /// handful of rows whatever the queue's length.
+    #[test]
+    fn a_change_to_a_large_queue_sends_what_changed() {
+        let (state, ids) = queue(ROWS);
+        let out = EngineState::new();
+        let mut seen = [0; crate::state::SLOTS];
+        let mut sender = QueueSender::default();
+
+        // The whole queue: what every change cost before, and an edit now.
+        let start = Instant::now();
+        let slices = sender.update(&state, true, joins);
+        let built = start.elapsed();
+        let start = Instant::now();
+        for slice in slices {
+            out.publish(slice);
+        }
+        let batch = out.since(&mut seen);
+        let handed = start.elapsed();
+        let whole_bytes = sent_bytes(&batch);
+        println!(
+            "{ROWS} rows whole: build {built:?}, publish + read {handed:?}, {whole_bytes} bytes"
+        );
+
+        let start = Instant::now();
+        let readings = state.queue_readings();
+        println!("{ROWS} rows, readings alone: {:?}", start.elapsed());
+        drop(readings);
+
+        // A track change.
+        state.set_cursor(Some(ids[1]));
+        let start = Instant::now();
+        let slices = sender.update(&state, false, joins);
+        let patched = start.elapsed();
+        for slice in slices {
+            out.publish(slice);
+        }
+        let batch = out.since(&mut seen);
+        let patch_bytes = sent_bytes(&batch);
+        println!("{ROWS} rows, track change: {patched:?}, {patch_bytes} bytes");
+        assert!(
+            matches!(&batch[..], [StateSlice::QueuePatch { items, .. }] if items.len() == 1),
+            "{batch:?}"
+        );
+
+        // The playing track's download landing, which moves the library too.
+        state.update_item_state(ids[1], ItemState::Ready);
+        let start = Instant::now();
+        let slices = sender.update(&state, true, joins);
+        let landed = start.elapsed();
+        for slice in slices {
+            out.publish(slice);
+        }
+        let batch = out.since(&mut seen);
+        let landed_bytes = sent_bytes(&batch);
+        println!("{ROWS} rows, download landed: {landed:?}, {landed_bytes} bytes");
+        assert!(
+            matches!(&batch[..], [StateSlice::QueuePatch { items, .. }]
+                if items.len() == 1 && items[0].status == EntryStatus::Playing),
+            "{batch:?}"
+        );
+
+        assert!(patch_bytes < 8_000, "{patch_bytes}");
+        assert!(landed_bytes < 8_000, "{landed_bytes}");
+        assert!(whole_bytes > 1_000 * patch_bytes);
+        assert!(patched < Duration::from_millis(200), "{patched:?}");
+        assert!(landed < Duration::from_millis(500), "{landed:?}");
+    }
+}

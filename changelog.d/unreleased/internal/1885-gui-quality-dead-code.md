@@ -1,0 +1,1 @@
+- **koan-kit and koan-gui lose code nothing called.** The picker's sheet parts, a compact EQ graph no page asked for, and helpers left behind as their callers moved; a row's links and heart are answered by one function in every list, and the queue's drop line by one handler for every kind of drag.

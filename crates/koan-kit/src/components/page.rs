@@ -2,11 +2,20 @@
 //! the content does not. The Mac's `PageHeader` and the page edges around
 //! it; a page declares what it shows and nothing about where it sits.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::RowMetrics;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
+
+/// A title standing alone, outside a page's header: the About window's
+/// name, a confirmation's question. `title`, `strong`, kept as given.
+pub fn title_text(text: impl Into<SharedString>, look: &Look) -> Div {
+    div()
+        .text_role(TypeRole::Title, look)
+        .text_color(look.palette.strong.hsla())
+        .child(text.into())
+}
 
 /// The header every page shares: an optional cover, the title over a
 /// detail line (a count, a duration), the page's actions under them, and
@@ -102,6 +111,7 @@ pub struct SectionHeading {
     trailing: Vec<AnyElement>,
     count: Option<SharedString>,
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
+    reveal: Option<super::choice::Run>,
 }
 
 impl SectionHeading {
@@ -111,7 +121,16 @@ impl SectionHeading {
             trailing: Vec::new(),
             count: None,
             open: None,
+            reveal: None,
         }
+    }
+
+    /// Run when a screen reader moves to the heading in a list that draws
+    /// only what is on screen, as `TableRow::on_reveal` is for a row: the
+    /// list scrolls the reader's next stop on screen and is drawn again.
+    pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.reveal = Some(std::rc::Rc::new(reveal));
+        self
     }
 
     /// How many the section holds in all, in `muted` beside the title: a
@@ -185,11 +204,22 @@ impl RenderOnce for SectionHeading {
                 .into_any_element(),
             None => title.into_any_element(),
         };
-        super::accessible(
+        let list_view = window.current_view();
+        let heading = super::accessible(
             div().id(ElementId::Name(format!("section-heading-{spoken}").into())),
-            gpui_kit::Role::Heading,
+            gpui::Role::Heading,
             Some(spoken),
-        )
+        );
+        match self.reveal {
+            Some(reveal) => heading.on_a11y_action(
+                gpui::AccessibleAction::ScrollIntoView,
+                move |_, window, cx| {
+                    reveal(window, cx);
+                    cx.notify(list_view);
+                },
+            ),
+            None => heading,
+        }
         .aria_level(2)
         .w_full()
         .h(Self::height(&look))
@@ -236,7 +266,7 @@ impl RenderOnce for PageHeader {
                         // The page's heading to a screen reader.
                         let title = super::accessible(
                             div().id(ElementId::Name(format!("page-title-{}", self.title).into())),
-                            gpui_kit::Role::Heading,
+                            gpui::Role::Heading,
                             Some(self.title.clone()),
                         )
                         .aria_level(1)
@@ -303,6 +333,7 @@ pub struct PlayButton {
     id: ElementId,
     label: SharedString,
     loading: bool,
+    disabled: bool,
     on_click: Option<super::Handler<ClickEvent>>,
 }
 
@@ -313,12 +344,20 @@ impl PlayButton {
             id: id.into(),
             label: label.into(),
             loading: false,
+            disabled: false,
             on_click: None,
         }
     }
 
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+
+    /// Nothing to play: dimmed, as `ShuffleButton::disabled`, and not
+    /// clickable.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -337,9 +376,11 @@ impl RenderOnce for PlayButton {
         let accent = look.color(crate::theme::Tone::Accent);
         let hover = look.palette.hover.hsla();
         let loading = self.loading;
+        // Either way there is nothing to press.
+        let idle = loading || self.disabled;
         super::accessible(
             div().id(self.id),
-            gpui_kit::Role::Button,
+            gpui::Role::Button,
             Some(self.label.clone()),
         )
         .size(crate::theme::HIT)
@@ -349,9 +390,9 @@ impl RenderOnce for PlayButton {
         .justify_center()
         .border(look.hairline)
         .border_color(accent)
-        .when(!loading, |d| {
-            d.cursor_pointer().active(move |s| s.bg(hover))
-        })
+        .aria_disabled(idle)
+        .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+        .when(!idle, |d| d.cursor_pointer().active(move |s| s.bg(hover)))
         .child(if loading {
             super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
         } else {
@@ -360,7 +401,7 @@ impl RenderOnce for PlayButton {
                 .color(look.text_color(crate::theme::Tone::Accent))
                 .into_any_element()
         })
-        .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
+        .when_some(self.on_click.filter(|_| !idle), |d, on_click| {
             super::answers_click(d, on_click.clone())
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })
@@ -413,30 +454,27 @@ impl RenderOnce for ShuffleButton {
         let group = SharedString::from(format!("shuffle-{:?}", self.id));
         let disabled = self.disabled;
         let help: SharedString = format!("{} {}", crate::theme::label("shuffle"), self.name).into();
-        super::accessible(
-            div().id(self.id),
-            gpui_kit::Role::Button,
-            Some(help.clone()),
-        )
-        .group(group.clone())
-        .size(crate::theme::HIT)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
-        .when(!disabled, |d| d.cursor_pointer())
-        .child(
-            crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
-                .points(SHUFFLE_GLYPH * look.scale.size)
-                .tone(crate::theme::Tone::Muted)
-                .when(!disabled, |i| i.hover_color(group, ink)),
-        )
-        .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
-        .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
-            super::answers_click(d, on_click.clone())
-                .on_click(move |event, window, cx| on_click(event, window, cx))
-        })
+        super::accessible(div().id(self.id), gpui::Role::Button, Some(help.clone()))
+            .group(group.clone())
+            .aria_disabled(disabled)
+            .size(crate::theme::HIT)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+            .when(!disabled, |d| d.cursor_pointer())
+            .child(
+                crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
+                    .points(SHUFFLE_GLYPH * look.scale.size)
+                    .tone(crate::theme::Tone::Muted)
+                    .when(!disabled, |i| i.hover_color(group, ink)),
+            )
+            .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
+            .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
+                super::answers_click(d, on_click.clone())
+                    .on_click(move |event, window, cx| on_click(event, window, cx))
+            })
     }
 }
 
@@ -494,7 +532,7 @@ impl RenderOnce for Page {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Context, Render, TestAppContext, VisualTestContext};
+    use gpui::{Context, Render, TestAppContext, VisualTestContext};
 
     use super::*;
     use crate::components::{Cover, CoverArt, FadeIn};
@@ -519,10 +557,10 @@ mod tests {
 
     /// A photo arriving takes its square beside the title and nothing more:
     /// the title keeps the rest of the row, before the photo and after.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_photo_fading_in_leaves_the_title_its_room(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (header, cx) = cx.add_window_view(|_, _| Header { photo: false });
