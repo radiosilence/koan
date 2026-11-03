@@ -92,7 +92,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // The queue playing, the pointer sweeping it, for the churn's length;
     // each pass seeks back, pauses and resumes. The tracks are 0.2 s, so
-    // playing moves through them all the while.
+    // playing moves through them all the while. There is no null output: the
+    // player opens the real device, and while the audio daemon is slow to
+    // answer that open, the first seek waits behind it (#2016) and this
+    // phase draws only a pass or two however long it is given.
     let playing = |cx: &mut HeadlessAppContext| {
         cx.update(|cx| {
             let mirror = cx.global::<koan_gui::mirror::Mirror>().playback.clone();
