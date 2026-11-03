@@ -526,7 +526,7 @@ impl Render for OrganizeSheet {
         .flex_1()
         .min_h_0();
 
-        ask::wide_panel(look)
+        ask::wide_panel(crate::theme::label("organise"), look)
             .child(ask::head_data(
                 format!("{} {}", crate::theme::label("organise"), self.title),
                 vec![cancel.into_any_element(), go.into_any_element()],

@@ -223,6 +223,9 @@ impl Render for LyricsPanel {
                 self.active,
             )
             .since(self.since)
+            // The track: another track's lines start afresh, the same
+            // words included.
+            .song(track)
             .on_line(cx.listener(|this, line: &usize, _, cx| this.seek_to(*line, cx)))
             .into_any_element(),
             Some(l) if !l.content.is_empty() => {

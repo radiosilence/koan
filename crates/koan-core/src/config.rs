@@ -1725,6 +1725,8 @@ impl Config {
         *cache = None;
         drop(cache);
         crate::signal::config_changed().bump();
+        // The cover preload's setting may have gone off.
+        crate::remote::client::wake_cover_waiters();
     }
 
     /// Load from a specific TOML file (no env var overlay).
