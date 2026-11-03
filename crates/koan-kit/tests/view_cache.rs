@@ -501,7 +501,7 @@ impl Render for RemeasureShell {
 /// A notify made while the window draws is not lost: the view is drawn by
 /// the next frame, which nothing but the notify asks for, exactly once, and
 /// an entity notified then reaches its observers.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_notify_during_a_draw_draws_the_next_frame(cx: &mut TestAppContext) {
     let model = cx.new(|_| Counter { value: 0 });
     let observed = std::rc::Rc::new(std::cell::Cell::new(0));
