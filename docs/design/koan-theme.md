@@ -92,7 +92,7 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 - Where no lightness in the band does, the accent is used for fills, indicators and rings only, at 3:1, and text that would have been the accent is `ink`.
 - A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
 - The hue is never moved. A red record gives a red accent, even one close to `bad`; errors are told apart by where they appear and what they say, not by hue alone.
-- A change of record turns the accent to the new colour as the wash dissolves to the record, over the same length and curve.
+- A change of record eases to the new accent over 250 ms (`Motion.settle`) when the colour was not already known, and lands with the record when it was, in the SwiftUI and Compose apps. The GPUI app turns the accent to the new colour as the wash dissolves to the record, over the same length and curve.
 - "Colours from the record" (`appearance.record_colours`) off pins the accent to mint and removes the wash, in both themes.
 
 ### Wash
