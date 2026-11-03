@@ -1116,6 +1116,7 @@ mod tests {
                 Item::FeaturesHeading => "[features]".into(),
                 Item::Tiles { range, .. } => format!("{}..{}", range.start, range.end),
                 Item::Track(i) => format!("track {i}"),
+                Item::About => "about".into(),
             })
             .collect();
         assert_eq!(
@@ -1128,7 +1129,8 @@ mod tests {
                 "[live]",
                 "4..5",
                 "[features]",
-                "0..1"
+                "0..1",
+                "about"
             ]
         );
         // Albums alone are headed too.

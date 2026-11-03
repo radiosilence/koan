@@ -371,6 +371,7 @@ pub fn apply(
                 let _ = std::fs::remove_file(path);
             }
             queries::clear_cached_paths_for(&db.conn, &ids).map_err(|e| e.to_string())?;
+            crate::helpers::requeue_cleared_downloads(state);
             log::info!("link: evicted {} cached tracks", ids.len());
             library_changed();
             Ok(())

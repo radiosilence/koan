@@ -1,0 +1,1 @@
+- **Download marks.** A row's mark follows its download exactly: no flicker between the ring, the cloud and the arrow while it downloads, the full cloud the moment it completes, and cleared tracks shown as downloaded again once they are fetched again.

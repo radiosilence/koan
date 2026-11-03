@@ -134,6 +134,7 @@ impl DevicesPane {
                         )
                     };
                     let device = info.device.clone();
+                    let device_id = info.device_id.clone();
                     let (allow_model, allow_engine, allow_pair) = (model.clone(), engine.clone(), typed.clone());
                     let (deny_model, deny_engine, deny_pair) = (model.clone(), engine.clone(), typed.clone());
                     let (signed, declined) = (device.clone(), device.clone());
@@ -160,8 +161,13 @@ impl DevicesPane {
                             })
                         })
                         .action(Action::new("Allow", move |_, _, cx| {
-                            let (engine, pair, device, who) =
-                                (allow_engine.clone(), allow_pair.clone(), signed.clone(), who.clone());
+                            let (engine, pair, device, who, device_id) = (
+                                allow_engine.clone(),
+                                allow_pair.clone(),
+                                signed.clone(),
+                                who.clone(),
+                                device_id.clone(),
+                            );
                             allow_model.update(cx, |m, cx| {
                                 m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
@@ -170,7 +176,11 @@ impl DevicesPane {
                                     cx,
                                     move |_| engine.approve_pairing(pair),
                                     move |m, result, cx| match result {
-                                        Ok(name) => m.done(format!("{name} is signed in as {who}."), cx),
+                                        Ok(name) => {
+                                            m.done(format!("{name} is signed in as {who}."), cx);
+                                            // A TV signed in from here is offered waking once it links.
+                                            crate::tv_wake::signed_in(device_id, name, cx);
+                                        }
                                         Err(e) => m.report(format!("Could not sign {device} in: {}", describe(&e)), cx),
                                     },
                                 )

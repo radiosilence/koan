@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Context, IntoElement, ParentElement, Render, Styled,
-    TestAppContext, Window, div, px,
+    AnyWindowHandle, Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
+    div, px,
 };
 use koan_kit::components::{
     Badge, Banner, Button, ButtonKind, EmptyState, IconToggle, NavNote, NavRow, PageHeader,

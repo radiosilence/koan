@@ -146,6 +146,23 @@ impl QueueSender {
         self.base = None;
     }
 
+    /// Transfers have just settled: where these tracks are now, from the
+    /// library, for the rows that hold them. The next `update` sends the rows
+    /// that moved. Cheaper than re-reading the whole queue's join, which waits
+    /// for the library's own change.
+    pub(crate) fn settled(&mut self, sources: HashMap<i64, (bool, bool)>) {
+        let Some(base) = self.base.as_mut() else {
+            return;
+        };
+        for (row, library) in base.items.iter().zip(base.library.iter_mut()) {
+            if let Some(&(on_server, on_disk)) = row.track_id.and_then(|id| sources.get(&id)) {
+                library.on_server = on_server;
+                library.on_disk = on_disk;
+            }
+        }
+        base.joins.sources.extend(sources);
+    }
+
     /// The slices that bring a client up to date with `state`'s queue.
     ///
     /// `library_moved` re-asks the library through `joins`; nothing in the

@@ -320,7 +320,7 @@ so nothing else in the library can be fetched from it. On a Mac the first
 connection from the amplifier may bring up the firewall prompt. macOS also
 asks whether kōan may use the local network, the first time it looks; if
 no amplifier or other kōan appears, check System Settings → Privacy &
-Security → Local Network and turn kōan on. Android searches when Now Playing opens and once a minute while the app is on screen; see [Android](android.md). The iPhone searches when the output picker opens; the first search brings up iOS's local network prompt, and if no amplifier appears, check Settings → Privacy & Security → Local Network and turn kōan on.
+Security → Local Network and turn kōan on. The desktop app says so in its output menu when macOS has refused it. A build of the desktop app started from a terminal rather than from its app has the terminal's permission instead, which a terminal is usually never given; `just gui-run` launches it as an app of its own for that reason. Android searches when Now Playing opens and once a minute while the app is on screen; see [Android](android.md). The iPhone searches when the output picker opens; the first search brings up iOS's local network prompt, and if no amplifier appears, check Settings → Privacy & Security → Local Network and turn kōan on.
 
 ## Controlling and moving
 
