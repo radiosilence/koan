@@ -34,6 +34,7 @@ pub struct NavRow {
     cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
     accepts: Vec<Accept>,
+    arrivals: Option<u64>,
 }
 
 /// A drop a row takes, attached as the row draws so the drop answers.
@@ -67,7 +68,16 @@ impl NavRow {
             cursor: false,
             on_click: None,
             accepts: Vec::new(),
+            arrivals: None,
         }
+    }
+
+    /// How many times something has arrived at the place (music queued or
+    /// added to a playlist from a menu): each new arrival seen while the
+    /// row is drawn answers as a drop does.
+    pub fn arrivals(mut self, count: u64) -> Self {
+        self.arrivals = Some(count);
+        self
     }
 
     /// Something dropped on the row (tracks on the queue, a record on a
@@ -154,6 +164,9 @@ impl RenderOnce for NavRow {
         let mut base = self.base;
         for accept in self.accepts {
             base = accept(base, answers.clone(), accent);
+        }
+        if let Some(count) = self.arrivals {
+            answers.follow(count, super::Answer::Sweep, accent, window, cx);
         }
         let ink = look.palette.ink.hsla();
         let name = self.label.clone();
@@ -295,6 +308,7 @@ impl RenderOnce for NavHeading {
 pub struct NavNote {
     text: SharedString,
     tone: crate::theme::Tone,
+    said: Option<(ElementId, u64)>,
 }
 
 impl NavNote {
@@ -302,15 +316,31 @@ impl NavNote {
         Self {
             text: text.into(),
             tone,
+            said: None,
         }
+    }
+
+    /// A line the app says things in, under `id` whatever it says: each new
+    /// thing said (`count` moving), a link copied, answers with a line
+    /// drawn under it as it appears, so a notice replacing one like it is
+    /// seen to.
+    pub fn said(mut self, id: impl Into<ElementId>, count: u64) -> Self {
+        self.said = Some((id.into(), count));
+        self
     }
 }
 
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let answer = self.said.map(|(id, count)| {
+            let answers = super::Answerer::of(&id, window, cx);
+            answers.announce(count, super::Answer::Sweep, look.accent.hsla(), window, cx);
+            answers.layer(window, cx)
+        });
         let id = SharedString::from(format!("note-{}", self.text));
         super::announced(div().id(id), self.text.clone(), self.tone)
+            .relative()
             .w_full()
             .min_w_0()
             .overflow_hidden()
@@ -321,6 +351,7 @@ impl RenderOnce for NavNote {
             .text_role(TypeRole::Fine, &look)
             .text_color(look.text_color(self.tone))
             .child(self.text)
+            .children(answer.flatten())
     }
 }
 
