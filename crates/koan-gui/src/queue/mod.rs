@@ -575,7 +575,7 @@ impl QueueView {
         &mut self,
         row: usize,
         p: &Paint,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows(cx).len();
