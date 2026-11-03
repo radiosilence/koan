@@ -287,6 +287,12 @@ impl Render for AutoEqSearch {
                     .into_any_element(),
                 );
             }
+        } else if let Some(failed) = d.autoeq_failed.clone() {
+            rows.push(
+                EmptyState::new(Icon::Search, "Couldn't Search AutoEQ")
+                    .detail(failed)
+                    .into_any_element(),
+            );
         } else if d.autoeq_results.is_empty() {
             let (dsp, sheets, q) = (self.dsp.clone(), self.sheets.clone(), query.clone());
             let search = cx.entity_id();

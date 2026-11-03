@@ -1,0 +1,1 @@
+- **EQ: where a profile plays, and a failed AutoEQ search.** A profile's "used for" lists the outputs whose filters hold it as well as those it corrects, so it no longer says "no output yet" beside a button for one. An AutoEQ search that fails says so, rather than that AutoEQ has nothing for the headphones.

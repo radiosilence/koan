@@ -93,6 +93,9 @@ pub struct Dsp {
     pub pending_import: Option<PendingImport>,
     pub needs_rate: Option<NeedsRate>,
     pub autoeq_results: Vec<AutoEqEntry>,
+    /// Why the last AutoEQ search failed, which is not the same as finding
+    /// nothing.
+    pub autoeq_failed: Option<SharedString>,
     pub autoeq_makers: Vec<AutoEqMaker>,
     /// Moves with every AutoEQ search, so one that returns after a newer one
     /// began is dropped.
@@ -144,6 +147,7 @@ impl Dsp {
                 pending_import: None,
                 needs_rate: None,
                 autoeq_results: Vec::new(),
+                autoeq_failed: None,
                 autoeq_makers: Vec::new(),
                 autoeq_search: 0,
                 _autoeq: None,
@@ -535,6 +539,7 @@ impl Dsp {
         if trimmed.is_empty() {
             self._autoeq = None;
             self.autoeq_results.clear();
+            self.autoeq_failed = None;
             cx.notify();
             return;
         }
@@ -549,8 +554,14 @@ impl Dsp {
                     return;
                 }
                 match found {
-                    Ok(found) => dsp.autoeq_results = found,
-                    Err(e) => dsp.last_error = Some(describe(&e)),
+                    Ok(found) => {
+                        dsp.autoeq_results = found;
+                        dsp.autoeq_failed = None;
+                    }
+                    Err(e) => {
+                        dsp.autoeq_results.clear();
+                        dsp.autoeq_failed = Some(describe(&e).into());
+                    }
                 }
                 cx.notify();
             })
