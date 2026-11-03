@@ -201,7 +201,7 @@ impl RenderOnce for IconToggle {
                             .role(TypeRole::Control)
                             .color(color),
                     )
-                    .child(on_mark(look.accent.hsla().opacity(on)))
+                    .child(on_mark(look.accent.hsla().opacity(on), &look))
                     .children(answers.layer(window, cx)),
             );
         if self.disabled {
@@ -245,12 +245,12 @@ fn switch(
 /// The accent hairline a toggle shows while on, 5 points under its glyph
 /// and as wide as it: positioned outside the layout, so a toggle's glyph sits
 /// where every other glyph in its row does.
-pub(crate) fn on_mark(color: gpui_kit::Hsla) -> gpui_kit::Div {
+pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
     div()
         .absolute()
         .left_0()
         .right_0()
-        .bottom(px(-5.0) - HAIRLINE)
-        .h(HAIRLINE)
+        .bottom(px(-5.0) - look.hairline)
+        .h(look.hairline)
         .bg(color)
 }
