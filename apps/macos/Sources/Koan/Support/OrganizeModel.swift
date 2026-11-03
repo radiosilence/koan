@@ -52,6 +52,9 @@ final class OrganizeModel {
     private(set) var previewing = false
     private(set) var running = false
     private(set) var error: String?
+    /// The error is a run's, and stays above the plan previewed after it
+    /// until the person changes something.
+    private var errorFromRun = false
 
     /// The selection, read once when the sheet opens. Patterns are generated
     /// against it — no database, no filesystem — which is what makes typing
@@ -189,6 +192,7 @@ final class OrganizeModel {
     /// Only the disk pass inside `refreshPreview` is deferred.
     private func schedulePreview() {
         guard subject != nil, selection != nil, !configuring else { return }
+        errorFromRun = false
         refreshPreview()
     }
 
@@ -216,7 +220,7 @@ final class OrganizeModel {
             let fast = await selection.generate(pattern: pattern, baseDir: base)
             guard requested == generation else { return }
             plan = fast
-            error = nil
+            if !errorFromRun { error = nil }
 
             let checked = await selection.check(
                 pattern: pattern, baseDir: base, moveAncillary: ancillary
@@ -232,8 +236,8 @@ final class OrganizeModel {
     func run() {
         guard let subject, let plan, plan.movedCount > 0, !running else { return }
         let engine = self.engine
-        let (pattern, base) = (self.pattern, self.baseDir)
-        let ids = subject.trackIds
+        guard let selection else { return }
+        let (pattern, base, ancillary) = (self.pattern, self.baseDir, self.moveAncillary)
 
         // Claim the generation so an in-flight preview can't overwrite the
         // result of the run with a plan made before it.
@@ -246,7 +250,11 @@ final class OrganizeModel {
             // rewritten in one transaction, which is exactly what a scan reads
             // and writes.
             let result = await activity?.run("Moving files", uses: .localLibrary) {
-                try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
+                // The plan previewed, from the selection it was previewed
+                // against: refused, nothing moved, if the library changed since.
+                try await engine.organizeExecutePreviewed(
+                    selection: selection, pattern: pattern, baseDir: base, moveAncillary: ancillary
+                )
             } ?? .failure(OrganizeFailure.noEngine)
             running = false
             guard requested == generation else { return }
@@ -277,6 +285,10 @@ final class OrganizeModel {
                 previewing = false
                 self.plan = nil
                 error = String(describing: failure)
+                errorFromRun = true
+                // Read again, so the plan shown is the one a second press runs;
+                // the message stays above it until the person changes something.
+                resolveSelection(trackIds: subject.trackIds)
             }
         }
     }

@@ -119,5 +119,5 @@ pub fn cmd_cache_clear(skip_confirm: bool) {
 /// Run LRU cache eviction with nothing held back: the CLI has no queue.
 pub fn evict_cache(cfg: &config::Config, verbose: bool) -> u64 {
     let db = open_db();
-    koan_core::helpers::evict_cache(&db, cfg, &Default::default(), verbose)
+    koan_core::helpers::evict_cache(&db, cfg, &Default::default(), verbose).total()
 }

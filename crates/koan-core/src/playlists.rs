@@ -528,106 +528,28 @@ pub fn reconcile_playlists(
         pulls.push((summary, local));
     }
 
-    // Fetched several at once, each a round trip, then stored in the
-    // listing's order, a chunk at a time: a phone holds one chunk's songs,
-    // not every playlist's, and a playlist is stored soon after the decision
-    // to pull it.
-    for chunk in pulls.chunks(FETCHING * 4) {
-        let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
-        for ((summary, local), full) in chunk.iter().zip(fetched) {
-            let (summary, local) = (*summary, local.as_ref());
-            let full = match full {
-                Ok(full) => full,
-                Err(e) => {
-                    log::warn!("could not fetch playlist {}: {e}", summary.id);
-                    continue;
-                }
+    // Fetched in the lanes one server gets, then stored in the listing's
+    // order, a chunk at a time: a phone holds a chunk or two of songs, not
+    // every playlist's, and a playlist is stored soon after the decision to
+    // pull it. The next chunk is fetched while this one is stored, so the
+    // network is not left idle meanwhile.
+    let fetch = |chunk: &[(&SubsonicPlaylist, Option<queries::PlaylistRow>)]| {
+        let ids: Vec<&str> = chunk.iter().map(|(s, _)| s.id.as_str()).collect();
+        crate::remote::lanes::in_lanes(&ids, &AtomicBool::new(false), |id| client.get_playlist(id))
+    };
+    let chunks: Vec<_> = pulls.chunks(PULL_CHUNK).collect();
+    std::thread::scope(|scope| {
+        let mut next = chunks.first().map(|&c| scope.spawn(move || fetch(c)));
+        for (n, chunk) in chunks.iter().enumerate() {
+            let fetched = match next.take().map(|fetching| fetching.join()) {
+                Some(Ok(fetched)) => fetched,
+                Some(Err(panic)) => std::panic::resume_unwind(panic),
+                None => Vec::new(),
             };
-
-            let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
-            let track_ids = match queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids) {
-                Ok(ids) => ids,
-                Err(e) => {
-                    log::warn!("could not read playlist {}: {e}", summary.name);
-                    continue;
-                }
-            };
-            let unknown = track_ids.iter().filter(|t| t.is_none()).count();
-            if unknown > 0 {
-                log::info!(
-                    "playlist {}: {unknown} of {} songs are not in the library; \
-                 they stay on the server",
-                    summary.name,
-                    track_ids.len()
-                );
-            }
-            let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
-            let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
-
-            // A push in flight records what it did only once the server has
-            // answered: one of this playlist (`push_lock`), or one creating a
-            // playlist there that this listing may already hold (`CREATING`),
-            // is waited for, so the check below sees what it wrote.
-            let lock = match local {
-                Some(local) => push_lock(local.id),
-                None => CREATING.clone(),
-            };
-            let _push = lock.lock();
-            // All of it or none: a copy renamed but not refilled, or refilled but
-            // not marked synced, would push back as an edit nobody made.
-            let stored = queries::atomically(&db.conn, || {
-                // Edited here, made here from another listing, or pushed (which
-                // moves the synced stamp, not the revision) since it was
-                // decided to pull it: the next sync weighs it again rather than
-                // writing over the edit.
-                let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-                let seen = |p: &queries::PlaylistRow| {
-                    (
-                        p.id,
-                        p.revision,
-                        p.synced_revision,
-                        p.remote_changed.clone(),
-                    )
-                };
-                if now.as_ref().map(seen) != local.map(seen) {
-                    return Ok(false);
-                }
-                let id = match local {
-                    Some(local) => local.id,
-                    None => queries::create_playlist(
-                        &db.conn,
-                        queries::LOCAL_USER,
-                        &summary.name,
-                        summary.comment.as_deref(),
-                    )?,
-                };
-                queries::rename_playlist(&db.conn, id, &summary.name)?;
-                queries::set_playlist_readonly(&db.conn, id, summary.readonly)?;
-                queries::set_playlist_remote(
-                    &db.conn,
-                    id,
-                    &summary.id,
-                    summary.owner.as_deref(),
-                    summary.public,
-                    &account,
-                )?;
-                queries::merge_server_tracks(&db.conn, id, &track_ids)?;
-                queries::set_playlist_server_songs(&db.conn, id, &record)?;
-                // The rename stamped the local copy as changed; this is the
-                // server's copy, so what is here now is what the server has.
-                queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)?;
-                Ok::<_, DbError>(true)
-            });
-            match stored {
-                Ok(true) => out.pulled += 1,
-                Ok(false) => log::info!(
-                    "playlist {} changed while syncing; left for the next sync",
-                    summary.name
-                ),
-                Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
-            }
+            next = chunks.get(n + 1).map(|&c| scope.spawn(move || fetch(c)));
+            store_chunk(db, &account, chunk, fetched, &mut out);
         }
-    }
+    });
 
     // A playlist we hold a server id for that the server no longer lists was
     // deleted there.
@@ -834,35 +756,120 @@ pub fn push_order() {
         .ok();
 }
 
-/// How many playlists are fetched at once.
-const FETCHING: usize = 8;
+/// Stores a chunk of pulled playlists in the listing's order: each one as
+/// the server has it, unless it changed here since the pull was decided.
+fn store_chunk(
+    db: &Database,
+    account: &str,
+    chunk: &[(&SubsonicPlaylist, Option<queries::PlaylistRow>)],
+    fetched: Vec<Option<Result<crate::remote::client::SubsonicPlaylistFull, SubsonicError>>>,
+    out: &mut PlaylistSync,
+) {
+    for ((summary, local), full) in chunk.iter().zip(fetched) {
+        let Some(full) = full else { continue };
+        let (summary, local) = (*summary, local.as_ref());
+        let full = match full {
+            Ok(full) => full,
+            Err(e) => {
+                log::warn!("could not fetch playlist {}: {e}", summary.id);
+                continue;
+            }
+        };
 
-/// Each playlist `ids` names, fetched `FETCHING` at a time, in the order
-/// named.
-fn fetch_playlists<'a>(
-    client: &SubsonicClient,
-    ids: impl Iterator<Item = &'a str>,
-) -> Vec<Result<crate::remote::client::SubsonicPlaylistFull, SubsonicError>> {
-    let ids: Vec<&str> = ids.collect();
-    let next = parking_lot::Mutex::new(ids.iter().copied().enumerate());
-    let answers = parking_lot::Mutex::new(Vec::with_capacity(ids.len()));
-    std::thread::scope(|scope| {
-        for _ in 0..FETCHING.min(ids.len()) {
-            scope.spawn(|| {
-                loop {
-                    let Some((i, id)) = next.lock().next() else {
-                        return;
-                    };
-                    let answer = client.get_playlist(id);
-                    answers.lock().push((i, answer));
-                }
-            });
+        let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
+        let track_ids = match queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids) {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::warn!("could not read playlist {}: {e}", summary.name);
+                continue;
+            }
+        };
+        let unknown = track_ids.iter().filter(|t| t.is_none()).count();
+        if unknown > 0 {
+            log::info!(
+                "playlist {}: {unknown} of {} songs are not in the library; \
+             they stay on the server",
+                summary.name,
+                track_ids.len()
+            );
         }
-    });
-    let mut answers = answers.into_inner();
-    answers.sort_by_key(|(i, _)| *i);
-    answers.into_iter().map(|(_, a)| a).collect()
+        let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
+        let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
+
+        // A push in flight records what it did only once the server has
+        // answered: one of this playlist (`push_lock`), or one creating a
+        // playlist there that this listing may already hold (`CREATING`),
+        // is waited for, so the check below sees what it wrote.
+        let lock = match local {
+            Some(local) => push_lock(local.id),
+            None => CREATING.clone(),
+        };
+        let _push = lock.lock();
+        // All of it or none: a copy renamed but not refilled, or refilled but
+        // not marked synced, would push back as an edit nobody made.
+        let stored = queries::atomically(&db.conn, || {
+            // Edited here, made here from another listing, or pushed (which
+            // moves the synced stamp, not the revision) since it was
+            // decided to pull it: the next sync weighs it again rather than
+            // writing over the edit.
+            let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
+            if !as_decided(now.as_ref(), local) {
+                return Ok(false);
+            }
+            let id = match local {
+                Some(local) => local.id,
+                None => queries::create_playlist(
+                    &db.conn,
+                    queries::LOCAL_USER,
+                    &summary.name,
+                    summary.comment.as_deref(),
+                )?,
+            };
+            queries::rename_playlist(&db.conn, id, &summary.name)?;
+            queries::set_playlist_readonly(&db.conn, id, summary.readonly)?;
+            queries::set_playlist_remote(
+                &db.conn,
+                id,
+                &summary.id,
+                summary.owner.as_deref(),
+                summary.public,
+                account,
+            )?;
+            queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+            queries::set_playlist_server_songs(&db.conn, id, &record)?;
+            // The rename stamped the local copy as changed; this is the
+            // server's copy, so what is here now is what the server has.
+            queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)?;
+            Ok::<_, DbError>(true)
+        });
+        match stored {
+            Ok(true) => out.pulled += 1,
+            Ok(false) => log::info!(
+                "playlist {} changed while syncing; left for the next sync",
+                summary.name
+            ),
+            Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
+        }
+    }
 }
+
+/// Whether a playlist's row is still as it was when its pull was decided:
+/// the same row, not edited here (`revision`), not pushed (`synced_revision`,
+/// `remote_changed`). A pull that finds it moved is left for the next sync.
+fn as_decided(now: Option<&queries::PlaylistRow>, decided: Option<&queries::PlaylistRow>) -> bool {
+    let seen = |p: &queries::PlaylistRow| {
+        (
+            p.id,
+            p.revision,
+            p.synced_revision,
+            p.remote_changed.clone(),
+        )
+    };
+    now.map(seen) == decided.map(seen)
+}
+
+/// Playlists fetched and stored together: a few rounds of the lanes.
+const PULL_CHUNK: usize = crate::remote::lanes::LANES * 4;
 
 /// Put the songs a server copy named that the library lacked into their
 /// places once the library has them.
@@ -1277,6 +1284,38 @@ pub fn export_m3u8(
 mod tests {
     use super::*;
     use crate::db::queries::{TrackMeta, upsert_track};
+
+    /// A pull is stored only over the row it was decided on: an edit here or
+    /// a push since leaves it for the next sync.
+    #[test]
+    fn a_pull_is_deferred_when_the_playlist_moved_since_it_was_decided() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, "Mix", None).unwrap();
+        queries::mark_playlist_synced(&db.conn, id, Some("2026-01-01T00:00:00Z"), None).unwrap();
+        let read = || queries::get_playlist(&db.conn, id).unwrap();
+        let decided = read();
+        assert!(as_decided(read().as_ref(), decided.as_ref()), "unchanged");
+
+        // Pushed from here: the synced stamps move, not the revision.
+        queries::mark_playlist_synced(&db.conn, id, Some("2026-01-02T00:00:00Z"), None).unwrap();
+        assert!(
+            !as_decided(read().as_ref(), decided.as_ref()),
+            "a push since"
+        );
+
+        // Edited here.
+        let decided = read();
+        queries::rename_playlist(&db.conn, id, "Mix 2").unwrap();
+        assert!(
+            !as_decided(read().as_ref(), decided.as_ref()),
+            "an edit since"
+        );
+
+        // Made here from another listing while this one was fetched.
+        assert!(!as_decided(read().as_ref(), None), "made since");
+        assert!(as_decided(None, None), "still absent");
+    }
 
     fn meta(title: &str, path: &Path) -> TrackMeta {
         TrackMeta {

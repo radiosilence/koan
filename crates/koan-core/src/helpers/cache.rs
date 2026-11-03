@@ -16,16 +16,16 @@ use super::*;
 /// nor a track in `keep` — the playback window, whose files the player may be
 /// reading and which are what it wants next (`playback_window`). A limit of
 /// nothing means no cache rather than no downloads: everything fetched to
-/// play goes, and what was asked for stays until it is removed. Returns the
-/// bytes freed.
+/// play goes, and what was asked for stays until it is removed. Returns what
+/// it freed.
 pub fn evict_cache(
     db: &Database,
     cfg: &Config,
     keep: &std::collections::HashSet<i64>,
     verbose: bool,
-) -> u64 {
+) -> Freed {
     let Some(limit) = cfg.cache_limit_bytes().map(|l| l as i64) else {
-        return 0;
+        return Freed::default();
     };
     // Kept covers count with the downloads and go first: one is a small
     // request to fetch again, a download is the music itself.
@@ -33,7 +33,7 @@ pub fn evict_cache(
         Ok(s) => s,
         Err(e) => {
             log::warn!("cache eviction: failed to query cache size: {e}");
-            return 0;
+            return Freed::default();
         }
     };
     let artwork = crate::remote::covers::bytes(cfg) as i64;
@@ -50,13 +50,19 @@ pub fn evict_cache(
         if verbose {
             log::info!("cache within limit: {current} / {limit} bytes");
         }
-        return covers_freed as u64;
+        return Freed {
+            downloads: 0,
+            covers: covers_freed as u64,
+        };
     }
     let files = match queries::cached_files_lru(&db.conn) {
         Ok(f) => f,
         Err(e) => {
             log::warn!("cache eviction: failed to query cached files: {e}");
-            return 0;
+            return Freed {
+                downloads: 0,
+                covers: covers_freed as u64,
+            };
         }
     };
     // A file two tracks record is kept if either is, and removed once.
@@ -101,7 +107,24 @@ pub fn evict_cache(
         cache_shrank(freed as u64);
         log::info!("cache eviction freed {freed} bytes");
     }
-    (freed + covers_freed) as u64
+    Freed {
+        downloads: freed as u64,
+        covers: covers_freed as u64,
+    }
+}
+
+/// What an eviction freed: downloads, which the queue's entries pointed at,
+/// and kept covers, which nothing does.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Freed {
+    pub downloads: u64,
+    pub covers: u64,
+}
+
+impl Freed {
+    pub fn total(&self) -> u64 {
+        self.downloads + self.covers
+    }
 }
 
 /// How many of `upcoming` — the playing track, then the rest of the queue in
@@ -187,6 +210,24 @@ pub fn measure_cache(cfg: &Config) -> u64 {
     CACHE_BYTES.store(bytes, Ordering::Relaxed);
     crate::signal::engine_changed().bump();
     bytes
+}
+
+/// A file of `grew` bytes replaced one of `shrank`: counted both ways, with
+/// one change signal when `signal` asks for it.
+pub(crate) fn cache_resized(grew: u64, shrank: u64, signal: bool) {
+    CACHE_BYTES.fetch_add(grew, Ordering::Relaxed);
+    let mut now = CACHE_BYTES.load(Ordering::Relaxed);
+    while let Err(moved) = CACHE_BYTES.compare_exchange_weak(
+        now,
+        now.saturating_sub(shrank),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        now = moved;
+    }
+    if signal {
+        crate::signal::engine_changed().bump();
+    }
 }
 
 pub(crate) fn cache_grew(bytes: u64) {
