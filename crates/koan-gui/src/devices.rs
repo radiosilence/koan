@@ -117,6 +117,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             "paused while you control another device"
         })
         .checked(here)
+        .stays_open()
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
         this = this.trailing(move_button(
@@ -170,6 +171,11 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
                     control(Some(id.clone()), cx);
                 }
             });
+        // Choosing a device keeps the menu up to show it waking; the pairing
+        // sheet needs the menu out of its way.
+        if !pair_first {
+            entry = entry.stays_open();
+        }
         if view.can_move(Some(device)) {
             entry = entry.trailing(move_button(
                 ("move-to", crate::transport::id_hash(&device.id)),

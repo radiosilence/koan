@@ -147,7 +147,7 @@ pub struct QueueView {
     /// The rest of the queue can be shuffled in place: there is a rest, and
     /// shuffle play is off (it keeps an order of its own beside the queue).
     shufflable: bool,
-    _subscriptions: [Subscription; 7],
+    _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {

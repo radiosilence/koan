@@ -206,10 +206,16 @@ impl RenderOnce for ProgressRing {
         }
         let ring = dots(side);
         let (progress, color) = (self.progress, self.color);
+        // With Reduce Motion an unknown amount is a still arc.
+        let moving = crate::theme::KoanTheme::motion_allowed(cx);
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
-                let elapsed = START.get_or_init(std::time::Instant::now).elapsed();
+                let elapsed = if moving {
+                    START.get_or_init(std::time::Instant::now).elapsed()
+                } else {
+                    Duration::ZERO
+                };
                 let count = ring.at.len();
                 let (start, length) = drawn(progress, elapsed, count);
                 let size = size(ring.dot, ring.dot);
@@ -220,7 +226,7 @@ impl RenderOnce for ProgressRing {
                             .corner_radii(ring.dot / 2.0),
                     );
                 }
-                if progress.is_none() {
+                if progress.is_none() && moving {
                     window.request_animation_frame();
                 }
             },

@@ -96,7 +96,7 @@ impl Render for ProfilePage {
                     div()
                         .px(look.space(Space::L))
                         .py(look.space(Space::M))
-                        .border_b(crate::theme::HAIRLINE)
+                        .border_b(look.hairline)
                         .border_color(look.palette.rule.hsla())
                         .child(
                             div().h(Pixels::from(GRAPH_H)).child(

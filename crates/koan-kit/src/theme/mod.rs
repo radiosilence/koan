@@ -61,6 +61,15 @@ pub struct KoanTheme {
     pub wash_window: bool,
     /// Low Power Mode, as the system last said.
     low_power: bool,
+    /// Increase Contrast (macOS) or high contrast (GNOME), as the system
+    /// last said: the contrast palettes, thicker rules, the accent at 7:1.
+    contrast: bool,
+    /// Reduce Transparency (macOS), as the system last said: no wash, and
+    /// every ground opaque.
+    opaque: bool,
+    /// The system's text scaling (GNOME's `text-scaling-factor`), which the
+    /// app's own size multiplies; 1 where the system has none.
+    system_text: f32,
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
@@ -77,6 +86,9 @@ impl Default for KoanTheme {
             wash_tint: 100,
             wash_window: true,
             low_power: false,
+            contrast: false,
+            opaque: false,
+            system_text: 1.0,
             pinned: HashMap::new(),
         }
     }
@@ -88,7 +100,8 @@ const FACES: [&[u8]; 3] = [
     include_bytes!("../../assets/fonts/GeistMono-Regular.ttf"),
 ];
 
-/// Registers Geist Mono, sets the theme global, reads Reduce Motion and
+/// Registers Geist Mono, sets the theme global, reads the system's motion,
+/// contrast, transparency and text size settings and
 /// dresses gpui-component's own theme (which the text field draws with) in
 /// the tokens. Call after `gpui_kit::init`.
 pub fn init(cx: &mut App) {
@@ -100,9 +113,11 @@ pub fn init(cx: &mut App) {
         state: AccentState::default(),
     });
     cx.set_global(AccentHandle(feed));
-    read_motion_settings(cx);
+    read_system_settings(cx);
     #[cfg(target_os = "macos")]
-    watch_motion_settings(cx);
+    watch_system_settings(cx);
+    #[cfg(target_os = "linux")]
+    watch_desktop_settings(cx);
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 
@@ -122,16 +137,24 @@ fn is_dark(appearance: WindowAppearance) -> bool {
     )
 }
 
-/// Reduce Motion and Low Power Mode, from the system: GPUI holds the first
-/// but no platform sets it, and has no word for the second. Linux has
-/// neither to read, and keeps motion on. A change redraws every window, as
-/// `set_reduce_motion` does for its own, so a wash at rest, which draws no
-/// frames, sees one lifted, and a drifting one stops at once.
-fn read_motion_settings(cx: &mut App) {
+/// Reduce Motion, Increase Contrast, Reduce Transparency and Low Power
+/// Mode, from the system: GPUI holds the first but no platform sets it, and
+/// has no word for the rest. Linux reads its contrast and text size through
+/// the portal instead (`watch_desktop_settings`) and keeps motion on. A
+/// change redraws every window, as `set_reduce_motion` does for its own, so
+/// a wash at rest, which draws no frames, sees one lifted, and a drifting
+/// one stops at once.
+fn read_system_settings(cx: &mut App) {
     #[cfg(target_os = "macos")]
     {
-        let reduce =
-            objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+        set_system_display(
+            Some(workspace.accessibilityDisplayShouldIncreaseContrast()),
+            Some(workspace.accessibilityDisplayShouldReduceTransparency()),
+            None,
+            cx,
+        );
+        let reduce = workspace.accessibilityDisplayShouldReduceMotion();
         if cx.reduce_motion() != reduce {
             cx.set_reduce_motion(reduce);
             // Touched, so what observes the theme to know whether it may
@@ -148,13 +171,93 @@ fn read_motion_settings(cx: &mut App) {
     let _ = cx;
 }
 
-/// Reads the motion settings again whenever the system says one changed:
+/// The system's contrast, transparency and text size, each where it said
+/// one: a change restyles the text field's theme and redraws every window,
+/// and observers of the theme hear of it.
+fn set_system_display(
+    contrast: Option<bool>,
+    opaque: Option<bool>,
+    text: Option<f32>,
+    cx: &mut App,
+) {
+    let theme = cx.global::<KoanTheme>();
+    let contrast = contrast.unwrap_or(theme.contrast);
+    let opaque = opaque.unwrap_or(theme.opaque);
+    let text = text
+        .filter(|t| t.is_finite() && *t > 0.0)
+        .unwrap_or(theme.system_text);
+    if (contrast, opaque, text) == (theme.contrast, theme.opaque, theme.system_text) {
+        return;
+    }
+    let theme = cx.global_mut::<KoanTheme>();
+    theme.contrast = contrast;
+    theme.opaque = opaque;
+    theme.system_text = text;
+    sync_components(is_dark(cx.window_appearance()), cx);
+    cx.refresh_windows();
+}
+
+/// High contrast and GNOME's text scaling factor, through the desktop
+/// portal's settings, and again whenever the portal says either changed.
+/// A desktop without the portal, or without either key, leaves both as
+/// they are.
+#[cfg(target_os = "linux")]
+fn watch_desktop_settings(cx: &mut App) {
+    use ashpd::desktop::settings::{Contrast, Settings};
+    use futures::StreamExt as _;
+    use futures::stream::{BoxStream, empty};
+
+    const INTERFACE: &str = "org.gnome.desktop.interface";
+    const SCALING: &str = "text-scaling-factor";
+    enum Change {
+        Contrast(bool),
+        Text(f32),
+    }
+    cx.spawn(async move |cx| {
+        let Ok(settings) = Settings::new().await else {
+            return;
+        };
+        let contrast = settings.contrast().await.ok().map(|c| c == Contrast::High);
+        let text = settings
+            .read::<f64>(INTERFACE, SCALING)
+            .await
+            .ok()
+            .map(|t| t as f32);
+        cx.update(|cx| set_system_display(contrast, None, text, cx));
+        let contrasts: BoxStream<Change> = match settings.receive_contrast_changed().await {
+            Ok(changes) => changes
+                .map(|c| Change::Contrast(c == Contrast::High))
+                .boxed(),
+            Err(_) => empty().boxed(),
+        };
+        let texts: BoxStream<Change> = match settings
+            .receive_setting_changed_with_args::<f64>(INTERFACE, SCALING)
+            .await
+        {
+            Ok(changes) => changes
+                .filter_map(|t| async move { t.ok().map(|t| Change::Text(t as f32)) })
+                .boxed(),
+            Err(_) => empty().boxed(),
+        };
+        let mut changes = futures::stream::select(contrasts, texts);
+        while let Some(change) = changes.next().await {
+            cx.update(|cx| match change {
+                Change::Contrast(on) => set_system_display(Some(on), None, None, cx),
+                Change::Text(factor) => set_system_display(None, None, Some(factor), cx),
+            });
+        }
+    })
+    .detach();
+}
+
+/// Reads the system's settings again whenever the system says one changed:
 /// Low Power Mode through `NSProcessInfoPowerStateDidChangeNotification`,
 /// which is posted on whatever thread changed it, and Reduce Motion through
-/// the workspace's `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`.
+/// the workspace's `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`,
+/// which also covers Increase Contrast and Reduce Transparency.
 /// Each observer only wakes a task on the main thread, which reads them.
 #[cfg(target_os = "macos")]
-fn watch_motion_settings(cx: &mut App) {
+fn watch_system_settings(cx: &mut App) {
     use std::ptr::NonNull;
 
     use block2::RcBlock;
@@ -192,7 +295,7 @@ fn watch_motion_settings(cx: &mut App) {
     cx.set_global(MotionObservers(observers));
     cx.spawn(async move |cx| {
         while changes.next().await.is_some() {
-            cx.update(read_motion_settings);
+            cx.update(read_system_settings);
         }
     })
     .detach();
@@ -230,12 +333,17 @@ pub fn pin_appearance(dark: Option<bool>, window: &mut Window, cx: &mut App) {
 fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
-    let palette = Palette::of(dark);
-    let accent = accent_state(cx).at(Instant::now()).shade(dark).hsla();
-    let size = TypeRole::Control.points() * Scale::of(koan.text_size).text;
+    let palette = Palette::for_look(dark, koan.contrast);
+    let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
+    if koan.contrast {
+        accent = accent.held(CONTRAST_ACCENT, dark, palette);
+    }
+    let accent = accent.hsla();
+    let size = TypeRole::Control.points() * koan.scale().text;
     sync_scrollbar(&palette, cx);
     let current = Theme::global(cx);
     if current.colors.background == palette.bg.hsla()
+        && current.colors.foreground == palette.ink.hsla()
         && current.colors.caret == accent
         && current.font_size == px(size)
         && current.font_family.as_ref() == FONT_FAMILY
@@ -292,7 +400,26 @@ fn sync_scrollbar(palette: &Palette, cx: &mut App) {
         .with_styles(styles);
 }
 
+/// The ratio the accent is held to on both grounds with more contrast asked
+/// for.
+const CONTRAST_ACCENT: f64 = 7.0;
+
+/// A veil's opacity with less transparency asked for: the page behind still
+/// shows that it is there.
+const OPAQUE_VEIL: f32 = 0.95;
+
 impl KoanTheme {
+    /// The text size chosen in the app, on top of the system's.
+    pub fn scale(&self) -> Scale {
+        Scale::at(self.text_size, self.system_text)
+    }
+
+    /// Whether the system asks for less transparency: the wash stays off
+    /// and every ground is opaque.
+    pub fn opaque(cx: &App) -> bool {
+        cx.global::<KoanTheme>().opaque
+    }
+
     /// Whether the system lets things move for their own sake: Reduce
     /// Motion and Low Power Mode off, as the system last said.
     pub fn motion_allowed(cx: &App) -> bool {
@@ -346,7 +473,7 @@ impl KoanTheme {
     /// takes away.
     pub fn washes_window(cx: &App) -> bool {
         let theme = cx.global::<KoanTheme>();
-        theme.wash_window && theme.record_colours
+        theme.wash_window && theme.record_colours && !theme.opaque
     }
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {
@@ -419,10 +546,17 @@ pub fn observe_accent_then<V: 'static>(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
     pub dark: bool,
+    /// More contrast asked for: the palette is the contrast variant, the
+    /// accent is held to 7:1, and a picked row is outlined as well as filled.
+    pub contrast: bool,
     pub palette: Palette,
     pub accent: Shade,
     pub scale: Scale,
     pub icons: bool,
+    /// A rule's width: `HAIRLINE`, twice that with more contrast.
+    pub hairline: Pixels,
+    /// Less transparency asked for: veils over the page are near opaque.
+    pub opaque: bool,
 }
 
 impl Look {
@@ -433,12 +567,21 @@ impl Look {
             .get(&window.window_handle().window_id())
             .copied()
             .unwrap_or_else(|| is_dark(window.appearance()));
+        let contrast = theme.contrast;
+        let palette = Palette::for_look(dark, contrast);
+        let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
+        if contrast {
+            accent = accent.held(CONTRAST_ACCENT, dark, palette);
+        }
         Look {
             dark,
-            palette: Palette::of(dark),
-            accent: accent_state(cx).at(Instant::now()).shade(dark),
-            scale: Scale::of(theme.text_size),
+            contrast,
+            palette,
+            accent,
+            scale: theme.scale(),
             icons: theme.icons,
+            hairline: if contrast { HAIRLINE * 2.0 } else { HAIRLINE },
+            opaque: theme.opaque,
         }
     }
 
@@ -460,6 +603,15 @@ impl Look {
             Tone::Accent if !self.accent.reads_as_text => self.palette.ink.hsla(),
             tone => self.color(tone),
         }
+    }
+
+    /// The ground drawn over the page behind a sheet or the artwork viewer:
+    /// `alpha` of `bg`, all but opaque with less transparency asked for.
+    pub fn veil(&self, alpha: f32) -> Hsla {
+        self.palette
+            .bg
+            .hsla()
+            .opacity(if self.opaque { OPAQUE_VEIL } else { alpha })
     }
 
     pub fn space(&self, space: Space) -> Pixels {

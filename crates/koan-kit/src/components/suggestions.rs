@@ -11,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::RowMetrics;
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 #[derive(IntoElement)]
 pub struct SuggestionPanel {
@@ -62,7 +62,7 @@ impl RenderOnce for SuggestionPanel {
                 .flex_col()
                 .pb(look.space(Space::Xs))
                 .bg(look.palette.bg.hsla())
-                .border(HAIRLINE)
+                .border(look.hairline)
                 .border_color(look.palette.rule.hsla())
                 .children(self.children),
         )

@@ -490,10 +490,13 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         ));
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
-        entry.checked(chosen).on_click(move |_, _, cx| {
-            let choice = choice.clone();
-            command(cx, "select output", move |e| e.select_output(choice));
-        })
+        entry
+            .checked(chosen)
+            .stays_open()
+            .on_click(move |_, _, cx| {
+                let choice = choice.clone();
+                command(cx, "select output", move |e| e.select_output(choice));
+            })
     };
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
