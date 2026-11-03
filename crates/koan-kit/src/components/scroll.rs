@@ -74,16 +74,18 @@ impl RenderOnce for ScrollArea {
                 handle.scroll_to_item(ix);
             }
         }
+        let followed = self.follow.is_some().then(|| {
+            window
+                .use_keyed_state(child(&self.id, "followed"), cx, |_, _| 0u64)
+                .clone()
+        });
         let scrolled = div()
             .id(self.id)
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&handle);
         // After the content, so its cursor has been laid out this frame.
-        let follow = self.follow.map(|spot| {
-            let followed = window
-                .use_keyed_state(child(&self.id, "followed"), cx, |_, _| 0u64)
-                .clone();
+        let follow = self.follow.zip(followed).map(|(spot, followed)| {
             let handle = handle.clone();
             canvas(
                 move |area, window, cx| {

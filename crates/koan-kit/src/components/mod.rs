@@ -79,7 +79,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{
-    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
+    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
     Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
