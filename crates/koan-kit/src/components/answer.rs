@@ -132,7 +132,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float x = (position.x - c.x) * u[1];
         float half_w = 0.5 * inner.x;
         float head = half_w + spill * e;
-        float tail = mix(half_w * 0.4, head, t);
+        float tail = mix(half_w, head, t);
         float across = clamp(0.75 * pt - abs(position.y - c.y) + 0.5, 0.0, 1.0);
         a = (x >= tail && x <= head) ? 0.45 * (1.0 - t) * across : 0.0;
     } else {
@@ -178,7 +178,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         let x = (position.x - c.x) * u[0].y;
         let half_w = 0.5 * inner.x;
         let head = half_w + spill * e;
-        let tail = mix(half_w * 0.4, head, t);
+        let tail = mix(half_w, head, t);
         let across = clamp(0.75 * pt - abs(position.y - c.y) + 0.5, 0.0, 1.0);
         if (x >= tail && x <= head) {
             a = 0.45 * (1.0 - t) * across;
