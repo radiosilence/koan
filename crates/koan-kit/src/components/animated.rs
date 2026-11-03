@@ -117,7 +117,8 @@ impl Animated {
 
     /// Track times are seconds from the uniforms' origin, in f32: an hour on,
     /// the origin moves to now and every track with it, so a koan open for
-    /// days still reckons its motion to the frame.
+    /// days still reckons its motion to the frame. Called inside the write's
+    /// publish, so the shift is made once and seen whole.
     fn rebase(&self) {
         let now = Instant::now();
         let shift = self.0.uniforms.time_at(now);
@@ -147,7 +148,8 @@ impl Animated {
 
     /// Where track `k` stands at `at`, as the program draws it.
     pub fn at(&self, k: usize, at: Instant) -> f32 {
-        self.0.uniforms.track(k).at(self.0.uniforms.time_at(at))
+        let uniforms = &self.0.uniforms;
+        uniforms.read(|| uniforms.track(k).at(uniforms.time_at(at)))
     }
 
     /// Whether a track is moving now.
@@ -172,14 +174,26 @@ impl Animated {
 
     /// Track `k` standing at `value`.
     pub fn hold(&self, k: usize, value: f32) {
-        self.rebase();
-        self.put(k, Track::hold(value));
+        self.0.uniforms.publish(|| {
+            self.rebase();
+            self.put(k, Track::hold(value));
+        });
+        self.wake();
     }
 
     /// Track `k` moving from where it stands now to `to` over `length`: a
     /// retarget mid-flight starts from the value, and with a spring the
     /// velocity, it had reached.
     pub fn to(&self, k: usize, to: f32, length: Duration, ease: Ease) {
+        // One publish: the rebase, the reading of where the track stands and
+        // the new track, so a write from another thread cannot fall between.
+        self.0
+            .uniforms
+            .publish(|| self.to_unpublished(k, to, length, ease));
+        self.wake();
+    }
+
+    fn to_unpublished(&self, k: usize, to: f32, length: Duration, ease: Ease) {
         // Before any time is read, so the new track is in the new base.
         self.rebase();
         let now = Self::now();
@@ -219,6 +233,23 @@ impl Animated {
     /// that breathes (`Repeat::Alternate`).
     #[allow(clippy::too_many_arguments)]
     pub fn segment(
+        &self,
+        k: usize,
+        from: f32,
+        to: f32,
+        start: Instant,
+        length: Duration,
+        ease: Ease,
+        repeat: Repeat,
+    ) {
+        self.0
+            .uniforms
+            .publish(|| self.segment_unpublished(k, from, to, start, length, ease, repeat));
+        self.wake();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn segment_unpublished(
         &self,
         k: usize,
         from: f32,
@@ -277,8 +308,9 @@ impl Animated {
         } else {
             track
         };
+        // The caller wakes the window once its publish has closed, so the
+        // refresh never meets the block still being written.
         self.0.uniforms.set_track(k, track);
-        self.wake();
     }
 
     /// `color` into the four uniforms from `index`, as red, green, blue and
@@ -292,10 +324,14 @@ impl Animated {
 
     /// Uniforms from `start` on.
     pub fn set_all(&self, start: usize, values: &[f32]) {
-        let mut changed = false;
-        for (i, value) in values.iter().enumerate() {
-            changed |= self.0.uniforms.set(start + i, *value);
-        }
+        let uniforms = &self.0.uniforms;
+        let changed = uniforms.publish(|| {
+            let mut changed = false;
+            for (i, value) in values.iter().enumerate() {
+                changed |= uniforms.set(start + i, *value);
+            }
+            changed
+        });
         if changed {
             self.wake();
         }
@@ -365,26 +401,28 @@ impl Animated {
     /// motion is decorative, then `paint` it.
     pub fn attach(&self, decorative: bool, window: &mut Window, cx: &mut App) {
         *self.0.waker.lock() = Some(waker(window, cx));
-        // A track not written for hours keeps its precision.
-        self.rebase();
         let still = decorative && !motion_allowed(cx);
         self.0.still.store(still, Ordering::Relaxed);
-        // Written before it was known: what moves stands at its end, or a
-        // repeat at its start.
-        if still {
-            for k in 0..SHADER_TRACKS {
-                let track = self.0.uniforms.track(k);
-                if track.length > 0.0 {
-                    self.0.uniforms.set_track(
-                        k,
-                        Track::hold(match track.repeat {
-                            Repeat::Once => track.to,
-                            _ => track.from,
-                        }),
-                    );
+        self.0.uniforms.publish(|| {
+            // A track not written for hours keeps its precision.
+            self.rebase();
+            // Written before it was known: what moves stands at its end, or
+            // a repeat at its start.
+            if still {
+                for k in 0..SHADER_TRACKS {
+                    let track = self.0.uniforms.track(k);
+                    if track.length > 0.0 {
+                        self.0.uniforms.set_track(
+                            k,
+                            Track::hold(match track.repeat {
+                                Repeat::Once => track.to,
+                                _ => track.from,
+                            }),
+                        );
+                    }
                 }
             }
-        }
+        });
         let running = self.is_running() && !still;
         self.0.uniforms.set_continuous(running);
         self.0.uniforms.set_live(running);

@@ -1109,11 +1109,22 @@ impl KoanEngine {
                 };
                 KoanError::Refused { message }
             })?;
-            Self::build(None, identity)
+            let engine = Self::build(None, identity)?;
+            engine
+                .state
+                .downloads()
+                .set_reading_gap(DESKTOP_READING_GAP);
+            Ok(engine)
         })
         .await
     }
 }
+
+/// How often the desktop app's engine takes a download reading: about 15 a
+/// second, for the rings and bars it glides between readings on the GPU.
+/// Other front ends keep the store's default, a quarter second, since each
+/// reading wakes every client of the figures.
+const DESKTOP_READING_GAP: std::time::Duration = std::time::Duration::from_millis(66);
 
 /// Calls for front ends that link the engine as a Rust library, not reached
 /// through uniffi.
@@ -8557,6 +8568,70 @@ mod move_tests {
 }
 
 #[cfg(test)]
+mod clock_stream_tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::ClockStream;
+    use crate::state::{EngineState, StateSlice};
+
+    fn clock(state: &Arc<EngineState>) -> ClockStream {
+        ClockStream {
+            state: Arc::downgrade(state),
+            moves: tokio::sync::Mutex::new(state.anchor_moves()),
+        }
+    }
+
+    fn playhead(state: &EngineState, position_ms: u64, playing: bool) {
+        state.publish(StateSlice::Playhead {
+            position_ms,
+            seekable_ms: 0,
+            playing,
+        });
+    }
+
+    /// The clients' executors (GPUI's, Swift's) poll the stream with no Tokio
+    /// reactor running, so it must wait without one: polled here by a plain
+    /// executor, on a thread of its own, against a deadline.
+    fn next_within(stream: Arc<ClockStream>, limit: Duration) -> Option<u64> {
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(stream.next()));
+        });
+        got.recv_timeout(limit)
+            .expect("the clock answers without Tokio")
+    }
+
+    #[test]
+    fn the_clock_ticks_and_follows_a_new_anchor_outside_tokio() {
+        let state = EngineState::new();
+        playhead(&state, 1_700, true);
+        let stream = Arc::new(clock(&state));
+
+        let ms = next_within(stream.clone(), Duration::from_secs(2)).unwrap();
+        assert!((1_990..2_100).contains(&ms), "the next whole second: {ms}");
+
+        let pauser = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            playhead(&pauser, 42_000, false);
+        });
+        // Playing from 2 s, the next tick is a second off; the pause comes
+        // first and is answered at once.
+        let ms = next_within(stream.clone(), Duration::from_millis(800)).unwrap();
+        assert_eq!(ms, 42_000);
+
+        drop(state);
+        assert_eq!(
+            next_within(stream, Duration::from_secs(1)),
+            None,
+            "the engine gone"
+        );
+    }
+}
+
+#[cfg(test)]
 mod clock_end_tests {
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -8637,6 +8712,66 @@ mod clock_end_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("the next track's anchor");
         assert!(next.is_some_and(|ms| ms < 100), "{next:?}");
+    }
+
+    /// Past the end, a seek back into the track starts the clock again: the
+    /// new place at once, then its whole seconds.
+    #[test]
+    fn a_seek_back_past_the_end_starts_the_clock_again() {
+        let state = EngineState::new();
+        playing(&state, 1_500);
+        playhead(&state, 1_600, true);
+        let stream = clock(&state);
+        let waiting = stream.clone();
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(waiting.next()));
+        });
+        assert!(
+            got.recv_timeout(Duration::from_millis(300)).is_err(),
+            "past the end: waiting"
+        );
+        playhead(&state, 300, true);
+        let seek = got
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the seek's anchor");
+        assert!(seek.is_some_and(|ms| (300..400).contains(&ms)), "{seek:?}");
+        let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
+        assert!(
+            tick.is_some_and(|ms| (990..1_100).contains(&ms)),
+            "{tick:?}"
+        );
+    }
+
+    /// Paused, the clock waits; resumed, it answers at once and counts on.
+    #[test]
+    fn a_resume_starts_the_clock_again() {
+        let state = EngineState::new();
+        playing(&state, 200_000);
+        playhead(&state, 4_200, false);
+        let stream = clock(&state);
+        let waiting = stream.clone();
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(waiting.next()));
+        });
+        assert!(
+            got.recv_timeout(Duration::from_millis(1_200)).is_err(),
+            "paused: no tick"
+        );
+        playhead(&state, 4_200, true);
+        let resumed = got
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the resume's anchor");
+        assert!(
+            resumed.is_some_and(|ms| (4_200..4_300).contains(&ms)),
+            "{resumed:?}"
+        );
+        let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
+        assert!(
+            tick.is_some_and(|ms| (4_990..5_100).contains(&ms)),
+            "{tick:?}"
+        );
     }
 }
 

@@ -192,7 +192,14 @@ fn shown(table: &Table, index: usize, at: Instant) -> Rgba {
     } else {
         mixed
     };
-    Rgba { r, g, b, a: mix(3) }
+    // As the stock shaders clamp it: a curve that overshoots (a spring, a
+    // Bezier past its ends) mixes past the ends, never past a colour.
+    Rgba {
+        r: r.clamp(0.0, 1.0),
+        g: g.clamp(0.0, 1.0),
+        b: b.clamp(0.0, 1.0),
+        a: mix(3).clamp(0.0, 1.0),
+    }
 }
 
 /// Track starts are seconds from the table's origin, in f32: an hour on, the
