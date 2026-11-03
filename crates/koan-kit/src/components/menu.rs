@@ -659,7 +659,8 @@ impl Render for Menu {
                 } => {
                     let mut row = MenuRow::new(("entry", index), label)
                         .highlighted(highlighted)
-                        .opens(true);
+                        .opens(true)
+                        .expanded(open.is_some());
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }

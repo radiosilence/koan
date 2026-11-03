@@ -296,13 +296,13 @@ impl Slider {
         self
     }
 
-    /// What sits at either end, such as the time played and the time left.
     /// What it sets, as a screen reader names it ("seek").
     pub fn named(mut self, name: impl AsRef<str>) -> Self {
         self.name = Some(label(name));
         self
     }
 
+    /// What sits at either end, such as the time played and the time left.
     pub fn ends(mut self, low: impl Into<SharedString>, high: impl Into<SharedString>) -> Self {
         self.low = Some(low.into());
         self.high = Some(high.into());
@@ -594,7 +594,7 @@ impl RenderOnce for Slider {
         let mut slider = accessible(
             div().id(self.id.clone()),
             gpui_kit::Role::Slider,
-            self.name.clone(),
+            self.name.clone().or_else(|| super::spoken_id(&self.id)),
         )
         .aria_disabled(self.disabled)
         .aria_numeric_value(value as f64)

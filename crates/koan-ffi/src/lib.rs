@@ -377,7 +377,8 @@ pub struct ClockStream(pub(crate) Arc<koan_runtime::ClockStream>);
 impl ClockStream {
     /// The playhead, in milliseconds, at its next whole second while it
     /// plays, or as soon as it is anchored afresh (a seek, a pause, the next
-    /// track). Waits through a pause. `None` once the engine is gone.
+    /// track). Waits through a pause, and past the end of the track until
+    /// the next one's anchor. `None` once the engine is gone.
     pub async fn next(&self) -> Option<u64> {
         self.0.next().await
     }

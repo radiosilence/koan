@@ -484,8 +484,11 @@ impl Render for SearchBar {
         if !self.input.read(cx).value().trim().is_empty() && self.answered(cx) {
             bar = bar.empty("nothing found");
         }
-        let bar = bar
-            .key(
+        // What the keys do with a row, once there is one to do it to: with
+        // nothing yet found, only Escape does anything.
+        let acting = !rows.is_empty();
+        let bar = if acting {
+            bar.key(
                 "↩",
                 if picking {
                     "play these"
@@ -498,6 +501,10 @@ impl Render for SearchBar {
             .key("⇧⌘↩", "replace the queue")
             .key("tab", "tick")
             .key("⇧↩", "all results")
+        } else {
+            bar
+        };
+        let bar = bar
             .key(
                 "esc",
                 if picking {

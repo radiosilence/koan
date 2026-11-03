@@ -92,6 +92,8 @@ pub struct MenuRow {
     disabled: bool,
     /// A row that opens a submenu: the chevron at its end.
     opens: bool,
+    /// Its submenu shows.
+    expanded: bool,
     /// The rich row's second line, and whether it warns.
     detail: Option<(SharedString, bool)>,
     /// The rich row: its glyph large in a column of its own, the chosen row
@@ -122,6 +124,7 @@ impl MenuRow {
             destructive: false,
             disabled: false,
             opens: false,
+            expanded: false,
             detail: None,
             rich: false,
             reach: None,
@@ -242,6 +245,12 @@ impl MenuRow {
     /// Opens a submenu: a chevron at the row's end.
     pub fn opens(mut self, opens: bool) -> Self {
         self.opens = opens;
+        self
+    }
+
+    /// The submenu it opens is showing: said to a screen reader.
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
         self
     }
 
@@ -451,7 +460,7 @@ impl RenderOnce for MenuRow {
                 row.aria_toggled(super::toggled(checked))
             })
             .when_some(described, |row, d| row.aria_description(d))
-            .when(self.opens, |row| row.aria_expanded(false))
+            .when(self.opens, |row| row.aria_expanded(self.expanded))
             .relative()
             .flex()
             .items_center()

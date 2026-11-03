@@ -94,7 +94,7 @@ pub fn install(cx: &mut App) {
     cx.set_global(TransfersHandle(transfers));
 }
 
-/// A ring's glide for `track`'s transfer in the colour `rgba`, made now if
+/// A ring's glide for `track`'s transfer in `color`, made now if
 /// the engine has not reported it yet, so the row that shows it is fed from
 /// its first report.
 fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
@@ -103,10 +103,9 @@ fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
         unknown.set_unknown();
         return unknown;
     };
-    let key = color;
     handle.0.update(cx, |transfers, _| {
         let entry = transfers.glides.entry(track).or_insert_with(Entry::new);
-        if let Some((_, glide)) = entry.rings.iter().find(|(k, _)| *k == key) {
+        if let Some((_, glide)) = entry.rings.iter().find(|(k, _)| *k == color) {
             return glide.clone();
         }
         // A new colour starts where the last report left the others.
@@ -115,7 +114,7 @@ fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
             Some(last) => last.apply(&glide),
             None => glide.set_unknown(),
         }
-        entry.rings.push((key, glide.clone()));
+        entry.rings.push((color, glide.clone()));
         glide
     })
 }

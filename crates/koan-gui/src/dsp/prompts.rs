@@ -38,7 +38,7 @@ pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<An
             .bg(look.veil(0.6))
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(panel(&look).child(shown))
+            .child(panel("eq", &look).child(shown))
             .into_any_element(),
     )
 }

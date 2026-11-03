@@ -902,6 +902,12 @@ impl PlaylistPage {
                 .id(("sleeve", row as u64))
                 .into_any_element()
         });
+        // A track's place among the playlist's entries, headings not
+        // counted; a heading has none.
+        let place = match r {
+            Row::Track { ix, .. } => Some((ix, self.items.len())),
+            Row::Heading { .. } => None,
+        };
         let feed = self.lib.feed.clone();
         let nav = self.lib.nav.read(cx).navigator();
         let (row_frame, _) = match r {
@@ -1004,7 +1010,7 @@ impl PlaylistPage {
             .cursor(self.keyed && self.cursor.at == Some(row))
             .when(p.a11y, |frame| {
                 frame
-                    .place(row, count)
+                    .when_some(place, |frame, (ix, items)| frame.place(ix, items))
                     .on_reveal(move |_, _| list.reveal_around(row))
             })
             .when(line_above, |d| {

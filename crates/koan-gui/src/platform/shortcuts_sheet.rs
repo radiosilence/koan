@@ -93,17 +93,17 @@ fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Div {
         .gap(look.space(Space::S))
         .min_w(look.spaced(210.0))
         .child(sheet::note(label(group.title()), Tone::Muted, look))
-        .children(lines.into_iter().map(|line| {
+        .children(lines.into_iter().enumerate().map(|(row, line)| {
             div()
                 .flex()
                 .items_center()
                 .gap(look.space(Space::S))
-                .child(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::Xs))
-                        .children(line.keys.into_iter().map(Badge::new)),
-                )
+                .child(div().flex().gap(look.space(Space::Xs)).children(
+                    line.keys.into_iter().enumerate().map(|(k, key)| {
+                        Badge::new(key)
+                            .key((SharedString::from(format!("{}-{row}", group.title())), k))
+                    }),
+                ))
                 .child(
                     div()
                         .text_role(TypeRole::Meta, look)
@@ -139,7 +139,8 @@ impl Render for ShortcutsSheet {
             .label("done")
             .on_click(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
 
-        sheet::panel(&look)
+        // Over the window as every sheet is: centred, the page dimmed.
+        let panel = sheet::panel("keyboard shortcuts", &look)
             .id("shortcuts-sheet")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -162,7 +163,8 @@ impl Render for ShortcutsSheet {
                         Tone::Muted,
                         &look,
                     )),
-            )
+            );
+        sheet::scrim("shortcuts-scrim", &look).child(panel)
     }
 }
 

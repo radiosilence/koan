@@ -90,9 +90,14 @@ impl Sheets {
         }
         let look = Look::of(window, cx);
         let layers = stack.into_iter().enumerate().map(|(depth, sheet)| {
-            let body = match sheet {
-                Sheet::View(view) => view.into_any_element(),
-                Sheet::Confirm(c) => confirm_body(c, this.clone(), &look).into_any_element(),
+            // Named for a screen reader: a question by its title, a view by
+            // the window it belongs to.
+            let (name, body) = match sheet {
+                Sheet::View(view) => (SharedString::from("eq"), view.into_any_element()),
+                Sheet::Confirm(c) => (
+                    c.title.clone(),
+                    confirm_body(c, this.clone(), &look).into_any_element(),
+                ),
             };
             div()
                 .id(("dsp-sheet", depth))
@@ -105,7 +110,7 @@ impl Sheets {
                 .bg(look.veil(0.6))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(panel(&look).child(body))
+                .child(panel(name, &look).child(body))
         });
         Some(
             div()
@@ -208,6 +213,9 @@ pub fn choice_row(
     }
 }
 
+/// What a choice row runs when it is picked.
+type OnChoose = Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct ChoiceRow {
     id: koan_kit::app::ElementId,
@@ -215,7 +223,7 @@ pub struct ChoiceRow {
     detail: Option<SharedString>,
     trailing: Option<AnyElement>,
     look: Look,
-    on_click: Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>,
+    on_click: OnChoose,
 }
 
 impl RenderOnce for ChoiceRow {
