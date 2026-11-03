@@ -175,9 +175,10 @@ pub fn install(cx: &mut App) {
 }
 
 /// How much of the code is in before the keys it goes on with are held back
-/// from the app: the first ↑ ↑ still move a list, and from the first ↓ on,
-/// what continues the code does nothing else until it is done or broken.
-const HOLD: usize = 2;
+/// from the app: every arrow, since ↑ ↑ ↓ ↓ ← → ← → is ordinary use of a
+/// list or a grid and always moves it. Only B and A, once the arrows are in,
+/// do nothing else.
+const HOLD: usize = 8;
 
 /// How much of the code `recent` ends in: the longest of its ends that the
 /// code starts with.
@@ -194,9 +195,9 @@ fn matched(recent: &[String]) -> usize {
 }
 
 /// Every key pressed in the app's windows, before anything takes it,
-/// against `CODE`; `then` runs when it has been typed. Once `HOLD` keys of
-/// it are in, a key that carries it on is kept from the app (a list's
-/// arrows, a hotkey's letter); a key that breaks it goes through as usual.
+/// against `CODE`; `then` runs when it has been typed. Once its arrows are
+/// in (`HOLD`), B and A are kept from the app, so a hotkey on either does
+/// not run; a key that breaks it goes through as usual.
 /// Typing in a field is typing, and a key held with Control, Option, Command
 /// or Fn is a shortcut: neither is part of a code, and either starts it
 /// over. Shift is not: a capital B is still B.
@@ -343,6 +344,8 @@ mod tests {
 
     /// The arrows the page's list took.
     static MOVED: AtomicUsize = AtomicUsize::new(0);
+    /// The B presses a hotkey on it took.
+    static BOUND: AtomicUsize = AtomicUsize::new(0);
 
     impl Render for Page {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -354,6 +357,9 @@ mod tests {
                 })
                 .on_action(|_: &list::Down, _, _| {
                     MOVED.fetch_add(1, Ordering::SeqCst);
+                })
+                .on_action(|_: &list::Pick, _, _| {
+                    BOUND.fetch_add(1, Ordering::SeqCst);
                 })
                 .size_full()
         }
@@ -370,6 +376,7 @@ mod tests {
             cx.bind_keys([
                 KeyBinding::new("up", list::Up, Some("List")),
                 KeyBinding::new("down", list::Down, Some("List")),
+                KeyBinding::new("b", list::Pick, Some("List")),
             ]);
             listen(
                 |_| {
@@ -388,15 +395,16 @@ mod tests {
         assert_eq!(TYPED.load(Ordering::SeqCst), 1);
         assert_eq!(
             MOVED.load(Ordering::SeqCst),
-            2,
-            "the first two arrows move the list, the rest are held for the code"
+            4,
+            "every arrow of the code moves the list"
         );
-        cx.simulate_keystrokes("up up up");
         assert_eq!(
-            MOVED.load(Ordering::SeqCst),
-            5,
-            "a third ↑ breaks it and moves the list"
+            BOUND.load(Ordering::SeqCst),
+            0,
+            "B, after the arrows, is held for the code"
         );
+        cx.simulate_keystrokes("b");
+        assert_eq!(BOUND.load(Ordering::SeqCst), 1, "B alone is the hotkey");
         cx.simulate_keystrokes("escape");
         cx.simulate_keystrokes("up up down down left right left right shift-b shift-a");
         assert_eq!(TYPED.load(Ordering::SeqCst), 2);

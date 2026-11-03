@@ -136,6 +136,7 @@ pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
+pub use slide::{Slide, SlideState};
 pub use slider::{Glide, Slider};
 pub use sparkline::Sparkline;
 pub use spinner::Spinner;
