@@ -46,10 +46,11 @@ pub use super::track::{
 };
 pub use gpui::SHADER_UNIFORMS;
 
-/// Track `k` of `uniforms`, as last written.
+/// Track `k` of `uniforms` as one publish left it, never half of two.
 fn track_of(uniforms: &ShaderUniforms, k: usize) -> Track {
     let base = SHADER_PLAIN + k * TRACK_FLOATS;
-    let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| uniforms.get(base + i));
+    let floats: [f32; TRACK_FLOATS] =
+        uniforms.read(|| std::array::from_fn(|i| uniforms.get(base + i)));
     Track::decode(&floats)
 }
 
