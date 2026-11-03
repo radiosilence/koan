@@ -10,7 +10,7 @@ use std::time::Duration;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Button, ButtonKind, Tooltip, child};
+use super::{Button, ButtonKind, Tooltip, accessible, child, focus, ring};
 use crate::theme::{Icon, KoanStyled, Look, TypeRole, label};
 
 /// How long "copied" stands in for the label.
@@ -154,27 +154,38 @@ impl RenderOnce for CopyText {
         let state = moment(&self.id, window, cx);
         let copied = state.read(cx).copied;
         let answers = super::Answerer::of(&self.id, window, cx);
+        let handle = focus(&self.id, window, cx);
         let accent = look.accent.hsla();
         let ink = look.palette.ink.hsla();
         let value = self.value;
         let help = self.help.unwrap_or_else(|| label("copy"));
-        div()
-            .id(self.id)
+        // A button to a screen reader, named by what it copies and the value.
+        let name: SharedString = format!("{help}: {value}").into();
+        // GPUI turns Enter and Space on the focused value into a click; the
+        // ring stands outside the text, which clips.
+        accessible(div().id(self.id), gpui_kit::Role::Button, Some(name))
             .relative()
-            .cursor_pointer()
+            .flex()
             .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
+            .cursor_pointer()
+            .track_focus(&handle)
             .text_role(TypeRole::Control, &look)
             .text_color(look.palette.muted.hsla())
             .hover(move |s| s.text_color(ink))
-            .child(if copied {
-                label("copied")
-            } else {
-                value.clone()
-            })
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(if copied {
+                        label("copied")
+                    } else {
+                        value.clone()
+                    }),
+            )
             .children(answers.layer(window, cx))
+            .children(ring(&handle, &look, window))
             .tooltip(move |window, cx| Tooltip::view(help.clone(), window, cx))
             .on_click(move |_, _, cx| {
                 answers.start(super::Answer::Sweep, accent, cx);

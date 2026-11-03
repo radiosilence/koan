@@ -438,7 +438,9 @@ pub fn follow_edit(
 /// side's change is judged against its own record: the server's `changed`
 /// against the stamp it had at the last sync, the local `changed_at` against
 /// the one that sync covered. Only one side moved: that side wins. Both moved:
-/// last writer wins on `changed`. Neither: nothing is fetched at all.
+/// last writer wins on `changed`. Neither: nothing is fetched at all. A pull
+/// whose local copy is edited or pushed between the decision and the store
+/// is left for the next sync to weigh again.
 ///
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
@@ -533,7 +535,7 @@ pub fn reconcile_playlists(
     for chunk in pulls.chunks(FETCHING * 4) {
         let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
         for ((summary, local), full) in chunk.iter().zip(fetched) {
-            let (summary, local) = (*summary, local.clone());
+            let (summary, local) = (*summary, local.as_ref());
             let full = match full {
                 Ok(full) => full,
                 Err(e) => {
@@ -562,19 +564,35 @@ pub fn reconcile_playlists(
             let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
             let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
+            // A push in flight records what it did only once the server has
+            // answered: one of this playlist (`push_lock`), or one creating a
+            // playlist there that this listing may already hold (`CREATING`),
+            // is waited for, so the check below sees what it wrote.
+            let lock = match local {
+                Some(local) => push_lock(local.id),
+                None => CREATING.clone(),
+            };
+            let _push = lock.lock();
             // All of it or none: a copy renamed but not refilled, or refilled but
             // not marked synced, would push back as an edit nobody made.
             let stored = queries::atomically(&db.conn, || {
-                // Edited here, or made here from another listing, since it was
+                // Edited here, made here from another listing, or pushed (which
+                // moves the synced stamp, not the revision) since it was
                 // decided to pull it: the next sync weighs it again rather than
                 // writing over the edit.
                 let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-                if now.as_ref().map(|p| (p.id, p.revision))
-                    != local.as_ref().map(|p| (p.id, p.revision))
-                {
+                let seen = |p: &queries::PlaylistRow| {
+                    (
+                        p.id,
+                        p.revision,
+                        p.synced_revision,
+                        p.remote_changed.clone(),
+                    )
+                };
+                if now.as_ref().map(seen) != local.map(seen) {
                     return Ok(false);
                 }
-                let id = match &local {
+                let id = match local {
                     Some(local) => local.id,
                     None => queries::create_playlist(
                         &db.conn,
@@ -895,6 +913,13 @@ fn push_lock(id: i64) -> std::sync::Arc<parking_lot::Mutex<()>> {
         .clone()
 }
 
+/// Held by a push that creates a playlist on the server, from before the
+/// create until its server id is recorded here. A sync whose listing already
+/// holds that playlist, with no local copy known for it yet, waits for it
+/// rather than pulling it in as a second copy.
+static CREATING: std::sync::LazyLock<std::sync::Arc<parking_lot::Mutex<()>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Send a playlist's name and contents to the server, in order.
 ///
 /// `createPlaylist` with a `playlistId` replaces the contents wholesale, which
@@ -917,6 +942,9 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
     let remote_id = local.remote_id.as_deref();
+    // Taken after this playlist's own lock, as a sync takes either alone.
+    let creating = CREATING.clone();
+    let _creating = remote_id.is_none().then(|| creating.lock());
     let song_ids = match queries::remote_ids_for_playlist(&db.conn, id) {
         Ok(ids) => ids,
         Err(e) => {

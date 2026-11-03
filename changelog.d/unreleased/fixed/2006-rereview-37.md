@@ -1,0 +1,1 @@
+- **Hearts, drops and lyrics.** In the kōan GUI app a heart is a toggle a screen reader can name and press, a playlist's own tracks let go over its sidebar row no longer answer as if added, and a lyric line clicked lets go after a moment even while paused and is never carried into the next song.

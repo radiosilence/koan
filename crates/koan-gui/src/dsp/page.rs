@@ -466,7 +466,9 @@ impl Render for EqBody {
                     .gap(look.space(Space::L))
                     .child(head)
                     .child(
-                        div().h(look.spaced(290.0)).child(
+                        // As the profile page's frame: the curve (`GRAPH_H`), its legend and
+                        // its brushes, which a scaled frame would clip.
+                        div().h(Pixels::from(290.0)).child(
                             koan_kit::app::AnyView::from(self.graph.clone())
                                 // the bounds a cached view keeps between frames.
                                 .cached(StyleRefinement::default().size_full()),

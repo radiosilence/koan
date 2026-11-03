@@ -345,8 +345,8 @@ pub fn sync_library(
         total: None,
     });
 
-    // Albums this library holds that the listing left out are asked about one
-    // by one; see `confirm_missing_albums`. One the server still answers for
+    // Albums this library holds that the listing left out are asked about,
+    // `CONFIRMING` at a time; see `confirm_missing_albums`. One the server still answers for
     // means the album listing came up short — an album deleted mid-walk shifts
     // the next page — and the songs of an album nobody listed were never
     // fetched, so nothing can be concluded about its tracks this time.
@@ -444,10 +444,11 @@ fn confirm_missing_albums(
     // Each answer is a round trip, so several are asked at once: a server
     // that deleted a few hundred records answers in a few seconds rather
     // than a few hundred round trips.
+    let lanes = CONFIRMING.min(missing.len());
     let next = parking_lot::Mutex::new(missing.into_iter());
     let kept = parking_lot::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..CONFIRMING {
+        for _ in 0..lanes {
             scope.spawn(|| {
                 loop {
                     if cancel.load(Ordering::Relaxed) {

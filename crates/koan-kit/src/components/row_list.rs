@@ -53,20 +53,16 @@ impl RowListState {
         self.0.scroll_to_reveal_item(ix);
     }
 
-    /// Scrolls row `ix` and the rows either side of it on screen: what a
-    /// screen reader moving down the list needs, since only rows drawn are
-    /// in the accessibility tree.
+    /// Scrolls the neighbour of row `ix` a screen reader is heading for on
+    /// screen, since only rows drawn are in the accessibility tree
+    /// (`reveal_around_list`).
     pub fn reveal_around(&self, ix: usize) {
-        let count = self.0.item_count();
-        if count == 0 {
-            return;
-        }
-        self.0.scroll_to_reveal_item((ix + 1).min(count - 1));
-        self.0.scroll_to_reveal_item(ix.saturating_sub(1));
+        super::lists::reveal_around_list(&self.0, ix);
     }
 
-    /// Where row `ix` was drawn last frame, in the window; `None` while it
-    /// is off screen.
+    /// Where row `ix` was laid out last frame, in the window: for a row
+    /// past the viewport's edge, outside it. `None` for a row the list has
+    /// not laid out.
     pub fn row_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.bounds_for_item(ix)
     }
