@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn a_cut_stream_is_asked_again_for_the_rest() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut asked: Vec<Vec<String>> = Vec::new();
         let (rest, halted) = {
             let mut fetch = |ask: &[String], each: &mut Each| {
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn a_bulk_answer_stops_between_frames() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let read = std::cell::Cell::new(0);
         let mut fetch = |ask: &[String], each: &mut Each| {
             for id in ask {
@@ -850,7 +850,7 @@ mod tests {
     #[test]
     fn koan_covers_failing_falls_back_to_one_by_one() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut calls = 0;
         let all = ids(BULK_MAX * (BULK_FAILURES + 2));
         let (rest, halted) = {
