@@ -220,6 +220,10 @@ pub struct EngineState {
     /// a `ClockStream` counts whole seconds from.
     anchor: parking_lot::Mutex<Option<Anchor>>,
     anchor_moved: tokio::sync::watch::Sender<u64>,
+    /// The playing track's length, from the Playback slice: where a clock
+    /// stops counting, since a playhead reckoned past it is the next track's
+    /// anchor not yet sent. 0 for none.
+    duration_ms: std::sync::atomic::AtomicU64,
 }
 
 impl EngineState {
@@ -230,6 +234,7 @@ impl EngineState {
             tick: tokio::sync::watch::channel(0).0,
             anchor: parking_lot::Mutex::new(None),
             anchor_moved: tokio::sync::watch::channel(0).0,
+            duration_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -278,6 +283,12 @@ impl EngineState {
             });
             let _ = self.anchor_moved.send(clock);
         }
+        if let StateSlice::Playback { now_playing } = &*slice {
+            self.duration_ms.store(
+                now_playing.duration_ms,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
         slots.latest[i] = Some(slice);
         drop(slots);
         let _ = self.tick.send(clock);
@@ -286,6 +297,12 @@ impl EngineState {
     /// The playhead as clients last heard it.
     pub fn anchor(&self) -> Option<Anchor> {
         *self.anchor.lock()
+    }
+
+    /// The playing track's length, as the Playback slice last said; 0 for
+    /// none.
+    pub fn duration_ms(&self) -> u64 {
+        self.duration_ms.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Woken each time the playhead is anchored afresh.
