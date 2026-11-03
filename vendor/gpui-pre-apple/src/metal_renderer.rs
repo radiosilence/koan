@@ -135,6 +135,10 @@ pub struct MetalRenderer {
     // KOAN: the last frame drawn as the layers its shaders are drawn
     // between, which each present composes with the shaders (#1641).
     shader_layers: ShaderLayerTextures,
+    // KOAN: each layer group's texture, and the frame they were drawn for
+    // (#1859).
+    group_textures: Vec<Option<metal::Texture>>,
+    group_generation: u64,
     compose_pipelines: Option<ComposePipelines>,
     /// What a shader with no image is given to sample.
     blank_texture: Option<metal::Texture>,
@@ -437,6 +441,8 @@ impl MetalRenderer {
             quads_pipeline_state,
             shader_pipelines: Default::default(), // KOAN: #1641.
             shader_layers: Default::default(), // KOAN: #1641.
+            group_textures: Vec::new(),        // KOAN: #1859.
+            group_generation: 0,
             compose_pipelines: None,           // KOAN: #1641.
             blank_texture: None,               // KOAN: #1641.
             underlines_pipeline_state,
@@ -558,6 +564,11 @@ impl MetalRenderer {
             return;
         };
 
+        // KOAN: each layer group drawn into its texture, once per frame
+        // drawn (#1859).
+        if let Err(error) = self.draw_layer_groups(scene, viewport_size) {
+            log::error!("failed to draw layer groups: {error:#}");
+        }
         // KOAN: a scene with shaders is drawn once as the layers they are
         // drawn between, and each present composes the layers with the
         // shaders, so re-presenting a moving shader costs the shaders and a
@@ -683,6 +694,7 @@ impl MetalRenderer {
         objc2::rc::autoreleasepool(|_| {
             // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size);
+            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
 
             // Create an offscreen texture as render target
             let texture_descriptor = metal::TextureDescriptor::new();
@@ -733,6 +745,7 @@ impl MetalRenderer {
     ) -> Result<RgbaImage> {
         objc2::rc::autoreleasepool(|_| {
             self.update_path_intermediate_textures(size);
+            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
             let texture_descriptor = metal::TextureDescriptor::new();
             texture_descriptor.set_width(size.width.0 as u64);
             texture_descriptor.set_height(size.height.0 as u64);
@@ -892,10 +905,12 @@ impl MetalRenderer {
                 PrimitiveBatch::Shaders {
                     program,
                     texture,
+                    group,
                     range,
                 } => self.draw_shaders(
                     program,
                     texture,
+                    group,
                     range,
                     instance_bindings,
                     viewport_size,
@@ -1161,15 +1176,16 @@ impl MetalRenderer {
             while start < group.end {
                 let head = &scene.shaders[start];
                 let key = |s: &gpui::PaintShader| {
-                    (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                    (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
                 };
                 let end = scene.shaders[start..group.end]
                     .iter()
-                    .position(|s| key(s) != key(head))
-                    .map_or(group.end, |n| start + n);
+                    .position(|s| key(s) != key(head) || s.group.is_some())
+                    .map_or(group.end, |n| (start + n).max(start + 1));
                 self.draw_shaders(
                     head.program,
                     head.image.as_ref().map(|t| t.texture_id),
+                    head.group,
                     start..end,
                     &bindings,
                     viewport_size,
@@ -1195,6 +1211,53 @@ impl MetalRenderer {
             command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
         }
         Ok(command_buffer)
+    }
+
+    // KOAN: (#1859) each layer group's scene drawn into a texture the size
+    // of the window, transparent, its content where it was painted; kept
+    // for the frame's presents.
+    fn draw_layer_groups(&mut self, scene: &Scene, viewport_size: Size<DevicePixels>) -> Result<()> {
+        if scene.layer_groups.is_empty() {
+            self.group_textures.clear();
+            return Ok(());
+        }
+        let width = i32::from(viewport_size.width) as u64;
+        let height = i32::from(viewport_size.height) as u64;
+        let fits = self.group_textures.iter().flatten().all(|t| {
+            t.width() == width && t.height() == height
+        });
+        if self.group_generation == scene.generation && fits {
+            return Ok(());
+        }
+        let mut pool: Vec<metal::Texture> = if fits {
+            std::mem::take(&mut self.group_textures).into_iter().flatten().collect()
+        } else {
+            Vec::new()
+        };
+        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
+        for group in &scene.layer_groups {
+            if group.is_blank() {
+                drawn.push(None);
+                continue;
+            }
+            let target = pool.pop().unwrap_or_else(|| {
+                let descriptor = metal::TextureDescriptor::new();
+                descriptor.set_width(width);
+                descriptor.set_height(height);
+                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                descriptor.set_usage(
+                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                );
+                descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+                self.device.new_texture(&descriptor)
+            });
+            // The same queue runs these before whatever samples them.
+            self.render_frame(group, &target, viewport_size, true)?.commit();
+            drawn.push(Some(target));
+        }
+        self.group_textures = drawn;
+        self.group_generation = scene.generation;
+        Ok(())
     }
 
     // KOAN: shader quads (#1641). A program's pipeline is compiled from its
@@ -1235,6 +1298,7 @@ impl MetalRenderer {
         &self,
         program: &'static gpui::ShaderProgram,
         texture: Option<AtlasTextureId>,
+        group: Option<usize>,
         shaders: Range<usize>,
         instance_bindings: &impl HasShaders,
         viewport_size: Size<DevicePixels>,
@@ -1251,8 +1315,10 @@ impl MetalRenderer {
         command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
         command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
         command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
-        let image = texture
-            .and_then(|id| self.sprite_atlas.metal_texture(id))
+        // KOAN: a layer group's texture, drawn this frame (#1859).
+        let image = group
+            .and_then(|group| self.group_textures.get(group).cloned().flatten())
+            .or_else(|| texture.and_then(|id| self.sprite_atlas.metal_texture(id)))
             .or_else(|| self.blank_texture.clone());
         command_encoder.set_fragment_texture(0, image.as_deref());
         let viewport = [
@@ -2494,6 +2560,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             program: &PROGRAM,
             uniforms: uniforms.clone(),
             image: None,
+            group: None,
         });
         scene.finish();
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
@@ -2558,6 +2625,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
                 program: &PROGRAM,
                 uniforms: uniforms.clone(),
                 image: None,
+                group: None,
             });
             let over = if cover {
                 rect(30.0, 10.0, 20.0, 4.0)
@@ -2635,6 +2703,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             program: &PROGRAM,
             uniforms: Arc::new(gpui::ShaderUniforms::new()),
             image: None,
+            group: None,
         });
         // A menu over the shader, and its text over the menu, clear of it.
         scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));

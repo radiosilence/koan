@@ -308,6 +308,19 @@ impl Animated {
         self.0.uniforms.set_live(running);
     }
 
+    /// Paints what `paint` paints into a texture of its own, composed over
+    /// `bounds` by `program` sampling it (#1859).
+    pub fn paint_layer(
+        &self,
+        program: &'static ShaderProgram,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        paint: impl FnOnce(&mut Window, &mut App),
+    ) {
+        window.paint_layer_group(bounds, program, self.0.uniforms.clone(), cx, paint);
+    }
+
     /// Paints the quad over `bounds`, drawn by `program`, sampling `image`.
     pub fn paint(
         &self,
