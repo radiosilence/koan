@@ -2,7 +2,7 @@ use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
     Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
     LayoutId, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Size, Style,
-    StyleRefinement, TextStyle, WeakEntity,
+    StyleRefinement, TextStyle, WeakEntity, window::a11y::CapturedA11y,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -329,6 +329,10 @@ struct ViewElementState {
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
+    /// The accessibility nodes the prepaint added, when it ran while the tree was being built.
+    /// A frame that builds the tree can only reuse the view if it has them: the tree starts
+    /// empty in every frame and the reused prepaint doesn't run.
+    a11y: Option<CapturedA11y>,
 }
 
 struct ViewElementCacheKey {
@@ -557,9 +561,19 @@ fn prepaint_view(
                     // its ranges index into.
                     && element_state.prepaint_frame + 1 == window.frames_drawn
                     && element_state.paint_frame + 1 == window.frames_drawn
+                    // KOAN: (#1899) after Wormhole's gpui-pre patch: a view
+                    // reused while the accessibility tree is built adds the
+                    // nodes it recorded, so it needs to have recorded them.
+                    && (element_state.a11y.is_some() || !window.a11y.is_active())
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
+                    if window.a11y.is_active()
+                        && let Some(a11y) = &element_state.a11y
+                    {
+                        let focus = window.focus;
+                        window.a11y.replay(a11y, focus);
+                    }
                     cx.entities
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();
@@ -575,6 +589,7 @@ fn prepaint_view(
                 // and nothing beside them. Only a refresh of the window draws
                 // everything again.
                 let prepaint_start = window.prepaint_index();
+                let a11y_mark = window.a11y.is_active().then(|| window.a11y.mark());
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
                     element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
@@ -583,11 +598,13 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
+                let a11y = a11y_mark.map(|mark| window.a11y.capture(&mark));
 
                 (
                     Some(element),
                     ViewElementState {
                         accessed_entities,
+                        a11y,
                         prepaint_range: prepaint_start..prepaint_end,
                         prepaint_frame: window.frames_drawn,
                         paint_frame: 0,
@@ -642,6 +659,11 @@ fn paint_view(
                         element.paint(window, cx);
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
+                        if window.a11y.is_active()
+                            && let Some(a11y) = &element_state.a11y
+                        {
+                            window.a11y.reuse_action_listeners(a11y);
+                        }
                     }
 
                     let paint_end = window.paint_index();
@@ -667,4 +689,356 @@ fn paint_component(
     window.with_id(ElementId::Name(name.into()), |window| {
         element.as_mut().unwrap().paint(window, cx);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use accesskit::{Action, ActionRequest, NodeId, Role, TreeId, TreeUpdate};
+
+    use crate::{
+        AnyWindowHandle, AppContext as _, Context, FocusHandle, InteractiveElement as _,
+        IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, StyleRefinement,
+        Styled as _, TestAppContext, Window, deferred, div, px,
+    };
+
+    /// The cached view: a button with an action listener, and a row of two more nodes. With a
+    /// popup it also holds a deferred element (as a popover does) with a button of its own.
+    struct Inner {
+        renders: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+        focus: FocusHandle,
+        popup: Option<Popup>,
+    }
+
+    struct Popup {
+        clicks: Rc<Cell<usize>>,
+        focus: FocusHandle,
+    }
+
+    impl Render for Inner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let clicks = self.clicks.clone();
+            let popup = self.popup.as_ref().map(|popup| {
+                let clicks = popup.clicks.clone();
+                deferred(
+                    div().id("popup").role(Role::Menu).size(px(40.)).child(
+                        div()
+                            .id("popup-button")
+                            .role(Role::MenuItem)
+                            .aria_label("Popup")
+                            .track_focus(&popup.focus)
+                            .on_a11y_action(Action::Click, move |_, _, _| {
+                                clicks.set(clicks.get() + 1)
+                            })
+                            .size(px(20.)),
+                    ),
+                )
+                .with_priority(1)
+            });
+            let mut root = div()
+                .id("inner")
+                .role(Role::Group)
+                .size(px(100.))
+                .child(
+                    div()
+                        .id("button")
+                        .role(Role::Button)
+                        .aria_label("Go")
+                        .track_focus(&self.focus)
+                        .on_a11y_action(Action::Click, move |_, _, _| clicks.set(clicks.get() + 1))
+                        .size(px(20.)),
+                )
+                .child(div().id("label").role(Role::Label).size(px(20.)));
+            if let Some(popup) = popup {
+                root = root.child(popup);
+            }
+            root
+        }
+    }
+
+    struct Outer {
+        inner: crate::Entity<Inner>,
+    }
+
+    impl Render for Outer {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().id("outer").role(Role::Toolbar).size_full().child(
+                self.inner
+                    .clone()
+                    .cached(StyleRefinement::default().size(px(100.))),
+            )
+        }
+    }
+
+    fn tree(window: &Window) -> TreeUpdate {
+        window.last_a11y_tree_update().expect("a tree was built")
+    }
+
+    /// The ids of the nodes in `tree`, sorted, with each node's children.
+    fn shape(tree: &TreeUpdate) -> Vec<(NodeId, Vec<NodeId>)> {
+        let mut shape: Vec<_> = tree
+            .nodes
+            .iter()
+            .map(|(id, node)| (*id, node.children().to_vec()))
+            .collect();
+        shape.sort_by_key(|(id, _)| id.0);
+        shape
+    }
+
+    fn node_with_role(tree: &TreeUpdate, role: Role) -> NodeId {
+        tree.nodes
+            .iter()
+            .find(|(_, node)| node.role() == role)
+            .map(|(id, _)| *id)
+            .expect("a node with the role")
+    }
+
+    fn node_with_label(tree: &TreeUpdate, label: &str) -> NodeId {
+        tree.nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .map(|(id, _)| *id)
+            .expect("a node with the label")
+    }
+
+    struct Fixture {
+        window: AnyWindowHandle,
+        renders: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+        popup_clicks: Rc<Cell<usize>>,
+        inner: crate::Entity<Inner>,
+    }
+
+    impl Fixture {
+        fn new(cx: &mut TestAppContext) -> Self {
+            Self::build(cx, false)
+        }
+
+        fn with_popup(cx: &mut TestAppContext) -> Self {
+            Self::build(cx, true)
+        }
+
+        fn build(cx: &mut TestAppContext, with_popup: bool) -> Self {
+            let renders = Rc::new(Cell::new(0));
+            let clicks = Rc::new(Cell::new(0));
+            let popup_clicks = Rc::new(Cell::new(0));
+            let inner = cx.new(|cx| Inner {
+                renders: renders.clone(),
+                clicks: clicks.clone(),
+                focus: cx.focus_handle(),
+                popup: with_popup.then(|| Popup {
+                    clicks: popup_clicks.clone(),
+                    focus: cx.focus_handle(),
+                }),
+            });
+            let window = cx
+                .add_window({
+                    let inner = inner.clone();
+                    |_, _| Outer { inner }
+                })
+                .into();
+            // Adding the window drew it once, without the tree.
+            renders.set(0);
+            Self {
+                window,
+                renders,
+                clicks,
+                popup_clicks,
+                inner,
+            }
+        }
+
+        /// Draw a frame; the tree it sent, if it built one.
+        fn draw(&self, cx: &mut TestAppContext) -> Option<TreeUpdate> {
+            cx.update_window(self.window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.is_a11y_active().then(|| tree(window))
+            })
+            .expect("draw")
+        }
+
+        fn simulate_tree(&self, cx: &mut TestAppContext, active: bool) {
+            cx.update_window(self.window, |_, window, _| {
+                window.simulate_a11y_active(active)
+            })
+            .expect("simulate");
+        }
+
+        fn click(&self, cx: &mut TestAppContext, node: NodeId) {
+            cx.update_window(self.window, |_, window, cx| {
+                window.simulate_a11y_action(
+                    ActionRequest {
+                        action: Action::Click,
+                        target_tree: TreeId::ROOT,
+                        target_node: node,
+                        data: None,
+                    },
+                    cx,
+                )
+            })
+            .expect("click");
+        }
+    }
+
+    #[gpui::test]
+    fn a_reused_view_keeps_its_a11y_nodes(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        fixture.simulate_tree(cx, true);
+
+        let first = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 1);
+        let shape_first = shape(&first);
+        let button = node_with_role(&first, Role::Button);
+        let outer = node_with_role(&first, Role::Toolbar);
+        let group = node_with_role(&first, Role::Group);
+        assert!(
+            first
+                .nodes
+                .iter()
+                .any(|(id, node)| *id == outer && node.children() == [group]),
+            "the cached view's top node is a child of the node it sits in"
+        );
+
+        // Nothing changed: the view's prepaint is replayed, not run, and the tree is whole.
+        let second = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 1, "the view was reused");
+        assert_eq!(shape(&second), shape_first);
+
+        // A reused frame keeps the view's action listeners, frame after frame.
+        fixture.click(cx, button);
+        assert_eq!(fixture.clicks.get(), 1);
+        let third = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 1);
+        assert_eq!(shape(&third), shape_first);
+        fixture.click(cx, button);
+        assert_eq!(fixture.clicks.get(), 2);
+
+        // Notified, the view renders again and the tree is the same.
+        fixture.inner.update(cx, |_, cx| cx.notify());
+        let fourth = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 2);
+        assert_eq!(shape(&fourth), shape_first);
+        fixture.click(cx, button);
+        assert_eq!(fixture.clicks.get(), 3);
+    }
+
+    #[gpui::test]
+    fn a_view_prepainted_without_the_tree_is_rendered_when_it_is_built(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let button;
+        {
+            fixture.simulate_tree(cx, true);
+            let first = fixture.draw(cx).expect("a tree");
+            button = node_with_role(&first, Role::Button);
+        }
+
+        // Frames without the tree reuse the view as before.
+        fixture.simulate_tree(cx, false);
+        assert!(fixture.draw(cx).is_none());
+        assert_eq!(fixture.renders.get(), 1);
+        fixture.inner.update(cx, |_, cx| cx.notify());
+        assert!(fixture.draw(cx).is_none());
+        assert_eq!(fixture.renders.get(), 2, "rendered while the tree was off");
+
+        // That prepaint left no nodes to replay: the first frame with the tree renders it.
+        fixture.simulate_tree(cx, true);
+        let tree = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 3);
+        assert_eq!(node_with_role(&tree, Role::Button), button);
+        let again = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 3, "and the next one reuses it");
+        assert_eq!(shape(&again), shape(&tree));
+        fixture.click(cx, button);
+        assert_eq!(fixture.clicks.get(), 1);
+
+        // A view prepainted with the tree and reused without it is whole when it is built again.
+        fixture.simulate_tree(cx, false);
+        assert!(fixture.draw(cx).is_none());
+        fixture.simulate_tree(cx, true);
+        let back = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 3);
+        assert_eq!(shape(&back), shape(&tree));
+        fixture.click(cx, button);
+        assert_eq!(fixture.clicks.get(), 2);
+    }
+
+    #[gpui::test]
+    fn a_reused_view_reports_the_focus_it_holds(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        fixture.simulate_tree(cx, true);
+        let button = node_with_role(&fixture.draw(cx).expect("a tree"), Role::Button);
+        cx.update_window(fixture.window, |_, window, cx| {
+            let focus = fixture.inner.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        })
+        .expect("focus");
+        fixture.draw(cx);
+        let renders = fixture.renders.get();
+        let reused = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), renders, "the view was reused");
+        assert_eq!(reused.focus, button);
+    }
+
+    #[gpui::test]
+    fn a_deferred_popup_in_a_reused_view_keeps_its_nodes(cx: &mut TestAppContext) {
+        let fixture = Fixture::with_popup(cx);
+        fixture.simulate_tree(cx, true);
+
+        let first = fixture.draw(cx).expect("a tree");
+        assert_eq!(fixture.renders.get(), 1);
+        let popup = node_with_label(&first, "Popup");
+        let menu = node_with_role(&first, Role::Menu);
+        assert!(
+            first
+                .nodes
+                .iter()
+                .any(|(id, node)| *id == menu && node.children() == [popup]),
+            "the popup's button is a child of its menu"
+        );
+        let shape_first = shape(&first);
+
+        cx.update_window(fixture.window, |_, window, cx| {
+            let focus = match &fixture.inner.read(cx).popup {
+                Some(popup) => popup.focus.clone(),
+                None => unreachable!("the fixture has a popup"),
+            };
+            window.focus(&focus, cx);
+        })
+        .expect("focus");
+        fixture.draw(cx);
+
+        // Frames that reuse the view reuse the deferred draw too, and the popup stays whole.
+        for round in 1..=3 {
+            let renders = fixture.renders.get();
+            let reused = fixture.draw(cx).expect("a tree");
+            assert_eq!(
+                fixture.renders.get(),
+                renders,
+                "round {round}: the view was reused"
+            );
+            assert_eq!(shape(&reused), shape_first, "round {round}");
+            assert_eq!(
+                reused.focus, popup,
+                "round {round}: the popup's focus is reported"
+            );
+            fixture.click(cx, popup);
+            assert_eq!(
+                fixture.popup_clicks.get(),
+                round,
+                "round {round}: its action works"
+            );
+        }
+
+        // The tree off and on again: the next frame with it is whole.
+        fixture.simulate_tree(cx, false);
+        assert!(fixture.draw(cx).is_none());
+        fixture.simulate_tree(cx, true);
+        let back = fixture.draw(cx).expect("a tree");
+        assert_eq!(shape(&back), shape_first);
+        fixture.click(cx, popup);
+        assert_eq!(fixture.popup_clicks.get(), 4);
+    }
 }
