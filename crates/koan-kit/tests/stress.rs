@@ -10,11 +10,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AppContext, ColorSlot, Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba,
-    ShaderUniforms, Styled, TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, point,
-    present_now, px, set_present_lead,
+    ColorSlot, Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba, ShaderUniforms,
+    Styled, TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, point, present_now, px,
+    set_present_lead,
 };
-use koan_kit::components::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram, Toolbar, ToolbarButton};
+use koan_kit::components::{
+    Animated, AnimatedQuad, Ease, Repeat, ShaderProgram, Toolbar, ToolbarButton,
+};
 use koan_kit::theme::{self, Accent, Icon, KoanTheme, Look, Motion};
 use parking_lot::Mutex;
 
@@ -127,7 +129,14 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     uniforms.set_origin(Instant::now());
     let slots: Arc<Vec<ColorSlot>> = Arc::new(
         (0..4)
-            .filter_map(|_| ColorSlot::claim(Rgba { r: 1.0, g: 0.5, b: 0.0, a: 1.0 }))
+            .filter_map(|_| {
+                ColorSlot::claim(Rgba {
+                    r: 1.0,
+                    g: 0.5,
+                    b: 0.0,
+                    a: 1.0,
+                })
+            })
             .collect(),
     );
     let writing = Arc::new(AtomicBool::new(true));
@@ -276,13 +285,22 @@ fn a_month_of_uptime_rebases_without_a_jump() {
         assert!((b - a).abs() < 0.02, "{before:?} then {after:?}");
     }
     assert!(animated.track(0).start.abs() < 60.0);
-    assert!(animated.track(1).start.abs() < 60.0, "a repeat re-anchors near now");
+    assert!(
+        animated.track(1).start.abs() < 60.0,
+        "a repeat re-anchors near now"
+    );
 }
 
 #[test]
 fn colour_slots_rebase_mid_move_without_a_jump() {
     let _clock = CLOCK.lock();
-    let slot = ColorSlot::claim(Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).expect("a slot");
+    let slot = ColorSlot::claim(Rgba {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    })
+    .expect("a slot");
     let long = Track {
         from: 0.0,
         to: 1.0,
@@ -291,20 +309,39 @@ fn colour_slots_rebase_mid_move_without_a_jump() {
         curve: TrackCurve::Linear,
         repeat: TrackRepeat::Once,
     };
-    slot.to(Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }, long);
+    slot.to(
+        Rgba {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+        long,
+    );
     // An hour and a half on, as the present clock reckons it: the next write
     // to the table moves its origin.
     set_present_lead(Duration::from_secs(5400));
     let before = slot.at(present_now());
     let other = ColorSlot::claim(Rgba::default()).expect("a slot");
     other.to(
-        Rgba { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
+        Rgba {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            a: 1.0,
+        },
         Track::hold(1.0),
     );
     let after = slot.at(present_now());
     set_present_lead(Duration::ZERO);
-    assert!((before.r - 0.75).abs() < 0.01, "three quarters through: {before:?}");
-    assert!((before.r - after.r).abs() < 1e-3, "{before:?} then {after:?}");
+    assert!(
+        (before.r - 0.75).abs() < 0.01,
+        "three quarters through: {before:?}"
+    );
+    assert!(
+        (before.r - after.r).abs() < 1e-3,
+        "{before:?} then {after:?}"
+    );
     assert!(slot.moving(present_now() + Duration::from_secs(5400)));
 }
 
@@ -338,17 +375,21 @@ struct Buttons;
 
 impl Render for Buttons {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size(px(1600.)).flex().flex_col().children((0..4).map(|row| {
-            let mut toolbar = Toolbar::new();
-            for i in 0..10 {
-                toolbar = toolbar.leading(ToolbarButton::new(
-                    ("b", row * 10 + i),
-                    Icon::Back,
-                    "back",
-                ));
-            }
-            toolbar
-        }))
+        div()
+            .size(px(1600.))
+            .flex()
+            .flex_col()
+            .children((0..4).map(|row| {
+                let mut toolbar = Toolbar::new();
+                for i in 0..10 {
+                    toolbar = toolbar.leading(ToolbarButton::new(
+                        ("b", (row * 10 + i) as usize),
+                        Icon::Back,
+                        "back",
+                    ));
+                }
+                toolbar
+            }))
     }
 }
 
@@ -398,7 +439,11 @@ impl Render for Painted {
 }
 
 fn accent(rng: &mut Rng) -> Accent {
-    Accent::of(Some([rng.unit() as f64, rng.unit() as f64, rng.unit() as f64]))
+    Accent::of(Some([
+        rng.unit() as f64,
+        rng.unit() as f64,
+        rng.unit() as f64,
+    ]))
 }
 
 #[gpui_kit::test]
@@ -425,7 +470,10 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
         let look = Look::of(window, cx);
         (Rgba::from(look.accent.hsla()), look.accent.rgba())
     });
-    for (a, b) in [shown.r, shown.g, shown.b].into_iter().zip([target.r, target.g, target.b]) {
+    for (a, b) in [shown.r, shown.g, shown.b]
+        .into_iter()
+        .zip([target.r, target.g, target.b])
+    {
         assert!((a - b).abs() < 2e-3, "{shown:?}, not {target:?}");
     }
     let _ = last;
@@ -450,8 +498,14 @@ fn reduce_motion_mid_settle_lands_the_accent(cx: &mut TestAppContext) {
         let look = Look::of(window, cx);
         (Rgba::from(look.accent.hsla()), look.accent.rgba())
     });
-    for (a, b) in [shown.r, shown.g, shown.b].into_iter().zip([target.r, target.g, target.b]) {
-        assert!((a - b).abs() < 2e-3, "still turning under Reduce Motion: {shown:?}");
+    for (a, b) in [shown.r, shown.g, shown.b]
+        .into_iter()
+        .zip([target.r, target.g, target.b])
+    {
+        assert!(
+            (a - b).abs() < 2e-3,
+            "still turning under Reduce Motion: {shown:?}"
+        );
     }
 }
 
