@@ -312,7 +312,7 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
                 |bounds, window, cx| {
                     let id = window.window_handle().window_id();
                     cx.default_global::<CursorAt>().0 = Some((id, bounds));
-                }
+                },
                 |_, _, _, _| {},
             )
             .size_full(),
