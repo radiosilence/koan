@@ -66,11 +66,12 @@ pub struct Scene {
     // KOAN: what was painted inside each layer group, as a scene of its own
     // that a renderer draws into a texture for its shader to compose (#1859).
     pub layer_groups: Vec<Scene>,
+    // KOAN: where each group's content lies, when its texture is the size
+    // of the shader composing it and its content is moved to its origin;
+    // `None` for one drawn the window's size, as a group holding paths is
+    // (their intermediate texture is the window's) (#1878).
+    pub layer_group_frames: Vec<Option<Bounds<ScaledPixels>>>,
     group_stack: Vec<usize>,
-    /// Shaders painted inside each open group, held to be drawn after it at
-    /// their own place: a group is drawn once per frame, and a shader in it
-    /// would stand still in its texture.
-    group_shaders: Vec<Vec<Primitive>>,
 }
 
 /// A scene split where its shaders are drawn (#1641).
@@ -103,8 +104,8 @@ impl Scene {
         self.surfaces.clear();
         self.shaders.clear(); // KOAN: shader quads (#1641).
         self.layer_groups.clear(); // KOAN: #1859.
+        self.layer_group_frames.clear(); // KOAN: #1878.
         self.group_stack.clear();
-        self.group_shaders.clear();
         self.color_slots.clear(); // KOAN: #1859.
     }
 
@@ -143,15 +144,81 @@ impl Scene {
     // refresh (#1641).
     pub fn has_live_shaders(&self) -> bool {
         self.shaders.iter().any(|shader| shader.uniforms.is_live())
+            // KOAN: and in a layer group (#1878).
+            || self.layer_groups.iter().any(Scene::has_live_shaders)
+    }
+
+    // KOAN: whether group `group` is drawn again at this present: a shader
+    // in it moves, or a colour slot it draws with does (#1878).
+    pub fn layer_group_moves(&self, group: usize, at: std::time::Instant) -> bool {
+        self.layer_groups
+            .get(group)
+            .is_some_and(|group| !group.shaders.is_empty() || group.color_slots_moving(at))
+    }
+
+    // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
+    // group's content to its texture's origin (#1878).
+    pub fn offset(&mut self, dx: ScaledPixels, dy: ScaledPixels) {
+        let by = |b: &mut Bounds<ScaledPixels>| {
+            b.origin.x += dx;
+            b.origin.y += dy;
+        };
+        for quad in &mut self.quads {
+            by(&mut quad.bounds);
+            by(&mut quad.content_mask.bounds);
+        }
+        for shadow in &mut self.shadows {
+            by(&mut shadow.bounds);
+            by(&mut shadow.content_mask.bounds);
+            by(&mut shadow.element_bounds);
+        }
+        for underline in &mut self.underlines {
+            by(&mut underline.bounds);
+            by(&mut underline.content_mask.bounds);
+        }
+        for sprite in &mut self.monochrome_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for sprite in &mut self.subpixel_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for sprite in &mut self.polychrome_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for surface in &mut self.surfaces {
+            by(&mut surface.bounds);
+            by(&mut surface.content_mask.bounds);
+        }
+        for shader in &mut self.shaders {
+            by(&mut shader.bounds);
+            by(&mut shader.content_mask.bounds);
+        }
+        for path in &mut self.paths {
+            by(&mut path.bounds);
+            by(&mut path.content_mask.bounds);
+            for vertex in &mut path.vertices {
+                vertex.xy_position.x += dx;
+                vertex.xy_position.y += dy;
+                by(&mut vertex.content_mask.bounds);
+            }
+        }
     }
 
     // KOAN: whether this refresh should present again: a live shader moved
     // or moves with time (#1641). Asks every shader, so each one's change is
     // taken once.
     pub fn take_shader_present(&self) -> bool {
+        let groups = self
+            .layer_groups
+            .iter()
+            .fold(false, |any, group| group.take_shader_present() | any);
         self.shaders
             .iter()
             .fold(false, |any, shader| shader.uniforms.take_present() | any)
+            | groups
     }
 
     pub fn len(&self) -> usize {
@@ -173,15 +240,11 @@ impl Scene {
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         // KOAN: painted inside a layer group: into its scene, recorded here
-        // so a cached view replays it (#1859).
+        // so a cached view replays it (#1859). Shaders too: a group holding
+        // one is drawn again at each present, so it moves and is clipped
+        // with the group (#1878).
         if let Some(&group) = self.group_stack.last() {
-            if matches!(primitive, Primitive::Shader(_)) {
-                if let Some(held) = self.group_shaders.last_mut() {
-                    held.push(primitive.clone());
-                }
-            } else {
-                self.layer_groups[group].insert_primitive(primitive.clone());
-            }
+            self.layer_groups[group].insert_primitive(primitive.clone());
             self.paint_operations
                 .push(PaintOperation::Primitive(primitive));
             return;
@@ -248,8 +311,8 @@ impl Scene {
     pub fn push_group(&mut self) -> usize {
         let group = self.layer_groups.len();
         self.layer_groups.push(Scene::default());
+        self.layer_group_frames.push(None);
         self.group_stack.push(group);
-        self.group_shaders.push(Vec::new());
         self.paint_operations.push(PaintOperation::StartGroup);
         group
     }
@@ -260,18 +323,18 @@ impl Scene {
         let Some(group) = self.group_stack.pop() else {
             return;
         };
-        let held = self.group_shaders.pop().unwrap_or_default();
         shader.group = Some(group);
         self.paint_operations
             .push(PaintOperation::EndGroup(shader.clone()));
-        // Into the enclosing group's scene, or this one, then the shaders
-        // painted inside it over it. Their operations are already recorded
-        // (the EndGroup's and each where it was painted): not twice.
+        // The texture is the group's own size, its content at its origin,
+        // unless it holds paths (#1878).
+        let local = self.layer_groups[group].paths.is_empty();
+        shader.group_local = local;
+        self.layer_group_frames[group] = local.then_some(shader.bounds);
+        // Into the enclosing group's scene, or this one. Its operation is
+        // already recorded, as the EndGroup's: not twice.
         let ops = self.paint_operations.len();
         self.insert_primitive(shader);
-        for primitive in held {
-            self.insert_primitive(primitive);
-        }
         self.paint_operations.truncate(ops);
     }
 
@@ -314,10 +377,22 @@ impl Scene {
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.color_slots = self.collect_color_slots(); // KOAN: #1859.
-        // KOAN: each group drawn whole into its texture (#1859).
-        for group in &mut self.layer_groups {
+        // KOAN: each group drawn whole into its texture (#1859), moved to
+        // its texture's origin where it is the group's size (#1878); the
+        // colour slots its content draws with are this scene's too, so a
+        // fade inside a group presents.
+        for (group, frame) in self.layer_groups.iter_mut().zip(&self.layer_group_frames) {
+            if let Some(frame) = frame {
+                group.offset(
+                    ScaledPixels(-frame.origin.x.0),
+                    ScaledPixels(-frame.origin.y.0),
+                );
+            }
             group.finish();
             group.shader_layers = None;
+        }
+        for group in &self.layer_groups {
+            self.color_slots.extend(&group.color_slots);
         }
         self.shader_layers = self.plan_shader_layers().map(Box::new);
     }
@@ -411,7 +486,8 @@ impl Scene {
             }
             (after, before)
         };
-        let placed: Vec<(usize, usize)> = drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
+        let placed: Vec<(usize, usize)> =
+            drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
         // A primitive also follows every earlier one it overlaps, so a menu's
         // text stays over the menu's ground wherever each is placed. Only
         // what sits above the lowest layer anything was placed in can raise
@@ -465,7 +541,11 @@ impl Scene {
             polychrome_sprites => PolychromeSprite,
             surfaces => Surface
         );
-        for (path, layer) in self.paths.iter().zip(&layers_by_kind[PrimitiveKind::Path as usize]) {
+        for (path, layer) in self
+            .paths
+            .iter()
+            .zip(&layers_by_kind[PrimitiveKind::Path as usize])
+        {
             let paths = &mut layers[*layer].paths;
             let mut path = path.clone();
             path.id = PathId(paths.len());
@@ -1324,5 +1404,146 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+// KOAN: layer groups (#1859, #1878).
+#[cfg(test)]
+mod layer_group_tests {
+    use super::*;
+    use crate::{Pixels, ShaderProgram, ShaderUniforms, px};
+
+    static PROGRAM: ShaderProgram = ShaderProgram {
+        name: "test",
+        msl: "",
+        wgsl: "",
+        prepare: None,
+    };
+
+    fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: point(ScaledPixels(x), ScaledPixels(y)),
+            size: Size {
+                width: ScaledPixels(w),
+                height: ScaledPixels(h),
+            },
+        }
+    }
+
+    fn quad(at: Bounds<ScaledPixels>) -> Quad {
+        Quad {
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            ..Default::default()
+        }
+    }
+
+    fn shader(at: Bounds<ScaledPixels>) -> crate::PaintShader {
+        crate::PaintShader {
+            order: 0,
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            program: &PROGRAM,
+            uniforms: std::sync::Arc::new(ShaderUniforms::default()),
+            image: None,
+            group: None,
+            group_local: false,
+        }
+    }
+
+    /// What is painted in a group, shaders included, is the group's: drawn
+    /// into its texture, so it moves and is clipped with the group. The
+    /// window's scene has only the shader composing it.
+    #[test]
+    fn a_group_holds_what_is_painted_in_it_shaders_too() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        scene.insert_primitive(shader(bounds(120.0, 70.0, 10.0, 10.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert!(scene.quads.is_empty());
+        assert_eq!(scene.shaders.len(), 1);
+        assert_eq!(scene.shaders[0].group, Some(0));
+        let group = &scene.layer_groups[0];
+        assert_eq!((group.quads.len(), group.shaders.len()), (1, 1));
+        assert!(scene.layer_group_moves(0, std::time::Instant::now()));
+    }
+
+    /// A group with no paths draws into a texture its own size: its content
+    /// moved to the texture's origin, the composing shader's tile the whole
+    /// texture.
+    #[test]
+    fn a_group_without_paths_is_drawn_at_its_own_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(
+            scene.layer_group_frames[0],
+            Some(bounds(100.0, 50.0, 200.0, 100.0))
+        );
+        let moved = &scene.layer_groups[0].quads[0];
+        assert_eq!(moved.bounds, bounds(10.0, 10.0, 20.0, 20.0));
+        assert_eq!(moved.content_mask.bounds, bounds(10.0, 10.0, 20.0, 20.0));
+        let tile = crate::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, 0.0, 200.0, 100.0]);
+        assert!(!scene.layer_group_moves(0, std::time::Instant::now()));
+    }
+
+    /// One holding a path stays the window's size, its content where it was
+    /// painted: paths are drawn through a texture the window's size.
+    #[test]
+    fn a_group_with_a_path_is_drawn_at_the_windows_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        let path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
+        scene.insert_primitive(path.scale(1.0));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_group_frames[0], None);
+        let tile = crate::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [100.0, 50.0, 200.0, 100.0]);
+    }
+
+    /// A group inside another is composed in the outer group's scene, so the
+    /// outer group carries it as it moves.
+    #[test]
+    fn a_nested_group_is_composed_inside_the_outer_one() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(10.0, 10.0, 5.0, 5.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 50.0, 50.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 100.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_groups.len(), 2);
+        assert_eq!(scene.shaders.len(), 1);
+        assert_eq!(scene.shaders[0].group, Some(0));
+        assert_eq!(scene.layer_groups[0].shaders[0].group, Some(1));
+        assert_eq!(scene.layer_groups[1].quads.len(), 1);
+    }
+
+    /// A cached view's replay builds the same groups.
+    #[test]
+    fn a_replay_rebuilds_the_groups() {
+        let mut first = Scene::default();
+        first.push_group();
+        first.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        first.insert_primitive(shader(bounds(120.0, 70.0, 10.0, 10.0)));
+        first.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        let ops = first.len();
+        let mut again = Scene::default();
+        again.replay(0..ops, &first);
+        again.finish();
+        assert_eq!(again.layer_groups.len(), 1);
+        assert_eq!(again.layer_groups[0].quads.len(), 1);
+        assert_eq!(again.layer_groups[0].shaders.len(), 1);
+        assert_eq!(again.shaders.len(), 1);
+        assert_eq!(
+            again.layer_group_frames[0],
+            Some(bounds(100.0, 50.0, 200.0, 100.0))
+        );
     }
 }

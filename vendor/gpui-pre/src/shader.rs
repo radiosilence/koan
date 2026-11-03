@@ -657,6 +657,10 @@ pub struct PaintShader {
     // painted inside `Window::paint_layer_group`, drawn into a texture of
     // its own (#1859).
     pub group: Option<usize>,
+    // KOAN: whether the group's texture is the size of the shader's bounds,
+    // its content moved to the texture's origin; otherwise it is the
+    // window's size, its content where it was painted (#1878).
+    pub group_local: bool,
 }
 
 impl From<PaintShader> for Primitive {
@@ -709,8 +713,8 @@ impl ShaderInstance {
             clip: rect(&shader.content_mask.bounds),
             uniforms,
             time: [time, 0.0, 0.0, 0.0],
-            // A group's texture is the window's size, its content where it
-            // was painted: the tile is the quad's own bounds.
+            // A group's texture is the quad's own size, or the window's
+            // with its content where it was painted (#1878).
             tile: match (&shader.image, shader.group) {
                 (Some(tile), _) => {
                     let b = tile.bounds;
@@ -720,6 +724,9 @@ impl ShaderInstance {
                         b.size.width.0 as f32,
                         b.size.height.0 as f32,
                     ]
+                }
+                (None, Some(_)) if shader.group_local => {
+                    [0.0, 0.0, shader.bounds.size.width.0, shader.bounds.size.height.0]
                 }
                 (None, Some(_)) => rect(&shader.bounds),
                 (None, None) => [0.0; 4],

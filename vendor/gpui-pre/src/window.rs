@@ -4769,6 +4769,7 @@ impl Window {
             uniforms,
             image: None,
             group: None,
+            group_local: false,
         };
         self.next_frame.scene.insert_primitive(shader);
     }
@@ -4799,6 +4800,7 @@ impl Window {
             uniforms,
             image: None,
             group: None,
+            group_local: false,
         };
         self.next_frame.scene.pop_group(shader);
     }
@@ -4837,6 +4839,7 @@ impl Window {
             uniforms,
             image: Some(tile),
             group: None,
+            group_local: false,
         };
         self.next_frame.scene.insert_primitive(shader);
         Ok(())

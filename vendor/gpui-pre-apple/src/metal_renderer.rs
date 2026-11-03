@@ -440,11 +440,11 @@ impl MetalRenderer {
             shadows_pipeline_state,
             quads_pipeline_state,
             shader_pipelines: Default::default(), // KOAN: #1641.
-            shader_layers: Default::default(), // KOAN: #1641.
-            group_textures: Vec::new(),        // KOAN: #1859.
+            shader_layers: Default::default(),    // KOAN: #1641.
+            group_textures: Vec::new(),           // KOAN: #1859.
             group_generation: 0,
-            compose_pipelines: None,           // KOAN: #1641.
-            blank_texture: None,               // KOAN: #1641.
+            compose_pipelines: None, // KOAN: #1641.
+            blank_texture: None,     // KOAN: #1641.
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -1111,7 +1111,11 @@ impl MetalRenderer {
                 width,
                 height,
                 layers: drawn,
-                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
+                moving: plan
+                    .layers
+                    .iter()
+                    .map(|l| l.color_slots_moving(now))
+                    .collect(),
             };
         } else {
             let written = self.shader_layers.slot_generation != slot_generation;
@@ -1191,7 +1195,11 @@ impl MetalRenderer {
             while start < group.end {
                 let head = &scene.shaders[start];
                 let key = |s: &gpui::PaintShader| {
-                    (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
+                    (
+                        s.program.name,
+                        s.image.as_ref().map(|t| t.texture_id),
+                        s.group,
+                    )
                 };
                 let end = scene.shaders[start..group.end]
                     .iter()
@@ -1228,49 +1236,74 @@ impl MetalRenderer {
         Ok(command_buffer)
     }
 
-    // KOAN: (#1859) each layer group's scene drawn into a texture the size
-    // of the window, transparent, its content where it was painted; kept
-    // for the frame's presents.
-    fn draw_layer_groups(&mut self, scene: &Scene, viewport_size: Size<DevicePixels>) -> Result<()> {
+    // KOAN: (#1859, #1878) each layer group's scene drawn into a texture of
+    // its own: the size of the shader composing it, its content moved to
+    // the texture's origin, or the window's size for one holding paths. A
+    // group is drawn again when the frame is new, and at every present while
+    // a shader in it or a colour slot it draws with moves, so those move
+    // with it. Groups nested in others are drawn first, as their composing
+    // shader is in the enclosing group's scene.
+    fn draw_layer_groups(
+        &mut self,
+        scene: &Scene,
+        viewport_size: Size<DevicePixels>,
+    ) -> Result<()> {
         if scene.layer_groups.is_empty() {
             self.group_textures.clear();
             return Ok(());
         }
-        let width = i32::from(viewport_size.width) as u64;
-        let height = i32::from(viewport_size.height) as u64;
-        let fits = self.group_textures.iter().flatten().all(|t| {
-            t.width() == width && t.height() == height
-        });
-        if self.group_generation == scene.generation && fits {
-            return Ok(());
-        }
-        let mut pool: Vec<metal::Texture> = if fits {
-            std::mem::take(&mut self.group_textures).into_iter().flatten().collect()
-        } else {
-            Vec::new()
-        };
-        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
-        for group in &scene.layer_groups {
+        let now = gpui::present_now();
+        let new_frame = self.group_generation != scene.generation;
+        let sizes: Vec<Size<DevicePixels>> = scene
+            .layer_group_frames
+            .iter()
+            .map(|frame| match frame {
+                Some(frame) => size(
+                    DevicePixels((frame.size.width.0.ceil() as i32).max(1)),
+                    DevicePixels((frame.size.height.0.ceil() as i32).max(1)),
+                ),
+                None => viewport_size,
+            })
+            .collect();
+        let mut held = std::mem::take(&mut self.group_textures);
+        held.resize(scene.layer_groups.len(), None);
+        for index in (0..scene.layer_groups.len()).rev() {
+            let group = &scene.layer_groups[index];
             if group.is_blank() {
-                drawn.push(None);
+                held[index] = None;
                 continue;
             }
-            let target = pool.pop().unwrap_or_else(|| {
-                let descriptor = metal::TextureDescriptor::new();
-                descriptor.set_width(width);
-                descriptor.set_height(height);
-                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-                descriptor.set_usage(
-                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-                );
-                descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-                self.device.new_texture(&descriptor)
-            });
-            // The same queue runs these before whatever samples them.
-            self.render_frame(group, &target, viewport_size, true)?.commit();
-            drawn.push(Some(target));
+            let extent = sizes[index];
+            let width = i32::from(extent.width) as u64;
+            let height = i32::from(extent.height) as u64;
+            let fits = held[index]
+                .as_ref()
+                .is_some_and(|t| t.width() == width && t.height() == height);
+            if fits && !new_frame && !scene.layer_group_moves(index, now) {
+                continue;
+            }
+            let target = match held[index].take().filter(|_| fits) {
+                Some(target) => target,
+                None => {
+                    let descriptor = metal::TextureDescriptor::new();
+                    descriptor.set_width(width);
+                    descriptor.set_height(height);
+                    descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                    descriptor.set_usage(
+                        metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                    );
+                    descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+                    self.device.new_texture(&descriptor)
+                }
+            };
+            // Drawn with the groups so far in place, which a group nested in
+            // this one is (higher indices first). The same queue runs these
+            // before whatever samples them.
+            self.group_textures = held.clone();
+            self.render_frame(group, &target, extent, true)?.commit();
+            held[index] = Some(target);
         }
-        self.group_textures = drawn;
+        self.group_textures = held;
         self.group_generation = scene.generation;
         Ok(())
     }
@@ -1917,7 +1950,7 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
-    shaders: InstanceBinding, // KOAN: #1641.
+    shaders: InstanceBinding,     // KOAN: #1641.
     color_slots: InstanceBinding, // KOAN: #1859.
 }
 
@@ -2023,7 +2056,11 @@ impl ComposePipelines {
             .map_err(|error| anyhow::anyhow!("{error}"))?;
         let pipeline = |over: bool| {
             let descriptor = metal::RenderPipelineDescriptor::new();
-            descriptor.set_label(if over { "koan_compose_over" } else { "koan_compose_copy" });
+            descriptor.set_label(if over {
+                "koan_compose_over"
+            } else {
+                "koan_compose_copy"
+            });
             descriptor.set_vertex_function(Some(&vertex));
             descriptor.set_fragment_function(Some(&fragment));
             let color = descriptor.color_attachments().object_at(0).unwrap();
@@ -2035,9 +2072,8 @@ impl ComposePipelines {
                 color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
                 color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
                 color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-                color.set_destination_alpha_blend_factor(
-                    metal::MTLBlendFactor::OneMinusSourceAlpha,
-                );
+                color
+                    .set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
             }
             device
                 .new_render_pipeline_state(&descriptor)
@@ -2553,15 +2589,29 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         };
         let tracks = [
             track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
-            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
+            track(
+                20.0,
+                100.0,
+                TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                TrackRepeat::Once,
+            ),
             track(
                 0.3,
                 5.0,
-                TrackCurve::Spring { stiffness: 30.0, damping: 12.0, velocity: 0.0 },
+                TrackCurve::Spring {
+                    stiffness: 30.0,
+                    damping: 12.0,
+                    velocity: 0.0,
+                },
                 TrackRepeat::Once,
             ),
             track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
-            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
+            track(
+                160.0,
+                100.0,
+                TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),
+                TrackRepeat::Alternate,
+            ),
         ];
         for (k, t) in tracks.iter().enumerate() {
             uniforms.set_track(k, *t);
@@ -2579,6 +2629,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             uniforms: uniforms.clone(),
             image: None,
             group: None,
+            group_local: false,
         });
         scene.finish();
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
@@ -2644,6 +2695,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
                 uniforms: uniforms.clone(),
                 image: None,
                 group: None,
+                group_local: false,
             });
             let over = if cover {
                 rect(30.0, 10.0, 20.0, 4.0)
@@ -2676,11 +2728,15 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             assert_eq!(plan.layers[1].is_blank(), !covered);
             uniforms.set(0, 0.5);
             let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
-            let composed = renderer.compose_scene_to_image(&scene, viewport, 2).unwrap();
+            let composed = renderer
+                .compose_scene_to_image(&scene, viewport, 2)
+                .unwrap();
             assert!(close(&whole, &composed), "covered: {covered}");
 
             uniforms.set(0, 1.0);
-            let moved = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
+            let moved = renderer
+                .compose_scene_to_image(&scene, viewport, 1)
+                .unwrap();
             assert_ne!(moved.as_raw(), composed.as_raw());
             let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
             assert!(close(&whole, &moved), "covered: {covered}, moved");
@@ -2722,6 +2778,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             uniforms: Arc::new(gpui::ShaderUniforms::new()),
             image: None,
             group: None,
+            group_local: false,
         });
         // A menu over the shader, and its text over the menu, clear of it.
         scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));
@@ -2733,8 +2790,14 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         let viewport = size(DevicePixels(64), DevicePixels(32));
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
         let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
-        let composed = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
-        assert_eq!(whole.get_pixel(36, 16), composed.get_pixel(36, 16), "the text is on top");
+        let composed = renderer
+            .compose_scene_to_image(&scene, viewport, 1)
+            .unwrap();
+        assert_eq!(
+            whole.get_pixel(36, 16),
+            composed.get_pixel(36, 16),
+            "the text is on top"
+        );
         assert!(
             whole
                 .as_raw()
@@ -2778,7 +2841,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 
         #[test]
         fn the_instance_is_aligned_blocks() {
-            assert_eq!(std::mem::size_of::<ShaderInstance>(), 4 * (4 + 4 + SHADER_UNIFORMS + 4 + 4));
+            assert_eq!(
+                std::mem::size_of::<ShaderInstance>(),
+                4 * (4 + 4 + SHADER_UNIFORMS + 4 + 4)
+            );
         }
 
         #[test]

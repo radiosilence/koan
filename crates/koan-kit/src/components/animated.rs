@@ -133,6 +133,16 @@ impl Animated {
         self.0.uniforms.tracks_moving(Self::now())
     }
 
+    /// How long until every track stands still: `None` while one repeats.
+    pub fn settled_in(&self) -> Option<Duration> {
+        let t = self.0.uniforms.time_at(Self::now());
+        let mut last = 0.0_f32;
+        for k in 0..SHADER_TRACKS {
+            last = last.max(self.0.uniforms.track(k).end()? - t);
+        }
+        Some(Duration::from_secs_f32(last.max(0.0)))
+    }
+
     /// Track `k` as it was last written.
     pub fn track(&self, k: usize) -> Track {
         self.0.uniforms.track(k)
