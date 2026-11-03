@@ -221,12 +221,16 @@ fn entry(
     let keys = shortcut_for(action().as_ref())
         .and_then(|s| s.keys.iter().find(|k| !k.starts_with("cmd-")))
         .map(|k| caption(k));
-    // From where the keyboard was when the menu opened: from the menu, the
-    // action would reach the toolbar and the shell but not the page
-    // beneath, whose Delete, Select All, Undo and Redo it is.
-    let entry = MenuEntry::new(title).on_click(move |_, window, cx| match &from {
-        Some(from) => from.dispatch_action(action().as_ref(), window, cx),
-        None => window.dispatch_action(action(), cx),
+    // From where the keyboard was when the menu opened, given it back first:
+    // from the menu, the action would reach the toolbar and the shell but not
+    // the page beneath, whose Delete, Select All, Undo and Redo it is. A page
+    // gone since then leaves the dispatch at the window's root, as a key's
+    // would be: the choice is never dropped.
+    let entry = MenuEntry::new(title).on_click(move |_, window, cx| {
+        if let Some(from) = &from {
+            window.focus(from, cx);
+        }
+        window.dispatch_action(action(), cx);
     });
     match keys {
         Some(keys) => entry.keys(keys),
