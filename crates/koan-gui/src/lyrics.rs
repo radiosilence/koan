@@ -1,6 +1,6 @@
 //! The lyrics beside the page, for the track playing: the terminal UI's `L`
 //! panel and the Mac's inspector. Synced lyrics follow the song, the line
-//! being sung larger and kept in view, and a click on a line seeks to it;
+//! being sung emphasised and kept in view, and a click on a line seeks to it;
 //! plain ones are shown whole.
 //!
 //! The cache answers first, so the panel fills at once; a miss, or a plain
@@ -223,6 +223,9 @@ impl Render for LyricsPanel {
                 self.active,
             )
             .since(self.since)
+            // The track: another track's lines start afresh, the same
+            // words included.
+            .song(track)
             .on_line(cx.listener(|this, line: &usize, _, cx| this.seek_to(*line, cx)))
             .into_any_element(),
             Some(l) if !l.content.is_empty() => {
