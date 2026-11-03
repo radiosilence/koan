@@ -869,18 +869,31 @@ impl<E: InteractiveElement + ParentElement> KoanContextMenu for E {}
 /// The menu opened last and where it gives the keyboard back to.
 struct LastMenu {
     menu: FocusHandle,
-    returns_to: Option<FocusHandle>,
+    returns_to: Option<WeakFocusHandle>,
 }
 
 impl Global for LastMenu {}
 
+/// What takes the keyboard when a menu closes and what held it before is
+/// gone: the app's page in front, say.
+struct MenuFallback(Rc<dyn Fn(&mut Window, &mut App)>);
+
+impl Global for MenuFallback {}
+
+/// Names what takes the keyboard when a menu closes and what held it as
+/// it opened has since gone, its page left behind.
+pub fn on_menu_focus_lost(fallback: impl Fn(&mut Window, &mut App) + 'static, cx: &mut App) {
+    cx.set_global(MenuFallback(Rc::new(fallback)));
+}
+
 /// Where the keyboard goes once the menu holding `menu` closes: what held
 /// it as the menu opened, or, when that was another menu about to close
-/// under this one, what that menu would have given it back to.
-fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<FocusHandle> {
-    let mut before = window.focused(cx);
+/// under this one, what that menu would have given it back to. Held weakly:
+/// a page the menu outlives does not take the keyboard from the grave.
+fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<WeakFocusHandle> {
+    let mut before = window.focused(cx).map(|f| f.downgrade());
     if let Some(last) = cx.try_global::<LastMenu>()
-        && before.as_ref() == Some(&last.menu)
+        && window.focused(cx).as_ref() == Some(&last.menu)
     {
         before = last.returns_to.clone();
     }
@@ -893,10 +906,24 @@ fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<Focus
 
 /// Gives the keyboard back as a menu closes, if it is still the menu's: a
 /// choice that put up a sheet or opened a field keeps it where it went.
-fn give_back(menu: &FocusHandle, before: &Option<FocusHandle>, window: &mut Window, cx: &mut App) {
+/// When what held it is gone, the app's fallback takes it.
+fn give_back(
+    menu: &FocusHandle,
+    before: &Option<WeakFocusHandle>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let in_menu = window.focused(cx).is_none() || menu.contains_focused(window, cx);
-    if in_menu && let Some(before) = before {
-        window.focus(before, cx);
+    if !in_menu {
+        return;
+    }
+    match before.as_ref().and_then(|b| b.upgrade()) {
+        Some(before) => window.focus(&before, cx),
+        None => {
+            if let Some(fallback) = cx.try_global::<MenuFallback>().map(|f| f.0.clone()) {
+                fallback(window, cx);
+            }
+        }
     }
 }
 
