@@ -411,16 +411,20 @@ impl Transport {
         cx: &mut Context<Self>,
     ) -> Div {
         let plain = eq.flat || eq.off;
-        let color = if plain { p.ink } else { p.accent_text };
-        let glyph = if plain { p.ink } else { p.accent };
-        // Quieter under the pointer, back over `LEAVE` once it has gone.
-        let (base, glyph) =
-            crate::components::hover_tint("eq", glyph, glyph.opacity(0.8), window, cx);
+        // The glyph, or with icons off the word, in `ink` or the accent:
+        // quieter under the pointer, back over `LEAVE` once it has gone.
+        let rest = match (plain, p.look.icons) {
+            (true, _) => p.ink,
+            (false, true) => p.accent,
+            (false, false) => p.accent_text,
+        };
+        let (base, color) =
+            crate::components::hover_tint("eq", rest, rest.opacity(0.8), window, cx);
         let summary: SharedString = help(&eq.summary(), &ShowEq, cx).into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(glyph)
+                .color(color)
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()
