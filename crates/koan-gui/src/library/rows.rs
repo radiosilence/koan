@@ -10,10 +10,6 @@
 
 use koan_ffi::{Track, TransferState};
 use koan_kit::app::*;
-// text measured or shaped at runtime.
-use koan_kit::raw::font;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::actions;
 use super::covers::Sleeve;
@@ -285,15 +281,7 @@ pub fn track_row<V: TrackList>(
 /// A lead column wide enough for the longest number in a list of `count`,
 /// measured in the face the numbers are drawn in.
 pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
-    let digits = count.max(1).to_string().len().max(2) as f32;
-    let text = window.text_system();
-    let font = text.resolve_font(&font(crate::theme::FONT_FAMILY));
-    let size = p.look.font_size(Type::Meta);
-    let digit = text
-        .advance(font, size, '0')
-        .map(|size| size.width)
-        .unwrap_or(size * 0.6);
-    digit * digits + px(4.0)
+    crate::components::RowMetrics::lead_width(count, &p.look, window)
 }
 
 /// What a click on a row does to a list's selection: picks it alone, ⌘ adds

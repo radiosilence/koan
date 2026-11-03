@@ -18,7 +18,7 @@ crates/
 │                  Subsonic REST API, MCP server.
 │                  Depends on koan-core.
 │
-├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
+├── koan-ffi/      library; staticlib or cdylib as each app builds it. uniffi bindings exposing koan-core
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for

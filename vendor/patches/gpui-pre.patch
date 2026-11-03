@@ -522,10 +522,10 @@ index 2328e95..f00ef65 100644
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..a491b56 100644
+index 6cb3387..57c1f12 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,37 @@ pub struct Scene {
+@@ -50,6 +50,41 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -546,6 +546,10 @@ index 6cb3387..a491b56 100644
 +    // that a renderer draws into a texture for its shader to compose (#1859).
 +    pub layer_groups: Vec<Scene>,
 +    group_stack: Vec<usize>,
++    /// Shaders painted inside each open group, held to be drawn after it at
++    /// their own place: a group is drawn once per frame, and a shader in it
++    /// would stand still in its texture.
++    group_shaders: Vec<Vec<Primitive>>,
 +}
 +
 +/// A scene split where its shaders are drawn (#1641).
@@ -563,13 +567,14 @@ index 6cb3387..a491b56 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +97,56 @@ impl Scene {
+@@ -66,6 +101,57 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
 +        self.shaders.clear(); // KOAN: shader quads (#1641).
 +        self.layer_groups.clear(); // KOAN: #1859.
 +        self.group_stack.clear();
++        self.group_shaders.clear();
 +        self.color_slots.clear(); // KOAN: #1859.
 +    }
 +
@@ -620,14 +625,20 @@ index 6cb3387..a491b56 100644
      }
  
      pub fn len(&self) -> usize {
-@@ -86,6 +167,14 @@ impl Scene {
+@@ -86,6 +172,20 @@ impl Scene {
  
      pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
          let mut primitive = primitive.into();
 +        // KOAN: painted inside a layer group: into its scene, recorded here
 +        // so a cached view replays it (#1859).
 +        if let Some(&group) = self.group_stack.last() {
-+            self.layer_groups[group].insert_primitive(primitive.clone());
++            if matches!(primitive, Primitive::Shader(_)) {
++                if let Some(held) = self.group_shaders.last_mut() {
++                    held.push(primitive.clone());
++                }
++            } else {
++                self.layer_groups[group].insert_primitive(primitive.clone());
++            }
 +            self.paint_operations
 +                .push(PaintOperation::Primitive(primitive));
 +            return;
@@ -635,7 +646,7 @@ index 6cb3387..a491b56 100644
          let clipped_bounds = primitive
              .bounds()
              .intersect(&primitive.content_mask().bounds);
-@@ -133,17 +222,54 @@ impl Scene {
+@@ -133,17 +233,58 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -655,6 +666,7 @@ index 6cb3387..a491b56 100644
 +        let group = self.layer_groups.len();
 +        self.layer_groups.push(Scene::default());
 +        self.group_stack.push(group);
++        self.group_shaders.push(Vec::new());
 +        self.paint_operations.push(PaintOperation::StartGroup);
 +        group
 +    }
@@ -665,16 +677,19 @@ index 6cb3387..a491b56 100644
 +        let Some(group) = self.group_stack.pop() else {
 +            return;
 +        };
++        let held = self.group_shaders.pop().unwrap_or_default();
 +        shader.group = Some(group);
 +        self.paint_operations
 +            .push(PaintOperation::EndGroup(shader.clone()));
-+        // Into the enclosing group's scene, or this one.
++        // Into the enclosing group's scene, or this one, then the shaders
++        // painted inside it over it. Their operations are already recorded
++        // (the EndGroup's and each where it was painted): not twice.
 +        let ops = self.paint_operations.len();
 +        self.insert_primitive(shader);
-+        // The shader's own operation is the EndGroup's: not twice.
-+        if self.paint_operations.len() > ops {
-+            self.paint_operations.pop();
++        for primitive in held {
++            self.insert_primitive(primitive);
 +        }
++        self.paint_operations.truncate(ops);
 +    }
 +
      pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
@@ -690,7 +705,7 @@ index 6cb3387..a491b56 100644
              }
          }
      }
-@@ -160,6 +286,180 @@ impl Scene {
+@@ -160,6 +301,180 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -871,7 +886,7 @@ index 6cb3387..a491b56 100644
      }
  
      #[cfg_attr(
-@@ -187,6 +487,8 @@ impl Scene {
+@@ -187,6 +502,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -880,7 +895,7 @@ index 6cb3387..a491b56 100644
          }
      }
  }
-@@ -209,12 +511,17 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +526,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -898,7 +913,7 @@ index 6cb3387..a491b56 100644
  }
  
  #[derive(Clone)]
-@@ -228,6 +535,7 @@ pub enum Primitive {
+@@ -228,6 +550,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -906,7 +921,7 @@ index 6cb3387..a491b56 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +550,7 @@ impl Primitive {
+@@ -242,6 +565,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -914,7 +929,7 @@ index 6cb3387..a491b56 100644
          }
      }
  
-@@ -255,6 +564,7 @@ impl Primitive {
+@@ -255,6 +579,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -922,7 +937,7 @@ index 6cb3387..a491b56 100644
          }
      }
  }
-@@ -283,6 +593,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +608,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -932,7 +947,7 @@ index 6cb3387..a491b56 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +629,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +644,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -944,7 +959,7 @@ index 6cb3387..a491b56 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +779,40 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +794,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
@@ -985,7 +1000,7 @@ index 6cb3387..a491b56 100644
          }
      }
  }
-@@ -493,6 +845,14 @@ pub enum PrimitiveBatch {
+@@ -493,6 +860,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -1000,7 +1015,7 @@ index 6cb3387..a491b56 100644
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +885,10 @@ impl PrimitiveBatch {
+@@ -525,6 +900,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -1657,6 +1672,51 @@ index 0000000..4fcacc5
 +        }
 +    }
 +}
+diff --git a/src/view.rs b/src/view.rs
+index 76688b7..6ef8b65 100644
+--- a/src/view.rs
++++ b/src/view.rs
+@@ -8,7 +8,6 @@ use crate::{Empty, Window};
+ use anyhow::Result;
+ use collections::FxHashSet;
+ use refineable::Refineable;
+-use std::mem;
+ use std::{
+     any::{TypeId, type_name},
+     fmt,
+@@ -560,7 +559,11 @@ fn prepaint_view(
+                     return (None, element_state);
+                 }
+ 
+-                let refreshing = mem::replace(&mut window.refreshing, true);
++                // KOAN: a view drawn again leaves the cached views inside it
++                // to their own keys: one that is neither dirty nor moved is
++                // reused, so a change redraws its own view and its ancestors
++                // and nothing beside them. Only a refresh of the window draws
++                // everything again.
+                 let prepaint_start = window.prepaint_index();
+                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                     let mut element = render(window, cx);
+@@ -570,7 +573,6 @@ fn prepaint_view(
+                 });
+ 
+                 let prepaint_end = window.prepaint_index();
+-                window.refreshing = refreshing;
+ 
+                 (
+                     Some(element),
+@@ -623,9 +625,9 @@ fn paint_view(
+                     let paint_start = window.paint_index();
+ 
+                     if let Some(element) = element {
+-                        let refreshing = mem::replace(&mut window.refreshing, true);
++                        // KOAN: as in prepaint, the cached views inside are
++                        // left to their own keys.
+                         element.paint(window, cx);
+-                        window.refreshing = refreshing;
+                     } else {
+                         window.reuse_paint(element_state.paint_range.clone());
+                     }
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
 index ae98aa5..ea0f6a4 100644
 --- a/src/window/a11y/debug.rs
