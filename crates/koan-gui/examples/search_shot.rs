@@ -71,7 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             })?;
             settle(&mut cx, window)?;
             for c in query.chars() {
-                key(&mut cx, window, &c.to_string())?;
+                // `Keystroke::parse` keeps its text: each character's,
+                // leaked for the length of this run.
+                key(&mut cx, window, Box::leak(c.to_string().into_boxed_str()))?;
             }
             settle(&mut cx, window)?;
             cx.capture_screenshot(window)?
@@ -100,9 +102,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn key(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
-    stroke: &str,
+    stroke: &'static str,
 ) -> Result<(), Box<dyn Error>> {
-    let keystroke = Keystroke::parse(stroke).map_err(|e| e.to_string())?;
+    let keystroke = Keystroke::parse(stroke)?;
     cx.update_window(window, |_, window, cx| {
         window.dispatch_keystroke(keystroke, cx);
     })?;
