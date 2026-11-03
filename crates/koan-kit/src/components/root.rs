@@ -48,7 +48,7 @@ impl Render for Root {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, Entity, FocusHandle, TestAppContext, VisualTestContext, px};
+    use gpui::{Entity, FocusHandle, TestAppContext, VisualTestContext, px};
 
     use super::super::focus_trap::FocusTrap as _;
     use super::*;

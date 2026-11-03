@@ -683,6 +683,15 @@ pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     })
 }
 
+pub use popover::{Selectable, opens_panel};
+pub use root::Root;
+pub use scrollbar::{ScrollSource, Scrollbar};
+
+/// The window root's keys, bound once by `theme::init`.
+pub(crate) fn bind_root(cx: &mut gpui::App) {
+    root::bind(cx);
+}
+
 #[cfg(test)]
 mod fallback_tests {
     use super::*;
@@ -699,12 +708,4 @@ mod fallback_tests {
         assert!(lit.at(0, Animated::now()) > 0.5, "the GPU's fade has begun");
         assert_eq!(plain_amount(&lit), 0.0, "gone at once without it");
     }
-}
-pub use popover::{Selectable, opens_panel};
-pub use root::Root;
-pub use scrollbar::{ScrollSource, Scrollbar};
-
-/// The window root's keys, bound once by `theme::init`.
-pub(crate) fn bind_root(cx: &mut gpui::App) {
-    root::bind(cx);
 }
