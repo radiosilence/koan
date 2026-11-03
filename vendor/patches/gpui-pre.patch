@@ -1148,10 +1148,10 @@ index 6cb3387..6091e34 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..185639f
+index 0000000..f4b8d8e
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,869 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -2019,44 +2019,6 @@ index 0000000..185639f
 +            let (a, _) = unpack_halves(pack_halves(v, 0.0));
 +            assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
 +        }
-+    }
-+    /// KOAN: a colour slot mixed in OKLab carries 16 in its track's code;
-+    /// the CPU reads the curve and repeat beneath it, as the shaders do.
-+    #[test]
-+    fn the_oklab_flag_leaves_the_repeat_as_it_was() {
-+        for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
-+            let track = Track {
-+                from: 0.0,
-+                to: 1.0,
-+                start: 2.0,
-+                length: 3.0,
-+                curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
-+                repeat,
-+            };
-+            let mut encoded = track.encode();
-+            encoded[4] += 16.0;
-+            let decoded = Track::decode(&encoded);
-+            assert_eq!(decoded.repeat, repeat);
-+            assert!(matches!(decoded.curve, TrackCurve::Bezier(..)));
-+        }
-+    }
-+
-+    /// KOAN: uniforms naming no colour slot do no colour work; one named is
-+    /// counted, and let go by a plain write over it.
-+    #[test]
-+    fn colour_slots_are_counted_as_they_are_named_and_let_go() {
-+        let slot = |h: f32| crate::Hsla { h, s: 0.0, l: 0.0, a: 1.0 };
-+        let uniforms = ShaderUniforms::new();
-+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
-+        uniforms.set_color(0, slot(2.0));
-+        uniforms.set_color(4, slot(3.0));
-+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2);
-+        uniforms.set_color(4, slot(4.0));
-+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2, "renamed, not added");
-+        uniforms.set(1, 0.5);
-+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 1);
-+        uniforms.set_color(4, crate::Hsla::default());
-+        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
 +    }
 +}
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs

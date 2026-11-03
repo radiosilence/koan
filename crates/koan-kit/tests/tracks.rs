@@ -426,3 +426,18 @@ fn a_plain_write_over_a_slot_colour_lets_it_go() {
     assert_eq!(values[6], 0.25);
     assert_eq!(values[4], 0.0, "the slot no longer draws over the floats");
 }
+
+/// A colour slot mixed in OKLab carries 16 in its track's code; the CPU reads
+/// the curve and repeat beneath it, as the shaders do (`code % 16`).
+#[test]
+fn the_oklab_flag_leaves_the_repeat_as_it_was() {
+    for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
+        let uniforms = ShaderUniforms::new();
+        uniforms.set_track(0, segment(TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), repeat));
+        let code = 16 + 4;
+        uniforms.set(code, uniforms.get(code) + 16.0);
+        let track = uniforms.track(0);
+        assert_eq!(track.repeat, repeat);
+        assert!(matches!(track.curve, TrackCurve::Bezier(..)));
+    }
+}

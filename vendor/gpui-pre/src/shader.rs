@@ -866,42 +866,4 @@ mod half_tests {
             assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
         }
     }
-    /// KOAN: a colour slot mixed in OKLab carries 16 in its track's code;
-    /// the CPU reads the curve and repeat beneath it, as the shaders do.
-    #[test]
-    fn the_oklab_flag_leaves_the_repeat_as_it_was() {
-        for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
-            let track = Track {
-                from: 0.0,
-                to: 1.0,
-                start: 2.0,
-                length: 3.0,
-                curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
-                repeat,
-            };
-            let mut encoded = track.encode();
-            encoded[4] += 16.0;
-            let decoded = Track::decode(&encoded);
-            assert_eq!(decoded.repeat, repeat);
-            assert!(matches!(decoded.curve, TrackCurve::Bezier(..)));
-        }
-    }
-
-    /// KOAN: uniforms naming no colour slot do no colour work; one named is
-    /// counted, and let go by a plain write over it.
-    #[test]
-    fn colour_slots_are_counted_as_they_are_named_and_let_go() {
-        let slot = |h: f32| crate::Hsla { h, s: 0.0, l: 0.0, a: 1.0 };
-        let uniforms = ShaderUniforms::new();
-        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
-        uniforms.set_color(0, slot(2.0));
-        uniforms.set_color(4, slot(3.0));
-        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2);
-        uniforms.set_color(4, slot(4.0));
-        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 2, "renamed, not added");
-        uniforms.set(1, 0.5);
-        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 1);
-        uniforms.set_color(4, crate::Hsla::default());
-        assert_eq!(uniforms.colored.load(Ordering::Relaxed), 0);
-    }
 }
