@@ -12,7 +12,7 @@ use koan_kit::app::*;
 
 use super::server::host;
 use crate::settings::Ctx;
-use crate::settings::form::{Row, buttons, item, moment, note, page, section, text};
+use crate::settings::form::{Row, item, moment, note, page, section, text};
 use crate::settings::model::describe;
 use crate::settings::sheet::{Action, Sheet};
 
@@ -35,9 +35,11 @@ impl DevicesPane {
         let field = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
+        // The code's own form, in capitals as the other device shows it; the
+        // rest are the app's words, lowercase.
         let code = field("XXXX-XXXX", window, cx);
         let address = field("host or host:port", window, cx);
-        let grantee = field("Their username on this server", window, cx);
+        let grantee = field("their username on this server", window, cx);
         let subscriptions = vec![
             cx.observe(&ctx.model, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
@@ -604,12 +606,10 @@ impl Render for DevicesPane {
             .collect();
         let ready = !self.address.read(cx).value().trim().is_empty();
         let pane = entity.clone();
-        addresses.push(buttons(
+        addresses.push(crate::components::form_field(
+            TextField::new(&self.address).into_any_element(),
+            260.0,
             vec![
-                div()
-                    .w(look.spaced(260.0))
-                    .child(TextField::new(&self.address))
-                    .into_any_element(),
                 Button::new("add-address", ButtonKind::Bordered)
                     .label("Add")
                     .disabled(!ready)
@@ -669,12 +669,10 @@ impl Render for DevicesPane {
                 .cloned()
                 .collect();
             let pane = entity.clone();
-            rows.push(buttons(
+            rows.push(crate::components::form_field(
+                TextField::new(&self.grantee).into_any_element(),
+                260.0,
                 vec![
-                    div()
-                        .w(look.spaced(260.0))
-                        .child(TextField::new(&self.grantee))
-                        .into_any_element(),
                     Button::new("share-device", ButtonKind::Bordered)
                         .label("Share")
                         .disabled(typed.is_empty())
