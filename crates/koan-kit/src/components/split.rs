@@ -4,8 +4,11 @@
 //! greatest widths, and a double click puts it back. The width is the
 //! owner's, which keeps it (with the window's bounds, for the sidebar).
 //!
-//! Hidden and shown, the column appears and disappears at once, so the page
-//! beside it is laid out once, not at every width in between.
+//! Hidden and shown, the column's width eases to nothing and back over
+//! `Motion::SETTLE`. Its content is laid out at full width and clipped, so
+//! nothing in it reflows; the page beside it is laid out again at each
+//! frame's width. At once under Reduce Motion. A hidden column draws
+//! nothing from the frame its width reaches nothing.
 
 use std::rc::Rc;
 
@@ -13,7 +16,7 @@ use gpui::prelude::*;
 use gpui::*;
 
 use super::child;
-use crate::theme::Look;
+use crate::theme::{Look, Motion};
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
@@ -74,7 +77,8 @@ impl SplitView {
         self
     }
 
-    /// Whether the leading column shows.
+    /// Whether the leading column shows; its width eases as this changes,
+    /// so the owner hands it over whether shown or not.
     pub fn shown(mut self, shown: bool) -> Self {
         self.shown = shown;
         self
@@ -103,9 +107,17 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        let Some(leading) = self.leading.filter(|_| self.shown) else {
+        let open = super::ease(
+            child(&self.id, "shown"),
+            self.shown,
+            Motion::SETTLE,
+            window,
+            cx,
+        );
+        let Some(leading) = self.leading.filter(|_| open > 0.0) else {
             return div().size_full().flex().children(self.trailing);
         };
+        let settled = self.shown && open >= 1.0;
         // Set on a press on the grip and cleared on release, without a
         // notify: nothing is drawn from it.
         let drag = window.use_keyed_state(child(&self.id, "drag"), cx, |_, _| None::<Drag>);
@@ -201,7 +213,7 @@ impl RenderOnce for SplitView {
             .flex()
             .child(
                 div()
-                    .w(width)
+                    .w(width * open)
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
@@ -217,7 +229,6 @@ impl RenderOnce for SplitView {
                     .border_color(rule)
                     .children(self.trailing),
             )
-            .child(follow)
-            .child(grip)
+            .when(settled, |d| d.child(follow).child(grip))
     }
 }

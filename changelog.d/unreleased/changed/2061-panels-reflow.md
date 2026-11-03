@@ -1,0 +1,1 @@
+- **Sidebar and lyrics panel.** They ease open and closed again, the page beside them reflowing at each frame's width; under Reduce Motion they still snap.
