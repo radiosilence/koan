@@ -8,7 +8,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::{EntityId, IntoElement, Pixels, Point, Styled, canvas, px};
+use gpui_kit::{
+    Div, ElementId, EntityId, InteractiveElement, IntoElement, Pixels, Point, SharedString,
+    Stateful, Styled, canvas, div, px,
+};
 
 pub use gpui_kit::{
     List, ListAlignment, ListOffset, ListState, ScrollStrategy, UniformList,
@@ -26,6 +29,32 @@ where
     H: gpui_kit::base::ScrollbarHandle + Clone,
 {
     gpui_kit::base::Scrollbar::vertical(handle)
+}
+
+/// What a virtualised list sits in for a screen reader: a list named for
+/// what it holds, its rows (`TableRow::spoken`) its items.
+pub fn spoken_list(id: impl Into<ElementId>, name: impl Into<SharedString>) -> Stateful<Div> {
+    super::accessible(div().id(id), gpui_kit::Role::List, Some(name.into()))
+}
+
+/// Scrolls the row past row `ix` of a `uniform_list`'s `count` on screen, the
+/// one before it where `ix` is at the top: a screen reader moving through the
+/// list reaches only rows drawn, so the next one is drawn before it gets
+/// there. The handle keeps one scroll, so only the neighbour the reader is
+/// heading for is asked for.
+pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize, count: usize) {
+    if count == 0 {
+        return;
+    }
+    // The row at the top as last laid out: `logical_scroll_top_index` is
+    // GPUI's test support only.
+    let top = handle.0.borrow().base_handle.logical_scroll_top().0;
+    let target = if ix <= top {
+        ix.saturating_sub(1)
+    } else {
+        (ix + 1).min(count - 1)
+    };
+    handle.scroll_to_item(target, ScrollStrategy::Nearest);
 }
 
 /// A scroll offset `y` down from the top, as a list's handle takes it.

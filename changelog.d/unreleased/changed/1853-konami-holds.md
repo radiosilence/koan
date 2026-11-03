@@ -1,0 +1,1 @@
+- **The Konami code holds the keys it is typed with.** Once its first two keys are in, the keys that carry it on no longer move a list or run a hotkey; a key that breaks it goes through as usual.

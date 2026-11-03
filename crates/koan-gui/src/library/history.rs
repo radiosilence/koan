@@ -15,7 +15,7 @@ use koan_kit::app::*;
 use super::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::tokens::Paint;
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::sheet::{Confirm, confirm};
@@ -326,6 +326,8 @@ impl HistoryPage {
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
                     cursor: self.keyed && self.cursor.at == Some(ix),
+                    place: Some((ix, self.entries.len())),
+                    reveal: p.a11y.then(|| Reveal::Rows(self.list.clone(), i)),
                 };
                 let row = rows::track_row(p, &track, ix, state, sleeve, None, cx);
                 let plays: Vec<i64> = self.acting_on(ix).iter().map(|e| e.id).collect();
@@ -376,6 +378,29 @@ impl super::keys::KeyedList for HistoryPage {
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         actions::play_list(&self.lib, self.row_tracks(), ix, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        let Some(ix) = ix else {
+            self.menu = None;
+            self.menu_plays.clear();
+            return;
+        };
+        let (plays, items, album) = {
+            let plays = self.acting_on(ix);
+            let album = match plays.as_slice() {
+                [one] => one.track.album_id,
+                _ => None,
+            };
+            let items: Vec<Playable> = plays.iter().map(|e| Playable::Track(e.track.id)).collect();
+            (plays.iter().map(|e| e.id).collect(), items, album)
+        };
+        self.menu_plays = plays;
+        self.menu = Some(actions::MenuTarget {
+            items: items.into(),
+            album,
+            after: None,
+        });
     }
 }
 
@@ -523,7 +548,6 @@ impl HistoryPage {
 
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {

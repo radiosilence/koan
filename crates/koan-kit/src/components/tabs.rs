@@ -7,7 +7,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::Handler;
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// The tabs, centred: each its glyph over its label in `fine`, lowercase,
 /// `muted`, and the chosen one in the accent and underlined. The glyph only
@@ -73,7 +73,7 @@ impl RenderOnce for TabStrip {
                     .child(
                         div()
                             .pb(px(5.0))
-                            .border_b(HAIRLINE)
+                            .border_b(look.hairline)
                             .border_color(look.accent.hsla().opacity(if chosen {
                                 1.0
                             } else {
@@ -117,7 +117,7 @@ impl RenderOnce for StatusLine {
             .min_h(look.line_height(TypeRole::Fine) * 2. + look.space(Space::S) * 2.)
             .px(look.space(Space::L))
             .py(look.space(Space::S))
-            .border_t(HAIRLINE)
+            .border_t(look.hairline)
             .border_color(look.palette.rule.hsla())
             .text_role(TypeRole::Fine, &look)
             .text_color(color)

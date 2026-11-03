@@ -1,0 +1,1 @@
+- **The queue's playing bars rest flat on pause.** They fall with the pause's fade and lie flat while paused, as the library's rows do, instead of giving way to the play mark.

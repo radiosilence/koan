@@ -184,14 +184,12 @@ impl LibraryStage {
                     ),
                 }
             }
-            page => match super::shelf::shelf_of(page) {
-                Some(shelf) => {
-                    let page = cx.new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx));
-                    held(page, cx)
-                }
+            page => {
                 // The shell draws its own pages for every other route.
-                None => return None,
-            },
+                let shelf = super::shelf::shelf_of(page)?;
+                let page = cx.new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx));
+                held(page, cx)
+            }
         };
         if super::shelf::shelf_of(current).is_some()
             || matches!(

@@ -1,0 +1,1 @@
+- **The Konami code in the kōan GUI app.** A capital B or A no longer starts the code over.

@@ -1,0 +1,1 @@
+- **The workspace builds without warnings again.** Clippy and the tests compile cleanly after several changes to the desktop app met on main.

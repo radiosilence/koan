@@ -8,7 +8,7 @@ use gpui_kit::{
 
 use super::{Handler, accessible, child, focus, ring};
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
 
 /// A value moved a step at a time: the title leading in `body`, `ink`, and
@@ -171,7 +171,7 @@ impl RenderOnce for StepButton {
             .items_center()
             .justify_center()
             .size(px(28.0))
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.muted.hsla())
             .when(!self.allowed, |button| button.opacity(DISABLED_OPACITY))
             .child(

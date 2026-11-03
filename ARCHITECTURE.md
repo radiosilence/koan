@@ -22,11 +22,14 @@ crates/
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
-│                  macOS and Linux: the kōan theme and its components
-│                  (koan-kit), `platform/`, the library pages
-│                  (`library/`) and the app over
-│                  KoanEngine. Links koan-ffi as a Rust library.
-│                  Not published.
+│                  macOS and Linux from koan-kit: `platform/`, the library
+│                  pages (`library/`) and the app over KoanEngine. Links
+│                  koan-ffi as a Rust library. Not published.
+│
+├── koan-kit/      Library. The design system the GUI app is built from:
+│                  the kōan theme (tokens, type, icons, accent, wash) and
+│                  the components. Knows nothing of the engine or of kōan's
+│                  data. Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
@@ -41,7 +44,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Seven crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI, drawn from `koan-kit`, its design system, which depends on neither the engine nor kōan's data; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -422,7 +425,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 
 `koan-gui` draws only the kōan look (docs/design/koan-theme.md); there is no system theme. `theme::Look::of(window, cx)` is a window's appearance and the tokens and accent for it, read by every component as it renders; `theme::KoanTheme` holds what windows share (text size, "show icons"). The record's accent is an entity, `AccentFeed`: it changes with every record and moves for a quarter second as it settles, so it notifies only the views that draw it, each of which calls `theme::observe_accent` when it is made, rather than redrawing every window past its caches. Appearance and text size, which change rarely, do redraw everything.
 
-**A window's root is two cached views.** The wash (`theme::wash::Wash`) and the content sit side by side under a root whose render only calls `KoanTheme::drive` and places the two cached views. A frame of the drift or of the accent settling then redraws the wash, or refreshes past the caches, without re-laying out the page: `request_animation_frame` dirties the view that asks and every ancestor, so content that is not in its own cached view is redrawn on every frame the wash moves. `sheet::ThemeSheet` is the reference shape.
+**A window's root is two cached views.** The wash (`theme::wash::Wash`) and the content sit side by side under a root whose render only calls `KoanTheme::drive` and places the two cached views. A frame of the drift or of the accent settling then redraws the wash, or refreshes past the caches, without re-laying out the page: `request_animation_frame` dirties the view that asks and every ancestor, so content that is not in its own cached view is redrawn on every frame the wash moves. `storybook::Storybook` is the reference shape.
 
 **Nothing heavy on the main thread.** The accent is worked out and the wash baked on the background executor; the main thread installs the finished texture. The wash is one textured quad per frame (two while a record dissolves into the next), drawn only while it drifts or fades, and released from the sprite atlas after the frame that last drew it. GPUI rasterises an icon's SVG sprite on the main thread the first time each glyph is drawn at a size; it is kept in the atlas after that.
 

@@ -68,8 +68,6 @@ pub struct Rainbow {
     step: usize,
     /// A window of the app is in front.
     active: bool,
-    /// The last keys pressed, against `CODE`.
-    recent: Vec<String>,
     cycle: Option<Task<()>>,
 }
 
@@ -163,31 +161,7 @@ pub fn install(cx: &mut App) {
         ..Default::default()
     });
     cx.set_global(Painted::default());
-    cx.observe_keystrokes(|event, _, cx| {
-        // Typing in a field is typing, and a key with a modifier is a
-        // shortcut: neither is part of a code, and either starts it over.
-        let typing = event.context_stack.iter().any(|c| c.contains("Input"));
-        if typing || event.keystroke.modifiers.modified() {
-            cx.update_global::<Rainbow, _>(|r, _| r.recent.clear());
-            return;
-        }
-        let key = event.keystroke.key.clone();
-        let done = cx.update_global::<Rainbow, _>(|r, _| {
-            r.recent.push(key);
-            if r.recent.len() > CODE.len() {
-                r.recent.remove(0);
-            }
-            let done = r.recent.iter().map(String::as_str).eq(CODE);
-            if done {
-                r.recent.clear();
-            }
-            done
-        });
-        if done {
-            toggle(cx);
-        }
-    })
-    .detach();
+    listen(toggle, cx).detach();
     // Reduce Motion or Low Power switched while it is on: the cycle stops
     // or starts again.
     cx.observe_global::<KoanTheme>(refresh).detach();
@@ -198,6 +172,58 @@ pub fn install(cx: &mut App) {
     })
     .detach();
     refresh(cx);
+}
+
+/// How much of the code is in before the keys it goes on with are held back
+/// from the app: the first ↑ ↑ still move a list, and from the first ↓ on,
+/// what continues the code does nothing else until it is done or broken.
+const HOLD: usize = 2;
+
+/// How much of the code `recent` ends in: the longest of its ends that the
+/// code starts with.
+fn matched(recent: &[String]) -> usize {
+    (0..=recent.len().min(CODE.len()))
+        .rev()
+        .find(|&n| {
+            recent[recent.len() - n..]
+                .iter()
+                .map(String::as_str)
+                .eq(CODE[..n].iter().copied())
+        })
+        .unwrap_or(0)
+}
+
+/// Every key pressed in the app's windows, before anything takes it,
+/// against `CODE`; `then` runs when it has been typed. Once `HOLD` keys of
+/// it are in, a key that carries it on is kept from the app (a list's
+/// arrows, a hotkey's letter); a key that breaks it goes through as usual.
+/// Typing in a field is typing, and a key held with Control, Option, Command
+/// or Fn is a shortcut: neither is part of a code, and either starts it
+/// over. Shift is not: a capital B is still B.
+fn listen(then: fn(&mut App), cx: &mut App) -> Subscription {
+    let recent = std::cell::RefCell::new(Vec::<String>::new());
+    cx.intercept_keystrokes(move |event, _, cx| {
+        let typing = event.context_stack.iter().any(|c| c.contains("Input"));
+        let m = &event.keystroke.modifiers;
+        let mut recent = recent.borrow_mut();
+        if typing || m.control || m.alt || m.platform || m.function {
+            recent.clear();
+            return;
+        }
+        let before = recent.len();
+        recent.push(event.keystroke.key.to_lowercase());
+        let now = matched(&recent);
+        let keep = recent.len() - now;
+        recent.drain(..keep);
+        if now == CODE.len() {
+            recent.clear();
+            drop(recent);
+            cx.stop_propagation();
+            then(cx);
+        } else if before >= HOLD && now == before + 1 {
+            cx.stop_propagation();
+        }
+    })
 }
 
 /// The code: off if the rainbow is drawn, whoever drew it, and on otherwise.
@@ -295,5 +321,86 @@ fn refresh(cx: &mut App) {
     }));
     if cx.try_global::<Painted>() != Some(&painted) {
         cx.set_global(painted);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::components::list_actions as list;
+    use core::prelude::v1::test;
+
+    // GPUI's test harness: a window driven with simulated input.
+    use koan_kit::raw::TestAppContext;
+
+    static TYPED: AtomicUsize = AtomicUsize::new(0);
+
+    /// A page holding the keyboard with the list keys, as every library
+    /// page and the queue does: its actions take the arrows.
+    struct Page(FocusHandle);
+
+    /// The arrows the page's list took.
+    static MOVED: AtomicUsize = AtomicUsize::new(0);
+
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("Library List")
+                .track_focus(&self.0)
+                .on_action(|_: &list::Up, _, _| {
+                    MOVED.fetch_add(1, Ordering::SeqCst);
+                })
+                .on_action(|_: &list::Down, _, _| {
+                    MOVED.fetch_add(1, Ordering::SeqCst);
+                })
+                .size_full()
+        }
+    }
+
+    /// The code is heard while a list holds the keyboard, with B and A typed
+    /// as capitals too, and holds back the arrows that carry it on.
+    // GPUI's test harness: a window driven with simulated input.
+    #[koan_kit::raw::test]
+    fn the_code_is_heard_over_a_list(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+            koan_kit::raw::init(cx);
+            cx.bind_keys([
+                KeyBinding::new("up", list::Up, Some("List")),
+                KeyBinding::new("down", list::Down, Some("List")),
+            ]);
+            listen(
+                |_| {
+                    TYPED.fetch_add(1, Ordering::SeqCst);
+                },
+                cx,
+            )
+            .detach();
+        });
+        let (page, cx) = cx.add_window_view(|_, cx| Page(cx.focus_handle()));
+        cx.update(|window, cx| {
+            let handle = page.read(cx).0.clone();
+            window.focus(&handle, cx);
+        });
+        cx.simulate_keystrokes("up up down down left right left right b a");
+        assert_eq!(TYPED.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            MOVED.load(Ordering::SeqCst),
+            2,
+            "the first two arrows move the list, the rest are held for the code"
+        );
+        cx.simulate_keystrokes("up up up");
+        assert_eq!(
+            MOVED.load(Ordering::SeqCst),
+            5,
+            "a third ↑ breaks it and moves the list"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.simulate_keystrokes("up up down down left right left right shift-b shift-a");
+        assert_eq!(TYPED.load(Ordering::SeqCst), 2);
+        cx.simulate_keystrokes("up up down down left cmd-right left right b a");
+        assert_eq!(TYPED.load(Ordering::SeqCst), 2, "a shortcut starts it over");
     }
 }

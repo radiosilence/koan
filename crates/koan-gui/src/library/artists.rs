@@ -67,6 +67,10 @@ pub struct ArtistBrowser {
     restore: Option<Pixels>,
     rewinds: u64,
     focus: FocusHandle,
+    /// The keyboard's place in the list.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     search: Entity<chrome::SearchField>,
     filters: Entity<chrome::FilterPanel>,
     _subscriptions: Vec<Subscription>,
@@ -161,6 +165,8 @@ impl ArtistBrowser {
             restore,
             rewinds,
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             search,
             filters,
             _subscriptions: subscriptions,
@@ -315,8 +321,21 @@ impl ArtistBrowser {
             }))
             .child(artist.name.clone());
         let play = cx.weak_entity();
+        let count = self.artists.len();
+        let scroll = self.scroll.clone();
         TableRow::new(("artist", id as u64), RowKind::Line)
+            .when(p.a11y, |row| {
+                row.spoken(crate::components::spoken([
+                    artist.name.as_str(),
+                    chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
+                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
+                    if favourite { "favourite" } else { "" },
+                ]))
+                .place(index, count)
+                .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+            })
             .selected(selected)
+            .cursor(self.keyed && self.cursor.at == Some(index))
             // Exactly the glyph's width, so it starts on the header's edge.
             .lead_exact(
                 crate::components::RowMetrics::lead_glyph(&p.look),
@@ -342,6 +361,9 @@ impl ArtistBrowser {
             )
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
+                // The keyboard carries on from the row clicked.
+                this.cursor.at = Some(index);
+                this.cursor.anchor = Some(index);
                 let order = &this.order;
                 if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
                     this.lib
@@ -445,32 +467,80 @@ impl Render for ArtistBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("artists-list", "artists")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .size_full()
-            .flex()
-            .flex_col()
-            .typeset(p, Type::Body, p.ink)
-            .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
-                div()
-                    .id("artist-list")
-                    .flex_1()
-                    .min_h_0()
-                    .pt(p.look.spaced(10.0))
-                    .relative()
-                    .child(body)
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
-                cx.weak_entity(),
-                window,
+        self.keyed = self.focus.is_focused(window);
+        self.cursor.clamp(self.artists.len());
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
                 cx,
-            ))
+            ),
+            cx.weak_entity(),
+            window,
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .size_full()
+        .flex()
+        .flex_col()
+        .typeset(p, Type::Body, p.ink)
+        .when(!held, |d| d.child(header))
+        .child(
+            div()
+                .id("artist-list")
+                .flex_1()
+                .min_h_0()
+                .pt(p.look.spaced(10.0))
+                .relative()
+                .child(body)
+                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
+                .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+        )
+    }
+}
+
+impl super::keys::KeyedList for ArtistBrowser {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.artists.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        self.selection.only(self.order[from]);
+        if to > from {
+            self.selection.click(self.order[to], true, &self.order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.selection.click(self.order[ix], false, &self.order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.scroll
+            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
+    }
+
+    /// Return opens the artist, as a double click does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let id = self.artists[ix].id;
+        self.lib
+            .nav
+            .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None));
     }
 }
 

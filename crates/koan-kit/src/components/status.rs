@@ -67,7 +67,7 @@ impl RenderOnce for StatusBlock {
             .flex()
             .flex_col()
             .gap(look.spaced(6.0))
-            .border_t(crate::theme::HAIRLINE)
+            .border_t(look.hairline)
             .border_color(look.palette.ink.hsla().opacity(ROW_RULE_OPACITY))
             .p(look.space(Space::L))
             .children(

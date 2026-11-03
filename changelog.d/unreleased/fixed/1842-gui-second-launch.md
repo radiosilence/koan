@@ -1,0 +1,1 @@
+- **Opening the desktop app again while it runs.** A second launch brings the running app to the front with what it was given, instead of quitting with nothing shown.

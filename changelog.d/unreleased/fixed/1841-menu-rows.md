@@ -1,0 +1,1 @@
+- **Play on and output menus.** Each row's buttons line up with every other row's, a long explanation stays on one line with the rest on hover, and the small buttons are quiet glyphs that say what they do.

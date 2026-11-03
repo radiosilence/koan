@@ -6,9 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind, Handler};
-use crate::theme::{
-    HAIRLINE, Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole,
-};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};
 
 /// The glyph and message in `tone`, `fine`, on the page's ground with a rule
 /// beneath; an action at the far edge where there is something to do about
@@ -52,12 +50,20 @@ impl RenderOnce for Banner {
             .gap(look.space(Space::M))
             .px(look.space(Space::L))
             .py(look.space(Space::S))
-            .border_b(HAIRLINE)
+            .border_b(look.hairline)
             .border_color(look.palette.rule.hsla().opacity(ROW_RULE_OPACITY))
             .text_role(TypeRole::Fine, &look)
             .text_color(color)
             .child(KoanIcon::new(self.icon).role(TypeRole::Fine).color(color))
-            .child(div().flex_1().min_w_0().line_clamp(2).child(self.message))
+            .child(
+                // The message alone is announced: the action beside it
+                // stays a button.
+                super::announced(div().id("banner"), self.message.clone(), self.tone)
+                    .flex_1()
+                    .min_w_0()
+                    .line_clamp(2)
+                    .child(self.message),
+            )
             .children(self.action.map(|(label, run)| {
                 Button::new("banner-action", ButtonKind::Compact)
                     .label(label)

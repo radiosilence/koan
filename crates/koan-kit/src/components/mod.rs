@@ -73,8 +73,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Global, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Window, canvas, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
@@ -94,7 +95,8 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
-        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+        Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
+        PageUp, Pick, Right, ShowMenu, Up,
     };
 }
 pub use empty::EmptyState;
@@ -111,17 +113,21 @@ pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
+    uniform_list, width_probe,
 };
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use panel::TOOLTIPS_DRAWN;
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
-pub use placeholder::Placeholder;
+pub use placeholder::{Placeholder, enso_svg};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -308,7 +314,25 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
+        .child(
+            canvas(
+                |bounds, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
 }
+
+/// Where the keyboard's cursor ring was drawn, and in which window: what the
+/// menu key opens a context menu under. The key clears it and lets a frame
+/// draw, so only a ring drawn in that frame counts.
+#[derive(Default)]
+pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
+
+impl Global for CursorAt {}
 
 /// Two colours mixed, `t` of the way from `a` to `b`.
 pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
@@ -440,6 +464,46 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
 }
 
 /// Answers a screen reader's click as a pointer's would, with `handler`.
+/// A row's or a tile's parts as a screen reader says them: the non-empty
+/// ones, in order, between commas. What `TableRow::spoken` takes.
+pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
+    parts
+        .into_iter()
+        .filter(|part| !part.as_ref().is_empty())
+        .map(|part| part.as_ref().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
+/// Something the app says on its own, read out as it appears without
+/// moving focus: politely, or at once when something went wrong. The text is
+/// both name and value, since VoiceOver announces a live node's value and
+/// Orca its name; and the element must be a leaf, since a live region's
+/// descendants are live too and would be announced again.
+pub(crate) fn announced<E: StatefulInteractiveElement>(
+    element: E,
+    text: SharedString,
+    tone: crate::theme::Tone,
+) -> E {
+    let alarm = tone == crate::theme::Tone::Bad;
+    accessible(
+        element,
+        if alarm {
+            gpui_kit::Role::Alert
+        } else {
+            gpui_kit::Role::Status
+        },
+        Some(text.clone()),
+    )
+    .aria_value(text)
+    .aria_live(if alarm {
+        gpui_kit::accesskit::Live::Assertive
+    } else {
+        gpui_kit::accesskit::Live::Polite
+    })
+}
+
 /// A checked state as AccessKit has it.
 pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
     if on {

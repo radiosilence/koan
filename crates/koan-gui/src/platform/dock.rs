@@ -26,6 +26,14 @@ pub enum Dock {
     PlayOn(Option<String>),
 }
 
+/// A Dock menu line that only says something, such as the playing track's
+/// title. Nothing listens for it, so AppKit's validation, which asks whether
+/// an item's action is handled, shows it disabled; an item marked disabled
+/// with an action that is handled stays clickable.
+#[derive(Clone, PartialEq, Debug, Default, Action)]
+#[action(namespace = koan_dock, no_json)]
+pub struct DockLabel;
+
 /// Everything the menu shows: built only when this changes.
 #[derive(Clone, PartialEq, Default)]
 struct Shown {
@@ -165,7 +173,7 @@ fn choice(name: &str, checked: bool, action: impl Action) -> MenuItem {
 fn header(name: String) -> MenuItem {
     MenuItem::Action {
         name: name.into(),
-        action: Box::new(TogglePlayPause),
+        action: Box::new(DockLabel),
         os_action: None,
         checked: false,
         disabled: true,

@@ -89,6 +89,28 @@ pub struct RowState {
     pub note: Option<(crate::theme::Icon, &'static str)>,
     /// Under the list's keyboard cursor.
     pub cursor: bool,
+    /// Its place in the list, of how many, for a screen reader.
+    pub place: Option<(usize, usize)>,
+    /// Where it sits in a list that draws only what is on screen, to scroll
+    /// its neighbours in when a screen reader moves to it.
+    pub reveal: Option<Reveal>,
+}
+
+/// A row's list and its index in it.
+pub enum Reveal {
+    Rows(crate::components::RowListState, usize),
+    Uniform(crate::components::UniformListScrollHandle, usize, usize),
+}
+
+impl Reveal {
+    fn run(&self) {
+        match self {
+            Reveal::Rows(list, ix) => list.reveal_around(*ix),
+            Reveal::Uniform(handle, ix, count) => {
+                crate::components::reveal_around(handle, *ix, *count)
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -185,7 +207,37 @@ pub fn track_row<V: TrackList>(
         )
     });
 
+    let spoken = p.a11y.then(|| {
+        let length = track
+            .duration_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| crate::time::clock(ms as u64))
+            .unwrap_or_default();
+        crate::components::spoken([
+            track.title.as_str(),
+            if names_artist {
+                track.artist_name.as_str()
+            } else {
+                ""
+            },
+            if state.gathered {
+                track.album_title.as_str()
+            } else {
+                ""
+            },
+            length.as_str(),
+            if state.current { "playing" } else { "" },
+            if state.favourite { "favourite" } else { "" },
+        ])
+    });
     TableRow::new(("row", id as u64), state.kind)
+        .when_some(spoken, |row, spoken| row.spoken(spoken))
+        .when_some(state.place.filter(|_| p.a11y), |row, (ix, count)| {
+            row.place(ix, count)
+        })
+        .when_some(state.reveal, |row, reveal| {
+            row.on_reveal(move |_, _| reveal.run())
+        })
         .selected(state.selected)
         .cursor(state.cursor)
         .lead_exact(state.lead_width, lead)

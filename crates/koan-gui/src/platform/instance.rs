@@ -129,7 +129,7 @@ pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
 /// The lock an earlier version takes in the config directory, while a
 /// running one holds it.
 pub fn earlier_version_lock() -> Option<File> {
-    let mut lock = OpenOptions::new()
+    let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .open(koan_core::config::config_dir().join(EARLIER_LOCK))
@@ -180,7 +180,14 @@ fn hand(lock: &mut File, paths: &[PathBuf]) -> std::io::Result<()> {
     };
     stream.set_write_timeout(Some(READ_FOR))?;
     stream.write_all(&encode(paths))?;
-    stream.shutdown(std::net::Shutdown::Write)
+    stream.shutdown(std::net::Shutdown::Write)?;
+    // Held open until the running app has read it and closed its end. A
+    // connection whose sender has already gone fails the holder's accept on
+    // macOS (EINVAL), and the hand-off, files and coming to the front, would
+    // be lost.
+    stream.set_read_timeout(Some(READ_FOR))?;
+    let _ = stream.read(&mut [0u8; 1]);
+    Ok(())
 }
 
 /// The socket the lock's holder wrote into it.

@@ -20,7 +20,7 @@ fn render<T: JsonSchema>() -> String {
         .into_generator()
         .into_root_schema_for::<T>();
     let mut value = schema.to_value();
-    canonical(&mut value);
+    canonical(&mut value, false);
     let mut json = serde_json::to_string_pretty(&value).unwrap();
     json.push('\n');
     json
@@ -30,16 +30,43 @@ fn render<T: JsonSchema>() -> String {
 /// workspace build can turn on serde_json's `preserve_order`, under which
 /// objects keep the order they were built in, or removed from, rather than
 /// sorting themselves.
-fn canonical(value: &mut serde_json::Value) {
+///
+/// `names` is an object keyed by names rather than keywords (`properties`,
+/// `$defs`): a field called `description` there is a field, and stays.
+fn canonical(value: &mut serde_json::Value, names: bool) {
     match value {
         serde_json::Value::Object(map) => {
-            map.remove("description");
+            if !names {
+                map.remove("description");
+            }
             map.sort_keys();
-            map.values_mut().for_each(canonical);
+            for (key, child) in map.iter_mut() {
+                let keyed = !names
+                    && matches!(
+                        key.as_str(),
+                        "properties" | "patternProperties" | "$defs" | "definitions"
+                    );
+                canonical(child, keyed);
+            }
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(canonical),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| canonical(item, false)),
         _ => {}
     }
+}
+
+#[test]
+fn a_field_called_description_is_kept() {
+    let mut schema = serde_json::json!({
+        "description": "a doc comment",
+        "properties": {
+            "description": { "description": "its doc comment", "type": "string" }
+        }
+    });
+    canonical(&mut schema, false);
+    assert_eq!(
+        schema,
+        serde_json::json!({ "properties": { "description": { "type": "string" } } })
+    );
 }
 
 #[test]

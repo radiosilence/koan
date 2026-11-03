@@ -176,6 +176,7 @@ impl LyricsPanel {
             self.active = Some(line);
             cx.notify();
         }
+        crate::transport::land(at, cx);
         command(cx, "seek to a line", move |e| e.seek(at));
     }
 }

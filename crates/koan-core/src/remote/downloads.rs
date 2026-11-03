@@ -620,6 +620,21 @@ impl DownloadStore {
         }
     }
 
+    /// Drop the finished rows whose file is gone: cleared or evicted from
+    /// the cache. A finished row says its track is on this device, which
+    /// every client shows at once, ahead of the library catching up; once the
+    /// file is removed it must stop saying so.
+    pub fn forget_removed(&self) {
+        let mut entries = self.entries.write();
+        let before = entries.len();
+        entries.retain(|e| e.download.state != DownloadState::Done || e.download.dest.exists());
+        let changed = entries.len() != before;
+        drop(entries);
+        if changed {
+            self.bump();
+        }
+    }
+
     /// Drop everything that has already settled. The running ones are not this
     /// call's business — stopping a transfer is a different verb.
     pub fn clear_settled(&self) {
@@ -948,6 +963,29 @@ mod tests {
         let _ = withdraw(&store, track_id);
         assert_eq!(store.version(), version, "and it leaves without a trace");
         assert!(!store.in_flight(track_id));
+    }
+
+    #[test]
+    fn a_finished_transfer_whose_file_went_is_forgotten() {
+        // `running` names files under /cache, which do not exist here: as if
+        // the cache had been cleared.
+        let store = DownloadStore::new();
+        let (gone, _, _) = running(&store, 1, "gone");
+        store.end(gone, Outcome::Done);
+        let (failed, _, _) = running(&store, 2, "failed");
+        store.end(failed, Outcome::Failed("no route".into()));
+        let (live, _, _) = running(&store, 3, "live");
+
+        let version = store.version();
+        store.forget_removed();
+        let left: Vec<i64> = store.all().iter().map(|d| d.track_id).collect();
+        assert!(!left.contains(&gone), "a finished row with no file left");
+        assert!(left.contains(&failed), "a failure is still worth reading");
+        assert!(
+            left.contains(&live),
+            "a running transfer is not this call's"
+        );
+        assert_ne!(store.version(), version, "clients hear of it");
     }
 
     #[test]

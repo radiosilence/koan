@@ -36,3 +36,22 @@ where
         })
         .detach();
 }
+
+/// `command`, with a failure said in the app's notice line as well as the
+/// log, as the Mac app's `attempt` shows it: for a choice the person made
+/// and is waiting to see happen, such as choosing a device in Play on.
+pub fn reported<F, Fut, T>(cx: &App, what: &'static str, f: F)
+where
+    F: FnOnce(Arc<KoanEngine>) -> Fut,
+    Fut: Future<Output = Result<T, KoanError>> + 'static,
+    T: 'static,
+{
+    let future = f(engine(cx));
+    cx.spawn(async move |cx| {
+        if let Err(e) = future.await {
+            log::warn!("{what}: {e}");
+            cx.update(|cx| crate::notice::show(e.to_string(), crate::theme::Tone::Bad, cx));
+        }
+    })
+    .detach();
+}

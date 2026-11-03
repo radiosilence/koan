@@ -19,7 +19,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
@@ -415,6 +415,10 @@ impl TrackBrowser {
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
             kind: crate::components::RowKind::Art,
+            place: Some((index, self.total as usize)),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), index, self.total as usize)),
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }
@@ -607,11 +611,21 @@ impl Render for TrackBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("tracks-list", "tracks")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
         self.keyed = self.focus.is_focused(window);
-        let page = super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        let page = actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         );
         page.on_action(cx.listener(Self::select_all))
@@ -621,7 +635,7 @@ impl Render for TrackBrowser {
             .flex_col()
             .typeset(p, Type::Body, p.ink)
             .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
+            .child(
                 div()
                     .id("track-list")
                     .flex_1()
@@ -631,10 +645,7 @@ impl Render for TrackBrowser {
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(crate::components::list_scrollbar(&self.scroll)),
-                cx.weak_entity(),
-                window,
-                cx,
-            ))
+            )
     }
 }
 
@@ -668,11 +679,18 @@ impl super::keys::KeyedList for TrackBrowser {
 
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         self.scroll
-            .scroll_to_item(ix, crate::components::ScrollStrategy::Top);
+            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let ids = self.tracks.iter().map(|t| t.id).collect();
         actions::play_list(&self.lib, ids, ix, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let track = &self.tracks[ix];
+            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+        });
     }
 }

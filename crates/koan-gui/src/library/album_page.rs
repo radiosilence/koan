@@ -14,7 +14,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
@@ -273,6 +273,10 @@ impl AlbumPage {
             kind,
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
+            place: Some((index, self.tracks.len())),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), i, self.lines.len())),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -486,9 +490,8 @@ impl Render for AlbumPage {
                     .flex()
                     .flex_col()
                     .child(self.header(p, grid, window, cx))
-                    .child(actions::list_menu(
-                        div()
-                            .id("album-track-list")
+                    .child(
+                        crate::components::spoken_list("album-track-list", "tracks")
                             .relative()
                             .flex_1()
                             .min_h_0()
@@ -509,10 +512,7 @@ impl Render for AlbumPage {
                             )
                             // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                             .child(crate::components::list_scrollbar(&self.scroll)),
-                        cx.weak_entity(),
-                        window,
-                        cx,
-                    ))
+                    )
                     .into_any_element()
             }
             // Still reading: nothing at first, since a local record lands
@@ -529,8 +529,13 @@ impl Render for AlbumPage {
             _ => div().into_any_element(),
         };
         self.keyed = self.focus.is_focused(window);
-        super::keys::keyed(
-            div().key_context("Library List").track_focus(&self.focus),
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
             cx,
         )
         .on_action(cx.listener(Self::select_all))
@@ -579,13 +584,20 @@ impl super::keys::KeyedList for AlbumPage {
             .position(|l| matches!(l, Line::Track { index, .. } if *index == ix));
         if let Some(line) = line {
             self.scroll
-                .scroll_to_item(line, crate::components::ScrollStrategy::Top);
+                .scroll_to_item(line, crate::components::ScrollStrategy::Nearest);
         }
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let ids = self.tracks.iter().map(|t| t.id).collect();
         actions::play_list(&self.lib, ids, ix, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let track = &self.tracks[ix];
+            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+        });
     }
 }
 

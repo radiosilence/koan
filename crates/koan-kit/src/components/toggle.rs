@@ -10,8 +10,7 @@ use super::{
     Answer, Answerer, Handler, accessible, answers_click, child, fade, focus, ring, toggled,
 };
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
-    label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole, label,
 };
 
 /// A square box at the row's trailing edge, the label leading: a `muted`
@@ -83,7 +82,7 @@ impl RenderOnce for Toggle {
                     .relative()
                     .flex_none()
                     .size(px(BOX))
-                    .border(HAIRLINE)
+                    .border(look.hairline)
                     .border_color(super::mix(look.palette.muted.hsla(), accent, on))
                     .child(
                         div()
@@ -107,6 +106,7 @@ impl RenderOnce for Toggle {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
@@ -208,6 +208,7 @@ impl RenderOnce for IconToggle {
             toggle = toggle.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let (checked, accent) = (self.checked, look.accent.hsla());
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();

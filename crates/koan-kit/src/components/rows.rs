@@ -28,6 +28,7 @@ pub struct NavRow {
     icon: Option<Icon>,
     art: Option<AnyElement>,
     detail: Option<SharedString>,
+    trailing: Option<SharedString>,
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
@@ -61,6 +62,7 @@ impl NavRow {
             icon: None,
             art: None,
             detail: None,
+            trailing: None,
             selected: false,
             cursor: false,
             on_click: None,
@@ -102,6 +104,13 @@ impl NavRow {
     /// A line under the label, in `meta`, `muted`: a playlist's count.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// A figure at the trailing edge, in `fine`, `muted`: how many
+    /// downloads are running. Only while there is one to say.
+    pub fn trailing(mut self, figure: impl Into<SharedString>) -> Self {
+        self.trailing = Some(figure.into());
         self
     }
 
@@ -210,6 +219,14 @@ impl RenderOnce for NavRow {
                     ),
                 ),
             })
+            .children(self.trailing.map(|figure| {
+                div()
+                    .ml_auto()
+                    .flex_none()
+                    .text_role(TypeRole::Fine, &look)
+                    .text_color(look.palette.muted.hsla())
+                    .child(figure)
+            }))
             .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
                 answers_click(row, on_click.clone())
@@ -292,7 +309,8 @@ impl NavNote {
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        let id = SharedString::from(format!("note-{}", self.text));
+        super::announced(div().id(id), self.text.clone(), self.tone)
             .w_full()
             .min_w_0()
             .overflow_hidden()
