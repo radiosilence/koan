@@ -1,1 +1,0 @@
-- **A change redraws its own view.** In the kōan GUI app a view drawn again no longer draws every cached view inside it, so the seek bar's tick each second while playing redraws the transport and the seek bar rather than the whole window.
