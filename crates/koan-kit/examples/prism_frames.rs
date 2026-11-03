@@ -57,10 +57,7 @@ impl Render for Window_ {
             Layers::All => vec![
                 p.wash().size_full().into_any_element(),
                 // The page between the layers under it and over it.
-                div()
-                    .size_full()
-                    .bg(rgb(0x202020))
-                    .into_any_element(),
+                div().size_full().bg(rgb(0x202020)).into_any_element(),
                 p.disco().size_full().into_any_element(),
                 p.party().size_full().into_any_element(),
                 p.pulse().size_full().into_any_element(),

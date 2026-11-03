@@ -95,18 +95,18 @@ static PRISM_WASH: ShaderProgram = ShaderProgram {
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float2 p = (position - size * 0.5) / size.y;
-    float pulse = pow(koan_track(u, 3, time), 1.0);
+    float pulse = u[19];
     float r = length(p);
     float seg = 6.2831853 / 6.0;
     float a = atan2(p.y, p.x) + time * 0.05 + 100.0 * seg;
     a = abs(fmod(a, seg) - seg * 0.5);
     float2 k = float2(cos(a), sin(a)) * r;
     float v = sin(k.x * 5.0 + time * 0.7) + sin(k.y * 6.0 - time * 0.55)
-        + sin((p.x + p.y) * 3.0 + time * 0.25 + koan_track(u, 1, time) * 2.0)
-        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + koan_track(u, 0, time));
+        + sin((p.x + p.y) * 3.0 + time * 0.25 + u[17] * 2.0)
+        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + u[16]);
     float3 colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[4]);
     float glow = 0.5 + 0.5 * sin(v * 3.14159);
-    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2, time)) + pulse * 0.06;
+    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * u[18]) + pulse * 0.06;
     if (u[5] < 0.5) {
         colour = mix(colour, float3(1.0), 0.35);
     }
@@ -119,19 +119,19 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let p = (position - size * 0.5) / size.y;
-    let pulse = pow(koan_track(u, 3u, time), 1.0);
+    let pulse = u[4].w;
     let r = length(p);
     let seg = 6.2831853 / 6.0;
     var a = atan2(p.y, p.x) + time * 0.05 + 100.0 * seg;
     a = abs(a % seg - seg * 0.5);
     let k = vec2<f32>(cos(a), sin(a)) * r;
     let v = sin(k.x * 5.0 + time * 0.7) + sin(k.y * 6.0 - time * 0.55)
-        + sin((p.x + p.y) * 3.0 + time * 0.25 + koan_track(u, 1u, time) * 2.0)
-        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + koan_track(u, 0u, time));
+        + sin((p.x + p.y) * 3.0 + time * 0.25 + u[4].y * 2.0)
+        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + u[4].x);
     var colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[1].x);
     let glow = 0.5 + 0.5 * sin(v * 3.14159);
     let base = select(0.30, 0.42, u[1].y > 0.5);
-    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2u, time)) + pulse * 0.06;
+    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * u[4].z) + pulse * 0.06;
     if (u[1].y < 0.5) {
         colour = mix(colour, vec3<f32>(1.0), 0.35);
     }
@@ -139,8 +139,15 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 }
 "#
     ),
-    prepare: None,
+    prepare: Some(wash_prepare),
 };
+
+/// The bands and the beat for every pixel of the layer over the wash: low,
+/// middle, high and the beat (16 to 19).
+fn wash_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
+    let [low, middle, high, beat] = bands(u, time);
+    u[16..20].copy_from_slice(&[low, middle, high, beat.max(0.0)]);
+}
 
 /// A glow in from the window's edges, widening and brightening on each beat,
 /// the palette running round it.
@@ -151,8 +158,12 @@ static PRISM_PULSE: ShaderProgram = ShaderProgram {
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    float pulse = pow(koan_track(u, 3, time), 0.8);
-    float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0, time));
+    float pulse = u[16];
+    float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * u[17]);
+    // Under a level at five and a half widths in: most of the window.
+    if (d > width * 5.6) {
+        return float4(0.0);
+    }
     float glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
         return float4(0.0);
@@ -168,8 +179,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    let pulse = pow(koan_track(u, 3u, time), 0.8);
-    let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0u, time));
+    let pulse = u[4].x;
+    let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * u[4].y);
+    if (d > width * 5.6) {
+        return vec4<f32>(0.0);
+    }
     let glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
         return vec4<f32>(0.0);
@@ -180,8 +194,15 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 }
 "#
     ),
-    prepare: None,
+    prepare: Some(pulse_prepare),
 };
+
+/// The beat and the low band, for every pixel of the pulse (16, 17).
+fn pulse_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
+    let [low, _, _, beat] = bands(u, time);
+    u[16] = beat.max(0.0).powf(0.8);
+    u[17] = low;
+}
 
 /// A mirror ball: a sphere of facets, silver tinted through the palette,
 /// turning while a window is in front, its facets catching light on the
@@ -539,6 +560,21 @@ static DISCO: ShaderProgram = ShaderProgram {
     msl: concat!(
         prism_msl!(),
         r#"
+constant float2 KOAN_SPOTS[48] = {
+    float2(-0.368125, 0.929776), float2(0.899499, -0.436924), float2(-0.958400, -0.285429), float2(0.513890, 0.857856),
+    float2(0.200547, -0.979684), float2(-0.809644, 0.586921), float2(0.993466, 0.114130), float2(-0.655457, -0.755232),
+    float2(-0.026839, 0.999640), float2(0.695037, -0.718974), float2(-0.998159, 0.060658), float2(0.776985, 0.629519),
+    float2(-0.147691, -0.989034), float2(-0.559180, 0.829046), float2(0.972335, -0.233592), float2(-0.874758, -0.484559),
+    float2(0.317705, 0.948190), float2(0.406228, -0.913772), float2(-0.916784, 0.399384), float2(0.945788, 0.324785),
+    float2(-0.478005, -0.878357), float2(-0.240856, 0.970561), float2(0.833204, -0.552966), float2(-0.987902, -0.155081),
+    float2(0.623692, 0.781670), float2(0.068120, -0.997677), float2(-0.724151, 0.689642), float2(0.999813, -0.019364),
+    float2(-0.750310, -0.661086), float2(0.106699, 0.994291), float2(0.592958, -0.805233), float2(-0.981156, 0.193217),
+    float2(0.853990, 0.520290), float2(-0.278255, -0.960507), float2(-0.443637, 0.896207), float2(0.932503, -0.361162),
+    float2(-0.931560, -0.363587), float2(0.441304, 0.897358), float2(0.280752, -0.959780), float2(-0.855340, 0.518066),
+    float2(0.980650, 0.195768), float2(-0.590861, -0.806773), float2(-0.109285, 0.994010), float2(0.752028, -0.659132),
+    float2(-0.999759, -0.021964), float2(0.722354, 0.691523), float2(-0.065524, -0.997851), float2(-0.625723, 0.780045)
+};
+
 float koan_disco_blend(thread float3 &colour, thread float &alpha, float3 c, float a) {
     if (a > 0.0) {
         colour = mix(colour, c, a / max(alpha + a, 1e-4));
@@ -549,46 +585,51 @@ float koan_disco_blend(thread float3 &colour, thread float &alpha, float3 c, flo
 
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float s = u[10];
-    float spin = time * 0.35 * u[8];
-    float beat = pow(koan_track(u, 3, time), 1.6);
+    float beat = u[16];
     float far = length(size);
     float3 colour = float3(0.0);
     float alpha = 0.0;
-    // The mirror ball's spots, wheeling across the window from it.
+    // The mirror ball's spots, wheeling across the window from it. Each
+    // spot's place on its ellipse is its angle in the table turned by its
+    // speed group's rotation (`disco_prepare`); a pixel outside a spot goes
+    // on to the next before any colour is worked out.
     float2 ball = float2(size.x - u[11] * s, u[12] * s);
-    // Each spot's place and size from its index by the golden ratio's
-    // fractions, with no trigonometry to find them; a pixel outside a spot
-    // goes on to the next before any colour is worked out.
-    float lift = 0.22 + 0.25 * beat + 0.15 * koan_track(u, 2, time);
+    float lift = 0.22 + 0.25 * beat + 0.15 * u[18];
     float swell = 1.0 + 0.6 * beat;
     for (int i = 0; i < 48; i++) {
         float fi = float(i);
         float h1 = fract(fi * 0.6180340 + 0.31);
         float h2 = fract(fi * 0.7548777 + 0.57);
         float radius = s * (10.0 + 14.0 * h1) * swell;
-        float angle = h1 * 6.2831853 + spin * (0.6 + 0.4 * h2);
-        float2 at = ball + float2(cos(angle), sin(angle) * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
-        float d = distance(position, at);
-        if (d >= radius) {
+        float2 base = KOAN_SPOTS[i];
+        int g = min(int(h2 * 16.0), 15);
+        float2 turn = float2(u[20 + 2 * g], u[21 + 2 * g]);
+        float2 dir = float2(base.x * turn.x - base.y * turn.y, base.y * turn.x + base.x * turn.y);
+        float2 at = ball + float2(dir.x, dir.y * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
+        float2 rel = position - at;
+        float d2 = dot(rel, rel);
+        if (d2 >= radius * radius) {
             continue;
         }
-        float spot = 1.0 - smoothstep(radius * 0.4, radius, d);
+        float spot = 1.0 - smoothstep(radius * 0.4, radius, sqrt(d2));
         float3 c = mix(float3(1.0), koan_prism(h1 + time * 0.1, u[4]), 0.55);
         koan_disco_blend(colour, alpha, c, spot * lift);
     }
     // Stage beams sweeping up from the foot of the window.
+    float beam_lift = 0.10 + 0.18 * beat + 0.08 * u[17];
     for (int i = 0; i < 4; i++) {
         float fi = float(i);
         float2 foot = float2(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        float angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
-        float2 dir = float2(cos(angle), -sin(angle));
+        float2 dir = float2(u[52 + 2 * i], u[53 + 2 * i]);
         float2 rel = position - foot;
         float along = dot(rel, dir);
         if (along > 0.0) {
             float across = abs(rel.x * dir.y - rel.y * dir.x);
             float width = s * 14.0 + along * 0.08;
-            float beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
-            koan_disco_blend(colour, alpha, koan_prism(fi * 0.25 + time * 0.07, u[4]), beam * (0.10 + 0.18 * beat + 0.08 * koan_track(u, 1, time)));
+            if (across < width) {
+                float beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
+                koan_disco_blend(colour, alpha, koan_prism(fi * 0.25 + time * 0.07, u[4]), beam * beam_lift);
+            }
         }
     }
     // Glimmers: four-pointed stars twinkling in and out on a grid.
@@ -611,8 +652,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     if (hc > 0.8) {
         float y = fract((time * s * (60.0 + 90.0 * hc) + hc * 4000.0) / size.y) * size.y;
         float d = max(abs(position.x - (column + 0.5) * pitch), abs(position.y - y));
-        float glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
-        koan_disco_blend(colour, alpha, mix(float3(1.0), koan_prism(hc + time * 0.2, u[4]), 0.4), glint * 0.8);
+        if (d < s * 1.6) {
+            float glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
+            koan_disco_blend(colour, alpha, mix(float3(1.0), koan_prism(hc + time * 0.2, u[4]), 0.4), glint * 0.8);
+        }
     }
     // The beat's flash over the whole window. Beats come at most three a
     // second (`Prism::hear`), WCAG's limit for flashing.
@@ -624,50 +667,73 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
+const KOAN_SPOTS = array<vec2<f32>, 48>(
+    vec2<f32>(-0.368125, 0.929776), vec2<f32>(0.899499, -0.436924), vec2<f32>(-0.958400, -0.285429), vec2<f32>(0.513890, 0.857856),
+    vec2<f32>(0.200547, -0.979684), vec2<f32>(-0.809644, 0.586921), vec2<f32>(0.993466, 0.114130), vec2<f32>(-0.655457, -0.755232),
+    vec2<f32>(-0.026839, 0.999640), vec2<f32>(0.695037, -0.718974), vec2<f32>(-0.998159, 0.060658), vec2<f32>(0.776985, 0.629519),
+    vec2<f32>(-0.147691, -0.989034), vec2<f32>(-0.559180, 0.829046), vec2<f32>(0.972335, -0.233592), vec2<f32>(-0.874758, -0.484559),
+    vec2<f32>(0.317705, 0.948190), vec2<f32>(0.406228, -0.913772), vec2<f32>(-0.916784, 0.399384), vec2<f32>(0.945788, 0.324785),
+    vec2<f32>(-0.478005, -0.878357), vec2<f32>(-0.240856, 0.970561), vec2<f32>(0.833204, -0.552966), vec2<f32>(-0.987902, -0.155081),
+    vec2<f32>(0.623692, 0.781670), vec2<f32>(0.068120, -0.997677), vec2<f32>(-0.724151, 0.689642), vec2<f32>(0.999813, -0.019364),
+    vec2<f32>(-0.750310, -0.661086), vec2<f32>(0.106699, 0.994291), vec2<f32>(0.592958, -0.805233), vec2<f32>(-0.981156, 0.193217),
+    vec2<f32>(0.853990, 0.520290), vec2<f32>(-0.278255, -0.960507), vec2<f32>(-0.443637, 0.896207), vec2<f32>(0.932503, -0.361162),
+    vec2<f32>(-0.931560, -0.363587), vec2<f32>(0.441304, 0.897358), vec2<f32>(0.280752, -0.959780), vec2<f32>(-0.855340, 0.518066),
+    vec2<f32>(0.980650, 0.195768), vec2<f32>(-0.590861, -0.806773), vec2<f32>(-0.109285, 0.994010), vec2<f32>(0.752028, -0.659132),
+    vec2<f32>(-0.999759, -0.021964), vec2<f32>(0.722354, 0.691523), vec2<f32>(-0.065524, -0.997851), vec2<f32>(-0.625723, 0.780045)
+);
+
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let s = u[2].z;
-    let spin = time * 0.35 * u[2].x;
-    let beat = pow(koan_track(u, 3u, time), 1.6);
+    var b = u;
+    let s = b[2].z;
+    let beat = b[4].x;
     let far = length(size);
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;
-    let ball = vec2<f32>(size.x - u[2].w * s, u[3].x * s);
-    let lift = 0.22 + 0.25 * beat + 0.15 * koan_track(u, 2u, time);
+    let ball = vec2<f32>(size.x - b[2].w * s, b[3].x * s);
+    let lift = 0.22 + 0.25 * beat + 0.15 * b[4].z;
     let swell = 1.0 + 0.6 * beat;
-    for (var i = 0; i < 48; i++) {
+    for (var i = 0u; i < 48u; i++) {
         let fi = f32(i);
         let h1 = fract(fi * 0.6180340 + 0.31);
         let h2 = fract(fi * 0.7548777 + 0.57);
         let radius = s * (10.0 + 14.0 * h1) * swell;
-        let angle = h1 * 6.2831853 + spin * (0.6 + 0.4 * h2);
-        let at = ball + vec2<f32>(cos(angle), sin(angle) * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
-        let d = distance(position, at);
-        if (d >= radius) {
+        let base = KOAN_SPOTS[i];
+        let g = min(u32(h2 * 16.0), 15u);
+        let pair = b[5u + g / 2u];
+        let turn = select(pair.xy, pair.zw, g % 2u == 1u);
+        let dir = vec2<f32>(base.x * turn.x - base.y * turn.y, base.y * turn.x + base.x * turn.y);
+        let at = ball + vec2<f32>(dir.x, dir.y * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
+        let rel = position - at;
+        let d2 = dot(rel, rel);
+        if (d2 >= radius * radius) {
             continue;
         }
-        let spot = 1.0 - smoothstep(radius * 0.4, radius, d);
-        let c = mix(vec3<f32>(1.0), koan_prism(h1 + time * 0.1, u[1].x), 0.55);
+        let spot = 1.0 - smoothstep(radius * 0.4, radius, sqrt(d2));
+        let c = mix(vec3<f32>(1.0), koan_prism(h1 + time * 0.1, b[1].x), 0.55);
         let a = spot * lift;
         if (a > 0.0) {
             colour = mix(colour, c, a / max(alpha + a, 1e-4));
             alpha = max(alpha, a);
         }
     }
-    for (var i = 0; i < 4; i++) {
+    let beam_lift = 0.10 + 0.18 * beat + 0.08 * b[4].y;
+    for (var i = 0u; i < 4u; i++) {
         let fi = f32(i);
         let foot = vec2<f32>(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        let angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
-        let dir = vec2<f32>(cos(angle), -sin(angle));
+        let pair = b[13u + i / 2u];
+        let dir = select(pair.xy, pair.zw, i % 2u == 1u);
         let rel = position - foot;
         let along = dot(rel, dir);
         if (along > 0.0) {
             let across = abs(rel.x * dir.y - rel.y * dir.x);
             let width = s * 14.0 + along * 0.08;
-            let beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
-            let a = beam * (0.10 + 0.18 * beat + 0.08 * koan_track(u, 1u, time));
-            if (a > 0.0) {
-                colour = mix(colour, koan_prism(fi * 0.25 + time * 0.07, u[1].x), a / max(alpha + a, 1e-4));
-                alpha = max(alpha, a);
+            if (across < width) {
+                let beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
+                let a = beam * beam_lift;
+                if (a > 0.0) {
+                    colour = mix(colour, koan_prism(fi * 0.25 + time * 0.07, b[1].x), a / max(alpha + a, 1e-4));
+                    alpha = max(alpha, a);
+                }
             }
         }
     }
@@ -693,24 +759,56 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     if (hc > 0.8) {
         let y = fract((time * s * (60.0 + 90.0 * hc) + hc * 4000.0) / size.y) * size.y;
         let d = max(abs(position.x - (column + 0.5) * pitch), abs(position.y - y));
-        let glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
-        let a = glint * 0.8;
-        if (a > 0.0) {
-            colour = mix(colour, mix(vec3<f32>(1.0), koan_prism(hc + time * 0.2, u[1].x), 0.4), a / max(alpha + a, 1e-4));
-            alpha = max(alpha, a);
+        if (d < s * 1.6) {
+            let glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
+            let a = glint * 0.8;
+            if (a > 0.0) {
+                colour = mix(colour, mix(vec3<f32>(1.0), koan_prism(hc + time * 0.2, b[1].x), 0.4), a / max(alpha + a, 1e-4));
+                alpha = max(alpha, a);
+            }
         }
     }
     let flash = beat * 0.10;
     if (flash > 0.0) {
-        colour = mix(colour, koan_prism(time * 0.3, u[1].x) * 0.5 + 0.5, flash / max(alpha + flash, 1e-4));
+        colour = mix(colour, koan_prism(time * 0.3, b[1].x) * 0.5 + 0.5, flash / max(alpha + flash, 1e-4));
         alpha = max(alpha, flash);
     }
-    return vec4<f32>(colour, clamp(alpha * u[1].z, 0.0, 0.85));
+    return vec4<f32>(colour, clamp(alpha * b[1].z, 0.0, 0.85));
 }
 "#
     ),
-    prepare: None,
+    prepare: Some(disco_prepare),
 };
+
+/// What every pixel of the disco layer shares, worked out once a present:
+/// the bands and the beat (16 to 19: beat, middle, high, low), each spot
+/// speed group's turn (20 to 51, sixteen pairs of cosine and sine), and the
+/// beams' directions (52 to 59). The tracks the shader no longer reads are
+/// where they go.
+fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
+    let [low, middle, high, beat] = bands(u, time);
+    u[16] = beat.max(0.0).powf(1.6);
+    u[17] = middle;
+    u[18] = high;
+    u[19] = low;
+    let spin = time * 0.35 * u[8];
+    for g in 0..16 {
+        let (sin, cos) = (spin * (0.6 + 0.4 * (g as f32 + 0.5) / 16.0)).sin_cos();
+        u[20 + 2 * g] = cos;
+        u[21 + 2 * g] = sin;
+    }
+    for i in 0..4 {
+        let fi = i as f32;
+        let angle = 1.5708 + (time * (0.5 + 0.13 * fi) + fi * 1.7).sin() * 0.55;
+        u[52 + 2 * i] = angle.cos();
+        u[53 + 2 * i] = -angle.sin();
+    }
+}
+
+/// The three bands and the beat, where their tracks stand at `time`.
+fn bands(u: &[f32; SHADER_UNIFORMS], time: f32) -> [f32; 4] {
+    std::array::from_fn(|k| track_at(u, k, time))
+}
 
 /// The palette as a gradient running along a fill, a glint passing through
 /// it: a progress bar's fill, the chosen tab's rule. Uniforms: 0 brat's
@@ -894,6 +992,16 @@ static PARTY: ShaderProgram = ShaderProgram {
     msl: concat!(
         prism_msl!(),
         r#"
+constant float3 KOAN_HEARTS[14] = {
+    float3(0.269174, 0.432807, 0.234943), float3(0.549559, 0.278070, 0.406280),
+    float3(0.020584, 0.668999, 0.341946), float3(0.141526, 0.118792, 0.346674),
+    float3(0.290872, 0.177370, 0.235926), float3(0.926131, 0.635417, 0.317249),
+    float3(0.576866, 0.542752, 0.511395), float3(0.317997, 0.770008, 0.255877),
+    float3(0.202549, 0.438551, 0.122110), float3(0.046405, 0.965378, 0.275706),
+    float3(0.610435, 0.541890, 0.763894), float3(0.957714, 0.993629, 0.800359),
+    float3(0.639136, 0.583277, 0.784036), float3(0.746825, 0.054642, 0.633860)
+};
+
 float koan_dot2(float2 v) {
     return dot(v, v);
 }
@@ -917,59 +1025,65 @@ float koan_party_blend(thread float3 &colour, thread float &alpha, float3 c, flo
 
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float s = u[10];
-    float low = koan_track(u, 0, time);
-    float high = koan_track(u, 2, time);
-    float beat = pow(koan_track(u, 3, time), 0.6);
+    float low = u[16];
+    float high = u[17];
+    float beat = u[18];
     float3 colour = float3(0.0);
     float alpha = 0.0;
-    // Lasers from the top corners, criss-crossing.
+    // Lasers from the top corners, criss-crossing, their directions from
+    // `party_prepare`. Past 32 points from a beam its glow is under a
+    // level, and the pixel goes on.
     for (int i = 0; i < 6; i++) {
         float fi = float(i);
-        float side = i < 3 ? 1.0 : -1.0;
         float2 origin = float2(i < 3 ? 0.0 : size.x, -10.0 * s);
-        float theta = 0.25 + 0.55 * (0.5 + 0.5 * sin(time * (1.1 + 0.31 * fi) + fi * 2.1));
-        float2 dir = float2(sin(theta) * side, cos(theta));
+        float2 dir = float2(u[20 + 2 * i], u[21 + 2 * i]);
         float2 rel = position - origin;
         float along = dot(rel, dir);
         if (along > 0.0) {
             float across = abs(rel.x * dir.y - rel.y * dir.x);
-            float beam = exp(-across / (1.4 * s)) + 0.35 * exp(-across / (7.0 * s));
-            koan_party_blend(colour, alpha, mix(koan_prism(fi / 6.0 + time * 0.12, u[4]), float3(1.0), 0.25), beam * (0.25 + 0.45 * high));
+            if (across < 32.0 * s) {
+                float beam = exp(-across / (1.4 * s)) + 0.35 * exp(-across / (7.0 * s));
+                koan_party_blend(colour, alpha, mix(koan_prism(fi / 6.0 + time * 0.12, u[4]), float3(1.0), 0.25), beam * (0.25 + 0.45 * high));
+            }
         }
     }
     // Pyro: flames shooting up from the foot on each beat.
     float from_foot = size.y - position.y;
-    for (int k = 0; k < 5; k++) {
-        float fk = float(k);
-        float cx = size.x * (0.1 + 0.2 * fk);
-        float h = size.y * (0.08 + 0.5 * beat) * (0.6 + 0.4 * low) * (0.8 + 0.2 * sin(fk * 3.7 + time * 9.0));
-        if (from_foot < h) {
-            float rise = from_foot / max(h, 1.0);
-            float width = s * (34.0 * (1.0 - rise) + 4.0);
-            float flicker = koan_prism_hash(floor(float2((position.x - cx) / (5.0 * s), (from_foot - time * 520.0 * s) / (9.0 * s))));
-            float flame = (1.0 - smoothstep(width * 0.5, width, abs(position.x - cx))) * (0.55 + 0.45 * flicker);
-            float3 hot = u[4] > 0.5
-                ? mix(float3(0.85, 1.0, 0.5), float3(0.54, 0.81, 0.0), rise)
-                : mix(mix(float3(1.0, 1.0, 0.85), float3(1.0, 0.75, 0.1), smoothstep(0.0, 0.4, rise)), float3(1.0, 0.18, 0.6), smoothstep(0.4, 1.0, rise));
-            koan_party_blend(colour, alpha, hot, flame * (1.0 - rise * 0.6) * 0.9);
+    float tallest = size.y * (0.08 + 0.5 * beat) * (0.6 + 0.4 * low);
+    if (from_foot < tallest) {
+        for (int k = 0; k < 5; k++) {
+            float fk = float(k);
+            float cx = size.x * (0.1 + 0.2 * fk);
+            float h = tallest * u[32 + k];
+            if (from_foot < h) {
+                float rise = from_foot / max(h, 1.0);
+                float width = s * (34.0 * (1.0 - rise) + 4.0);
+                float off = abs(position.x - cx);
+                if (off < width) {
+                    float flicker = koan_prism_hash(floor(float2((position.x - cx) / (5.0 * s), (from_foot - time * 520.0 * s) / (9.0 * s))));
+                    float flame = (1.0 - smoothstep(width * 0.5, width, off)) * (0.55 + 0.45 * flicker);
+                    float3 hot = u[4] > 0.5
+                        ? mix(float3(0.85, 1.0, 0.5), float3(0.54, 0.81, 0.0), rise)
+                        : mix(mix(float3(1.0, 1.0, 0.85), float3(1.0, 0.75, 0.1), smoothstep(0.0, 0.4, rise)), float3(1.0, 0.18, 0.6), smoothstep(0.4, 1.0, rise));
+                    koan_party_blend(colour, alpha, hot, flame * (1.0 - rise * 0.6) * 0.9);
+                }
+            }
         }
     }
-    // Hearts floating up through the window, swaying.
+    // Hearts floating up through the window, swaying: each one's place in
+    // its climb and its sway from `party_prepare`.
     for (int j = 0; j < 14; j++) {
-        float fj = float(j);
-        float h1 = koan_prism_hash(float2(fj, 1.3));
-        float h2 = koan_prism_hash(float2(2.9, fj));
-        float h3 = koan_prism_hash(float2(fj * 0.7, 5.1));
-        float radius = s * (16.0 + 22.0 * h2) * (1.0 + 0.15 * beat);
+        float3 h = KOAN_HEARTS[j];
+        float radius = s * (16.0 + 22.0 * h.y) * (1.0 + 0.15 * beat);
         float travel = size.y + 4.0 * radius;
-        float y = size.y + 2.0 * radius - fract(time * (0.04 + 0.05 * h1) + h3) * travel;
-        float x = h1 * size.x + sin(time * (0.6 + h2) + fj) * 40.0 * s;
+        float y = size.y + 2.0 * radius - u[40 + j] * travel;
+        float x = h.x * size.x + u[56 + j] * 40.0 * s;
         float2 p = float2(position.x - x, y - position.y) / radius + float2(0.0, 0.5);
         if (abs(p.x) < 1.2 && p.y > -0.3 && p.y < 1.3) {
             float d = koan_heart(p);
             float body = 1.0 - smoothstep(-0.02, 0.02, d);
             float shine = (1.0 - smoothstep(0.0, 0.12, length(p - float2(-0.28, 0.72)))) * body;
-            float3 c = mix(koan_prism(h3 + time * 0.05, u[4]), float3(1.0, 0.6, 0.8), 0.3);
+            float3 c = mix(koan_prism(h.z + time * 0.05, u[4]), float3(1.0, 0.6, 0.8), 0.3);
             koan_party_blend(colour, alpha, mix(c, float3(1.0), shine * 0.8), body * 0.8);
         }
     }
@@ -980,6 +1094,16 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
+const KOAN_HEARTS = array<vec3<f32>, 14>(
+    vec3<f32>(0.269174, 0.432807, 0.234943), vec3<f32>(0.549559, 0.278070, 0.406280),
+    vec3<f32>(0.020584, 0.668999, 0.341946), vec3<f32>(0.141526, 0.118792, 0.346674),
+    vec3<f32>(0.290872, 0.177370, 0.235926), vec3<f32>(0.926131, 0.635417, 0.317249),
+    vec3<f32>(0.576866, 0.542752, 0.511395), vec3<f32>(0.317997, 0.770008, 0.255877),
+    vec3<f32>(0.202549, 0.438551, 0.122110), vec3<f32>(0.046405, 0.965378, 0.275706),
+    vec3<f32>(0.610435, 0.541890, 0.763894), vec3<f32>(0.957714, 0.993629, 0.800359),
+    vec3<f32>(0.639136, 0.583277, 0.784036), vec3<f32>(0.746825, 0.054642, 0.633860)
+);
+
 fn koan_dot2(v: vec2<f32>) -> f32 {
     return dot(v, v);
 }
@@ -992,66 +1116,75 @@ fn koan_heart(q: vec2<f32>) -> f32 {
     return sqrt(min(koan_dot2(p - vec2<f32>(0.0, 1.0)), koan_dot2(p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
 }
 
+fn koan_uniform(b: ptr<function, array<vec4<f32>, 20>>, i: u32) -> f32 {
+    return (*b)[i / 4u][i % 4u];
+}
+
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let s = u[2].z;
-    let low = koan_track(u, 0u, time);
-    let high = koan_track(u, 2u, time);
-    let beat = pow(koan_track(u, 3u, time), 0.6);
+    var b = u;
+    let s = b[2].z;
+    let low = b[4].x;
+    let high = b[4].y;
+    let beat = b[4].z;
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0u; i < 6u; i++) {
         let fi = f32(i);
-        let side = select(-1.0, 1.0, i < 3);
-        let origin = vec2<f32>(select(size.x, 0.0, i < 3), -10.0 * s);
-        let theta = 0.25 + 0.55 * (0.5 + 0.5 * sin(time * (1.1 + 0.31 * fi) + fi * 2.1));
-        let dir = vec2<f32>(sin(theta) * side, cos(theta));
+        let origin = vec2<f32>(select(size.x, 0.0, i < 3u), -10.0 * s);
+        let pair = b[5u + i / 2u];
+        let dir = select(pair.xy, pair.zw, i % 2u == 1u);
         let rel = position - origin;
         let along = dot(rel, dir);
         if (along > 0.0) {
             let across = abs(rel.x * dir.y - rel.y * dir.x);
-            let beam = exp(-across / (1.4 * s)) + 0.35 * exp(-across / (7.0 * s));
-            let a = beam * (0.25 + 0.45 * high);
-            if (a > 0.0) {
-                colour = mix(colour, mix(koan_prism(fi / 6.0 + time * 0.12, u[1].x), vec3<f32>(1.0), 0.25), a / max(alpha + a, 1e-4));
-                alpha = max(alpha, a);
+            if (across < 32.0 * s) {
+                let beam = exp(-across / (1.4 * s)) + 0.35 * exp(-across / (7.0 * s));
+                let a = beam * (0.25 + 0.45 * high);
+                if (a > 0.0) {
+                    colour = mix(colour, mix(koan_prism(fi / 6.0 + time * 0.12, b[1].x), vec3<f32>(1.0), 0.25), a / max(alpha + a, 1e-4));
+                    alpha = max(alpha, a);
+                }
             }
         }
     }
     let from_foot = size.y - position.y;
-    for (var k = 0; k < 5; k++) {
-        let fk = f32(k);
-        let cx = size.x * (0.1 + 0.2 * fk);
-        let h = size.y * (0.08 + 0.5 * beat) * (0.6 + 0.4 * low) * (0.8 + 0.2 * sin(fk * 3.7 + time * 9.0));
-        if (from_foot < h) {
-            let rise = from_foot / max(h, 1.0);
-            let width = s * (34.0 * (1.0 - rise) + 4.0);
-            let flicker = koan_prism_hash(floor(vec2<f32>((position.x - cx) / (5.0 * s), (from_foot - time * 520.0 * s) / (9.0 * s))));
-            let flame = (1.0 - smoothstep(width * 0.5, width, abs(position.x - cx))) * (0.55 + 0.45 * flicker);
-            let fire = mix(mix(vec3<f32>(1.0, 1.0, 0.85), vec3<f32>(1.0, 0.75, 0.1), smoothstep(0.0, 0.4, rise)), vec3<f32>(1.0, 0.18, 0.6), smoothstep(0.4, 1.0, rise));
-            let lime = mix(vec3<f32>(0.85, 1.0, 0.5), vec3<f32>(0.54, 0.81, 0.0), rise);
-            let hot = select(fire, lime, u[1].x > 0.5);
-            let a = flame * (1.0 - rise * 0.6) * 0.9;
-            if (a > 0.0) {
-                colour = mix(colour, hot, a / max(alpha + a, 1e-4));
-                alpha = max(alpha, a);
+    let tallest = size.y * (0.08 + 0.5 * beat) * (0.6 + 0.4 * low);
+    if (from_foot < tallest) {
+        for (var k = 0u; k < 5u; k++) {
+            let fk = f32(k);
+            let cx = size.x * (0.1 + 0.2 * fk);
+            let h = tallest * koan_uniform(&b, 32u + k);
+            if (from_foot < h) {
+                let rise = from_foot / max(h, 1.0);
+                let width = s * (34.0 * (1.0 - rise) + 4.0);
+                let off = abs(position.x - cx);
+                if (off < width) {
+                    let flicker = koan_prism_hash(floor(vec2<f32>((position.x - cx) / (5.0 * s), (from_foot - time * 520.0 * s) / (9.0 * s))));
+                    let flame = (1.0 - smoothstep(width * 0.5, width, off)) * (0.55 + 0.45 * flicker);
+                    let fire = mix(mix(vec3<f32>(1.0, 1.0, 0.85), vec3<f32>(1.0, 0.75, 0.1), smoothstep(0.0, 0.4, rise)), vec3<f32>(1.0, 0.18, 0.6), smoothstep(0.4, 1.0, rise));
+                    let lime = mix(vec3<f32>(0.85, 1.0, 0.5), vec3<f32>(0.54, 0.81, 0.0), rise);
+                    let hot = select(fire, lime, b[1].x > 0.5);
+                    let a = flame * (1.0 - rise * 0.6) * 0.9;
+                    if (a > 0.0) {
+                        colour = mix(colour, hot, a / max(alpha + a, 1e-4));
+                        alpha = max(alpha, a);
+                    }
+                }
             }
         }
     }
-    for (var j = 0; j < 14; j++) {
-        let fj = f32(j);
-        let h1 = koan_prism_hash(vec2<f32>(fj, 1.3));
-        let h2 = koan_prism_hash(vec2<f32>(2.9, fj));
-        let h3 = koan_prism_hash(vec2<f32>(fj * 0.7, 5.1));
-        let radius = s * (16.0 + 22.0 * h2) * (1.0 + 0.15 * beat);
+    for (var j = 0u; j < 14u; j++) {
+        let h = KOAN_HEARTS[j];
+        let radius = s * (16.0 + 22.0 * h.y) * (1.0 + 0.15 * beat);
         let travel = size.y + 4.0 * radius;
-        let y = size.y + 2.0 * radius - fract(time * (0.04 + 0.05 * h1) + h3) * travel;
-        let x = h1 * size.x + sin(time * (0.6 + h2) + fj) * 40.0 * s;
+        let y = size.y + 2.0 * radius - koan_uniform(&b, 40u + j) * travel;
+        let x = h.x * size.x + koan_uniform(&b, 56u + j) * 40.0 * s;
         let p = vec2<f32>(position.x - x, y - position.y) / radius + vec2<f32>(0.0, 0.5);
         if (abs(p.x) < 1.2 && p.y > -0.3 && p.y < 1.3) {
             let d = koan_heart(p);
             let body = 1.0 - smoothstep(-0.02, 0.02, d);
             let shine = (1.0 - smoothstep(0.0, 0.12, length(p - vec2<f32>(-0.28, 0.72)))) * body;
-            let c = mix(koan_prism(h3 + time * 0.05, u[1].x), vec3<f32>(1.0, 0.6, 0.8), 0.3);
+            let c = mix(koan_prism(h.z + time * 0.05, b[1].x), vec3<f32>(1.0, 0.6, 0.8), 0.3);
             let a = body * 0.8;
             if (a > 0.0) {
                 colour = mix(colour, mix(c, vec3<f32>(1.0), shine * 0.8), a / max(alpha + a, 1e-4));
@@ -1059,12 +1192,58 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             }
         }
     }
-    return vec4<f32>(colour, clamp(alpha * u[1].z, 0.0, 0.9));
+    return vec4<f32>(colour, clamp(alpha * b[1].z, 0.0, 0.9));
 }
 "#
     ),
-    prepare: None,
+    prepare: Some(party_prepare),
 };
+
+/// The hearts' places across the window, sizes and colours (`h1`, `h2`,
+/// `h3` of the party's hash), the same table as the programs'.
+const HEARTS: [[f32; 3]; 14] = [
+    [0.269174, 0.432807, 0.234943],
+    [0.549559, 0.278070, 0.406280],
+    [0.020584, 0.668999, 0.341946],
+    [0.141526, 0.118792, 0.346674],
+    [0.290872, 0.177370, 0.235926],
+    [0.926131, 0.635417, 0.317249],
+    [0.576866, 0.542752, 0.511395],
+    [0.317997, 0.770008, 0.255877],
+    [0.202549, 0.438551, 0.122110],
+    [0.046405, 0.965378, 0.275706],
+    [0.610435, 0.541890, 0.763894],
+    [0.957714, 0.993629, 0.800359],
+    [0.639136, 0.583277, 0.784036],
+    [0.746825, 0.054642, 0.633860],
+];
+
+/// What every pixel of the party shares, worked out once a present: the low
+/// and high bands and the beat (16 to 18), the lasers' directions (20 to
+/// 31), each flame's height as a share of the tallest (32 to 36), each
+/// heart's place in its climb (40 to 53) and its sway (56 to 69).
+fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
+    let [low, _, high, beat] = bands(u, time);
+    u[16] = low;
+    u[17] = high;
+    u[18] = beat.max(0.0).powf(0.6);
+    for i in 0..6 {
+        let fi = i as f32;
+        let side = if i < 3 { 1.0 } else { -1.0 };
+        let theta = 0.25 + 0.55 * (0.5 + 0.5 * (time * (1.1 + 0.31 * fi) + fi * 2.1).sin());
+        let (sin, cos) = theta.sin_cos();
+        u[20 + 2 * i] = sin * side;
+        u[21 + 2 * i] = cos;
+    }
+    for k in 0..5 {
+        let fk = k as f32;
+        u[32 + k] = 0.8 + 0.2 * (fk * 3.7 + time * 9.0).sin();
+    }
+    for (j, [h1, h2, h3]) in HEARTS.into_iter().enumerate() {
+        u[40 + j] = (time * (0.04 + 0.05 * h1) + h3).fract();
+        u[56 + j] = (time * (0.6 + h2) + j as f32).sin();
+    }
+}
 
 /// How long a beat takes to fade.
 const BEAT_DECAY: Duration = Duration::from_millis(700);

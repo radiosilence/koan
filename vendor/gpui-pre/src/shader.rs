@@ -343,6 +343,16 @@ pub fn shader_epoch() -> Instant {
 // KOAN: the present clock (#1859).
 static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
 
+// KOAN: (#2034) a track's value from a program's uniforms as `prepare` is
+// handed them, as the prelude's `koan_track` reads it: a value the same for
+// every pixel worked out once a present on the CPU.
+/// Where track `k` of `uniforms` stands at `time`, both as `prepare` is
+/// handed them.
+pub fn track_at(uniforms: &[f32; SHADER_UNIFORMS], k: usize, time: f32) -> f32 {
+    let at = SHADER_PLAIN + k * TRACK_FLOATS;
+    Track::decode(&uniforms[at..at + TRACK_FLOATS]).at(time)
+}
+
 // KOAN: (#2034) each command buffer's time on the GPU, kept while a
 // measurement asks for it: what a frame of shaders costs, read headlessly.
 static GPU_TIMING: AtomicBool = AtomicBool::new(false);
