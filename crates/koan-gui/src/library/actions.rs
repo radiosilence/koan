@@ -376,12 +376,18 @@ pub fn menu(
             .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
     );
     // Moving the pick's files where a pattern puts them, previewed first.
-    let (organise_lib, organise_items) = (lib.clone(), items.clone());
-    menu = menu.separator().item(
-        MenuEntry::new("organise…")
-            .icon(Icon::Organize)
-            .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
-    );
+    let (organise_lib, organise_items, organise_after) =
+        (lib.clone(), items.clone(), after.clone());
+    menu =
+        menu.separator()
+            .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click(
+                move |_, window, cx| {
+                    organise(&organise_lib, &organise_items, window, cx);
+                    if let Some(after) = &organise_after {
+                        after(cx);
+                    }
+                },
+            ));
     // A remote library's files on this device: fetched now, or let go.
     let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
     let (drop_lib, drop_items) = (lib.clone(), items.clone());
