@@ -1,0 +1,1 @@
+- **koan-kit builds again.** Its test helpers are compiled only for tests.
