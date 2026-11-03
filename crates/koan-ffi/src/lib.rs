@@ -8453,7 +8453,10 @@ mod clock_stream_tests {
             None,
             "the engine gone"
         );
+    }
+}
 
+#[cfg(test)]
 mod clock_end_tests {
     use std::sync::Arc;
     use std::sync::mpsc;
@@ -8559,7 +8562,10 @@ mod clock_end_tests {
             .expect("the seek's anchor");
         assert!(seek.is_some_and(|ms| (300..400).contains(&ms)), "{seek:?}");
         let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
-        assert!(tick.is_some_and(|ms| (990..1_100).contains(&ms)), "{tick:?}");
+        assert!(
+            tick.is_some_and(|ms| (990..1_100).contains(&ms)),
+            "{tick:?}"
+        );
     }
 
     /// Paused, the clock waits; resumed, it answers at once and counts on.
@@ -8582,8 +8588,14 @@ mod clock_end_tests {
         let resumed = got
             .recv_timeout(Duration::from_secs(1))
             .expect("the resume's anchor");
-        assert!(resumed.is_some_and(|ms| (4_200..4_300).contains(&ms)), "{resumed:?}");
+        assert!(
+            resumed.is_some_and(|ms| (4_200..4_300).contains(&ms)),
+            "{resumed:?}"
+        );
         let tick = next_within(stream, Duration::from_millis(1_200)).flatten();
-        assert!(tick.is_some_and(|ms| (4_990..5_100).contains(&ms)), "{tick:?}");
+        assert!(
+            tick.is_some_and(|ms| (4_990..5_100).contains(&ms)),
+            "{tick:?}"
+        );
     }
 }
