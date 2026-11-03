@@ -19,7 +19,9 @@ use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
+use crate::queue::{DraggedRows, QueueDragTracks};
 use crate::theme::{self, Icon, Space, Tone};
+use koan_runtime::TrackSet;
 
 const LIBRARY: [(Route, &str, Icon); 8] = [
     (Route::Albums, "albums", Icon::Album),
@@ -578,6 +580,21 @@ impl Render for Sidebar {
                         .when(!playlist.readonly, |row| {
                             row.drop_highlight::<ExternalPaths>(&p.look)
                                 .drop_highlight::<PlayableDrag>(&p.look)
+                                .drop_highlight::<DraggedRows>(&p.look)
+                                .accept({
+                                    let id = playlist.id;
+                                    move |_: &DraggedRows, _, cx: &mut App| {
+                                        let ids = cx.global::<QueueDragTracks>().0.clone();
+                                        if !ids.is_empty() {
+                                            command(cx, "add to playlist", move |e| {
+                                                e.add_to_playlist(
+                                                    id,
+                                                    vec![TrackSet::Tracks { ids }],
+                                                )
+                                            });
+                                        }
+                                    }
+                                })
                                 .accept(cx.listener({
                                     let id = playlist.id;
                                     move |_, paths: &ExternalPaths, _, cx| {

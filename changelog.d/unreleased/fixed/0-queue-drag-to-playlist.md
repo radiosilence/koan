@@ -1,0 +1,1 @@
+- **Queue rows can be dragged onto a playlist again.** Dropping rows from the queue on a playlist in the sidebar adds their tracks.
