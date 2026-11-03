@@ -333,12 +333,12 @@ impl Transport {
         help: String,
         enabled: bool,
         p: &Paint,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         self.menus.trigger(
             which,
-            text_button(icon, label, p)
-                .id(label)
+            text_button(icon, label, p, window, cx)
                 .tooltip(tip(help))
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
@@ -351,7 +351,7 @@ impl Transport {
     /// controlled its name beside it in an accent badge, since everything the
     /// window shows is then that device's. A device out of reach turns the
     /// glyph into a warning in `bad`.
-    fn control_button(&self, p: &Paint, cx: &mut Context<Self>) -> Div {
+    fn control_button(&self, p: &Paint, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let view = &self.devices.read(cx).0;
         let away = matches!(
             view.target_reach,
@@ -371,6 +371,7 @@ impl Transport {
                 "play on another device".to_owned(),
                 true,
                 p,
+                window,
                 cx,
             );
         };
@@ -385,8 +386,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Devices,
-            trailing_item(p, false)
-                .id("devices")
+            trailing_item(div().id("devices"), p, false)
                 .tooltip(tip(if away {
                     format!("{name} is out of reach")
                 } else {
@@ -403,24 +403,32 @@ impl Transport {
 
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
-    fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
+    fn eq_button(
+        &self,
+        eq: &EqState,
+        p: &Paint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let plain = eq.flat || eq.off;
         let color = if plain { p.ink } else { p.accent_text };
+        let glyph = if plain { p.ink } else { p.accent };
+        // Quieter under the pointer, back over `LEAVE` once it has gone.
+        let (base, glyph) =
+            crate::components::hover_tint("eq", glyph, glyph.opacity(0.8), window, cx);
         let summary: SharedString = help(&eq.summary(), &ShowEq, cx).into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(if plain { p.ink } else { p.accent })
+                .color(glyph)
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()
         };
         self.menus.trigger(
             Menu::Eq,
-            trailing_item(p, p.look.icons)
-                .id("eq")
+            trailing_item(base, p, p.look.icons)
                 .text_color(color)
-                .hover(|s| s.opacity(0.8))
                 .child(child)
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
@@ -694,22 +702,25 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
 const SEEK_KEY_MS: u64 = 5_000;
 
 /// The theme's text button, or with icons its icon button: `muted`, `ink`
-/// under the pointer.
-fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
-    let ink = p.ink;
+/// under the pointer, leaving over `LEAVE` as the kit's controls do.
+fn text_button(
+    icon: Icon,
+    label: &'static str,
+    p: &Paint,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let (base, color) = crate::components::hover_tint(label, p.muted, p.ink, window, cx);
     let child = if p.look.icons {
         KoanIcon::new(icon)
             .points(TransportMetrics::trailing_icon(&p.look))
-            .color(p.muted)
-            .hover_color(TEXT_BUTTON, ink)
+            .color(color)
             .into_any_element()
     } else {
         div().child(label).into_any_element()
     };
-    trailing_item(p, p.look.icons)
-        .group(TEXT_BUTTON)
-        .text_color(p.muted)
-        .hover(move |s| s.text_color(ink))
+    trailing_item(base, p, p.look.icons)
+        .text_color(color)
         .child(child)
 }
 
@@ -718,7 +729,7 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
 /// A glyph alone reaches further, over the gap, so it is at least `HIT` wide
 /// to click: padding taken back by an equal negative margin, so the item's
 /// own bounds grow and nothing moves.
-fn trailing_item(p: &Paint, glyph_only: bool) -> Div {
+fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<Div> {
     let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
     let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
     let reach = if glyph_only {
@@ -726,8 +737,7 @@ fn trailing_item(p: &Paint, glyph_only: bool) -> Div {
     } else {
         gap
     };
-    div()
-        .flex()
+    base.flex()
         .items_center()
         .justify_center()
         .h(theme::HIT)
@@ -736,9 +746,6 @@ fn trailing_item(p: &Paint, glyph_only: bool) -> Div {
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
 }
-
-/// The group a text button's glyph follows the pointer by.
-const TEXT_BUTTON: &str = "transport-text-button";
 
 /// A transport control's tooltip.
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
@@ -1044,9 +1051,10 @@ impl Render for Transport {
                 },
                 true,
                 &p,
+                window,
                 cx,
             ))
-            .child(self.control_button(&p, cx))
+            .child(self.control_button(&p, window, cx))
             .child(self.menu_button(
                 Menu::Output,
                 Icon::Speaker,
@@ -1054,6 +1062,7 @@ impl Render for Transport {
                 "output".to_owned(),
                 true,
                 &p,
+                window,
                 cx,
             ))
             // This device's own output's EQ; another device's is chosen there.
@@ -1071,7 +1080,7 @@ impl Render for Transport {
                             // output to the other one.
                             .is_some_and(|o| o.owner.is_none())
                     })
-                    .map(|eq| self.eq_button(&eq, &p, cx)),
+                    .map(|eq| self.eq_button(&eq, &p, window, cx)),
             );
 
         let ring = crate::components::focus_ring(&self.focus, window, cx);

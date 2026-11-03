@@ -479,6 +479,24 @@ pub(crate) fn hover_fill(
     (state, fill(color, &lit))
 }
 
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
+}
+
 /// A row a click acts on, lit under the pointer as controls are (`surface`,
 /// leaving over `Motion::LEAVE`): its content goes in as children, over the
 /// fill.
