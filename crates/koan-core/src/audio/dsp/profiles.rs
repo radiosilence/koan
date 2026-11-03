@@ -699,7 +699,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                 };
                 Summary {
                     name: p.name.clone(),
-                    devices: p.devices.clone(),
+                    devices: used_on(p, &cfg.dsp.tunings),
                     bands: p.filters.len(),
                     layers: p.layers.len(),
                     rates,
@@ -1045,6 +1045,18 @@ pub struct Detail {
 }
 
 /// Everything in the profile `name`.
+/// The outputs a profile plays on: those it corrects, then those whose
+/// filters hold it.
+fn used_on(profile: &DspProfile, tunings: &[config::DspOutputTuning]) -> Vec<String> {
+    let mut devices = profile.devices.clone();
+    for t in tunings.iter().filter(|t| t.tuning == profile.name) {
+        if !devices.contains(&t.device) {
+            devices.push(t.device.clone());
+        }
+    }
+    devices
+}
+
 pub fn detail(name: &str) -> Option<Detail> {
     let cfg = Config::cached();
     let profile = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
@@ -1104,7 +1116,7 @@ pub fn detail(name: &str) -> Option<Detail> {
     let chain_summary = summary(name).unwrap_or_default();
     Some(Detail {
         name: profile.name.clone(),
-        devices: profile.devices.clone(),
+        devices: used_on(profile, &cfg.dsp.tunings),
         source: profile.source.clone(),
         filters: profile.filters.clone(),
         impulses,
@@ -4029,6 +4041,26 @@ fn slug(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::audio::dsp::impulse::{Impulse, Route};
+
+    #[test]
+    fn a_profile_is_used_where_it_corrects_and_where_it_is_in_the_filters() {
+        let profile = DspProfile {
+            name: "Warm".into(),
+            devices: vec!["Amp".into()],
+            ..Default::default()
+        };
+        let tuning = |device: &str, tuning: &str| config::DspOutputTuning {
+            device: device.into(),
+            tuning: tuning.into(),
+            on: true,
+        };
+        let tunings = [
+            tuning("Desk DAC", "Warm"),
+            tuning("Amp", "Warm"),
+            tuning("Speakers", "Bright"),
+        ];
+        assert_eq!(used_on(&profile, &tunings), ["Amp", "Desk DAC"]);
+    }
 
     #[test]
     fn an_import_lands_beside_the_config_and_merges_by_name() {
