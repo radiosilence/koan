@@ -5,10 +5,10 @@
 //! failure keeps its reason.
 //!
 //! The list follows the Transfers slice, which moves a handful of times in a
-//! transfer's life. A running row's bar reads the bytes each frame it is
-//! drawn (`transfers::progress`) and asks for the next one; nothing running,
-//! or the page not on stage, and no frame is asked for. The rate beside it is
-//! the Figures slice's, a few readings a second.
+//! transfer's life. A running row's bar is its transfer's glide
+//! (`transfers::bar`): the share at each reading and the rate the bytes
+//! arrive at, drawn on the GPU between readings with no frame drawn. The rate
+//! beside it is the Figures slice's, about fifteen readings a second.
 //!
 //! Every write says what it changes first: cancelling fails the queue
 //! entries waiting on the track, removing a file deletes it, and clearing
@@ -121,10 +121,8 @@ impl DownloadsPage {
             (None, false) => format!("{} — {}", t.artist, t.album),
         };
         let bar = (t.state == TransferState::Running).then(|| {
-            // The bytes land between the list's own redraws: read again on
-            // the next frame, for as long as this row is drawn.
-            window.request_animation_frame();
-            ProgressBar::new(("bar", id as u64), crate::transfers::progress(id, cx))
+            let glide = crate::transfers::bar(id, cx);
+            ProgressBar::new(("bar", id as u64), Some(glide.value())).glide(&glide)
         });
         let row = TableRow::new(("download", id as u64), RowKind::Text)
             .title(

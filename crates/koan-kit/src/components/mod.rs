@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod arrive;
 mod availability;
 mod badge;
 mod banner;
@@ -78,6 +79,7 @@ pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
     ShaderProgram, Track,
 };
+pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;

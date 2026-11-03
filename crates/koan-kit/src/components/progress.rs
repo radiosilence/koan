@@ -52,6 +52,7 @@ static START: OnceLock<Instant> = OnceLock::new();
 pub struct ProgressBar {
     id: ElementId,
     fraction: Option<f32>,
+    glide: Option<super::Glide>,
 }
 
 impl ProgressBar {
@@ -59,7 +60,16 @@ impl ProgressBar {
         Self {
             id: id.into(),
             fraction,
+            glide: None,
         }
+    }
+
+    /// Filled to `glide`'s value as it moves, on the GPU, where the renderer
+    /// draws shaders: a transfer's bar, fed by its reports, with no frame
+    /// drawn between them. Elsewhere the bar shows `fraction`.
+    pub fn glide(mut self, glide: &super::Glide) -> Self {
+        self.glide = Some(glide.clone());
+        self
     }
 }
 
@@ -73,6 +83,11 @@ impl RenderOnce for ProgressBar {
             .bg(look.palette.rule.hsla())
             .relative()
             .overflow_hidden();
+        if let Some(glide) = self.glide.filter(|_| SHADED) {
+            return track
+                .child(super::slider::glide_fill(glide, accent, BAR))
+                .into_any_element();
+        }
         match self.fraction {
             Some(fraction) => track
                 .child(

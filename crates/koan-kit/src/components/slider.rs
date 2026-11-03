@@ -154,6 +154,26 @@ impl Glide {
     }
 }
 
+/// A bar `height` points high filled to `glide`'s value in `color`, drawn
+/// on the GPU at present time: the downloads page's bars.
+pub(crate) fn glide_fill(glide: Glide, color: Hsla, height: f32) -> impl IntoElement {
+    canvas(
+        move |_, window, cx| {
+            glide.style(&Style {
+                fill: height * window.scale_factor(),
+                thumb: 0.0,
+                inset: 0.0,
+                fill_color: color,
+                thumb_color: color,
+            });
+            glide.0.attach(false, window, cx);
+            glide
+        },
+        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
+    )
+    .size_full()
+}
+
 struct Style {
     fill: f32,
     /// The thumb's side, or 0 while it is hidden.

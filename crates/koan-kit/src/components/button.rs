@@ -6,8 +6,7 @@ use gpui_kit::{
 };
 
 use super::{
-    Handler, accessible, answers_click, child, fade, fill, focus, pointer, ring, track,
-    transition,
+    Handler, accessible, answers_click, child, fade, fill, focus, pointer, ring, track, transition,
 };
 use crate::theme::{
     DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TOOLBAR_BUTTON, Tone, TypeRole,
