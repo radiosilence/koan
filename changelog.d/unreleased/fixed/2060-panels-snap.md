@@ -1,0 +1,1 @@
+- **Sidebar and lyrics panel.** They now appear and disappear at once instead of sliding, so the page beside them is no longer laid out at its final width before the slide ends, and a closed lyrics panel can no longer flash back for a frame.

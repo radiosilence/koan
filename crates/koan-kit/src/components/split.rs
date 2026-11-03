@@ -4,18 +4,16 @@
 //! greatest widths, and a double click puts it back. The width is the
 //! owner's, which keeps it (with the window's bounds, for the sidebar).
 //!
-//! Hidden and shown again, the column slides: its width eases to nothing
-//! and back over `Motion::SETTLE`, its content laid out at full width and
-//! clipped, so nothing in it reflows as it goes. At once under Reduce
-//! Motion.
+//! Hidden and shown, the column appears and disappears at once, so the page
+//! beside it is laid out once, not at every width in between.
 
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{SHADED, child};
-use crate::theme::{Look, Motion};
+use super::child;
+use crate::theme::Look;
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
@@ -76,8 +74,7 @@ impl SplitView {
         self
     }
 
-    /// Whether the leading column shows; it slides in and out as this
-    /// changes, so the owner hands it over whether shown or not.
+    /// Whether the leading column shows.
     pub fn shown(mut self, shown: bool) -> Self {
         self.shown = shown;
         self
@@ -106,33 +103,9 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        // Where the renderer draws shaders, the column slides as a layer by
-        // the GPU, its slot laid out at once (#1859); elsewhere its width
-        // eases on frames.
-        let slide = SHADED.then(|| {
-            let travel = -f32::from(self.width) * window.scale_factor();
-            super::layer::sliding(child(&self.id, "shown"), self.shown, travel, window, cx)
-        });
-        let open = match &slide {
-            Some(slide) => {
-                if slide.laid_out {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            None => super::ease(
-                child(&self.id, "shown"),
-                self.shown,
-                Motion::SETTLE,
-                window,
-                cx,
-            ),
-        };
-        let Some(leading) = self.leading.filter(|_| open > 0.0) else {
+        let Some(leading) = self.leading.filter(|_| self.shown) else {
             return div().size_full().flex().children(self.trailing);
         };
-        let settled = self.shown && open >= 1.0;
         // Set on a press on the grip and cleared on release, without a
         // notify: nothing is drawn from it.
         let drag = window.use_keyed_state(child(&self.id, "drag"), cx, |_, _| None::<Drag>);
@@ -228,24 +201,12 @@ impl RenderOnce for SplitView {
             .flex()
             .child(
                 div()
-                    .w(width * open)
+                    .w(width)
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
                     .relative()
-                    .child(match &slide {
-                        Some(slide) => super::AnimatedLayer::new(
-                            &slide.animated,
-                            div().w(width).h_full().child(leading),
-                        )
-                        .into_any_element(),
-                        None => div().w(width).h_full().child(leading).into_any_element(),
-                    })
-                    // Sliding out, it takes no clicks: what it covers is going.
-                    .when(
-                        slide.as_ref().is_some_and(|s| s.laid_out) && !self.shown,
-                        |d| d.child(div().absolute().inset_0().occlude()),
-                    ),
+                    .child(div().w(width).h_full().child(leading)),
             )
             .child(
                 div()
@@ -256,6 +217,7 @@ impl RenderOnce for SplitView {
                     .border_color(rule)
                     .children(self.trailing),
             )
-            .when(settled, |d| d.child(follow).child(grip))
+            .child(follow)
+            .child(grip)
     }
 }

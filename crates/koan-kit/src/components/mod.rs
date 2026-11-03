@@ -65,7 +65,6 @@ mod scrollbar;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
-mod slide;
 mod slider;
 mod sparkline;
 mod spinner;
@@ -159,7 +158,6 @@ pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
-pub use slide::{Slide, SlideState};
 pub use slider::{Glide, Slider};
 pub use sparkline::Sparkline;
 pub use spinner::Spinner;
@@ -331,59 +329,6 @@ pub(crate) fn fade(
             None => off_color,
         }
     })
-}
-
-/// A panel's openness between 0 and 1, eased toward `on` over `duration`
-/// from wherever it stood and kept under `key`: what `Slide` and
-/// `SplitView::shown` lay a width out by. Layout moves on the CPU, frame by
-/// frame while it eases, until panels slide as animated layers the GPU
-/// composes. Instant with Reduce Motion.
-pub(crate) fn ease(
-    key: ElementId,
-    on: bool,
-    duration: std::time::Duration,
-    window: &mut Window,
-    cx: &mut App,
-) -> f32 {
-    struct Ease {
-        on: bool,
-        from: f32,
-        started: Option<Instant>,
-    }
-    let now = Instant::now();
-    let reduce = cx.reduce_motion();
-    let at = |e: &Ease| {
-        let target = if e.on { 1.0 } else { 0.0 };
-        match e.started {
-            Some(started) => {
-                let t = now.duration_since(started).as_secs_f32() / duration.as_secs_f32();
-                if t >= 1.0 {
-                    target
-                } else {
-                    e.from + (target - e.from) * Motion::quick_out(t)
-                }
-            }
-            None => target,
-        }
-    };
-    let state = window.use_keyed_state(key, cx, |_, _| Ease {
-        on,
-        from: 0.0,
-        started: None,
-    });
-    let (value, moving) = state.update(cx, |e, _| {
-        if e.on != on {
-            e.from = at(e);
-            e.on = on;
-            e.started = (!reduce).then_some(now);
-        }
-        let moving = e.started.is_some_and(|s| now.duration_since(s) < duration);
-        (at(e), moving)
-    });
-    if moving {
-        window.request_animation_frame();
-    }
-    value
 }
 
 /// The keyboard's focus ring, 2 points of accent standing 4 outside the
