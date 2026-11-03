@@ -16,7 +16,7 @@ use crate::components::{
     Animated, AnimatedQuad, Button, ButtonKind, CopyText, Ease, Repeat, SectionHeader, Segmented,
     ShaderProgram, Slider, Stepper,
 };
-use crate::theme::{HAIRLINE, Look, Space, Tone, TypeRole};
+use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole};
 
 const PROPERTIES: [&str; 4] = ["position", "opacity", "scale", "colour"];
 const EASES: [&str; 5] = ["linear", "in-out", "quick-out", "bézier", "spring"];
