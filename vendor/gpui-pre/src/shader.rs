@@ -441,8 +441,21 @@ impl ShaderUniforms {
         Self::default()
     }
 
-    /// Whether the value changed.
+    /// Whether the value changed. A colour slot whose four floats `index`
+    /// falls in is let go: the value written stands as written.
     pub fn set(&self, index: usize, value: f32) -> bool {
+        // KOAN: #1859.
+        let mut moved = false;
+        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
+            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
+        }
+        if moved {
+            self.changed.store(true, Ordering::Relaxed);
+        }
+        self.write(index, value) || moved
+    }
+
+    fn write(&self, index: usize, value: f32) -> bool {
         let bits = value.to_bits();
         let changed = self.values[index].swap(bits, Ordering::Relaxed) != bits;
         if changed {
@@ -571,7 +584,6 @@ impl ShaderUniforms {
     /// anything changed.
     pub fn set_color(&self, index: usize, color: Hsla) -> bool {
         let slot = crate::color_slot_of(&color).map_or(0, |slot| slot as u16 + 1);
-        let moved = self.colors[index].swap(slot, Ordering::Relaxed) != slot;
         let rgba = if slot == 0 {
             crate::Rgba::from(color)
         } else {
@@ -583,11 +595,18 @@ impl ShaderUniforms {
                 a: color.a,
             }
         };
-        let mut changed = moved;
-        for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
-            changed |= self.set(index + i, value);
+        // Any other colour these floats overlap stands no more.
+        let mut changed = false;
+        for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
+            if other != index {
+                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
+            }
         }
-        if moved {
+        for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
+            changed |= self.write(index + i, value);
+        }
+        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
+        if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
         changed

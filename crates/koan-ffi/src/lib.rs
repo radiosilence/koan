@@ -6696,6 +6696,8 @@ impl KoanEngine {
             });
         }
 
+        let baseline = state.content_version();
+
         let engine = Arc::new(Self {
             state,
             tx,
@@ -6706,9 +6708,7 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
-            session_gate: parking_lot::Mutex::new(SessionGate::Unread {
-                baseline: state.content_version(),
-            }),
+            session_gate: parking_lot::Mutex::new(SessionGate::Unread { baseline }),
             session: identity.files,
             remote_seek: Default::default(),
             playlist_history: Default::default(),
@@ -6994,7 +6994,7 @@ impl KoanEngine {
             // No player: nothing it holds can be saved over anything.
             return;
         }
-        let settle = |engine: &Self| {
+        let settle = move |engine: &Self| {
             let gate = SessionGate::settled(restored, engine.state.content_version());
             if let SessionGate::Unread { .. } = gate {
                 log::warn!("session: not restored; it is saved again once the queue is edited");

@@ -155,13 +155,6 @@ impl Sidebar {
             .map(|(field, _)| field.read(cx).focus_handle(cx))
     }
 
-    /// ⌘K and `/`: the keyboard to the search field.
-    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((field, _)) = &self.search {
-            field.update(cx, |f, cx| f.focus(window, cx));
-        }
-    }
-
     /// Draws the playlists' sleeves from the library's art cache.
     pub fn set_covers(&mut self, covers: Entity<Covers>, cx: &mut Context<Self>) {
         let id = cx.entity_id();

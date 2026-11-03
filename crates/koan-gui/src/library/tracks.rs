@@ -489,15 +489,7 @@ impl TrackList for TrackBrowser {
                 }
                 cx.notify();
             }
-            RowPart::Artist(id) => self
-                .lib
-                .nav
-                .update(cx, |n, cx| n.open(Page::Artist(id), cx)),
-            RowPart::Album(id) => self.lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
-            RowPart::Heart => self
-                .lib
-                .feed
-                .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
+            part => part.follow(track, &self.lib, cx),
         }
     }
 }
