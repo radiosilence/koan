@@ -305,35 +305,6 @@ pub fn of_queue_row(
     on_disk: bool,
     transfer: Option<TransferState>,
 ) -> Option<Availability> {
-<<<<<<< HEAD
-    Some(match status {
-        EntryStatus::PriorityPending => Availability::Pending,
-        EntryStatus::Failed => Availability::Failed,
-        EntryStatus::Downloading => Availability::Transferring(match track {
-            Some(track) => ring_for(track),
-            None => Rc::new(|_, _| {
-                let unknown = paced();
-                unknown.set_unknown();
-                unknown
-            }),
-        }),
-        _ => stored(on_server, on_disk)?,
-    })
-||||||| 5f90d95e
-    Some(match status {
-        EntryStatus::PriorityPending => Availability::Pending,
-        EntryStatus::Failed => Availability::Failed,
-        EntryStatus::Downloading => Availability::Transferring(match track {
-            Some(track) => ring_for(track),
-            None => Rc::new(|_, _| {
-                let unknown = Glide::new();
-                unknown.set_unknown();
-                unknown
-            }),
-        }),
-        _ => stored(on_server, on_disk)?,
-    })
-=======
     let waiting = matches!(transfer, None | Some(TransferState::Queued));
     match (status, track) {
         (EntryStatus::PriorityPending, _) if waiting && !on_disk => Some(Availability::Pending),
@@ -341,7 +312,6 @@ pub fn of_queue_row(
         (_, Some(track)) => of_track(track, on_server, on_disk, transfer),
         _ => stored(on_server, on_disk),
     }
->>>>>>> origin/main
 }
 
 fn stored(on_server: bool, on_disk: bool) -> Option<Availability> {
