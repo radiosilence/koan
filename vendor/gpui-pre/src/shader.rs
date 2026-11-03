@@ -353,7 +353,7 @@ fn since_epoch(at: Instant) -> i64 {
 /// While any shader on screen is `live` the window keeps its refreshes
 /// coming; otherwise it parks, and a change is seen at the next refresh,
 /// which `Window::request_present` asks for.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ShaderUniforms {
     values: [AtomicU32; SHADER_UNIFORMS],
     live: AtomicBool,
@@ -376,6 +376,24 @@ pub struct ShaderUniforms {
     moving_until: AtomicU64,
     /// The present that lands the last track at its end.
     track_landing: AtomicBool,
+}
+
+// KOAN: written out, since an array of eighty has no derived default
+// (#1859).
+impl Default for ShaderUniforms {
+    fn default() -> Self {
+        Self {
+            values: std::array::from_fn(|_| AtomicU32::new(0)),
+            live: AtomicBool::new(false),
+            continuous: AtomicBool::new(false),
+            changed: AtomicBool::new(false),
+            origin: AtomicI64::new(0),
+            until: AtomicU64::new(0),
+            landing: AtomicBool::new(false),
+            moving_until: AtomicU64::new(0),
+            track_landing: AtomicBool::new(false),
+        }
+    }
 }
 
 impl ShaderUniforms {
@@ -526,7 +544,7 @@ impl From<PaintShader> for Primitive {
 /// One shader as a renderer hands it to the GPU: its quad, its clip and its
 /// uniforms and time as they were when the frame was presented. Laid out for
 /// both Metal and WGSL: blocks of 16-byte aligned floats.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct ShaderInstance {
     /// x, y, width, height.
@@ -538,6 +556,18 @@ pub struct ShaderInstance {
     pub time: [f32; 4],
     /// The image's tile in its atlas texture, in texels: x, y, width, height.
     pub tile: [f32; 4],
+}
+
+impl Default for ShaderInstance {
+    fn default() -> Self {
+        Self {
+            bounds: [0.0; 4],
+            clip: [0.0; 4],
+            uniforms: [0.0; SHADER_UNIFORMS],
+            time: [0.0; 4],
+            tile: [0.0; 4],
+        }
+    }
 }
 
 impl ShaderInstance {
