@@ -202,13 +202,14 @@ mod tests {
 
     struct Bar {
         input: Entity<InputState>,
+        width: Pixels,
     }
 
     impl Render for Bar {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             // As the shell builds it: bare space in the middle, the page's
             // group trailing, the field leading the group.
-            div().w(px(900.)).child(
+            div().w(self.width).child(
                 Toolbar::new()
                     .leading(ToolbarButton::new("back", Icon::Back, "back"))
                     .principal(div().id("drag").size_full())
@@ -220,7 +221,11 @@ mod tests {
                                     .child(FilterField::new(&self.input)),
                             )
                             .spacer()
-                            .child(ToolbarButton::new("sort", Icon::Sort, "sort")),
+                            .child(
+                                div()
+                                    .debug_selector(|| "sort".into())
+                                    .child(ToolbarButton::new("sort", Icon::Sort, "sort")),
+                            ),
                     ),
             )
         }
@@ -235,6 +240,7 @@ mod tests {
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
             input: cx.new(|cx| InputState::new(window, cx).placeholder("filter albums")),
+            width: px(900.),
         });
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
@@ -252,6 +258,37 @@ mod tests {
             focused(cx),
             "a click at {at:?} on {field:?} focused nothing"
         );
+    }
+
+    /// In a narrow toolbar the field gives up its width, down to its
+    /// minimum, before the buttons beside it give up any.
+    #[gpui_kit::test]
+    fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|window, cx| Bar {
+            input: cx.new(|cx| InputState::new(window, cx).placeholder("filter albums")),
+            width: px(220.),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let field = cx.debug_bounds("filter").expect("field drawn");
+        let sort = cx.debug_bounds("sort").expect("button drawn");
+        assert!(
+            field.size.width < super::super::ToolbarMetrics::FIELD,
+            "the field kept its whole measure: {field:?}"
+        );
+        assert!(
+            field.size.width >= super::super::ToolbarMetrics::FIELD_MIN,
+            "the field went under its minimum: {field:?}"
+        );
+        assert!(
+            sort.size.width >= crate::theme::TOOLBAR_BUTTON,
+            "the button gave up width: {sort:?}"
+        );
+        assert!(sort.right() <= px(220.), "the button is cut off: {sort:?}");
     }
 
     struct Field {
