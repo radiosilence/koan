@@ -60,6 +60,7 @@ pub struct TileArt {
     heart: Option<(bool, bool)>,
     id: ElementId,
     pick: Option<bool>,
+    sheen: Option<(ElementId, bool)>,
     cursor: bool,
 }
 
@@ -87,6 +88,7 @@ impl TileArt {
             heart: None,
             id: ElementId::Name("tile-art".into()),
             pick: None,
+            sheen: None,
             cursor: false,
         }
     }
@@ -139,6 +141,13 @@ impl TileArt {
     /// While picking: whether this record is picked.
     pub fn pick(mut self, picked: Option<bool>) -> Self {
         self.pick = picked;
+        self
+    }
+
+    /// The rainbow appearance's sheen over the sleeve, under the id `id`
+    /// (brat's palette when `brat`): for the tile the pointer is on.
+    pub fn sheen(mut self, sheen: Option<(ElementId, bool)>) -> Self {
+        self.sheen = sheen;
         self
     }
 
@@ -199,6 +208,9 @@ impl RenderOnce for TileArt {
             TileSleeve::Colour(colour) => art = art.bg(colour),
             TileSleeve::Loading => art = art.child(Placeholder::new(side).loading(true)),
             TileSleeve::Missing => art = art.child(Placeholder::new(side)),
+        }
+        if let Some((id, brat)) = self.sheen {
+            art = art.child(super::Sheen::new(id).brat(brat));
         }
         let badge = |text: SharedString| {
             div()

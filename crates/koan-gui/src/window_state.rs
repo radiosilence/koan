@@ -10,8 +10,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use koan_kit::app::*;
-// the platform window and its options.
-use koan_kit::raw::WindowBounds;
 
 pub const FILE: &str = "desktop-window";
 

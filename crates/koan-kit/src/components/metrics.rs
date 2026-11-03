@@ -3,7 +3,7 @@
 //! and the margins the spacing scale, as on the Mac. Read from the window's
 //! `Look`, so nothing passes them by hand.
 
-use gpui_kit::{Pixels, px};
+use gpui_kit::{Pixels, Window, font, px};
 
 use crate::theme::{Look, Scale, Space, TypeRole};
 
@@ -241,6 +241,21 @@ impl RowMetrics {
     /// A page's margin on every side, and what a row's content is inset by
     /// so it lines up under the page's header. One figure, so the page's
     /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
+    /// A lead column wide enough for the longest number in a list of
+    /// `count` rows, measured in the face the numbers are drawn in (`meta`):
+    /// two digits at least.
+    pub fn lead_width(count: usize, look: &Look, window: &Window) -> Pixels {
+        let digits = count.max(1).to_string().len().max(2) as f32;
+        let text = window.text_system();
+        let face = text.resolve_font(&font(crate::theme::FONT_FAMILY));
+        let size = look.font_size(TypeRole::Meta);
+        let digit = text
+            .advance(face, size, '0')
+            .map(|size| size.width)
+            .unwrap_or(size * 0.6);
+        digit * digits + look.spaced(4.0)
+    }
+
     pub fn page_margin(look: &Look) -> Pixels {
         Self::page_margin_on(&look.scale)
     }
@@ -263,7 +278,7 @@ impl RowMetrics {
     }
 
     /// The sidebar's width as it opens, and what a double click on its edge
-    /// restores; a drag keeps it between `sidebar_min` and `sidebar_max`.
+    /// restores; a drag keeps it between `SIDEBAR_MIN` and `SIDEBAR_MAX`.
     pub const SIDEBAR: Pixels = px(220.);
     pub const SIDEBAR_MIN: Pixels = px(180.);
     pub const SIDEBAR_MAX: Pixels = px(360.);

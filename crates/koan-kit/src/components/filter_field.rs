@@ -57,7 +57,7 @@ impl RenderOnce for FilterField {
                     // margins included, not the text's line alone.
                     d.w(super::ToolbarMetrics::FIELD * look.scale.size)
                         .min_h(super::ToolbarMetrics::FIELD_HIT)
-                        .flex_shrink()
+                        .flex_shrink(1.)
                         .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }
             })

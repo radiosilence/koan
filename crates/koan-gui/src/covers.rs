@@ -10,9 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use koan_kit::app::image::{Image, ImageFormat, RenderImage};
 use koan_kit::app::*;
-// decoded images handed to the renderer.
-use koan_kit::raw::{Image, ImageFormat, RenderImage};
 
 use crate::components::CoverArt;
 use crate::engine::engine;

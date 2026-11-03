@@ -126,6 +126,11 @@ impl Animated {
         self.0.uniforms.track(k).at(self.0.uniforms.time_at(at))
     }
 
+    /// Whether a track is moving now.
+    pub fn moving(&self) -> bool {
+        self.0.uniforms.tracks_moving(Self::now())
+    }
+
     /// Track `k` as it was last written.
     pub fn track(&self, k: usize) -> Track {
         self.0.uniforms.track(k)
@@ -326,6 +331,19 @@ impl Animated {
         let running = self.is_running() && !still;
         self.0.uniforms.set_continuous(running);
         self.0.uniforms.set_live(running);
+    }
+
+    /// Paints what `paint` paints into a texture of its own, composed over
+    /// `bounds` by `program` sampling it (#1859).
+    pub fn paint_layer(
+        &self,
+        program: &'static ShaderProgram,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        paint: impl FnOnce(&mut Window, &mut App),
+    ) {
+        window.paint_layer_group(bounds, program, self.0.uniforms.clone(), cx, paint);
     }
 
     /// Paints the quad over `bounds`, drawn by `program`, sampling `image`.

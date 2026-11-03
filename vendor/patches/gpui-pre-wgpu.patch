@@ -174,7 +174,7 @@ index 074d430..2538748 100644
      return out;
  }
 diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
-index f6611df..de01126 100644
+index f6611df..e84f959 100644
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
 @@ -45,6 +45,198 @@ const SUBPIXEL_SHADERS: &str = concat!(
@@ -376,7 +376,7 @@ index f6611df..de01126 100644
  fn least_common_multiple(left: u64, right: u64) -> u64 {
      let mut first = left;
      let mut second = right;
-@@ -190,11 +382,35 @@ struct WgpuResources {
+@@ -190,11 +382,37 @@ struct WgpuResources {
      globals_buffer: wgpu::Buffer,
      globals_bind_group: wgpu::BindGroup,
      path_globals_bind_group: wgpu::BindGroup,
@@ -396,6 +396,8 @@ index f6611df..de01126 100644
 +    // between, which each present composes with the shaders, and the
 +    // pipelines that lay a layer down (#1641).
 +    shader_layers: KoanLayers,
++    // KOAN: each layer group's texture (#1859).
++    layer_groups: KoanLayers,
 +    compose_pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 +}
 +
@@ -412,7 +414,7 @@ index f6611df..de01126 100644
  }
  
  struct CachedTextureBindGroup {
-@@ -523,6 +739,17 @@ impl WgpuRendererCore {
+@@ -523,6 +741,17 @@ impl WgpuRendererCore {
                          },
                          count: None,
                      },
@@ -430,7 +432,7 @@ index f6611df..de01126 100644
                  ],
              });
  
-@@ -1077,6 +1304,10 @@ impl WgpuRenderer {
+@@ -1077,6 +1306,10 @@ impl WgpuRenderer {
              core.dual_source_blending,
              core.uses_webgl_instance_data,
          );
@@ -441,7 +443,7 @@ index f6611df..de01126 100644
  
          if let RendererState::Ready { surface, core } = &self.state {
              surface.configure(&core.resources.device, &self.surface_config);
-@@ -1191,13 +1422,23 @@ impl WgpuRenderer {
+@@ -1191,13 +1424,27 @@ impl WgpuRenderer {
              .create_view(&wgpu::TextureViewDescriptor::default());
          let premultiplied_alpha =
              self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
@@ -455,6 +457,10 @@ index f6611df..de01126 100644
 +        // KOAN: a scene with shaders is drawn once as the layers they are
 +        // drawn between, and each present composes them with the shaders
 +        // (#1641).
++        // KOAN: each layer group drawn into its texture first (#1859).
++        if let Err(error) = core.draw_layer_groups(scene, size, premultiplied_alpha) {
++            log::error!("failed to draw layer groups: {error:#}");
++        }
 +        let rendered = if scene.shader_layers.is_some() && !core.uses_webgl_instance_data {
 +            core.compose_frame(scene, &frame_view, size, premultiplied_alpha)
 +        } else {
@@ -472,7 +478,7 @@ index f6611df..de01126 100644
              log::error!("{error:#}");
              return false;
          }
-@@ -1247,6 +1488,13 @@ impl WgpuRendererCore {
+@@ -1247,6 +1494,13 @@ impl WgpuRendererCore {
              usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
              mapped_at_creation: false,
          });
@@ -486,7 +492,7 @@ index f6611df..de01126 100644
          let (
              instance_data,
              instance_data_capacity,
-@@ -1306,6 +1554,11 @@ impl WgpuRendererCore {
+@@ -1306,6 +1560,11 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -498,7 +504,7 @@ index f6611df..de01126 100644
              ],
          });
          let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-@@ -1328,9 +1581,47 @@ impl WgpuRendererCore {
+@@ -1328,9 +1587,47 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -546,7 +552,7 @@ index f6611df..de01126 100644
  
          Self {
              resources: WgpuResources {
-@@ -1343,11 +1634,17 @@ impl WgpuRendererCore {
+@@ -1343,11 +1640,18 @@ impl WgpuRendererCore {
                  globals_buffer,
                  globals_bind_group,
                  path_globals_bind_group,
@@ -560,11 +566,12 @@ index f6611df..de01126 100644
 +                shader_color_target,
 +                blank_texture_bind_group,
 +                shader_layers: KoanLayers::default(),
++                layer_groups: KoanLayers::default(),
 +                compose_pipelines: None,
              },
              atlas,
              path_globals_offset,
-@@ -1462,6 +1759,7 @@ impl WgpuRendererCore {
+@@ -1462,6 +1766,7 @@ impl WgpuRendererCore {
              self.gamma_offset,
              bytemuck::bytes_of(&gamma_params),
          );
@@ -572,7 +579,7 @@ index f6611df..de01126 100644
  
          self.record_frame(scene, target_view, clear_color)
              .inspect_err(|_| {
-@@ -1492,6 +1790,22 @@ impl WgpuRendererCore {
+@@ -1492,6 +1797,22 @@ impl WgpuRendererCore {
                  )
              })?;
          self.prepare_texture_bind_groups(scene);
@@ -595,7 +602,7 @@ index f6611df..de01126 100644
  
          let mut encoder =
              self.resources()
-@@ -1607,6 +1921,22 @@ impl WgpuRendererCore {
+@@ -1607,6 +1928,24 @@ impl WgpuRendererCore {
                      // Surfaces are macOS-only for video playback and are not
                      // implemented by the WGPU renderer.
                      PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -603,6 +610,7 @@ index f6611df..de01126 100644
 +                    PrimitiveBatch::Shaders {
 +                        program,
 +                        texture,
++                        group,
 +                        range,
 +                    } => {
 +                        if let Some(instances) = &shader_instances {
@@ -610,6 +618,7 @@ index f6611df..de01126 100644
 +                                instances,
 +                                program,
 +                                texture,
++                                group,
 +                                instance_range(range),
 +                                &mut pass,
 +                            );
@@ -618,7 +627,7 @@ index f6611df..de01126 100644
                  }
              }
          }
-@@ -1688,6 +2018,11 @@ impl WgpuRendererCore {
+@@ -1688,6 +2027,11 @@ impl WgpuRendererCore {
                  PrimitiveBatch::MonochromeSprites { texture_id, .. }
                  | PrimitiveBatch::SubpixelSprites { texture_id, .. }
                  | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
@@ -630,7 +639,7 @@ index f6611df..de01126 100644
                  _ => continue,
              };
              if !texture_ids.contains(&texture_id) {
-@@ -1727,6 +2062,37 @@ impl WgpuRendererCore {
+@@ -1727,6 +2071,37 @@ impl WgpuRendererCore {
          }
      }
  
@@ -668,7 +677,7 @@ index f6611df..de01126 100644
      fn draw_instances(
          &self,
          instances: &InstanceBinding,
-@@ -1775,6 +2141,370 @@ impl WgpuRendererCore {
+@@ -1775,6 +2150,448 @@ impl WgpuRendererCore {
          Ok(())
      }
  
@@ -690,6 +699,76 @@ index f6611df..de01126 100644
 +                bytemuck::cast_slice(&table),
 +            );
 +        });
++    }
++
++    // KOAN: (#1859) each layer group's scene drawn into a texture the size
++    // of the window, over clear, its content where it was painted; kept for
++    // the frame's presents.
++    fn draw_layer_groups(
++        &mut self,
++        scene: &Scene,
++        size: Size<DevicePixels>,
++        premultiplied_alpha: bool,
++    ) -> Result<()> {
++        let extent = (size.width.0 as u32, size.height.0 as u32);
++        if scene.layer_groups.is_empty() {
++            self.resources_mut().layer_groups = KoanLayers::default();
++            return Ok(());
++        }
++        let held = &self.resources().layer_groups;
++        if held.generation == scene.generation && held.size == extent {
++            return Ok(());
++        }
++        let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
++            if self.resources().layer_groups.size == extent {
++                std::mem::take(&mut self.resources_mut().layer_groups.layers)
++                    .into_iter()
++                    .flatten()
++                    .collect()
++            } else {
++                Vec::new()
++            };
++        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
++        for group in &scene.layer_groups {
++            if group.is_blank() {
++                drawn.push(None);
++                continue;
++            }
++            let (texture, bind_group) = match pool.pop() {
++                Some(held) => held,
++                None => {
++                    let resources = self.resources();
++                    let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
++                        label: Some("koan_layer_group"),
++                        size: wgpu::Extent3d {
++                            width: extent.0,
++                            height: extent.1,
++                            depth_or_array_layers: 1,
++                        },
++                        mip_level_count: 1,
++                        sample_count: 1,
++                        dimension: wgpu::TextureDimension::D2,
++                        format: self.target_format,
++                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
++                            | wgpu::TextureUsages::TEXTURE_BINDING,
++                        view_formats: &[],
++                    });
++                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
++                    let bind_group = self.create_texture_bind_group("koan_layer_group", &view);
++                    (texture, bind_group)
++                }
++            };
++            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
++            self.render_frame(group, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
++            drawn.push(Some((texture, bind_group)));
++        }
++        self.resources_mut().layer_groups = KoanLayers {
++            generation: scene.generation,
++            slot_generation: 0,
++            size: extent,
++            layers: drawn,
++        };
++        Ok(())
 +    }
 +
 +    fn compose_frame(
@@ -855,16 +934,18 @@ index f6611df..de01126 100644
 +                while start < group.end {
 +                    let head = &scene.shaders[start];
 +                    let key = |s: &gpui::PaintShader| {
-+                        (s.program.name, s.image.as_ref().map(|t| t.texture_id))
++                        (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
 +                    };
++                    // A layer group's shader is drawn alone, with its texture.
 +                    let end = scene.shaders[start..group.end]
 +                        .iter()
-+                        .position(|s| key(s) != key(head))
-+                        .map_or(group.end, |n| start + n);
++                        .position(|s| key(s) != key(head) || s.group.is_some())
++                        .map_or(group.end, |n| (start + n).max(start + 1));
 +                    self.draw_shaders(
 +                        &instances,
 +                        head.program,
 +                        head.image.as_ref().map(|t| t.texture_id),
++                        head.group,
 +                        start as u32..end as u32,
 +                        &mut pass,
 +                    );
@@ -1011,6 +1092,7 @@ index f6611df..de01126 100644
 +        instances: &InstanceBinding,
 +        program: &'static gpui::ShaderProgram,
 +        texture: Option<AtlasTextureId>,
++        group: Option<usize>,
 +        range: Range<u32>,
 +        pass: &mut wgpu::RenderPass<'_>,
 +    ) {
@@ -1018,13 +1100,18 @@ index f6611df..de01126 100644
 +        let Some(Some(pipeline)) = resources.shader_pipelines.get(program.name) else {
 +            return;
 +        };
-+        let image = match texture {
++        // KOAN: a layer group's texture, drawn this frame (#1859).
++        let grouped = group.and_then(|g| resources.layer_groups.layers.get(g)?.as_ref());
++        let image = match (grouped, texture) {
++            (Some((_, bind_group)), _) => bind_group,
++            (None, texture) => match texture {
 +            Some(id) => match resources.atlas_texture_bind_groups.get(&id) {
 +                Some(cached) => &cached.bind_group,
 +                // Released by the atlas: a stale paint, replaced soon.
 +                None => return,
 +            },
 +            None => &resources.blank_texture_bind_group,
++            },
 +        };
 +        pass.set_pipeline(pipeline);
 +        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
@@ -1039,7 +1126,13 @@ index f6611df..de01126 100644
      unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
          unsafe {
              std::slice::from_raw_parts(
-@@ -2405,6 +3135,26 @@ impl WgpuHeadlessRenderer {
+@@ -2400,11 +3217,33 @@ impl WgpuHeadlessRenderer {
+             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
+             .view
+             .clone();
++        self.core.draw_layer_groups(scene, size, false)?; // KOAN: #1859.
+         self.core
+             .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
          Ok(())
      }
  
@@ -1059,6 +1152,7 @@ index f6611df..de01126 100644
 +            .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
 +            .view
 +            .clone();
++        self.core.draw_layer_groups(scene, size, false)?; // KOAN: #1859.
 +        self.core.compose_frame(scene, &view, size, false)?;
 +        self.read_image()
 +    }
@@ -1066,7 +1160,7 @@ index f6611df..de01126 100644
      /// Copies the current render target back to the CPU. Dimensions come from the
      /// target texture itself, so the copy can never disagree with what was rendered.
      fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
-@@ -2921,4 +3671,218 @@ mod tests {
+@@ -2921,4 +3760,220 @@ mod tests {
              ]
          );
      }
@@ -1104,6 +1198,7 @@ index f6611df..de01126 100644
 +            program: &HALF,
 +            uniforms: uniforms.clone(),
 +            image: None,
++            group: None,
 +        });
 +        scene.finish();
 +        let size = Size { width: DevicePixels(64), height: DevicePixels(32) };
@@ -1231,6 +1326,7 @@ index f6611df..de01126 100644
 +            program: &SOLID,
 +            uniforms: uniforms.clone(),
 +            image: None,
++            group: None,
 +        }
 +    }
 +

@@ -1,0 +1,1 @@
+- **The wash's drift is yours to set.** Settings → Appearance gains Drift (how fast the wash moves while music plays, from still to twice its pace) and Turn (how far it turns either way, up to 10°), in the desktop app's kōan theme.

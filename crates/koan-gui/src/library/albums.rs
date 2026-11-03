@@ -14,9 +14,8 @@ use std::time::{Duration, Instant};
 
 use crate::components::{UniformListScrollHandle, uniform_list};
 use koan_ffi::{AlbumSort, BrowseFilter};
+use koan_kit::app::platform::TouchPhase;
 use koan_kit::app::*;
-// a fling's phase, which the grid's cover aiming reads from the scroll.
-use koan_kit::raw::TouchPhase;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};

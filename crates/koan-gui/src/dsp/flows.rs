@@ -9,9 +9,8 @@ use koan_ffi::{
     AutoEqEntry, AutoEqOffer, DspEarKind, DspMeasurementReading, DspResponse, DspTargetOption,
     SquigHit,
 };
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState, Textarea, TextareaState};
 
 use super::graph::{Graph, Shown};
 use super::model::{Dsp, describe};
@@ -354,7 +353,7 @@ pub struct MeasurementFlow {
     dsp: Entity<Dsp>,
     sheets: Entity<Sheets>,
     step: Step,
-    text: Entity<TextareaState>,
+    text: Entity<crate::components::AreaState>,
     file: Option<String>,
     in_ear: bool,
     targets: Vec<DspTargetOption>,
@@ -395,7 +394,7 @@ impl MeasurementFlow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let text = cx.new(|cx| TextareaState::new(window, cx).rows(6));
+        let text = cx.new(|cx| crate::components::AreaState::new(window, cx).rows(6));
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(label("Name"))
@@ -850,7 +849,7 @@ impl MeasurementFlow {
                     .into_any_element(),
                     section(
                         Some("Or paste it here"),
-                        vec![div().p(look.space(Space::S)).bg(look.palette.surface.hsla()).child(Textarea::new(&self.text).appearance(false)).into_any_element()],
+                        vec![crate::components::TextArea::new(&self.text).into_any_element()],
                         None,
                         &look,
                     )

@@ -3,8 +3,11 @@
 //! Motion or Low Power Mode it appears. `Reveal` also makes room for it: the
 //! slot grows from nothing to its size, moving what is beside it along.
 //!
-//! Both change layout or a subtree's opacity, which a shader quad cannot, so
-//! they run on GPUI frames for their length and then stop.
+//! Where the renderer draws shaders, what they hold is an `AnimatedLayer`:
+//! drawn once into a texture and faded or revealed by its tracks on the GPU,
+//! with no frame drawn while it moves (#1859). A reveal's slot takes its full
+//! size at once, so what is beside it moves along in one step while its
+//! content is revealed. Elsewhere both run on GPUI frames for their length.
 //!
 //! The wrapper takes no size of its own: in a row it is as wide as what it
 //! holds, in a column as wide as the column, so the element lays out exactly
@@ -12,8 +15,44 @@
 
 use gpui_kit::*;
 
+use super::layer::{AnimatedLayer, standing};
+use super::{Animated, Ease, Repeat, SHADED};
 use crate::theme::KoanTheme;
 use crate::theme::tokens::Motion;
+
+/// A layer's tracks for an arrival under `id`, set going the first time it is
+/// drawn: its opacity, and with `reveal` how much of it shows, from nothing.
+fn arrival(id: ElementId, reveal: bool, window: &mut Window, cx: &mut App) -> Animated {
+    window
+        .use_keyed_state(id, cx, |_, _| {
+            let animated = Animated::new();
+            standing(&animated);
+            let now = Animated::now();
+            animated.segment(
+                0,
+                0.0,
+                1.0,
+                now,
+                Motion::NORMAL,
+                Ease::QuickOut,
+                Repeat::Once,
+            );
+            if reveal {
+                animated.segment(
+                    3,
+                    0.0,
+                    1.0,
+                    now,
+                    Motion::NORMAL,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+            }
+            animated
+        })
+        .read(cx)
+        .clone()
+}
 
 #[derive(IntoElement)]
 pub struct FadeIn {
@@ -32,9 +71,16 @@ impl FadeIn {
 }
 
 impl RenderOnce for FadeIn {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         if !KoanTheme::motion_allowed(cx) {
             return self.child;
+        }
+        if SHADED {
+            let animated = arrival(self.id, false, window, cx);
+            return div()
+                .flex_none()
+                .child(AnimatedLayer::new(&animated, self.child))
+                .into_any_element();
         }
         div()
             .flex_none()
@@ -79,8 +125,20 @@ impl Reveal {
 }
 
 impl RenderOnce for Reveal {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Size { width, height } = self.size;
+        if SHADED && self.arriving && KoanTheme::motion_allowed(cx) {
+            let animated = arrival(self.id, true, window, cx);
+            return div()
+                .flex_none()
+                .w(width)
+                .h(height)
+                .child(AnimatedLayer::new(
+                    &animated,
+                    div().w(width).h(height).flex_none().child(self.child),
+                ))
+                .into_any_element();
+        }
         let slot = div()
             .flex_none()
             .overflow_hidden()

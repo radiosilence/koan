@@ -9,10 +9,6 @@ use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's focus and click extensions, for the shell's own handling.
-use koan_kit::raw::base::FocusTrapElement as _;
-// a sheet's height as a share of its window's.
-use koan_kit::raw::relative;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
@@ -337,8 +333,7 @@ impl Sheets {
             );
         }
 
-        let panel = div()
-            .id("sheet")
+        let panel = crate::components::sheet::panel(look)
             .track_focus(&focus)
             .key_context("SettingsSheet")
             // Before a focused field sees it, which may take Escape for its
@@ -353,15 +348,9 @@ impl Sheets {
                 }
             })
             .w(look.spaced(460.0))
-            .max_h(relative(0.9))
             .overflow_y_scroll()
-            .flex()
-            .flex_col()
             .gap(look.space(Space::S))
             .p(look.space(Space::L))
-            .bg(look.palette.bg.hsla())
-            .border(look.hairline)
-            .border_color(look.palette.rule.hsla())
             .child(
                 div()
                     .text_role(TypeRole::TitleSmall, look)
@@ -388,8 +377,8 @@ impl Sheets {
                     .child(TextField::new(state))
             }))
             .children(extra)
-            .child(buttons)
-            .focus_trap("sheet-trap", &focus);
+            .child(buttons);
+        let panel = crate::components::sheet::trap_focus(panel, &focus);
 
         Some(
             div()

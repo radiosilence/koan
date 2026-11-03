@@ -9,10 +9,6 @@ use std::time::Duration;
 
 use koan_ffi::KoanEngine;
 use koan_kit::app::*;
-// the platform window and its options.
-use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, size};
 
 use crate::covers::Covers;
 use crate::engine::Engine;
@@ -239,34 +235,26 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
 }
 
 fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
-    let bounds = match saved {
-        Some(saved) => window_state::place(saved, cx),
-        None => WindowBounds::Windowed(Bounds::centered(None, size(px(1180.), px(760.)), cx)),
-    };
-    let options = WindowOptions {
-        window_bounds: Some(bounds),
-        window_min_size: Some(crate::components::RowMetrics::WINDOW_MIN),
-        titlebar: Some(titlebar()),
-        app_owns_titlebar_drag: cfg!(target_os = "macos"),
-        // The `.desktop` file's StartupWMClass.
-        app_id: Some(APP_ID.into()),
-        ..Default::default()
-    };
-    // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-    let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
-        // Closing the last window quits, unless kōan is kept running,
-        // and quitting waits for nothing spawned: a file of a few bytes,
-        // written now.
-        window.on_window_should_close(cx, |window, cx| {
-            window_state::write(window.window_bounds());
-            crate::platform::residency::window_closing(cx);
-            true
+    let place = saved.map(|saved| window_state::place(saved, cx));
+    // The `.desktop` file's StartupWMClass names the app on Linux.
+    let opened = crate::components::MainWindow::new("kōan", APP_ID)
+        .place(place)
+        .min(crate::components::RowMetrics::WINDOW_MIN)
+        .buttons_at(crate::components::ToolbarMetrics::WINDOW_BUTTONS_ORIGIN)
+        .open(cx, |window, cx| {
+            // Closing the last window quits, unless kōan is kept running,
+            // and quitting waits for nothing spawned: a file of a few bytes,
+            // written now.
+            window.on_window_should_close(cx, |window, cx| {
+                window_state::write(window.window_bounds());
+                crate::platform::residency::window_closing(cx);
+                true
+            });
+            let shell = cx.new(|cx| Shell::new(window, cx));
+            cx.new(|cx| WindowRoot::new(shell, window, cx))
         });
-        let shell = cx.new(|cx| Shell::new(window, cx));
-        cx.new(|cx| WindowRoot::new(shell, window, cx))
-    });
     match opened {
-        Ok((handle, _)) => cx.global_mut::<MainWindow>().handle = Some(handle),
+        Ok(handle) => cx.global_mut::<MainWindow>().handle = Some(handle),
         Err(e) => {
             log::error!("the window did not open: {e}");
             cx.quit();
@@ -274,23 +262,4 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
     }
     crate::platform::residency::window_opening();
     cx.activate(true);
-}
-
-/// On macOS the window's buttons sit at the top of the sidebar, on its
-/// ground. Elsewhere the system draws the title bar where the compositor
-/// offers one; where it leaves decorations to the app, the toolbar carries
-/// the buttons.
-fn titlebar() -> TitlebarOptions {
-    if cfg!(target_os = "macos") {
-        TitlebarOptions {
-            title: Some("kōan".into()),
-            appears_transparent: true,
-            traffic_light_position: Some(crate::components::ToolbarMetrics::WINDOW_BUTTONS_ORIGIN),
-        }
-    } else {
-        TitlebarOptions {
-            title: Some("kōan".into()),
-            ..Default::default()
-        }
-    }
 }

@@ -13,8 +13,6 @@ use std::collections::HashSet;
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
-// the colour a row part is drawn in, chosen from the theme by the caller.
-use koan_kit::raw::Hsla;
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -35,7 +33,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, TypeRole};
+use crate::theme::{self, Hsla, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
 
@@ -764,6 +762,21 @@ impl QueueView {
         let dragging = cx.has_active_drag();
         let line_above = dragging && self.drop_at == Some(row);
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
+        // Whatever is dragged over the row, the insertion line goes above it
+        // in its upper half and below it in its lower.
+        let aim = move |this: &mut Self,
+                        at: Point<Pixels>,
+                        bounds: Bounds<Pixels>,
+                        cx: &mut Context<Self>| {
+            if !bounds.contains(&at) {
+                return;
+            }
+            let at = rows::insertion_point(row, at.y > bounds.center().y);
+            if this.drop_at != Some(at) {
+                this.drop_at = Some(at);
+                cx.notify();
+            }
+        };
         let view = cx.entity();
         let list = self.list.clone();
         row_frame
@@ -781,16 +794,8 @@ impl QueueView {
                 d.border_b(INSERTION).border_color(insertion)
             })
             .on_drag_move::<DraggedRows>(cx.listener(
-                move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<DraggedRows>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_mouse_down(
@@ -818,16 +823,8 @@ impl QueueView {
                 cx.new(|_| DragPreview(label, album))
             })
             .on_drag_move::<PlayableDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
@@ -839,16 +836,8 @@ impl QueueView {
                 this.drop_library(dragged, dest, cx);
             }))
             .on_drag_move::<PlaylistDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {

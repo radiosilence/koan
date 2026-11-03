@@ -20,8 +20,8 @@ use super::tokens::{Paint, Type, Typeset};
 use crate::components::{
     Arrival, TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths,
 };
+use crate::theme::KoanTheme;
 use crate::theme::tokens::Motion;
-use crate::theme::{Icon, KoanIcon, KoanTheme};
 
 use crate::theme::Hsla;
 
@@ -318,7 +318,13 @@ impl<V: TileHost> Render for TileView<V> {
                     .then_some((state.favourite, hovered == Some(Part::Heart))),
             )
             .pick(state.selecting.then_some(state.selected))
-            .cursor(state.cursor);
+            .cursor(state.cursor)
+            // The rainbow refracts through the sleeve the pointer is on.
+            .sheen(
+                crate::rainbow::Painted::now()
+                    .filter(|_| over_sleeve)
+                    .map(|brat| (ElementId::from("tile-sheen"), brat)),
+            );
 
         let title = div()
             .w_full()
@@ -503,17 +509,6 @@ impl<V: TileHost> Tiles<V> {
         AnyView::from(view)
             .cached(StyleRefinement::default().w(side).h(height))
             .into_any_element()
-    }
-}
-
-/// The heart, filled in the accent for a favourite.
-pub fn heart_glyph(p: &Paint, favourite: bool) -> KoanIcon {
-    if favourite {
-        KoanIcon::new(Icon::Favourited)
-            .role(Type::Meta)
-            .color(p.accent)
-    } else {
-        KoanIcon::new(Icon::Favourite).role(Type::Meta).color(p.ink)
     }
 }
 
