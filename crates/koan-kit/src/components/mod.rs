@@ -80,7 +80,7 @@ use std::time::Instant;
 use gpui_kit::{
     AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+    Stateful, StatefulInteractiveElement, Styled, Task, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
@@ -235,12 +235,15 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
 /// A colour moving between its off and on colours on the GPU, through a
 /// colour slot (#1859): the control draws once with the slot's colour as a
 /// leave fade starts, and the presents that follow move it with no frame
-/// drawn. The slot is held only for the fade, and let go at the control's
-/// next draw after it lands; at rest the control draws a plain colour.
+/// drawn. The slot is held only for the fade: as it lands the control is
+/// drawn once more in its plain colour, and that draw lets the slot go, so
+/// the table's slots are held only by fades still running.
 struct ColorFade {
     on: bool,
     /// The slot fading and when it lands, while a leave fade runs.
     fading: Option<(ColorSlot, Instant)>,
+    /// Wakes the control as the fade lands.
+    _landing: Option<Task<()>>,
 }
 
 /// The colour a control's text, glyph or edge draws in, `on_color` when `on`
@@ -257,8 +260,12 @@ pub(crate) fn fade(
     cx: &mut App,
 ) -> Hsla {
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| ColorFade { on, fading: None });
-    state.update(cx, |fade, _| {
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade {
+        on,
+        fading: None,
+        _landing: None,
+    });
+    state.update(cx, |fade, cx| {
         let now = Animated::now();
         if fade.on != on {
             fade.on = on;
@@ -279,8 +286,20 @@ pub(crate) fn fade(
                     );
                     (slot, now + Motion::LEAVE)
                 });
+            // One wake at the landing, which draws the plain colour and lets
+            // the slot go.
+            fade._landing = fade.fading.as_ref().map(|(_, lands)| {
+                // Counted to the landing on the present clock, which runs
+                // ahead of the wall clock: woken then, the draw sees it landed.
+                let wait = lands.saturating_duration_since(Instant::now());
+                cx.spawn(async move |fade, cx| {
+                    cx.background_executor().timer(wait).await;
+                    fade.update(cx, |_, cx| cx.notify()).ok();
+                })
+            });
         } else if fade.fading.as_ref().is_some_and(|(_, lands)| now >= *lands) {
             fade.fading = None;
+            fade._landing = None;
         }
         match &fade.fading {
             Some((slot, _)) => slot.hsla(1.0),

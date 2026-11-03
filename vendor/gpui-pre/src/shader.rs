@@ -414,6 +414,15 @@ pub struct ShaderUniforms {
     /// Whether a slot the uniforms name was moving at the last present: the
     /// present after it stops lands it.
     colors_moved: AtomicBool,
+    /// A sequence lock over the values and the origin: odd while a write is
+    /// being made, so a reader on another thread (the presenter) takes the
+    /// block as one publish, never half a track or a track in one base and
+    /// the origin in another.
+    sequence: AtomicU64,
+    /// Held by the thread writing, reentrantly, so writers from several
+    /// threads publish one after another and a write made of reads and
+    /// writes (a rebase, a retarget) is one publish.
+    writer: parking_lot::ReentrantMutex<std::cell::Cell<u32>>,
 }
 
 // KOAN: written out, since an array of eighty has no derived default
@@ -432,6 +441,8 @@ impl Default for ShaderUniforms {
             track_landing: AtomicBool::new(false),
             colors: std::array::from_fn(|_| AtomicU16::new(0)),
             colors_moved: AtomicBool::new(false),
+            sequence: AtomicU64::new(0),
+            writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
         }
     }
 }
@@ -441,9 +452,54 @@ impl ShaderUniforms {
         Self::default()
     }
 
+    /// Runs `write` as one publish: what it writes is seen by a reader all
+    /// at once, and no other thread writes in between. Reentrant: a write
+    /// inside it joins it.
+    pub fn publish<R>(&self, write: impl FnOnce() -> R) -> R {
+        let held = self.writer.lock();
+        let depth = held.get();
+        if depth == 0 {
+            self.sequence.fetch_add(1, Ordering::AcqRel);
+        }
+        held.set(depth + 1);
+        let result = write();
+        held.set(depth);
+        if depth == 0 {
+            self.sequence.fetch_add(1, Ordering::AcqRel);
+        }
+        result
+    }
+
+    /// Runs `read` until it saw one whole publish: what a reader on another
+    /// thread calls to take several values together. Within a `publish` on
+    /// this thread it reads as it stands.
+    pub fn read<R>(&self, read: impl Fn() -> R) -> R {
+        if let Some(held) = self.writer.try_lock() {
+            if held.get() > 0 {
+                return read();
+            }
+        }
+        loop {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let result = read();
+            std::sync::atomic::fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Acquire) == before {
+                return result;
+            }
+        }
+    }
+
     /// Whether the value changed. A colour slot whose four floats `index`
     /// falls in is let go: the value written stands as written.
     pub fn set(&self, index: usize, value: f32) -> bool {
+        self.publish(|| self.set_unpublished(index, value))
+    }
+
+    fn set_unpublished(&self, index: usize, value: f32) -> bool {
         // KOAN: #1859.
         let mut moved = false;
         for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
@@ -471,6 +527,10 @@ impl ShaderUniforms {
     /// The moment `time` counts from in the program: where an anchor was
     /// taken, so the program reckons from it.
     pub fn set_origin(&self, origin: Instant) -> bool {
+        self.publish(|| self.set_origin_unpublished(origin))
+    }
+
+    fn set_origin_unpublished(&self, origin: Instant) -> bool {
         let nanos = since_epoch(origin);
         let changed = self.origin.swap(nanos, Ordering::Relaxed) != nanos;
         if changed {
@@ -481,6 +541,10 @@ impl ShaderUniforms {
 
     /// Seconds from the origin to `now`, as the program reads `time`.
     pub fn time_at(&self, now: Instant) -> f32 {
+        self.read(|| self.time_at_unpublished(now))
+    }
+
+    fn time_at_unpublished(&self, now: Instant) -> f32 {
         ((since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9) as f32
     }
 
@@ -546,6 +610,10 @@ impl ShaderUniforms {
 
     /// Every value, as a renderer copies them into a frame.
     pub fn snapshot(&self) -> [f32; SHADER_UNIFORMS] {
+        self.read(|| self.snapshot_unpublished())
+    }
+
+    fn snapshot_unpublished(&self) -> [f32; SHADER_UNIFORMS] {
         std::array::from_fn(|i| self.get(i))
     }
 
@@ -553,13 +621,17 @@ impl ShaderUniforms {
     /// Puts `track` in slot `k`: the program draws it from the next present
     /// on, and the window presents while it moves.
     pub fn set_track(&self, k: usize, track: Track) {
+        self.publish(|| self.set_track_unpublished(k, track))
+    }
+
+    fn set_track_unpublished(&self, k: usize, track: Track) {
         let base = SHADER_PLAIN + k * TRACK_FLOATS;
         for (i, value) in track.encode().into_iter().enumerate() {
-            self.set(base + i, value);
+            self.set_unpublished(base + i, value);
         }
         let origin = self.origin.load(Ordering::Relaxed);
         let until = (0..SHADER_TRACKS)
-            .map(|k| self.track(k))
+            .map(|k| self.track_unpublished(k))
             .filter(|t| t.length > 0.0)
             .map(|t| match t.end() {
                 None => u64::MAX,
@@ -573,6 +645,10 @@ impl ShaderUniforms {
 
     /// The track in slot `k`.
     pub fn track(&self, k: usize) -> Track {
+        self.read(|| self.track_unpublished(k))
+    }
+
+    fn track_unpublished(&self, k: usize) -> Track {
         let base = SHADER_PLAIN + k * TRACK_FLOATS;
         let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
         Track::decode(&floats)
@@ -583,6 +659,10 @@ impl ShaderUniforms {
     /// slot as each present is made, its alpha scaling the slot's. Whether
     /// anything changed.
     pub fn set_color(&self, index: usize, color: Hsla) -> bool {
+        self.publish(|| self.set_color_unpublished(index, color))
+    }
+
+    fn set_color_unpublished(&self, index: usize, color: Hsla) -> bool {
         let slot = crate::color_slot_of(&color).map_or(0, |slot| slot as u16 + 1);
         let rgba = if slot == 0 {
             crate::Rgba::from(color)
@@ -623,15 +703,30 @@ impl ShaderUniforms {
     /// Every value as the program reads it at `now`: a colour naming a slot
     /// replaced by the colour the slot shows then.
     pub fn snapshot_at(&self, now: Instant) -> [f32; SHADER_UNIFORMS] {
-        let mut values = self.snapshot();
-        for (index, slot) in self.colors.iter().enumerate() {
+        self.present_at(now).1
+    }
+
+    /// `time` and every value as a present made at `now` hands them to the
+    /// program, taken as one publish.
+    pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
+        let (time, values, colors) = self.read(|| {
+            (
+                self.time_at_unpublished(now),
+                self.snapshot_unpublished(),
+                std::array::from_fn::<u16, SHADER_PLAIN, _>(|i| {
+                    self.colors[i].load(Ordering::Relaxed)
+                }),
+            )
+        });
+        let mut values = values;
+        for (index, slot) in colors.into_iter().enumerate() {
             let slot = slot.load(Ordering::Relaxed);
             if slot != 0 {
                 let rgba = crate::color_slot_rgba_at(slot as usize - 1, values[index + 3], now);
                 values[index..index + 4].copy_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
             }
         }
-        values
+        (time, values)
     }
 
     /// Whether a track is moving at `now`.
@@ -694,8 +789,7 @@ impl Default for ShaderInstance {
 
 impl ShaderInstance {
     pub fn of(shader: &PaintShader, now: Instant) -> Self {
-        let time = shader.uniforms.time_at(now);
-        let mut uniforms = shader.uniforms.snapshot_at(now);
+        let (time, mut uniforms) = shader.uniforms.present_at(now);
         if let Some(prepare) = shader.program.prepare {
             prepare(&mut uniforms, time);
         }

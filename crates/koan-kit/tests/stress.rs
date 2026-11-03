@@ -401,7 +401,7 @@ fn a_hover_storm_gives_back_every_colour_slot(cx: &mut TestAppContext) {
         theme::init(cx);
     });
     let free = free_slots();
-    let (view, cx) = cx.add_window_view(|_, _| Buttons);
+    let (_, cx) = cx.add_window_view(|_, _| Buttons);
     cx.run_until_parked();
     let mut rng = Rng(11);
     for _ in 0..3000 {
@@ -413,14 +413,11 @@ fn a_hover_storm_gives_back_every_colour_slot(cx: &mut TestAppContext) {
     }
     cx.simulate_mouse_move(point(px(1500.), px(1500.)), None, Modifiers::none());
     cx.run_until_parked();
-    // Every leave fade has landed; the next draw lets the slots go.
+    // Every leave fade lands, and its control wakes and lets its slot go,
+    // with nothing else drawing the page.
     std::thread::sleep(Motion::LEAVE + Duration::from_millis(50));
-    cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
-    cx.run_until_parked();
-    cx.update(|window, cx| {
-        window.refresh();
-        let _ = cx;
-    });
+    cx.executor()
+        .advance_clock(Motion::LEAVE + Duration::from_millis(50));
     cx.run_until_parked();
     assert_eq!(free_slots(), free, "a slot outlived its fade");
 }
@@ -572,4 +569,70 @@ fn reduce_motion_toggled_mid_animation_lands_and_lifts(cx: &mut TestAppContext) 
     cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
     cx.run_until_parked();
     assert!(animated.moving(), "motion lifted moves again");
+}
+
+/// Two threads writing the same tracks, each rebasing an origin hours old,
+/// while a third reads them as a presenter does: every track read is one
+/// writer's whole track (its ends a unit apart), never half of two, and the
+/// clock is shifted once, not once per writer.
+#[test]
+fn two_writers_publish_whole_tracks_and_rebase_once() {
+    for round in 0..20 {
+        let animated = Animated::new();
+        animated.set_origin(Instant::now() - Duration::from_secs(2 * 3600 + round));
+        let running = Arc::new(AtomicBool::new(true));
+        let reader = {
+            let (animated, running) = (animated.clone(), running.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0u64;
+                while running.load(Ordering::Relaxed) {
+                    for k in 0..4 {
+                        let track = animated.track(k);
+                        if track.length > 0.0 {
+                            assert!(
+                                (track.to - track.from - 1.0).abs() < 1e-3,
+                                "a torn track: {track:?}"
+                            );
+                        }
+                        let shown = animated.at(k, Animated::now());
+                        assert!(shown.is_finite());
+                    }
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let writers: Vec<_> = (0..2)
+            .map(|w| {
+                let animated = animated.clone();
+                std::thread::spawn(move || {
+                    let mut rng = Rng(100 + w);
+                    for _ in 0..5_000 {
+                        let from = (rng.below(1000) as f32) * (if w == 0 { 1.0 } else { -1.0 });
+                        animated.segment(
+                            rng.below(4),
+                            from,
+                            from + 1.0,
+                            Animated::now(),
+                            Duration::from_millis(50),
+                            Ease::Linear,
+                            Repeat::Once,
+                        );
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("a writer panicked");
+        }
+        running.store(false, Ordering::Relaxed);
+        assert!(reader.join().expect("the reader panicked") > 0);
+        for k in 0..4 {
+            let start = animated.track(k).start;
+            assert!(
+                start.abs() < 60.0,
+                "track {k} starts at {start}: the clock was shifted more than once"
+            );
+        }
+    }
 }

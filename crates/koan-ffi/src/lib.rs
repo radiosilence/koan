@@ -1096,11 +1096,22 @@ impl KoanEngine {
                 };
                 KoanError::Refused { message }
             })?;
-            Self::build(None, identity)
+            let engine = Self::build(None, identity)?;
+            engine
+                .state
+                .downloads()
+                .set_reading_gap(DESKTOP_READING_GAP);
+            Ok(engine)
         })
         .await
     }
 }
+
+/// How often the desktop app's engine takes a download reading: about 15 a
+/// second, for the rings and bars it glides between readings on the GPU.
+/// Other front ends keep the store's default, a quarter second, since each
+/// reading wakes every client of the figures.
+const DESKTOP_READING_GAP: std::time::Duration = std::time::Duration::from_millis(66);
 
 /// Calls for front ends that link the engine as a Rust library, not reached
 /// through uniffi.
