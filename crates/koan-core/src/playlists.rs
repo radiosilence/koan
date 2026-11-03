@@ -812,7 +812,7 @@ fn store_chunk(
                 &summary.id,
                 summary.owner.as_deref(),
                 summary.public,
-                &account,
+                account,
             )?;
             queries::merge_server_tracks(&db.conn, id, &track_ids)?;
             queries::set_playlist_server_songs(&db.conn, id, &record)?;
