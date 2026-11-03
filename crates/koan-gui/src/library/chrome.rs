@@ -64,6 +64,54 @@ pub fn empty_state(icon: Icon, title: &'static str, detail: &'static str) -> Div
         .child(EmptyState::new(icon, title).detail(detail))
 }
 
+/// What a browser does with the listing its last visit kept, against the
+/// query and the library's version now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kept {
+    /// The same listing: drawn at once, where the last visit left it.
+    Draw,
+    /// The same query over a library that has moved: not drawn, since its
+    /// rows may no longer be the library's; the place is kept for the new
+    /// listing.
+    Wait,
+    /// Another query (a filter changed on another page): neither the rows
+    /// nor the place are this listing's.
+    Forget,
+}
+
+/// See `Kept`. A version not yet known is taken as the same: the engine's
+/// first report is a frame away, and the load it brings checks again.
+pub fn kept<Q: PartialEq>(kept: &(Q, u64), query: &Q, version: Option<u64>) -> Kept {
+    if kept.0 != *query {
+        Kept::Forget
+    } else if version.is_some_and(|v| v != kept.1) {
+        Kept::Wait
+    } else {
+        Kept::Draw
+    }
+}
+
+/// A listing that could not be read, why, and a way to ask again: what a
+/// browser draws in place of "no albums yet" when the library did not answer.
+pub fn failed_state(
+    icon: Icon,
+    why: &str,
+    retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .child(
+            EmptyState::new(icon, "could not read the library")
+                .warning()
+                .detail(why.to_string()),
+        )
+        .child(text_button("retry-listing", "try again").on_click(retry))
+}
+
 /// A text button: an app word in `muted`, `ink` under the pointer.
 pub fn text_button(id: impl Into<ElementId>, label: &str) -> Button {
     Button::new(id, ButtonKind::Text).label(label)
@@ -545,6 +593,31 @@ pub fn selection_bar<V: Picking>(
         .verb("sel-organise", "organise…", organise)
         .on_done(move |_, _, cx| end(cx))
         .done_help("stop selecting (esc)")
+}
+
+#[cfg(test)]
+mod kept_tests {
+    use super::{Kept, kept};
+
+    #[test]
+    fn a_kept_listing_is_drawn_only_while_it_is_the_listing() {
+        assert_eq!(kept(&("rock", 4), &"rock", Some(4)), Kept::Draw);
+        assert_eq!(
+            kept(&("rock", 4), &"rock", None),
+            Kept::Draw,
+            "not yet known"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"rock", Some(5)),
+            Kept::Wait,
+            "the library moved"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"jazz", Some(4)),
+            Kept::Forget,
+            "another filter"
+        );
+    }
 }
 
 #[cfg(test)]
