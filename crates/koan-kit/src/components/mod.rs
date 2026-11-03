@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod answer;
 mod arrive;
 mod availability;
 mod badge;
@@ -20,6 +21,7 @@ mod bars;
 mod button;
 pub mod choice;
 mod collection;
+mod command_bar;
 mod copy;
 mod cover;
 mod dense;
@@ -30,6 +32,7 @@ mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod heart;
 mod inspector;
 mod level;
 mod link_text;
@@ -51,6 +54,7 @@ mod scroll;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
+mod slide;
 mod slider;
 mod sparkline;
 mod spinner;
@@ -63,6 +67,7 @@ mod tabs;
 mod tile;
 mod toggle;
 mod toolbar;
+mod transport_control;
 mod viewer;
 mod window;
 
@@ -70,22 +75,24 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{
-    AnyElement, App, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
-    IntoElement, MouseButton, Rgba, SharedString, StatefulInteractiveElement, Styled, TrackCurve,
-    Window, div, px,
+    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
+    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
     ShaderProgram, Track,
 };
+pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
+pub use command_bar::{CommandBar, CommandSection};
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
@@ -95,7 +102,8 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
-        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+        Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
+        PageUp, Pick, Right, ShowMenu, Up,
     };
 }
 pub use empty::EmptyState;
@@ -106,6 +114,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
     form_text,
 };
+pub use heart::Heart;
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
@@ -134,6 +143,7 @@ pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
+pub use slide::{Slide, SlideState};
 pub use slider::{Glide, Slider};
 pub use sparkline::Sparkline;
 pub use spinner::Spinner;
@@ -149,6 +159,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
+pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::SecondaryWindow;
 
@@ -310,7 +321,25 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
+        .child(
+            canvas(
+                |bounds, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
 }
+
+/// Where the keyboard's cursor ring was drawn, and in which window: what the
+/// menu key opens a context menu under. The key clears it and lets a frame
+/// draw, so only a ring drawn in that frame counts.
+#[derive(Default)]
+pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
+
+impl Global for CursorAt {}
 
 /// A fill or an outline following a control's state on the GPU: lit at once
 /// as the state comes on (the pointer arrives), and faded out over

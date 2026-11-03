@@ -58,7 +58,9 @@ pub struct TileArt {
     playing: Option<AnyElement>,
     on_device: Option<f32>,
     heart: Option<(bool, bool)>,
+    id: ElementId,
     pick: Option<bool>,
+    cursor: bool,
 }
 
 impl TileArt {
@@ -83,8 +85,17 @@ impl TileArt {
             playing: None,
             on_device: None,
             heart: None,
+            id: ElementId::Name("tile-art".into()),
             pick: None,
+            cursor: false,
         }
+    }
+
+    /// Which record's art this is, for its heart's answer: tiles drawn
+    /// side by side in one view each need their own.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// The codec, top right: at tile size a rate is unreadable, and the
@@ -128,6 +139,13 @@ impl TileArt {
     /// While picking: whether this record is picked.
     pub fn pick(mut self, picked: Option<bool>) -> Self {
         self.pick = picked;
+        self
+    }
+
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// the focus ring, inside the sleeve, once the keyboard was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -248,15 +266,10 @@ impl RenderOnce for TileArt {
             );
         }
         if let (Some((favourite, hovered)), None) = (self.heart, self.pick) {
-            let glyph = if favourite {
-                KoanIcon::new(Icon::Favourited)
-                    .role(TypeRole::Meta)
-                    .color(look.accent.hsla())
-            } else {
-                KoanIcon::new(Icon::Favourite)
-                    .role(TypeRole::Meta)
-                    .color(pal.ink.hsla())
-            };
+            // A mark inside the tile, which takes the click itself and tells
+            // the heart from the sleeve by where it lands.
+            let glyph = super::Heart::new(super::child(&self.id, "heart"), favourite)
+                .rest(crate::theme::Tone::Ink);
             art = art.child(
                 div()
                     .absolute()
@@ -300,6 +313,9 @@ impl RenderOnce for TileArt {
                     .child(tick.points(Self::TICK / 1.2).color(gpui_kit::white())),
             );
         }
+        if self.cursor && window.last_input_was_keyboard() {
+            art = art.child(super::cursor_ring(&look));
+        }
         art
     }
 }
@@ -342,6 +358,8 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 

@@ -108,7 +108,7 @@ fn offer(id: String, name: String, cx: &mut App) {
 /// Opens the sheet for the TV `id`, called `name`.
 pub fn open(id: String, name: String, window: &mut Window, cx: &mut App) {
     let sheet = cx.new(|cx| TvWake::new(id, name, window, cx));
-    ask::present(sheet, cx);
+    ask::present(sheet, window, cx);
 }
 
 /// Asks, then forgets the TV's pairing for all the account's devices:

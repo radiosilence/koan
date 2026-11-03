@@ -97,6 +97,8 @@ pub struct TileState {
     pub selecting: bool,
     pub selected: bool,
     pub starting: bool,
+    /// Under the grid's keyboard cursor while the grid holds the keyboard.
+    pub cursor: bool,
     pub show_artist: bool,
     pub side: Pixels,
     pub sleeve: Sleeve,
@@ -120,6 +122,7 @@ impl TileState {
             && self.selecting == other.selecting
             && self.selected == other.selected
             && self.starting == other.starting
+            && self.cursor == other.cursor
             && self.show_artist == other.show_artist
             && self.side == other.side
             && self.pick == other.pick
@@ -300,6 +303,7 @@ impl<V: TileHost> Render for TileView<V> {
             None
         };
         let art = TileArt::new(side, sleeve)
+            .id(("tile-art", id as u64))
             .codec(record.codec.clone())
             .badge(record.badge.clone())
             .mark(mark)
@@ -313,7 +317,8 @@ impl<V: TileHost> Render for TileView<V> {
                 (hovered.is_some() || state.favourite)
                     .then_some((state.favourite, hovered == Some(Part::Heart))),
             )
-            .pick(state.selecting.then_some(state.selected));
+            .pick(state.selecting.then_some(state.selected))
+            .cursor(state.cursor);
 
         let title = div()
             .w_full()

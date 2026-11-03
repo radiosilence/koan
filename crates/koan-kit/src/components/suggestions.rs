@@ -212,7 +212,10 @@ impl RenderOnce for SuggestionRow {
                     icon.map(|icon| KoanIcon::new(icon).role(TypeRole::Meta).tone(Tone::Muted)),
                 ),
         };
-        self.base
+        // An option of its list to a screen reader, selected while lit.
+        let name = self.title.clone();
+        super::accessible(self.base, gpui_kit::Role::ListBoxOption, Some(name))
+            .aria_selected(self.lit)
             .flex()
             .items_center()
             .gap(look.space(Space::S))

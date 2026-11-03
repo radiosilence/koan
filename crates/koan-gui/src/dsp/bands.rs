@@ -410,7 +410,9 @@ pub fn table<V: 'static>(
         Column::fixed(DB_W, Align::End),
         Column::fixed(Q_W, Align::End),
     ];
-    let mut table = DenseTable::new(columns);
+    // The options menu on a band of a kind this version does not know:
+    // room for it on every row, so the figures line up down the edge.
+    let mut table = DenseTable::new(columns).trailing_width(crate::theme::HIT);
     if !bands.is_empty() {
         table = table.header(["#", "Type", "Hz", "dB", "Q"]);
     }

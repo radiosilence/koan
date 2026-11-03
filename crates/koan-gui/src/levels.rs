@@ -24,11 +24,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use futures::StreamExt as _;
 use koan_kit::app::*;
-use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
+use koan_kit::components::{
+    BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay, renderer_mark,
+};
 use parking_lot::Mutex;
 
 use crate::engine::engine;
@@ -76,7 +79,43 @@ struct Levels {
 
 impl Global for Levels {}
 
+/// The music plays on a renderer handed the original file, which no bars
+/// can follow; with a processed stream, sent from here, they can.
+static HANDED_OFF: AtomicBool = AtomicBool::new(false);
+
+/// Follows whether the music is handed off, from the mirror's renderer
+/// output and stream format. Every window is drawn again when it changes,
+/// which is when an output is chosen.
+fn follow_hand_off(cx: &mut App) {
+    let Some(mirror) = cx.try_global::<crate::mirror::Mirror>().cloned() else {
+        return;
+    };
+    let update = move |cx: &mut App| {
+        let on_renderer = mirror.renderers.read(cx).0.output.is_some();
+        let processed = mirror
+            .playback
+            .read(cx)
+            .0
+            .format
+            .as_ref()
+            .is_some_and(|f| f.dsp.is_some());
+        let handed = on_renderer && !processed;
+        if HANDED_OFF.swap(handed, Ordering::Relaxed) != handed {
+            cx.refresh_windows();
+        }
+    };
+    update(cx);
+    let (renderers, playback) = {
+        let m = cx.global::<crate::mirror::Mirror>();
+        (m.renderers.clone(), m.playback.clone())
+    };
+    let again = update.clone();
+    cx.observe(&renderers, move |_, cx| update(cx)).detach();
+    cx.observe(&playback, move |_, cx| again(cx)).detach();
+}
+
 pub fn install(cx: &mut App) {
+    follow_hand_off(cx);
     let (gone, mut slots_gone) = futures::channel::mpsc::unbounded();
     let registry: Arc<Mutex<Registry>> = Arc::default();
     registry.lock().gone = Some(gone);
@@ -163,7 +202,12 @@ impl Drop for SlotState {
 
 /// The playing bars in `color`. Inside an element with an id, which keys the
 /// slot's state.
-pub fn bars(color: Hsla) -> impl IntoElement {
+pub fn bars(color: Hsla) -> AnyElement {
+    // Played on a renderer that is handed the file itself, nothing reaches
+    // the analyser: the slot shows where it plays instead.
+    if HANDED_OFF.load(Ordering::Relaxed) {
+        return renderer_mark(color).into_any_element();
+    }
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {

@@ -109,6 +109,10 @@ pub struct PlaylistPage {
     /// What the last export had to say.
     note: Option<SharedString>,
     focus: FocusHandle,
+    /// The keyboard's place in the list, by row.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     _loading: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -162,6 +166,8 @@ impl PlaylistPage {
             playing,
             note: None,
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             _loading: None,
             _subscriptions: subscriptions,
         };
@@ -469,103 +475,142 @@ impl PlaylistPage {
     }
 
     fn ask_rename(&self, window: &mut Window, cx: &mut App) {
-        let Some(playlist) = self.playlist.clone() else {
-            return;
-        };
-        let id = self.id;
-        let old = playlist.name.clone();
-        let synced = playlist.remote_id.is_some();
-        name(
-            "rename playlist",
-            "rename",
-            &playlist.name,
-            move |typed| {
-                let mut lines: Vec<SharedString> = if typed.is_empty() || typed == old {
-                    vec!["Type the new name.".into()]
-                } else {
-                    vec![format!("“{old}” becomes “{typed}”.").into()]
-                };
-                if synced {
-                    lines.push("It is renamed on the server too.".into());
-                }
-                lines
-            },
-            window,
-            cx,
-            move |name, cx| command(cx, "rename playlist", move |e| e.rename_playlist(id, name)),
-        );
+        if let Some(playlist) = &self.playlist {
+            ask_rename(playlist, window, cx);
+        }
     }
 
     fn ask_delete(&self, window: &mut Window, cx: &mut App) {
-        let Some(playlist) = self.playlist.clone() else {
-            return;
-        };
-        let (id, nav) = (self.id, self.lib.nav.clone());
-        let mut lines: Vec<SharedString> = vec![
-            format!(
-                "“{}” and its {} go.",
-                playlist.name,
-                count(playlist.track_count.into(), "entry", "entries")
-            )
-            .into(),
-        ];
-        if playlist.remote_id.is_some() {
-            lines.push("It is deleted on the server too, for every device.".into());
+        if let Some(playlist) = &self.playlist {
+            ask_delete(playlist, self.lib.nav.read(cx).navigator(), window, cx);
         }
-        if playlist.from_file {
-            lines.push("Its file in the library stays, and a rescan reads it again.".into());
-        }
-        confirm(
-            Confirm {
-                title: "delete playlist".into(),
-                verb: "delete".into(),
-                destructive: true,
-                lines,
-                note: Some("The tracks stay in the library. This cannot be undone.".into()),
-            },
-            window,
+    }
+
+    /// Writes the playlist out as an M3U8, saying under the header how it
+    /// went.
+    fn export(&mut self, cx: &mut Context<Self>) {
+        let page = cx.weak_entity();
+        export(
+            self.lib.engine.clone(),
+            self.id,
+            self.name(),
             cx,
-            move |cx| {
-                nav.update(cx, |nav, cx| nav.open(Route::Queue, cx));
-                command(cx, "delete playlist", move |e| e.delete_playlist(id));
+            move |note, cx| {
+                page.update(cx, |this, cx| {
+                    this.note = Some(note.into());
+                    cx.notify();
+                })
+                .ok();
             },
         );
     }
+}
 
-    /// Writes the playlist out as an M3U8 where the person chooses, saying
-    /// what could not go in: a track never downloaded has no file to name.
-    fn export(&mut self, cx: &mut Context<Self>) {
-        let file = format!("{}.m3u8", self.name());
-        let home = dirs::home_dir().unwrap_or_default();
-        let chosen = cx.prompt_for_new_path(&home, Some(&file));
-        let (engine, id) = (self.lib.engine.clone(), self.id);
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(path))) = chosen.await else {
-                return;
+/// Asks for a playlist's new name, saying what changes, then renames it.
+pub fn ask_rename(playlist: &Playlist, window: &mut Window, cx: &mut App) {
+    let id = playlist.id;
+    let old = playlist.name.clone();
+    let synced = playlist.remote_id.is_some();
+    name(
+        "rename playlist",
+        "rename",
+        &playlist.name,
+        move |typed| {
+            let mut lines: Vec<SharedString> = if typed.is_empty() || typed == old {
+                vec!["Type the new name.".into()]
+            } else {
+                vec![format!("“{old}” becomes “{typed}”.").into()]
             };
-            let note = match engine
-                .export_playlist(id, path.to_string_lossy().into_owned())
-                .await
-            {
-                Ok(summary) if summary.skipped > 0 => format!(
-                    "Exported {}; {} not downloaded, so they have no file to name.",
-                    count(summary.written.into(), "track", "tracks"),
-                    summary.skipped
-                ),
-                Ok(summary) => format!(
-                    "Exported {}.",
-                    count(summary.written.into(), "track", "tracks")
-                ),
-                Err(e) => format!("Could not write the playlist: {e}"),
-            };
-            this.update(cx, |this, cx| {
-                this.note = Some(note.into());
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+            if synced {
+                lines.push("It is renamed on the server too.".into());
+            }
+            lines
+        },
+        window,
+        cx,
+        move |name, cx| command(cx, "rename playlist", move |e| e.rename_playlist(id, name)),
+    );
+}
+
+/// Asks before deleting a playlist, saying what goes and what stays. The
+/// queue shows in its place when it was the page showing.
+pub fn ask_delete(
+    playlist: &Playlist,
+    nav: Entity<crate::navigator::Navigator>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let id = playlist.id;
+    let mut lines: Vec<SharedString> = vec![
+        format!(
+            "“{}” and its {} go.",
+            playlist.name,
+            count(playlist.track_count.into(), "entry", "entries")
+        )
+        .into(),
+    ];
+    if playlist.remote_id.is_some() {
+        lines.push("It is deleted on the server too, for every device.".into());
     }
+    if playlist.from_file {
+        lines.push("Its file in the library stays, and a rescan reads it again.".into());
+    }
+    confirm(
+        Confirm {
+            title: "delete playlist".into(),
+            verb: "delete".into(),
+            destructive: true,
+            lines,
+            note: Some("The tracks stay in the library. This cannot be undone.".into()),
+        },
+        window,
+        cx,
+        move |cx| {
+            nav.update(cx, |nav, cx| {
+                if nav.current() == Route::Playlist(id) && nav.go(Route::Queue) {
+                    cx.notify();
+                }
+            });
+            command(cx, "delete playlist", move |e| e.delete_playlist(id));
+        },
+    );
+}
+
+/// Writes a playlist out as an M3U8 where the person chooses, and hands
+/// `said` what could not go in: a track never downloaded has no file to
+/// name.
+pub fn export(
+    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    id: i64,
+    name: String,
+    cx: &mut App,
+    said: impl FnOnce(String, &mut App) + 'static,
+) {
+    let file = format!("{name}.m3u8");
+    let home = dirs::home_dir().unwrap_or_default();
+    let chosen = cx.prompt_for_new_path(&home, Some(&file));
+    cx.spawn(async move |cx| {
+        let Ok(Ok(Some(path))) = chosen.await else {
+            return;
+        };
+        let note = match engine
+            .export_playlist(id, path.to_string_lossy().into_owned())
+            .await
+        {
+            Ok(summary) if summary.skipped > 0 => format!(
+                "Exported {}; {} not downloaded, so they have no file to name.",
+                count(summary.written.into(), "track", "tracks"),
+                summary.skipped
+            ),
+            Ok(summary) => format!(
+                "Exported {}.",
+                count(summary.written.into(), "track", "tracks")
+            ),
+            Err(e) => format!("Could not write the playlist: {e}"),
+        };
+        cx.update(|cx| said(note, cx));
+    })
+    .detach();
 }
 
 /// Entries with how a question names them: title and artist.
@@ -746,10 +791,12 @@ impl PlaylistPage {
             controls = controls
                 .child(
                     ToolbarButton::new("playlist-undo", Icon::Undo, "undo")
+                        .help(crate::platform::actions::help("undo", &Undo, cx))
                         .on_click(move |_, _, cx| command(cx, "undo", move |e| e.undo(Some(id)))),
                 )
                 .child(
                     ToolbarButton::new("playlist-redo", Icon::Redo, "redo")
+                        .help(crate::platform::actions::help("redo", &Redo, cx))
                         .on_click(move |_, _, cx| command(cx, "redo", move |e| e.redo(Some(id)))),
                 );
         }
@@ -954,6 +1001,7 @@ impl PlaylistPage {
         let list = self.list.clone();
         row_frame
             .selected(selected)
+            .cursor(self.keyed && self.cursor.at == Some(row))
             .when(p.a11y, |frame| {
                 frame
                     .place(row, count)
@@ -971,6 +1019,9 @@ impl PlaylistPage {
             )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
+                // The keyboard carries on from the row clicked.
+                this.cursor.at = Some(row);
+                this.cursor.anchor = Some(row);
                 this.click(row, event, cx);
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -1098,73 +1149,127 @@ impl Render for PlaylistPage {
             .named(self.name())
             .into_any_element()
         };
-        div()
-            .id("playlist")
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &super::SelectAll, _, cx| {
-                this.selected = this.items.iter().map(|i| i.queue_item_id.clone()).collect();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &super::Dismiss, _, cx| {
-                this.selected.clear();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
-                this.selected.clear();
-                cx.notify();
-            }))
-            .when(fillable, |d| {
-                let id = self.id;
-                d.on_action(cx.listener(Self::ask_remove_selected))
-                    .on_action(move |_: &Undo, _, cx| {
-                        command(cx, "undo", move |e| e.undo(Some(id)))
-                    })
-                    .on_action(move |_: &Redo, _, cx| {
-                        command(cx, "redo", move |e| e.redo(Some(id)))
-                    })
-                    // Below the last row: the end of the playlist.
-                    .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
-                        let dest = this.drop_at.unwrap_or(count);
-                        this.dropped(dragged, dest, cx);
-                    }))
-                    .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
-                        let dest = this.drop_at.unwrap_or(count);
-                        this.dropped(&dragged.as_library(), dest, cx);
-                    }))
-                    // Files from outside: indexed where they lie and appended.
-                    .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
-                        drop::add_files_to_playlist(
-                            &crate::engine::engine(cx),
-                            id,
-                            paths.paths().to_vec(),
-                            cx,
-                        )
-                    }))
-                    // A drag that leaves the list takes its insertion line with it.
-                    .on_drag_move::<PlayableDrag>(cx.listener(
-                        |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
-                            if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
-                                this.drop_at = None;
-                                cx.notify();
-                            }
-                        },
-                    ))
-            })
-            .size_full()
-            .flex()
-            .flex_col()
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
-                if event.button == MouseButton::Right {
-                    this.menu_row = None;
-                }
-            }))
-            .child(Page::new(header).body(body))
-            .koan_context_menu("playlist-menu", window, cx, {
-                let view = view.clone();
-                move |menu, window, cx| row_menu(menu, &view, window, cx)
-            })
-            .into_any_element()
+        self.keyed = self.focus.is_focused(window);
+        self.cursor.clamp(self.rows.len());
+        super::keys::keyed(
+            div()
+                .id("playlist")
+                .key_context("Library List")
+                .track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(|this, _: &super::SelectAll, _, cx| {
+            this.selected = this.items.iter().map(|i| i.queue_item_id.clone()).collect();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &super::Dismiss, _, cx| {
+            this.selected.clear();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
+            this.selected.clear();
+            cx.notify();
+        }))
+        .when(fillable, |d| {
+            let id = self.id;
+            d.on_action(cx.listener(Self::ask_remove_selected))
+                .on_action(move |_: &Undo, _, cx| command(cx, "undo", move |e| e.undo(Some(id))))
+                .on_action(move |_: &Redo, _, cx| command(cx, "redo", move |e| e.redo(Some(id))))
+                // Below the last row: the end of the playlist.
+                .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
+                    let dest = this.drop_at.unwrap_or(count);
+                    this.dropped(dragged, dest, cx);
+                }))
+                .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
+                    let dest = this.drop_at.unwrap_or(count);
+                    this.dropped(&dragged.as_library(), dest, cx);
+                }))
+                // Files from outside: indexed where they lie and appended.
+                .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
+                    drop::add_files_to_playlist(
+                        &crate::engine::engine(cx),
+                        id,
+                        paths.paths().to_vec(),
+                        cx,
+                    )
+                }))
+                // A drag that leaves the list takes its insertion line with it.
+                .on_drag_move::<PlayableDrag>(cx.listener(
+                    |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
+                            this.drop_at = None;
+                            cx.notify();
+                        }
+                    },
+                ))
+        })
+        .size_full()
+        .flex()
+        .flex_col()
+        .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
+            if event.button == MouseButton::Right {
+                this.menu_row = None;
+            }
+        }))
+        .child(Page::new(header).body(body))
+        .koan_context_menu("playlist-menu", window, cx, {
+            let view = view.clone();
+            move |menu, window, cx| row_menu(menu, &view, window, cx)
+        })
+        .into_any_element()
+    }
+}
+
+impl super::keys::KeyedList for PlaylistPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let entries = self.rows[from].items().start..self.rows[to].items().end;
+        self.selected = self.items[entries]
+            .iter()
+            .map(|i| i.queue_item_id.clone())
+            .collect();
+        if from == to {
+            let first = self.row_items(from).next().map(|i| i.queue_item_id.clone());
+            self.anchor = first;
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let ids: Vec<String> = self
+            .row_items(ix)
+            .map(|i| i.queue_item_id.clone())
+            .collect();
+        if ids.iter().all(|id| self.selected.contains(id)) {
+            for id in &ids {
+                self.selected.remove(id);
+            }
+        } else {
+            self.selected.extend(ids);
+        }
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.list.reveal(ix);
+    }
+
+    /// Return plays the playlist from the row, as a double click does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let entry = self
+            .row_items(ix)
+            .next()
+            .and_then(|i| i.queue_item_id.parse().ok());
+        self.play_from(entry, false, cx);
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu_row = ix;
     }
 }
 

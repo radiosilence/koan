@@ -20,7 +20,7 @@ The same context menu has download to cache, which fetches a remote library's tr
 
 Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. A pattern typed or changed can be saved under a name, which stores it in `config.toml` for every kōan on that configuration; the sheet says whether the name is new or replaces one before it saves. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
 
-Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite signs in, asking first when it would replace an account signed in elsewhere, and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
+Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite asks first whether to sign in as its account on its server, saying what becomes of the account signed in now, and changes nothing until you say so (one for the account already signed in just says so); and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
 
 ## Media keys and now playing
 
@@ -80,13 +80,15 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 
 The queue keeps its place and selection when you visit another page and come back.
 
-Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued. "new" beside the playlists heading makes an empty playlist, and tracks, records or artists dropped on the heading make one holding them; "add to playlist" in any context menu offers a new playlist too, and the queue's ⋯ saves the queue as one.
+A row's context menu acts on the rows under it, or the selection: play, remove, add to playlist, organise, the files on this device, go to album and a share link. A heading's acts on its whole record, and its share link names the record. A share link is made on your server and copied; only tracks the server holds go in it, and the notice says how many were left out.
+
+Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued. "new" beside the playlists heading makes an empty playlist, and tracks, records or artists dropped on the heading make one holding them; "add to playlist" in any context menu offers a new playlist too, and the queue's ⋯ saves the queue as one. A playlist's context menu in the sidebar plays or shuffles it, and renames, exports or deletes it, asking first.
 
 A playlist's page is laid out as the queue is, grouped by record or flat (the album toggle in the toolbar, remembered per playlist). Play and shuffle are in its header; the toolbar holds undo and redo, and under ⋯ play next, add to queue, shuffle the order, rename, export as M3U8 and delete. Rows are selected as in the queue and dragged to reorder, with the insertion line showing where they land; tracks, records and playlists dropped between rows are added there, and files dropped on the page are added at the end. Delete removes the selected rows. Removing, shuffling the order, renaming and deleting say what will change before they do it, and every edit but deleting can be undone. Smart playlists, playlists read from files in the library and playlists the server marks read-only say so in the header and take no edits.
 
 ## Favourites, Recently played and Downloaded
 
-Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens that kind's browser with the same filter on (favourites, played in the last month, or on this device), so the full listing starts with what the preview showed. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
+Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens the whole listing of that kind on the shelf (favourite albums, artists played in the last month, tracks on this device) on a page of its own, which starts with what the preview showed and leaves the library's own browsers filtered as they were. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
 
 ## History
 
@@ -94,9 +96,19 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-The field at the top of the sidebar searches the library as you type, ⌘K or `/` reaching it from anywhere. Under it, a panel suggests a few tracks, records and artists; the arrows light one and Return goes to it, while Return with none lit, or the sidebar's Results row, opens every result on a page laid out as the shelves are, its headings opening each browser with the query as its search. Escape or the field's clear mark empties it.
+⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches tracks, records and artists as you type, and everything in it is done from the keyboard:
 
-⇧⌘K (Ctrl+Shift+K on Linux), File → Add Music…, opens the picker: tracks, records or artists by name, several picked with a click, then Add (Return), Add & Play (⌘Return) or Replace Queue (⇧⌘Return), which says how much comes off the queue before it does. A double-click plays the one thing at once.
+| Key | Does |
+|---|---|
+| ↑ ↓ | Light a result |
+| Return | Play a track after the end of the queue, or open a record or an artist |
+| ⌘Return | Play next |
+| ⌥Return | Add to the queue |
+| Tab | Tick the lit result; Return, ⌘Return and ⌥Return then act on everything ticked |
+| ⇧Return | Every result, on a page of its own, whose headings open each kind's whole listing |
+| Escape | Empty the query, then close the box |
+
+A click on a result does what Return does, and ⌘-click ticks it.
 
 ## Lyrics, track info and artwork
 
@@ -110,7 +122,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 
-Downloads, in the sidebar, lists what is being fetched from your server and what finished or failed, with the cache's size against its limit. A running download shows its rate and a bar; one that has stopped moving says it has stalled, and a failure keeps its reason. Retry fetches a failed track again; cancel stops one, and queue entries waiting on it are skipped until it is retried; remove deletes a downloaded copy, which downloads again when played. Clear finished forgets the settled rows and leaves the files. Wherever a track's row says where its file is (the queue, the library, playlists), a download in progress fills a ring as it arrives.
+Downloads, in the sidebar, lists what is being fetched from your server and what finished or failed, with the cache's size against its limit. A running download shows its rate and a bar; one that has stopped moving says it has stalled, and a failure keeps its reason. Retry fetches a failed track again; cancel stops one, and queue entries waiting on it are skipped until it is retried; remove deletes a downloaded copy, which downloads again when played. Clear finished forgets the settled rows and leaves the files. While any are running, the sidebar's Downloads row counts them. Wherever a track's row says where its file is (the queue, the library, playlists), a download in progress fills a ring as it arrives.
 
 ## EQ
 

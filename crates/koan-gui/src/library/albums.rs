@@ -25,6 +25,7 @@ use super::selection::Selection;
 use super::tile::{Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::navigator::{Listing, Shelf};
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
@@ -94,6 +95,11 @@ pub struct AlbumGrid {
     /// state rather than staying held, so the query can still be changed.
     failed: bool,
     lib: Lib,
+    /// A shelf's "see all": the shelf's filter and order in place of the
+    /// shared ones, and no controls to change them.
+    scope: Option<Shelf>,
+    /// The route the grid is on, for its place in the navigator.
+    page: Page,
     /// The listing, as its tiles draw it.
     records: Rc<Vec<Rc<Record>>>,
     tiles: Tiles<AlbumGrid>,
@@ -125,6 +131,10 @@ pub struct AlbumGrid {
     restore: Option<Pixels>,
     rewinds: u64,
     focus: FocusHandle,
+    /// The keyboard's place in the grid, by record.
+    cursor: crate::components::ListCursor,
+    /// The grid holds the keyboard, as of the last frame.
+    keyed: bool,
     search: Entity<chrome::SearchField>,
     filters: Entity<chrome::FilterPanel>,
     /// The list's height as of the last frame, to tell when it moved.
@@ -147,11 +157,24 @@ impl AlbumGrid {
     }
 
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::scoped(lib, None, window, cx)
+    }
+
+    /// The grid narrowed to `scope`'s shelf, or the library's own.
+    pub fn scoped(
+        lib: Lib,
+        scope: Option<Shelf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let page = scope.map_or(Page::Albums, |shelf| Page::Shelved(shelf, Listing::Albums));
         let id = cx.entity_id();
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            // A search's own listing follows its query.
+            cx.observe(&lib.search, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
@@ -165,7 +188,7 @@ impl AlbumGrid {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                if let Some(loaded) = this.loaded.take() {
+                if let Some(loaded) = this.loaded.take().filter(|_| this.scope.is_none()) {
                     this.lib.kept.put(KeptAlbums {
                         records: this.records.clone(),
                         order: std::mem::take(&mut this.order),
@@ -175,21 +198,28 @@ impl AlbumGrid {
                 let offset = Pixels::from(this.heading.borrow().offset);
                 this.lib
                     .nav
-                    .update(cx, |nav, _| nav.remember_offset(Page::Albums, offset));
+                    .update(cx, |nav, _| nav.remember_offset(page, offset));
                 this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Albums, cx);
-        let restore = lib.nav.read(cx).offset(Page::Albums);
+        let rewinds = lib.nav.read(cx).rewinds(page, cx);
+        let restore = lib.nav.read(cx).offset(page);
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter albums", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
-        let (records, order, loaded) = match lib.kept.take::<KeptAlbums>() {
+        let kept = if scope.is_none() {
+            lib.kept.take::<KeptAlbums>()
+        } else {
+            None
+        };
+        let (records, order, loaded) = match kept {
             Some(k) => (k.records, k.order, Some(k.loaded)),
             None => (Rc::new(Vec::new()), Vec::new(), None),
         };
         let mut this = Self {
             lib,
+            scope,
+            page,
             records,
             tiles: Tiles::default(),
             aimed: None,
@@ -212,6 +242,8 @@ impl AlbumGrid {
             restore,
             rewinds,
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             search,
             filters,
             viewport: 0.0,
@@ -222,12 +254,33 @@ impl AlbumGrid {
         if this.loaded.is_some() {
             this.restore_scroll();
         }
+        // A listing kept from a visit under another query (a shelf's "see
+        // all" changed the filter) is not drawn: the page waits for its own,
+        // as a first visit does, rather than drawing the old rows and
+        // swapping them.
+        if this
+            .loaded
+            .as_ref()
+            .is_some_and(|(q, _)| *q != this.query(cx))
+        {
+            this.records = Rc::new(Vec::new());
+            this.order.clear();
+            this.loaded = None;
+        }
         this.reload(cx);
         this
     }
 
     fn query(&self, cx: &App) -> Query {
         let browse = self.lib.browse.read(cx);
+        if let Some(shelf) = self.scope {
+            return Query {
+                search: super::scope::search(shelf, &self.lib, cx),
+                filter: super::scope::filter(shelf),
+                sort: super::scope::album_sort(shelf),
+                seed: browse.seed,
+            };
+        }
         Query {
             search: browse.search(),
             filter: browse.filter.clone(),
@@ -507,6 +560,7 @@ impl AlbumGrid {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&record.id),
+                cursor: self.keyed && self.cursor.at == Some(start + ix),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -751,6 +805,11 @@ impl TileHost for AlbumGrid {
     ) {
         window.focus(&self.focus, cx);
         let item = Playable::Album(album);
+        // The keyboard carries on from the tile clicked.
+        if let Some(index) = self.records.iter().position(|r| r.id == album) {
+            self.cursor.at = Some(index);
+            self.cursor.anchor = Some(index);
+        }
         if self
             .selection
             .take(item, modifiers.shift, modifiers.secondary(cx), &self.order)
@@ -819,6 +878,7 @@ impl AlbumGrid {
                     }
                     cx.notify();
                 }),
+                cx,
             ))
             .into_any_element()
     }
@@ -828,7 +888,7 @@ impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         self.scale.set(window.scale_factor());
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Albums, cx);
+        let rewinds = self.lib.nav.read(cx).rewinds(self.page, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll
@@ -850,7 +910,9 @@ impl Render for AlbumGrid {
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
-            "albums",
+            self.scope.map_or("albums", |shelf| {
+                super::scope::title(shelf, Listing::Albums)
+            }),
             chrome::count(count as u64, "album", "albums"),
             div(),
         );
@@ -901,40 +963,104 @@ impl Render for AlbumGrid {
             None => div().into_any_element(),
         };
 
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .size_full()
-            .flex()
-            .flex_col()
-            .typeset(p, Type::Body, p.ink)
-            .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
-                div()
-                    .id("album-grid")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
-                    .child(measure)
-                    .child(body)
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(crate::components::list_scrollbar(&self.scroll)),
-                cx.weak_entity(),
-                window,
+        self.keyed = self.focus.is_focused(window);
+        self.cursor.clamp(count);
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .size_full()
+        .flex()
+        .flex_col()
+        .typeset(p, Type::Body, p.ink)
+        .when(!held, |d| d.child(header))
+        .child(
+            div()
+                .id("album-grid")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
+                .child(measure)
+                .child(body)
+                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
+                .child(crate::components::list_scrollbar(&self.scroll)),
+        )
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
                 cx,
             ))
-            .when(self.selection.is_active(), |d| {
-                d.child(chrome::selection_bar(
-                    p,
-                    &self.lib,
-                    &self.selection,
-                    cx.entity(),
-                    cx,
-                ))
-            })
+        })
+    }
+}
+
+impl super::keys::KeyedList for AlbumGrid {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    fn columns(&self) -> usize {
+        self.grid.map_or(1, |grid| grid.columns)
+    }
+
+    fn page(&self) -> usize {
+        self.heading.borrow().visible.len().max(1)
+    }
+
+    /// One record is marked, as a plain click on a list row marks it,
+    /// without starting a pick: the tiles still play on a click. A range
+    /// starts one.
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let item = |ix: usize| Playable::Album(self.records[ix].id);
+        if from == to {
+            self.selection.mark(item(from));
+        } else {
+            self.selection.only(item(from));
+            self.selection.click(item(to), true, &self.order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let item = Playable::Album(self.records[ix].id);
+        self.selection.click(item, false, &self.order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        if let Some(grid) = self.grid {
+            self.scroll.scroll_to_item(
+                ix / grid.columns.max(1),
+                crate::components::ScrollStrategy::Nearest,
+            );
+        }
+    }
+
+    /// Return opens the record, as a click on its title does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let album = self.records[ix].id;
+        self.lib
+            .nav
+            .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+        });
     }
 }
 

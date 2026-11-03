@@ -109,7 +109,7 @@ Toolbar::new()
 
 ### FilterField (Mac: `KoanSearchField`, the filter panel's field)
 
-`FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. The page owns the `InputState` and what typing does.
+`FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. A click anywhere on the field, a toolbar button's height, focuses it; in a narrow page column it gives up width down to 64 points before any toolbar button goes. The page owns the `InputState` and what typing does.
 
 With text in it the field shows a clear mark at its trailing edge, `muted` and `ink` under the pointer; a press on it empties the field and keeps the keyboard there, and Escape does the same, going on to whatever Escape means around the field once it is empty. Emptying is an `InputEvent::Change` like typing. `.fill()` makes it as wide as what holds it, as the sidebar's search is. The input's types are `koan_kit::app::input`.
 
@@ -120,17 +120,19 @@ With text in it the field shows a clear mark at its trailing edge, `muted` and `
 ```rust
 TableRow::new(id, RowKind::Art)
     .selected(picked)
-    .current(playing)
-    .lead(Lead::Number(n))       // or Lead::Time, Lead::Bars
-    .sleeve(sleeve)              // drawn with Placeholder while missing
-    .title(title, credit_line)   // flexes and truncates
-    .mark(availability)
-    .heart(favourite)
-    .figure(Column::Format, quality)   // fixed, right-aligned
-    .figure(Column::Length, duration)
+    .lead(MARK, mark)            // a fixed cell, its content at its trailing edge
+    .lead_exact(sleeve_side, sleeve)
+    .title(title)                // flexes and truncates
+    .line(credit)
+    .figure(FORMAT, quality)     // fixed, right-aligned
+    .figure(LENGTH, duration)
 ```
 
-`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. A fixed cell's width is passed in points at 100 % and grows with the text size; each list names its widths as constants of its own (the queue's `MARK`), so nothing yet makes one figure the same width in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+
+### CommandBar (Arc's and Dia's command bars)
+
+`CommandBar::new(id, &input).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top, results in headed groups of `SuggestionRow`s with the lit one kept in view, and along its foot what each key does. The owner holds the query and decides what is found and what each key does.
 
 ### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
 
@@ -172,7 +174,7 @@ Menu::build(window, cx, |m, window, cx| {
 
 Built from entries, separators, sections and submenus; an entry's `keys` shows the keys that do the same at the row's end, for menus drawn where there is no menu bar; the panel, rows, glyph column, check, padding and keyboard handling are the menu's. Every verb carries the glyph the Mac's menu gives it.
 
-`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there. An entry that is `stays_open` leaves the menu open when chosen, for a choice among outputs or devices, where the tick and the details moving are the answer.
+`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there. An entry that is `stays_open` leaves the menu open when chosen, for a choice among outputs or devices, where the tick and the details moving are the answer. A rich entry's second line is one line, ending in an ellipsis with the rest in its tooltip, so a long one never widens the menu. What acts on a row without choosing it is an `action`: a quiet glyph with a tooltip naming it (`lit_action` in the accent while on, as an output's EQ), or a `text_action`, a word or two ("move here"). Where a row's last action is words, a choice's tick shares that last slot with it, as what is chosen is never moved to; beside glyphs the tick keeps its own column. Ticks are in the accent, and the chosen row of a menu of choices stands on the accent at 12%, inset from the panel's edges and rounded, as the Mac's picker draws it; every row's ground is inset and rounded alike. A rich row keeps two lines' height without a second line, its title centred. A menu whose rows change while it is open keeps a `min_width`; pickers of places (outputs, devices) take `Menu::PICKER_WIDTH`, sized for a rich row with its detail and a "move here", so they hold their size. Every row keeps as many slots at its end as the most any row of the menu has, filled from the end, so the actions line up whichever rows have them.
 
 ### Controls
 
@@ -218,7 +220,22 @@ progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engin
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 
-`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
+### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
+
+A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
+
+A change the control learns of rather than sees done (a favourite set by a shortcut or another device, music queued from a menu) answers through `follow(mark, answer, colour)` as the control draws: `mark` names the state, and a draw that finds it moved starts the answer. A control's first draw only notes the mark, so a row scrolled in shows its state still, and a change the control answered from its own handler a moment earlier is not answered twice. `announce` answers the first draw too, for something whose appearing is the news.
+
+| Control | Answer |
+|---|---|
+| `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
+| `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
+| `Heart`, the album tile's heart included, however the favourite changed | six dots leaving a heart that fills; a ring closing in on one that empties |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it |
+
+`SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
+
+`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`. `renderer_mark(color)` takes the bars' place while the music plays on a renderer handed the file itself, where nothing passes through to measure.
 
 `SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 
@@ -262,7 +279,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 `table_list(id, count, rows)`: a virtualised list of `TableRow`s, made a screenful at a time, for a table too long to build whole (a library's organise plan).
 
-`DenseTable::new(columns).header(…).rows(…)` with `Column::fixed(width)` or `Column::flex()` and an `Align` each: the compact table an editor shows, where every cell may be a field. A `DenseRow` can `span` cells (a graphic EQ's curve across four columns) and carries a `trailing` menu. Columns, gutters and row height are the table's; rows declare cells.
+`DenseTable::new(columns).header(…).rows(…)` with `Column::fixed(width)` or `Column::flex()` and an `Align` each: the compact table an editor shows, where every cell may be a field. A `DenseRow` can `span` cells (a graphic EQ's curve across four columns) and carries a `trailing` menu; `trailing_width` keeps that room on every row, the header's included, so the columns line up whichever rows have one. Columns, gutters and row height are the table's; rows declare cells.
 
 ### ProgressRow and StatusBlock (Mac: `ActivityIndicator`, `SidebarView`'s foot)
 
