@@ -6,7 +6,7 @@
 use koan_kit::app::*;
 use std::sync::Arc;
 
-use koan_ffi::TrackSet;
+use koan_runtime::TrackSet;
 
 use super::tokens::Paint;
 use crate::components::DragChip;

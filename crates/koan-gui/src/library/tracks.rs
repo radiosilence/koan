@@ -11,8 +11,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
 use koan_kit::app::*;
+use koan_runtime::{BrowseFilter, Track, TrackBrowseSort};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 

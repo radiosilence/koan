@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use crate::theme::wash::{Sleeve, Wash};
 use crate::theme::{self, Accent, KoanTheme, Look};
-use koan_ffi::PlayState;
 use koan_kit::app::*;
 use koan_kit::components::{Burst, Prism, SHADED};
+use koan_runtime::PlayState;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};

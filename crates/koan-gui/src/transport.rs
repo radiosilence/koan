@@ -5,10 +5,10 @@
 
 use std::time::{Duration, Instant};
 
-use koan_ffi::{
+use koan_kit::app::*;
+use koan_runtime::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
-use koan_kit::app::*;
 
 use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
@@ -355,7 +355,7 @@ impl Transport {
         let view = &self.devices.read(cx).0;
         let away = matches!(
             view.target_reach,
-            Some(koan_ffi::DeviceReach::OutOfReach { .. })
+            Some(koan_runtime::DeviceReach::OutOfReach { .. })
         );
         let name = view.target.as_ref().map(|t| {
             view.devices
@@ -470,7 +470,7 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
 /// whenever one of them moves while it is open.
 struct OutputView {
     /// `None` while the device controlled has not said what it plays through.
-    outputs: Option<koan_ffi::OutputsInfo>,
+    outputs: Option<koan_runtime::OutputsInfo>,
     /// Why the renderer played to skipped its last track, until one plays.
     problem: Option<String>,
     /// The EQ profile the stream playing goes through.
@@ -512,7 +512,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
             crate::dsp::window::open(Some(id.clone()), cx);
         })
     };
-    let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
+    let preset = |o: &koan_runtime::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
         (Some(preset), false) => preset.clone(),
         (None, true) => "unsaved".into(),

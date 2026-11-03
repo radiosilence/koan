@@ -17,8 +17,8 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 use koan_kit::app::*;
+use koan_runtime::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{ListAlignment, ListOffset, ListState, list};
 
@@ -286,7 +286,7 @@ impl ArtistPage {
             // In the release's own words; the heading puts them in the
             // theme's case.
             items.push(Item::Heading(
-                koan_ffi::release_section_title(section).into(),
+                koan_runtime::release_section_title(section).into(),
                 Heading::Section(section),
             ));
             rows(&mut items, false, start, len);

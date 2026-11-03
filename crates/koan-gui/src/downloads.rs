@@ -14,8 +14,8 @@
 //! entries waiting on the track, removing a file deletes it, and clearing
 //! forgets the settled rows.
 
-use koan_ffi::{Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{Transfer, TransferFigure, TransferState};
 
 use crate::components::sheet as ask;
 use crate::components::{

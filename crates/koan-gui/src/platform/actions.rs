@@ -21,10 +21,10 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use koan_ffi::KoanEngine;
 use koan_kit::app::platform::{KeyBindingContextPredicate, OperatingSystem};
 use koan_kit::app::{Action, App, KeyBinding, actions};
 use koan_kit::components::list_actions as list;
+use koan_runtime::KoanEngine;
 
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
@@ -537,7 +537,7 @@ fn push(
 /// Run an engine command, logging a refusal.
 fn send(
     cx: &mut App,
-    command: impl std::future::Future<Output = Result<(), koan_ffi::KoanError>> + 'static,
+    command: impl std::future::Future<Output = Result<(), koan_runtime::KoanError>> + 'static,
 ) {
     cx.foreground_executor()
         .spawn(async move {

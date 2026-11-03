@@ -16,8 +16,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{KoanEngine, ShelfKind, ShelfSummary};
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, ShelfKind, ShelfSummary};
 
 use crate::navigator::{Listing, Navigator, Route, Shelf};
 
@@ -82,7 +82,7 @@ impl Results {
     }
 }
 
-fn credit(parts: &[koan_ffi::CreditPart]) -> String {
+fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn suggestions_take_a_few_of_each_kind_in_order() {
-        let artist = |id| koan_ffi::Artist {
+        let artist = |id| koan_runtime::Artist {
             id,
             name: format!("artist {id}"),
             sort_name: None,

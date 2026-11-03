@@ -22,9 +22,9 @@
 
 use std::rc::Rc;
 
-use koan_ffi::{Placement, ShelfSummary};
 use koan_kit::app::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
 use koan_kit::app::*;
+use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
 use crate::components::{CommandBar, Cover, CoverArt, RowMetrics, SuggestionRow};
@@ -66,7 +66,7 @@ impl Item {
     }
 }
 
-fn credit(parts: &[koan_ffi::CreditPart]) -> String {
+fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 

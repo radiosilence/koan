@@ -10,8 +10,8 @@
 
 use std::collections::HashSet;
 
-use koan_ffi::{EntryStatus, Playlist, PlaylistEntry, QueueItem, TrackSet};
 use koan_kit::app::*;
+use koan_runtime::{EntryStatus, Playlist, PlaylistEntry, QueueItem, TrackSet};
 
 use super::Lib;
 use super::actions;
@@ -580,7 +580,7 @@ pub fn ask_delete(
 /// `said` what could not go in: a track never downloaded has no file to
 /// name.
 pub fn export(
-    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    engine: std::sync::Arc<koan_runtime::KoanEngine>,
     id: i64,
     name: String,
     cx: &mut App,
@@ -625,7 +625,7 @@ fn described(items: &[&QueueItem]) -> Vec<(i64, String)> {
 /// an empty one), then makes it and opens it. The tracks are resolved first,
 /// so the question can say how many it will hold.
 pub fn new_playlist(
-    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    engine: std::sync::Arc<koan_runtime::KoanEngine>,
     nav: Entity<crate::navigator::Navigator>,
     sets: Vec<TrackSet>,
     window: &mut Window,
@@ -813,7 +813,7 @@ impl PlaylistPage {
             "playlist-more",
             ToolbarButton::new("playlist-more-trigger", Icon::More, "more"),
             move |dismiss, _, _| {
-                let queue = |placement: fn() -> koan_ffi::Placement| {
+                let queue = |placement: fn() -> koan_runtime::Placement| {
                     let close = dismiss.clone();
                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                         close(window, cx);
@@ -833,11 +833,11 @@ impl PlaylistPage {
                 MenuPanel::new()
                     .child(
                         MenuRow::new("playlist-next", "play next")
-                            .on_click(queue(|| koan_ffi::Placement::Next)),
+                            .on_click(queue(|| koan_runtime::Placement::Next)),
                     )
                     .child(
                         MenuRow::new("playlist-queue", "add to queue")
-                            .on_click(queue(|| koan_ffi::Placement::Append)),
+                            .on_click(queue(|| koan_runtime::Placement::Append)),
                     )
                     .child(
                         MenuRow::new("playlist-shuffle-order", "shuffle the order…")
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test]
     fn an_entry_is_listed_under_its_own_id_and_waits_for_nothing() {
-        let track = koan_ffi::Track {
+        let track = koan_runtime::Track {
             id: 7,
             title: "Song".into(),
             artist_name: "Artist".into(),
@@ -1315,7 +1315,7 @@ mod tests {
         let item = listed(PlaylistEntry {
             entry_id: 42,
             track,
-            run: koan_ffi::RunRole::Single,
+            run: koan_runtime::RunRole::Single,
         });
         assert_eq!(item.queue_item_id, "42");
         assert_eq!(item.playlist_entry_id, Some(42));

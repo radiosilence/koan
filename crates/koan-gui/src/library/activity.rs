@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use futures_channel::mpsc;
 use futures_util::StreamExt;
-use koan_ffi::{ProgressReporter, SyncPhase};
 use koan_kit::app::*;
+use koan_runtime::{ProgressReporter, SyncPhase};
 
 use crate::components::{NavNote, ProgressRow};
 use crate::engine::engine;

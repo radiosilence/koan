@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, TransferState};
 
 use super::drag::Playable;
 
@@ -155,7 +155,7 @@ impl Feed {
     /// Each track's transfer, and the tracks still arriving by record.
     #[allow(clippy::type_complexity)]
     fn by_track(
-        transfers: &[koan_ffi::Transfer],
+        transfers: &[koan_runtime::Transfer],
     ) -> (HashMap<i64, TransferState>, HashMap<i64, Vec<i64>>) {
         let by_track = transfers.iter().map(|t| (t.track_id, t.state)).collect();
         let mut arriving: HashMap<i64, Vec<i64>> = HashMap::new();
@@ -274,7 +274,7 @@ impl Feed {
         let edits = self.favourites.edits;
         cx.spawn(async move |this, cx| {
             let read = async {
-                Ok::<_, koan_ffi::KoanError>((
+                Ok::<_, koan_runtime::KoanError>((
                     engine.clone().favourite_track_ids().await?,
                     engine.clone().favourite_album_ids().await?,
                     engine.favourite_artist_ids().await?,

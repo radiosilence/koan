@@ -1,11 +1,11 @@
 //! Choosing what fills a stage of a device's chain, the words the EQ page
 //! uses, and making a new EQ.
 
-use koan_ffi::{
-    DspJoin, DspOverview, DspProfileSummary, DspRole, DspStarter, DspTargets, DspTuningEntry,
-};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{
+    DspJoin, DspOverview, DspProfileSummary, DspRole, DspStarter, DspTargets, DspTuningEntry,
+};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};
@@ -476,7 +476,7 @@ impl StagePicker {
 
 /// A target as a menu lists it: its name, its default marked, and what it
 /// does.
-pub fn target_label(t: &koan_ffi::DspTargetOption, is_default: bool) -> String {
+pub fn target_label(t: &koan_runtime::DspTargetOption, is_default: bool) -> String {
     let name = if is_default {
         format!("{} (default)", t.name)
     } else {

@@ -3,8 +3,8 @@
 //! its detail under it, then the lesser verbs as compact buttons with their
 //! glyphs: play next, queue, copy share link, favourite.
 
-use koan_ffi::Placement;
 use koan_kit::app::*;
+use koan_runtime::Placement;
 
 use super::drag::Playable;
 use super::{Lib, actions};

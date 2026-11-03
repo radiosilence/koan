@@ -2,7 +2,7 @@
 //! (sharing its own library, connected to a server, or its own library
 //! alone) and how much the library holds, as the Mac's sidebar shows it.
 
-use koan_ffi::Stats;
+use koan_runtime::Stats;
 // The entity, its context and Render are GPUI's app model, which koan-kit does not wrap.
 use koan_kit::app::*;
 

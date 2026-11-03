@@ -10,8 +10,8 @@
 //! and the queue only) the engine enforces at the other end; the picker
 //! offers the same rows for both.
 
-use koan_ffi::{DeviceInfo, DeviceReach, PlayState};
 use koan_kit::app::*;
+use koan_runtime::{DeviceInfo, DeviceReach, PlayState};
 
 use crate::components::{Menu, MenuEntry};
 use crate::engine::{engine, reported};
@@ -75,7 +75,7 @@ impl ControlView {
     }
 
     fn can_move(&self, to: Option<&DeviceInfo>) -> bool {
-        koan_ffi::can_move_music(to.cloned(), self.controlled().cloned(), self.has_queue)
+        koan_runtime::can_move_music(to.cloned(), self.controlled().cloned(), self.has_queue)
     }
 }
 
@@ -265,7 +265,7 @@ fn move_music(to: Option<String>, cx: &mut App) {
 }
 
 fn moved_notice(
-    moved: &koan_ffi::MoveResult,
+    moved: &koan_runtime::MoveResult,
     here: bool,
     name: &str,
     from: Option<&str>,
@@ -389,8 +389,8 @@ fn detail(device: &DeviceInfo, now: i64) -> String {
 mod tests {
     use super::*;
 
-    fn moved(started: bool, queued: bool, left_out: u32) -> koan_ffi::MoveResult {
-        koan_ffi::MoveResult {
+    fn moved(started: bool, queued: bool, left_out: u32) -> koan_runtime::MoveResult {
+        koan_runtime::MoveResult {
             left_out,
             started,
             queued,

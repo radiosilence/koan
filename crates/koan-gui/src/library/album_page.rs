@@ -6,8 +6,8 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use koan_ffi::{Album, Track};
 use koan_kit::app::*;
+use koan_runtime::{Album, Track};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 

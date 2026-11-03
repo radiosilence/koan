@@ -28,7 +28,7 @@ use crate::types::{
 // the FFI. The saving would be nothing anyway: a handful of these exist at a
 // time, built a few times a second, never held in a collection.
 #[allow(clippy::large_enum_variant)]
-#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StateSlice {
     /// Everything a transport bar shows other than the position. `position_ms`
     /// is always zero here — it has a slice of its own, and leaving it in would
@@ -316,7 +316,6 @@ impl EngineState {
 /// published while the client was away.
 /// A cursor cannot lose a change. It can only arrive later, holding a newer
 /// value, which is what every slice being a whole snapshot makes safe.
-#[derive(uniffi::Object)]
 pub struct StateStream {
     /// Weak, so a client's loop ends when the engine goes rather than holding
     /// it up. The loop *is* the subscription — there is nothing to unregister.
@@ -343,7 +342,6 @@ impl StateStream {
     }
 }
 
-#[uniffi::export]
 impl StateStream {
     /// Everything that has changed since this stream last answered, at most one
     /// message per slice.

@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
-use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
+use koan_runtime::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;

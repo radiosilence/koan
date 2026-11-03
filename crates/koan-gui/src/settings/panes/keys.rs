@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, Spinner, TextField, Tooltip};
 use crate::theme::{Look, Space, Tone, TypeRole, label};
-use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, KoanError};
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, day, item, section, text};

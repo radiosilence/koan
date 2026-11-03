@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
+use koan_runtime::{Artist, BrowseFilter};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;

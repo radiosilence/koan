@@ -17,8 +17,8 @@ mod sheet;
 use std::sync::Arc;
 
 use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
-use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, KoanEngine};
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;

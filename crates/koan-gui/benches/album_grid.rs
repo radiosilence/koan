@@ -16,8 +16,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use gpui::{AppContext as _, BenchAppContext, px};
-use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, bench::Recorder, browse::Browse};
+use koan_runtime::KoanEngine;
 
 /// One engine for the process, as the apps have.
 fn engine() -> Arc<KoanEngine> {

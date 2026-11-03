@@ -23,8 +23,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
-use koan_ffi::QueueItem;
 use koan_kit::app::*;
+use koan_runtime::QueueItem;
 
 use crate::engine::engine;
 use crate::mirror::Mirror;

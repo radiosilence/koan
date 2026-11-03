@@ -2,8 +2,8 @@
 //! credited artist to the artist. Underlined under the pointer, as the
 //! theme's link button; a name with no page is plain text.
 
-use koan_ffi::CreditPart;
 use koan_kit::app::*;
+use koan_runtime::CreditPart;
 
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;

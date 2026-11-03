@@ -16,8 +16,8 @@
 
 use std::time::{Duration, Instant};
 
-use koan_ffi::{LyricLine, Lyrics};
 use koan_kit::app::*;
+use koan_runtime::{LyricLine, Lyrics};
 
 use crate::components::{EmptyState, Inspector, ScrollArea, Spinner, SyncedLines, plain_text};
 use crate::engine::{command, engine};

@@ -36,7 +36,7 @@ pub enum Anchored {
 /// headings come and go as sections do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heading {
-    Section(koan_ffi::ReleaseSection),
+    Section(koan_runtime::ReleaseSection),
     Features,
     Appearances,
 }

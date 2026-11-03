@@ -12,8 +12,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use koan_ffi::{ShelfKind, ShelfSummary};
 use koan_kit::app::*;
+use koan_runtime::{ShelfKind, ShelfSummary};
 
 use super::covers::{Art, Covers, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};

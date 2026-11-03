@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use koan_ffi::{
+use koan_kit::app::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
+use koan_runtime::{
     AutoEqEntry, AutoEqMaker, AutoEqOffer, ConnectionInfo, DspBand, DspBandBounds, DspEdited,
     DspImportPlan, DspImportSummary, DspOverview, DspPoint, DspProfileSummary, DspRole,
     DspTuningEntry, KoanEngine, KoanError,
 };
-use koan_kit::app::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 
 use crate::mirror::{Mirror, Slice};
 
@@ -122,7 +122,7 @@ pub struct Dsp {
     /// The output this device plays through and the outputs it has, as the
     /// mirror last said: the overview is of the device that resolves to, and
     /// with the system's default chosen, plugging in a DAC moves it.
-    output: Option<(koan_ffi::OutputChoice, Vec<String>)>,
+    output: Option<(koan_runtime::OutputChoice, Vec<String>)>,
     /// The extensions the signed-in server lists, and whether it is out
     /// of reach.
     extensions: Vec<String>,
@@ -147,7 +147,7 @@ impl Dsp {
                 autoeq_makers: Vec::new(),
                 autoeq_search: 0,
                 _autoeq: None,
-                bounds: koan_ffi::dsp_band_bounds(),
+                bounds: koan_runtime::dsp_band_bounds(),
                 version: 0,
                 reads: 0,
                 applied: 0,

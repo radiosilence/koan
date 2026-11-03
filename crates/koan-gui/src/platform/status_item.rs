@@ -218,7 +218,7 @@ fn shown(playback: &Playback) -> Shown {
     Shown {
         title: entry.map(|e| e.title.clone()),
         artist: entry.map(|e| e.artist.clone()).filter(|a| !a.is_empty()),
-        playing: now.state == koan_ffi::PlayState::Playing,
+        playing: now.state == koan_runtime::PlayState::Playing,
     }
 }
 

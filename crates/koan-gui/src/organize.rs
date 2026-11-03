@@ -14,8 +14,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 use koan_kit::app::*;
+use koan_runtime::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 
 use crate::components::sheet as ask;
 use crate::components::{

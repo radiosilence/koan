@@ -13,9 +13,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::components::{UniformListScrollHandle, uniform_list};
-use koan_ffi::{AlbumSort, BrowseFilter};
 use koan_kit::app::platform::TouchPhase;
 use koan_kit::app::*;
+use koan_runtime::{AlbumSort, BrowseFilter};
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
