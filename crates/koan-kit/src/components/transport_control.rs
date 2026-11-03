@@ -75,6 +75,18 @@ impl RenderOnce for TransportControl {
             Some(false) => (p.muted.hsla(), None),
             None => (p.ink.hsla(), None),
         };
+        // Quieter under the pointer, at once, and back over `LEAVE` once it
+        // has gone, as every control's state leaves.
+        let pointer = super::pointer(&super::child(&self.id, "pointer"), window, cx);
+        let hovered = pointer.read(cx).hovered;
+        let color = super::fade(
+            super::child(&self.id, "hover"),
+            hovered,
+            color,
+            color.opacity(0.8),
+            window,
+            cx,
+        );
         let glyph = px(crate::theme::icons::side(look.points(TypeRole::Body)));
         let reach = (HIT - glyph) / 2.;
         let face = if look.icons {
@@ -99,10 +111,13 @@ impl RenderOnce for TransportControl {
         let tip = self.help.clone();
         let on = self.on;
         let answer = self.answer;
-        accessible(
-            div().id(self.id.clone()),
-            gpui_kit::Role::Button,
-            Some(self.help.clone()),
+        super::track(
+            accessible(
+                div().id(self.id.clone()),
+                gpui_kit::Role::Button,
+                Some(self.help.clone()),
+            ),
+            &pointer,
         )
         .when_some(on, |d, on| d.aria_toggled(toggled(on)))
         .relative()
@@ -116,7 +131,6 @@ impl RenderOnce for TransportControl {
         .cursor_pointer()
         .text_role(TypeRole::Control, &look)
         .text_color(color)
-        .hover(|s| s.opacity(0.8))
         .tooltip(move |window, cx| Tooltip::view(tip.clone(), window, cx))
         .child(
             div()
