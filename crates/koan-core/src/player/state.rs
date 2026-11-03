@@ -1016,7 +1016,13 @@ impl SharedPlayerState {
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
         if let Some(seek) = self.pending_seek() {
-            return seek;
+            // Counting on from a target near the end stops at the end.
+            let duration = self.duration_ms();
+            return if duration > 0 {
+                seek.min(duration)
+            } else {
+                seek
+            };
         }
         let clock = *self.renderer_clock.lock();
         if let Some(clock) = clock {
