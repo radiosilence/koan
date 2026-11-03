@@ -1,0 +1,1 @@
+- **Rainbow mode at the display's rate.** Its layers cost about a third of the GPU time they did, measured at 19 ms a frame before and 7 ms after on a 1550 × 900 window at 2×, and a step of its colours no longer draws every album tile again.

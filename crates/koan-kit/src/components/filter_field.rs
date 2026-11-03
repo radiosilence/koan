@@ -6,9 +6,9 @@
 //! around it. The caller owns the `InputState` and listens to it: emptying
 //! the field is a change like any other.
 
+use crate::components::field::{Escape, FieldState as InputState};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::{Escape, InputState};
 
 use super::TextField;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
@@ -17,6 +17,7 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 pub struct FilterField {
     input: Entity<InputState>,
     fill: bool,
+    label: SharedString,
 }
 
 impl FilterField {
@@ -24,7 +25,15 @@ impl FilterField {
         Self {
             input: input.clone(),
             fill: false,
+            label: crate::theme::label("filter"),
         }
+    }
+
+    /// What a screen reader calls the field, in the app's words: "filter"
+    /// unless the page says what it filters.
+    pub fn label(mut self, label: &str) -> Self {
+        self.label = crate::theme::label(label);
+        self
     }
 
     /// As wide as what holds it, as the sidebar's search field is, rather
@@ -87,7 +96,7 @@ impl RenderOnce for FilterField {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(TextField::new(&self.input).bare()),
+                    .child(TextField::new(&self.input).label(self.label).bare()),
             )
             .when(!empty, |d| {
                 d.child(
@@ -232,7 +241,6 @@ mod tests {
     #[gpui::test]
     fn the_filter_field_in_a_toolbar_takes_its_width_and_a_click(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
@@ -262,7 +270,6 @@ mod tests {
     #[gpui::test]
     fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|window, cx| Bar {
@@ -306,7 +313,6 @@ mod tests {
     #[gpui::test]
     fn the_clear_mark_and_escape_empty_the_field(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (field, cx) = cx.add_window_view(|window, cx| Field {
@@ -319,8 +325,8 @@ mod tests {
         cx.update(|_, cx| {
             cx.subscribe(
                 &input,
-                move |_, e: &gpui_kit::component::input::InputEvent, _| {
-                    if matches!(e, gpui_kit::component::input::InputEvent::Change) {
+                move |_, e: &crate::components::field::InputEvent, _| {
+                    if matches!(e, crate::components::field::InputEvent::Change) {
                         counted.set(counted.get() + 1);
                     }
                 },

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use gpui_kit::{ColorSlot, Rgba, Track, TrackCurve, TrackRepeat, present_now, set_present_lead};
+use gpui::{ColorSlot, Rgba, Track, TrackCurve, TrackRepeat, present_now, set_present_lead};
 use parking_lot::Mutex;
 
 static CLOCK: Mutex<()> = Mutex::new(());

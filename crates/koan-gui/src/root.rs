@@ -380,7 +380,6 @@ impl WindowRoot {
 
 impl Render for WindowRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
         self.viewport = window.viewport_size();
         self.scale = window.scale_factor();
         let fill = || StyleRefinement::default().size_full();
@@ -396,6 +395,10 @@ impl Render for WindowRoot {
             self.prism.ball_at(
                 MIRROR_BALL_RIGHT + MIRROR_BALL / 2.0,
                 MIRROR_BALL_TOP + MIRROR_BALL / 2.0,
+            );
+            self.prism.window(
+                f32::from(self.viewport.width),
+                f32::from(self.viewport.height),
             );
             look
         });
@@ -423,7 +426,6 @@ impl Render for WindowRoot {
                 let side = look.spaced(MIRROR_BALL);
                 root.child(layer(self.prism.disco().size_full().into_any_element()))
                     .child(layer(self.prism.party().size_full().into_any_element()))
-                    .child(layer(self.prism.pulse().size_full().into_any_element()))
                     .child(
                         div()
                             .absolute()

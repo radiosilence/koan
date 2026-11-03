@@ -1,9 +1,9 @@
 //! The storybook's pages for containers and moving parts: collections,
 //! tables and lists, panels and sheets, motion and drag.
 
+use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::InputState;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
@@ -16,7 +16,7 @@ use crate::components::{
     SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text,
     name_line, plain_text, table_list,
 };
-use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
+use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What the components on these pages hold.
 pub struct State {
@@ -241,6 +241,27 @@ impl StoryContent {
             Story::Lists => {
                 let ink = look.palette.ink.hsla();
                 vec![
+                    SectionHeader::new(
+                        "The scrollbar: shown as it scrolls or under the pointer, faded out after a rest",
+                    )
+                    .into_any_element(),
+                    div()
+                        .w(look.spaced(260.0))
+                        .h(look.spaced(160.0))
+                        .border(look.hairline)
+                        .border_color(look.palette.rule.hsla())
+                        .child(crate::components::ScrollArea::new(
+                            "story-scrollbar",
+                            div().flex().flex_col().children((1..=40).map(|n| {
+                                div()
+                                    .px(look.space(Space::M))
+                                    .py(look.space(Space::Xs))
+                                    .text_role(TypeRole::Body, look)
+                                    .text_color(look.palette.ink.hsla())
+                                    .child(format!("Track {n}"))
+                            })),
+                        ))
+                        .into_any_element(),
                     SectionHeader::new("Navigation headings and notes").into_any_element(),
                     div()
                         .w(look.spaced(240.0))
@@ -644,10 +665,25 @@ impl StoryContent {
                     frame(340.0)
                         .relative()
                         .overflow_hidden()
+                        // The stage is the prism's window: its size, as laid
+                        // out, is what the spots and hearts are placed in.
+                        .child({
+                            let prism = prism.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    prism.window(
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    )
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
                         .child(overlay(prism.wash().size_full().into_any_element()))
                         .child(overlay(prism.disco().size_full().into_any_element()))
                         .child(overlay(prism.party().size_full().into_any_element()))
-                        .child(overlay(prism.pulse().size_full().into_any_element()))
                         .child(
                             div()
                                 .absolute()

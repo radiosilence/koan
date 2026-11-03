@@ -410,7 +410,7 @@ impl Sheets {
             }))
             .children(extra)
             .child(buttons);
-        let panel = crate::components::sheet::trap_focus(panel, &focus);
+        let panel = crate::components::sheet::trap_focus(panel, &focus, cx);
 
         Some(
             div()

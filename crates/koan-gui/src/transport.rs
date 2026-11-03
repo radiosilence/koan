@@ -49,6 +49,12 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: CoverArt,
+    /// The library's favourites, for the playing track's heart, once the
+    /// library has loaded.
+    feed: Option<(Entity<crate::library::feed::Feed>, Subscription)>,
+    /// The bar's width as last laid out, which decides what of the trailing
+    /// group it has room for.
+    width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     /// The display's scale as of the last frame, which sizes the sleeve.
     scale: f32,
     /// What the output in use plays, for the EQ button; `None` while there
@@ -220,6 +226,8 @@ impl Transport {
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
+            feed: None,
+            width: Default::default(),
             scale: 2.0,
             eq: None,
             eq_profile: None,
@@ -363,23 +371,35 @@ impl Transport {
         )
     }
 
+    /// The playing track's heart reads and toggles the library's
+    /// favourites, and follows them as they change elsewhere.
+    pub fn set_feed(&mut self, feed: Entity<crate::library::feed::Feed>, cx: &mut Context<Self>) {
+        let observed = cx.observe(&feed, |_, _, cx| cx.notify());
+        self.feed = Some((feed, observed));
+        cx.notify();
+    }
+
+    /// The device controlled, by name, while one is.
+    fn controlled_name(&self, cx: &App) -> Option<String> {
+        let view = &self.devices.read(cx).0;
+        view.target.as_ref().map(|t| {
+            view.devices
+                .iter()
+                .find(|d| &d.id == t)
+                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
+        })
+    }
+
     /// The control button: the devices glyph, and while another device is
     /// controlled its name beside it in an accent badge, since everything the
     /// window shows is then that device's. A device out of reach turns the
     /// glyph into a warning in `bad`.
     fn control_button(&self, p: &Paint, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let view = &self.devices.read(cx).0;
         let away = matches!(
-            view.target_reach,
+            self.devices.read(cx).0.target_reach,
             Some(koan_runtime::DeviceReach::OutOfReach { .. })
         );
-        let name = view.target.as_ref().map(|t| {
-            view.devices
-                .iter()
-                .find(|d| &d.id == t)
-                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
-        });
-        let Some(name) = name else {
+        let Some(name) = self.controlled_name(cx) else {
             return self.menu_button(
                 Menu::Devices,
                 Icon::Devices,
@@ -748,6 +768,38 @@ fn text_button(
         .child(child)
 }
 
+/// The trailing group's items, by what they are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Trailing {
+    Format,
+    Sleep,
+    Devices,
+    Output,
+    Eq,
+}
+
+impl Trailing {
+    /// What a bar too narrow for all of them gives up first: the format,
+    /// read elsewhere; the sleep timer and the EQ, set now and then; the
+    /// device played on; the output last, where the sound goes.
+    fn drop_order() -> [Trailing; 5] {
+        [
+            Self::Format,
+            Self::Sleep,
+            Self::Eq,
+            Self::Devices,
+            Self::Output,
+        ]
+    }
+}
+
+/// The least the record's side keeps beside its sleeve, at 100 %: a few
+/// letters of its title and its credit.
+const LEFT_TEXT_LEAST: f32 = 56.0;
+/// The least the centre gives way to, at 100 %: the controls, and a seek bar
+/// with its times either side.
+const CENTRE_LEAST: f32 = 300.0;
+
 /// One of the trailing group's items, as the Mac lays them out: as wide as
 /// what it shows, the full bar's height and half the gap either side to hit.
 /// A glyph alone reaches further, over the gap, so it is at least `HIT` wide
@@ -899,7 +951,7 @@ impl Render for Transport {
                         // The rainbow's shimmer through the playing title,
                         // over it while the rainbow is drawn; the title
                         // otherwise stands as it is.
-                        match crate::theme::KoanTheme::prism(cx) {
+                        let title = match crate::theme::KoanTheme::prism(cx) {
                             Some(brat) => div()
                                 .relative()
                                 .min_w_0()
@@ -912,7 +964,36 @@ impl Render for Transport {
                                 )
                                 .into_any_element(),
                             None => names.into_any_element(),
-                        }
+                        };
+                        // The playing track's heart, as the Mac's transport
+                        // has it: kept when the title is cut, and only for a
+                        // track the library holds.
+                        let heart = e
+                            .track_id
+                            .zip(self.feed.as_ref())
+                            .map(|(track, (feed, _))| {
+                                let item = crate::library::drag::Playable::Track(track);
+                                let on = feed.read(cx).is_favourite(item);
+                                let feed = feed.clone();
+                                div().flex_shrink_0().child(
+                                    // Keyed by the track, so its answer plays for a toggle, not
+                                    // for the next track's heart standing otherwise.
+                                    crate::components::Heart::new(("np-heart", track as u64), on)
+                                        .role(TypeRole::Meta)
+                                        .on_click(move |_, _, cx| {
+                                            feed.update(cx, |feed, cx| {
+                                                feed.toggle_favourite(item, cx)
+                                            })
+                                        }),
+                                )
+                            });
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(p.space(Space::Xs))
+                            .min_w_0()
+                            .child(div().min_w_0().child(title))
+                            .children(heart)
                     }))
                     .children(entry.map(|e| {
                         let mut detail = links::credit(
@@ -957,12 +1038,164 @@ impl Render for Transport {
         )
         .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
+        // The trailing items, each with the width it takes, in the order a
+        // narrow bar gives them up (`Trailing::drop_order`).
+        let sleeping = now.sleep.is_some();
+        let format = now.format.as_ref().map(format_badge);
+        let controlled = self.controlled_name(cx);
+        // Each item's width, worked out before any is made.
+        let (format_width, sleep_width, devices_width, output_width, eq_width) = {
+            let words = |text: &str, role: TypeRole| {
+                crate::components::text_widths(
+                    &[SharedString::from(text.to_owned())],
+                    role,
+                    window,
+                    cx,
+                )
+                .first()
+                .copied()
+                .unwrap_or_default()
+            };
+            let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
+            let face = |label: &str| {
+                if p.look.icons {
+                    glyph
+                } else {
+                    words(label, TypeRole::Meta)
+                }
+            };
+            (
+                format.as_ref().map(|text| {
+                    words(text, TypeRole::Meta) + p.look.spaced(12.0) * 2.0 + p.look.hairline * 2.0
+                }),
+                face(if sleeping { "sleeping" } else { "sleep" }),
+                match &controlled {
+                    // The glyph and the device's name in a badge.
+                    Some(name) => {
+                        Pixels::from(crate::theme::icons::side(p.look.points(TypeRole::Body)))
+                            + p.space(Space::Xs)
+                            + words(name, TypeRole::Fine)
+                            + Pixels::from(14.0)
+                            + p.look.hairline * 2.0
+                    }
+                    None => face("devices"),
+                },
+                face("output"),
+                face("eq"),
+            )
+        };
+        let mut trailing: Vec<(Trailing, Pixels, AnyElement)> = Vec::new();
+        if let (Some(text), Some(width)) = (format, format_width) {
+            trailing.push((Trailing::Format, width, Badge::new(text).into_any_element()));
+        }
+        trailing.push((
+            Trailing::Sleep,
+            sleep_width,
+            self.menu_button(
+                Menu::Sleep,
+                if sleeping {
+                    Icon::SleepSet
+                } else {
+                    Icon::Sleep
+                },
+                if sleeping { "sleeping" } else { "sleep" },
+                if sleeping {
+                    "sleep timer: set".to_owned()
+                } else {
+                    "sleep timer".to_owned()
+                },
+                true,
+                &p,
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ));
+        trailing.push((
+            Trailing::Devices,
+            devices_width,
+            self.control_button(&p, window, cx).into_any_element(),
+        ));
+        trailing.push((
+            Trailing::Output,
+            output_width,
+            self.menu_button(
+                Menu::Output,
+                Icon::Speaker,
+                "output",
+                "output".to_owned(),
+                true,
+                &p,
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ));
+        // This device's own output's EQ; another device's is chosen there.
+        if let Some(eq) = self.eq.clone().filter(|_| {
+            self.outputs
+                .read(cx)
+                .0
+                .as_ref()
+                // Only this device's outputs: with another device controlled,
+                // or its outputs not yet heard, a preset chosen here would
+                // name this device's output to the other one.
+                .is_some_and(|o| o.owner.is_none())
+        }) {
+            trailing.push((
+                Trailing::Eq,
+                eq_width,
+                self.eq_button(&eq, &p, window, cx).into_any_element(),
+            ));
+        }
+
+        // The three columns keep their contents. The centre stands at its
+        // full width while the sides have room, and gives way down to its
+        // least; the record's side keeps its sleeve and a line's start, its
+        // names cut; the trailing items keep their size. Narrower still, the
+        // trailing items go in `drop_order`, never all at once.
+        let trailing_gap = TransportMetrics::trailing_gap(&p.look);
+        // The sleeve, a line's start and the heart beside it.
+        let left_least = COVER
+            + p.space(Space::M)
+            + p.look.sized(LEFT_TEXT_LEAST)
+            + Pixels::from(crate::theme::icons::side(p.look.points(TypeRole::Meta)))
+            + p.space(Space::Xs);
+        let centre_least = p.look.sized(CENTRE_LEAST);
+        let need = |items: &[(Trailing, Pixels, AnyElement)]| {
+            let widths: Pixels = items.iter().map(|(_, w, _)| *w).sum();
+            widths + trailing_gap * items.len().saturating_sub(1) as f32
+        };
+        let inner = self.width.get().map(|w| w - p.space(Space::L) * 4.0);
+        if let Some(inner) = inner {
+            for kind in Trailing::drop_order() {
+                if left_least + centre_least + need(&trailing) <= inner {
+                    break;
+                }
+                trailing.retain(|(k, ..)| *k != kind);
+            }
+        }
+        let centre_width = inner.map_or(TransportMetrics::CENTRE, |inner| {
+            (inner - left_least - need(&trailing))
+                .min(TransportMetrics::CENTRE)
+                .max(centre_least)
+        });
+        let right = div()
+            .flex_1()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(trailing_gap)
+            .children(trailing.into_iter().map(|(_, _, item)| item));
+
         // The controls and the seek bar placed by koan-kit's metrics: centred
         // in the bar as the Mac's, the controls' hit row never reaching the
         // seek row or above the rule.
         let rows = TransportMetrics::centre_rows(&p.look);
         let centre = div()
-            .w(TransportMetrics::CENTRE)
+            .flex_shrink_0()
+            .w(centre_width)
             .h_full()
             .relative()
             .child(
@@ -1049,69 +1282,6 @@ impl Render for Transport {
                     ),
             );
 
-        let right = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap(TransportMetrics::trailing_gap(&p.look))
-            .children(
-                now.format
-                    .as_ref()
-                    .map(|format| Badge::new(format_badge(format))),
-            )
-            .child(self.menu_button(
-                Menu::Sleep,
-                if now.sleep.is_some() {
-                    Icon::SleepSet
-                } else {
-                    Icon::Sleep
-                },
-                if now.sleep.is_some() {
-                    "sleeping"
-                } else {
-                    "sleep"
-                },
-                if now.sleep.is_some() {
-                    "sleep timer: set".to_owned()
-                } else {
-                    "sleep timer".to_owned()
-                },
-                true,
-                &p,
-                window,
-                cx,
-            ))
-            .child(self.control_button(&p, window, cx))
-            .child(self.menu_button(
-                Menu::Output,
-                Icon::Speaker,
-                "output",
-                "output".to_owned(),
-                true,
-                &p,
-                window,
-                cx,
-            ))
-            // This device's own output's EQ; another device's is chosen there.
-            .children(
-                self.eq
-                    .clone()
-                    .filter(|_| {
-                        self.outputs
-                            .read(cx)
-                            .0
-                            .as_ref()
-                            // Only this device's outputs: with another device
-                            // controlled, or its outputs not yet heard, a
-                            // preset chosen here would name this device's
-                            // output to the other one.
-                            .is_some_and(|o| o.owner.is_none())
-                    })
-                    .map(|eq| self.eq_button(&eq, &p, window, cx)),
-            );
-
         let ring = crate::components::focus_ring(&self.focus, window, cx);
         div()
             .id("transport")
@@ -1156,7 +1326,14 @@ impl Render for Transport {
             .bg(p.bg)
             .border_t(p.look.hairline)
             .border_color(p.rule)
-            .child(left)
+            // The width the bar was laid out at, for the next frame to fit
+            // the trailing group to.
+            .child(crate::components::width_probe(
+                self.width.clone(),
+                cx.entity_id(),
+            ))
+            // Its sleeve and a line's start, whatever the trailing group.
+            .child(left.min_w(left_least))
             .child(centre)
             .child(right)
             .children(ring)

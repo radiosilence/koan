@@ -12,11 +12,11 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 GPUI (vendor/gpui-pre*)  ->  koan-kit  ->  koan-gui
 ```
 
-koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates. A few components still come from gpui-kit (the text input, the window's root and focus trap, the scrollbar, the filter panels' popover) until koan-kit has its own (#2021); nothing outside koan-kit names gpui-kit.
+koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates, and every component from itself: the text field, the window's root (`Root`) and focus trap (`focus_trap`), the scrollbar (`Scrollbar`) and the panels controls open (`opens_panel`).
 
 **koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and `cargo run -p koan-kit` opens its storybook: every component and container on a page of its own, in each state, with the appearance, the accent (a sample sleeve among them, for its tone mapping and the wash), the text size, Reduce Motion and Show icons to switch. `examples/storybook.rs` draws each page offscreen, dark and light, to a PNG.
 
-**koan-gui** builds pages from koan-kit only: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
+**koan-gui** builds pages from koan-kit only: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
 ## Beyond kōan
 
@@ -189,6 +189,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 `Button::help` and `ToolbarButton::help` give the tooltip as the Mac's buttons do, what it does and its keys ("back (⌘[)"), in place of a glyph-only button's label.
 
 `Button` with the spec's kinds (`Prominent`, `Standard`, `Compact`, `Bordered`, `Link`, `Text`, `Icon`, `IconOutlined`, `Toolbar`), `Toggle`, `IconToggle`, `Segmented`, `Picker`, `Slider`, `Stepper`, `TextField`, `Badge`, `Chip`, `Tooltip`, `ScrollArea` and the overlay scrollbar, and `RowList`, the virtualised list of measured rows the queue and playlists scroll in, as they are now.
+
+`TextField::new(&state)` and `TextArea::new(&state)` draw a `FieldState` the page owns (`.placeholder`, `.default_value`, `.masked`, `.read_only`, `.rows(n)` for several lines, `.highlight(spans)` for code; `value`, `set_value`, `clean`, `focus`), named by `.label` or by the `FormRow` it sits in (`labelled`, which any row of a label and a control can use), and says `InputEvent::Change`, `PressEnter`, `Focus` and `Blur`. They are koan-kit's own, on GPUI's `EntityInputHandler`: an input method composes in place, underlined; the selection takes Shift with the arrows, a click, a drag, and double and triple clicks, which select and then extend by words and lines; words and lines move as the Mac's fields move them; the clipboard (never for a masked field), undo and redo (typing undoes as one step); a line longer than the field scrolls to keep the caret in view. A single line leaves Up, Down and Escape to its owner, so a field that leads a list hands it the arrows. `set_value` is the owner's: it says no `Change` and starts the history afresh. The caret is the accent, one point wide, a shader quad whose blink presents the frame again and draws nothing; it holds steady while the person types or moves, and shows and blinks only in a focused field of the active window. The selection is the accent at 30 % (45 % with Increase Contrast), the caret the hairline's width, so it thickens with contrast too; the placeholder `muted`, and there is no bezel or focus ring. A code field is the same field: `.highlight` takes a function from the text to tone spans, run again whenever the text changes, so Organise's pattern field colours its `%fields%` and `$functions(` without a field of its own; input assistance (autocorrect, substitution) is never asked of the platform. A screen reader meets a text input (a password input when masked, a multi-line one for several rows) named by its label, with its value (never a masked one's), its placeholder, its selection on a text run, read-only or disabled, and a value its owner sets announced politely; it can set the value, which is an edit like typing. A disabled field takes no focus. A password is never handed to the platform's text services, which are told bullets. A click during a composition ends it, and on macOS the input method discards it whenever the app changes the text or selection itself. Nothing in the field is platform-specific: editing goes through GPUI's input handler, so a touch platform's keyboard drives it as a hardware one does.
 
 A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_outlined`), which takes its tooltip: what it does, with its keys where it has them (koan-gui's `platform::actions::help`, "back (⌘[)"). A glyph-only button made any other way without help or a label fails a debug assertion, so none goes without saying what it does.
 
@@ -370,7 +372,7 @@ A virtual list draws only the rows on screen, and only rows drawn are in the tre
 
 Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. A text field is a text input (a password input, masked, or a multi-line one) with its value, placeholder and selection: one text run as a synthetic child, the selection set on it, so a screen reader reads where the caret is and what is selected; it takes a screen reader's focus and its request to set the value. `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
 
 ## Swift roles and their GPUI components
 
@@ -401,7 +403,7 @@ Pages say what no component says for them through `koan_kit::app::a11y`: the sid
 | `koanSheet`, `KoanSheetAction` | `sheet` parts, `Asking` |
 | `ActivityIndicator` | `ProgressRow`, `ProgressBar` |
 | `SidebarView`'s status foot | `StatusBlock` |
-| `koanPopover` | `MenuPanel` as a popover (gap) |
+| `koanPopover` | `opens_panel` with a `MenuPanel` |
 | `KoanTabItem` (Settings tabs) | `settings/sheet.rs`'s tabs; a `Tabs` component (gap) |
 
 ## Where the spec and the Swift app disagree
@@ -416,7 +418,7 @@ The spec wins, except for these, each a deliberate choice for the desktop.
 
 Two parts, the compiler first.
 
-**The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla`, fonts and gpui-component's widgets. koan-gui still depends on GPUI itself, as `gpui`, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
+**The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla` and fonts. koan-gui still depends on GPUI itself, as `gpui`, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
 
 **`just gui-theme-leaks`**, in CI's GUI job: sizes and colours written as numbers (`px(`, `rgb(`, `hsla(` and the like), methods of the `Styled` trait that fix a size (`.p_4()`, `.text_xs()`, `.w_64()`, `.line_height(`), hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`), `gpui::` named directly, and each name taken from `koan_kit::raw`.
 

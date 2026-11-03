@@ -74,7 +74,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
         koan_gui::library::bind_keys(cx);

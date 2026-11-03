@@ -97,20 +97,20 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches tracks, records and artists as you type, and everything in it is done from the keyboard:
+⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
 
 | Key | Does |
 |---|---|
-| ↑ ↓ | Light a result |
-| Return | Play a track after the end of the queue, or open a record or an artist |
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, go to it: a record or an artist to its page, a track to its record's page with the track selected |
+| ↑ ↓ | Light a result, or "All results…" after the last |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |
 | ⇧⌘Return | Replace the queue, asking first when it holds anything |
-| Tab, ⇧Tab | Tick or untick the lit result; Return, ⌘Return, ⌥Return and ⇧⌘Return then act on everything ticked, a single ticked record included |
-| ⇧Return | Every result, on a page of its own, whose headings open each kind's whole listing |
+| Tab, ⇧Tab | Tick or untick the lit result; ⌘Return, ⌥Return and ⇧⌘Return then act on everything ticked |
+| ⇧Return | Every result, from anywhere in the list |
 | Escape | Clear the ticks, then empty the query, then close the box |
 
-A click on a result does what Return does, and ⌘-click ticks it.
+Choosing a result never plays it: only ⌘Return, ⌥Return and ⇧⌘Return do. A click on a result does what Return does, and ⌘-click ticks it.
 
 ## Lyrics, track info and artwork
 

@@ -150,7 +150,7 @@ index 8fd2066..e22aed1 100644
      }
  
 diff --git a/src/window.rs b/src/window.rs
-index f2208d3..049c73f 100644
+index f2208d3..de3ebd5 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -2,12 +2,12 @@ use crate::{
@@ -168,7 +168,44 @@ index f2208d3..049c73f 100644
  use gpui::{
      AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
      ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-@@ -648,6 +648,20 @@ struct MacWindowState {
+@@ -407,6 +407,21 @@ pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
+     }
+ }
+ 
++// KOAN: (#2021) see `build_window_class`.
++extern "C" fn window_accessibility_hit_test(
++    this: &AnyObject,
++    _: Sel,
++    point: NSPoint,
++) -> *mut AnyObject {
++    unsafe {
++        let view: *mut AnyObject = msg_send![this, contentView];
++        if view.is_null() {
++            return ptr::null_mut();
++        }
++        msg_send![view, accessibilityHitTest: point]
++    }
++}
++
+ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyClass {
+     unsafe {
+         let mut decl = ClassBuilder::new(name, superclass).unwrap();
+@@ -468,6 +483,14 @@ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyCl
+ 
+         decl.add_method(sel!(close), close_window as extern "C" fn(_, Sel));
+ 
++        // KOAN: (#2021) VoiceOver's hit test (the pointer, a touch on the
++        // trackpad) asks the window, whose own answer stops at the content
++        // view; it is passed on to the view, which knows the app's nodes.
++        decl.add_method(
++            sel!(accessibilityHitTest:),
++            window_accessibility_hit_test as extern "C" fn(_, Sel, NSPoint) -> *mut AnyObject,
++        );
++
+         decl.add_method(
+             sel!(draggingEntered:),
+             dragging_entered as extern "C" fn(_, Sel, *mut AnyObject) -> NSDragOperation,
+@@ -648,6 +671,20 @@ struct MacWindowState {
      cursor_style: CursorStyle,
      cursor_visible: Arc<AtomicBool>,
      frame_source: Option<WindowFrameSource>,
@@ -189,7 +226,7 @@ index f2208d3..049c73f 100644
      renderer: renderer::Renderer,
      request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
      event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
-@@ -826,6 +840,8 @@ impl MacWindowState {
+@@ -826,6 +863,8 @@ impl MacWindowState {
          let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
          let Some(display_id) = display_id_for_screen(screen) else {
              // AppKit can temporarily report no screen while displays are being reconfigured.
@@ -198,7 +235,7 @@ index f2208d3..049c73f 100644
              return;
          };
          let data = self.native_view.as_ptr() as *mut c_void;
-@@ -833,12 +849,26 @@ impl MacWindowState {
+@@ -833,12 +872,26 @@ impl MacWindowState {
              .get_or_insert_with(|| WindowFrameSource::new(data, step))
              .start(display_id)
              .log_err();
@@ -225,7 +262,7 @@ index f2208d3..049c73f 100644
      }
  
      fn is_maximized(&self) -> bool {
-@@ -1072,6 +1102,11 @@ impl MacWindow {
+@@ -1072,6 +1125,11 @@ impl MacWindow {
                  cursor_style: CursorStyle::Arrow,
                  cursor_visible,
                  frame_source: None,
@@ -237,7 +274,7 @@ index f2208d3..049c73f 100644
                  renderer: renderer::new_renderer(
                      renderer_context,
                      native_window as *mut _,
-@@ -1369,6 +1404,12 @@ impl Drop for MacWindow {
+@@ -1369,6 +1427,12 @@ impl Drop for MacWindow {
          let window = this.native_window;
          let sheet_parent = this.sheet_parent.take();
          this.frame_source.take();
@@ -250,7 +287,7 @@ index f2208d3..049c73f 100644
          unsafe {
              let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
          }
-@@ -1997,6 +2038,19 @@ impl PlatformWindow for MacWindow {
+@@ -1997,6 +2061,19 @@ impl PlatformWindow for MacWindow {
          self.0.as_ref().lock().request_frame_callback = Some(callback);
      }
  
@@ -270,7 +307,44 @@ index f2208d3..049c73f 100644
      fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
          self.0.as_ref().lock().event_callback = Some(callback);
      }
-@@ -2637,6 +2691,8 @@ extern "C" fn handle_key_event(
+@@ -2109,6 +2186,36 @@ impl PlatformWindow for MacWindow {
+         None
+     }
+ 
++    // KOAN: (#2021) the app changed the text or the selection itself, as a
++    // click elsewhere in a field: an input method's composition no longer
++    // stands where it was, so AppKit is told to discard it, as an
++    // NSTextView does.
++    fn text_input_state_changed(&self, change: gpui::TextInputStateChange) {
++        if !matches!(
++            change,
++            gpui::TextInputStateChange::ContentChanged
++                | gpui::TextInputStateChange::SelectionChanged
++        ) {
++            return;
++        }
++        // This window's own context: the current one is the key window's,
++        // which a field changed in a window behind it must not touch.
++        let this = self.0.lock();
++        let view = this.native_view;
++        let closed = this.closed.clone();
++        this.foreground_executor
++            .spawn(async move {
++                if_window_not_closed(closed, || unsafe {
++                    let input_context: *mut AnyObject = msg_send![view.as_ptr(), inputContext];
++                    if input_context.is_null() {
++                        return;
++                    }
++                    let _: () = msg_send![input_context, discardMarkedText];
++                })
++            })
++            .detach()
++    }
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+         let executor = self.0.lock().foreground_executor.clone();
+         executor
+@@ -2637,6 +2744,8 @@ extern "C" fn handle_key_event(
  ) -> Bool {
      let window_state = unsafe { get_window_state(this) };
      let mut lock = window_state.as_ref().lock();
@@ -279,7 +353,7 @@ index f2208d3..049c73f 100644
  
      let window_height = lock.content_size().height;
      let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
-@@ -2787,6 +2843,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
+@@ -2787,6 +2896,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
      let window_state = unsafe { get_window_state(this) };
      let weak_window_state = Arc::downgrade(&window_state);
      let mut lock = window_state.as_ref().lock();
@@ -288,7 +362,7 @@ index f2208d3..049c73f 100644
      let window_height = lock.content_size().height;
      let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
      match native_event_type {
-@@ -3362,7 +3420,45 @@ extern "C" fn step(view: *mut c_void) {
+@@ -3362,7 +3473,45 @@ extern "C" fn step(view: *mut c_void) {
              signal_source,
              ..Default::default()
          });

@@ -179,7 +179,9 @@ impl<V: TileHost> TileView<V> {
             credit_widths: None,
             fade: None,
             ground,
-            _accent: crate::theme::observe_accent(cx),
+            // The accent is drawn only in the playing bars: a step of the
+            // rainbow's draws the playing tile again, not every tile.
+            _accent: crate::theme::observe_accent_when(cx, |tile: &Self| tile.state.playing),
         }
     }
 

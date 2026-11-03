@@ -148,8 +148,7 @@ fn glyph_named(name: &str) -> Option<&'static Glyph> {
         .find(|glyph| glyph.name == name)
 }
 
-/// The app's assets: the icon set's sprites, and gpui-kit's own assets (the
-/// glyphs gpui-component's controls draw) for every other path.
+/// The app's assets: the icon set's sprites and the ensō, drawn from code.
 pub struct Assets;
 
 impl AssetSource for Assets {
@@ -160,7 +159,7 @@ impl AssetSource for Assets {
             )));
         }
         let Some(rest) = path.strip_prefix(PREFIX) else {
-            return gpui_kit::assets::Assets.load(path);
+            return Ok(None);
         };
         let mut parts = rest.split('/');
         let (Some(name), Some(units), Some(layer), None) =
@@ -176,8 +175,8 @@ impl AssetSource for Assets {
         Ok(Some(Cow::Owned(render(glyph, units, layer).into_bytes())))
     }
 
-    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-        gpui_kit::assets::Assets.list(path)
+    fn list(&self, _: &str) -> gpui::Result<Vec<SharedString>> {
+        Ok(Vec::new())
     }
 }
 

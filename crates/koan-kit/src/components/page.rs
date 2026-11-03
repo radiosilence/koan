@@ -560,7 +560,6 @@ mod tests {
     #[gpui::test]
     fn a_photo_fading_in_leaves_the_title_its_room(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (header, cx) = cx.add_window_view(|_, _| Header { photo: false });

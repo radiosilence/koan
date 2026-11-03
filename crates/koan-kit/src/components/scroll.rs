@@ -1,11 +1,10 @@
 //! A page that scrolls, with the kōan scrollbar over its edge: shown while
 //! it scrolls and while the pointer is over that edge, draggable, taking no
-//! width from what scrolls. The bar's look and motion are the theme's
-//! (`theme::sync_scrollbar`); a list keeps its own handle and lays a
-//! `Scrollbar` over itself the same way.
+//! width from what scrolls (`Scrollbar`); a list keeps its own handle and
+//! lays a `Scrollbar` over itself the same way.
 
+use super::Scrollbar;
 use gpui::*;
-use gpui_kit::base::Scrollbar;
 
 use super::child;
 

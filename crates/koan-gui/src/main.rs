@@ -39,7 +39,6 @@ fn main() {
         platform::residency::launched_at_login();
         #[cfg(target_os = "macos")]
         platform::about::icon_unbundled();
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
         quit_on_signal(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {

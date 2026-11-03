@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # The vendored GPUI crates, kept as patches against their crates.io release.
 #
-#   scripts/vendor-gpui.sh VERSION [KIT_VERSION]
-#                                    rebuild vendor/<crate> from the release
-#                                    VERSION of GPUI's crates (KIT_VERSION of
-#                                    gpui-kit's, or the version vendored) and
+#   scripts/vendor-gpui.sh VERSION   rebuild vendor/<crate> from the release
+#                                    VERSION of GPUI's crates and
 #                                    vendor/patches/<crate>.patch, failing on
 #                                    the first hunk that does not apply
 #   scripts/vendor-gpui.sh --patches write vendor/patches/<crate>.patch from
@@ -23,11 +21,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 VENDOR=$ROOT/vendor
 PATCHES=$VENDOR/patches
-# GPUI's crates, released together, and gpui-kit's, released on their own
-# numbers.
-GPUI_CRATES=(gpui-pre gpui-pre-apple gpui-pre-linux gpui-pre-macos gpui-pre-wgpu)
-KIT_CRATES=(gpui-base)
-CRATES=("${GPUI_CRATES[@]}" "${KIT_CRATES[@]}")
+# GPUI's crates, released together.
+CRATES=(gpui-pre gpui-pre-apple gpui-pre-linux gpui-pre-macos gpui-pre-wgpu)
 # Beside the copies, on their filesystem, so a copy is replaced by a rename.
 WORK=$(mktemp -d "$VENDOR/.tmp.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -122,13 +117,9 @@ case "${1:-}" in
     exit 2
     ;;
 *)
-    gpui_version=$1 kit_version=${2:-}
+    gpui_version=$1
     for crate in "${CRATES[@]}"; do
-        if [[ " ${KIT_CRATES[*]} " == *" $crate "* ]]; then
-            version=${kit_version:-$(version_of "$crate")}
-        else
-            version=$gpui_version
-        fi
+        version=$gpui_version
         release "$crate" "$version" "$WORK/$crate"
         if ! (cd "$WORK/$crate" && git apply --check -p1 "$PATCHES/$crate.patch" 2>"$WORK/err"); then
             echo "error: $crate's patch does not apply to $version:" >&2

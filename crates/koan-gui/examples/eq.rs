@@ -183,7 +183,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             .with_assets(theme::icons::Assets)
             .run(move |cx| {
                 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-                koan_kit::raw::init(cx);
                 theme::init(cx);
                 koan_gui::app::install(&engine, cx);
                 let dsp = Dsp::new(engine.clone(), cx);
@@ -215,7 +214,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     cx.update(|cx| {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-        koan_kit::raw::init(cx);
         theme::init(cx);
         koan_gui::app::install(&engine, cx);
     });

@@ -632,7 +632,6 @@ mod tests {
     #[koan_kit::app::test::test]
     fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            koan_kit::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let browse = cx.new(|_| Browse::fresh());

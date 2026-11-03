@@ -100,7 +100,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let sleeve = sleeve();

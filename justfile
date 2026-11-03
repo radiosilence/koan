@@ -520,8 +520,8 @@ tv_deployment_target := "26.0"
 
 # Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
 # failing on the first patch that does not apply; vendor/ is untouched then.
-vendor-gpui version kit="":
-    scripts/vendor-gpui.sh {{version}} {{kit}}
+vendor-gpui version:
+    scripts/vendor-gpui.sh {{version}}
 
 # Write vendor/patches from the vendored copies: after editing one.
 vendor-gpui-patches:

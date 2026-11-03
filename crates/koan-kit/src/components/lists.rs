@@ -26,9 +26,9 @@ pub const OVERDRAW: Pixels = px(400.0);
 /// right edge.
 pub fn list_scrollbar<H>(handle: &H) -> impl IntoElement
 where
-    H: gpui_kit::base::ScrollbarHandle + Clone,
+    H: super::ScrollSource,
 {
-    gpui_kit::base::Scrollbar::vertical(handle)
+    super::Scrollbar::vertical(handle)
 }
 
 /// What a virtualised list sits in for a screen reader: a list named for
