@@ -147,6 +147,7 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
         let (uniforms, writing) = (uniforms.clone(), writing.clone());
         std::thread::spawn(move || {
             while writing.load(Ordering::Relaxed) {
+                gpui::refresh_dynamic_colors(Instant::now());
                 uniforms.take_present(Instant::now());
                 uniforms.is_live(Instant::now());
                 let values = uniforms.presented_at(present_now()).1;
@@ -205,10 +206,15 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     writing.store(false, Ordering::Relaxed);
     presenter.join().expect("the presenter does not panic");
     // Everything written has an end within 30 ms: once that is past, the
-    // shader presents once more at most and then parks.
+    // shader presents once more at most and then parks. Each present fills
+    // the colour table first, as a renderer's does, so whether the colours
+    // move is this test's slots and not the last test's.
     std::thread::sleep(Duration::from_millis(80));
     let presents = (0..5)
-        .filter(|_| uniforms.take_present(Instant::now()))
+        .filter(|_| {
+            gpui::refresh_dynamic_colors(Instant::now());
+            uniforms.take_present(Instant::now())
+        })
         .count();
     assert!(presents <= 1, "{presents} presents after everything landed");
     assert!(!uniforms.is_live(Instant::now()), "the window parks");
