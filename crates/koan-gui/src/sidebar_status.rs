@@ -2,8 +2,6 @@
 //! (sharing its own library, connected to a server, or its own library
 //! alone) and how much the library holds, as the Mac's sidebar shows it.
 
-use std::time::{Duration, Instant};
-
 use koan_ffi::Stats;
 // The entity, its context and Render are GPUI's app model, which koan-kit does not wrap.
 use koan_kit::app::*;
@@ -20,11 +18,6 @@ pub struct SidebarStatus {
     /// the read ends, rather than once per batch.
     reading: bool,
     stale: bool,
-    /// When the last read began: while a scan or sync moves the library,
-    /// the counts follow it once a `WHILE_BUSY` at most.
-    began: Option<Instant>,
-    /// The read waiting out the rest of that interval.
-    _later: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,18 +29,9 @@ impl SidebarStatus {
             stats: None,
             reading: false,
             stale: false,
-            began: None,
-            _later: None,
             _subscriptions: vec![
                 cx.observe(&mirror.library, |this, _, cx| this.read(cx)),
                 cx.observe(&mirror.cache, |this, _, cx| this.read(cx)),
-                // Read once a scan or sync ends, if the library moved under it.
-                cx.observe(&mirror.tasks, |this, _, cx| {
-                    if this.stale && !this.reading {
-                        this.stale = false;
-                        this.read(cx);
-                    }
-                }),
                 cx.observe(&mirror.connection, |_, _, cx| cx.notify()),
                 cx.observe(&sharing, |_, _, cx| cx.notify()),
             ],
@@ -56,38 +40,13 @@ impl SidebarStatus {
         status
     }
 
-    /// Counts the library again: one read at a time. A scan or sync moves
-    /// the library every batch, so while one runs the counts are read once
-    /// a `WHILE_BUSY` at most, the last change read once it ends.
+    /// Counts the library again, one read at a time: a scan or sync moves
+    /// the library every batch, and changes meanwhile are read once, after.
     fn read(&mut self, cx: &mut Context<Self>) {
         if self.reading {
             self.stale = true;
             return;
         }
-        let tasks = cx.global::<Mirror>().tasks.read(cx).0;
-        if tasks.scanning || tasks.syncing {
-            let wait = self
-                .began
-                .map(|at| WHILE_BUSY.saturating_sub(at.elapsed()))
-                .unwrap_or_default();
-            if !wait.is_zero() {
-                self.stale = true;
-                if self._later.is_none() {
-                    self._later = Some(cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(wait).await;
-                        this.update(cx, |this, cx| {
-                            this._later = None;
-                            if std::mem::take(&mut this.stale) {
-                                this.read(cx);
-                            }
-                        })
-                        .ok();
-                    }));
-                }
-                return;
-            }
-        }
-        self.began = Some(Instant::now());
         self.reading = true;
         let stats = engine(cx).library_stats();
         cx.spawn(async move |this, cx| {
@@ -108,9 +67,6 @@ impl SidebarStatus {
         .detach();
     }
 }
-
-/// How often the counts follow a scan or sync while it runs.
-const WHILE_BUSY: Duration = Duration::from_secs(1);
 
 impl Render for SidebarStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
