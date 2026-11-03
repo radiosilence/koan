@@ -1,0 +1,1 @@
+- **The sidebar and lyrics turn back smoothly when toggled quickly.** A slide reversed part-way now turns from where it stands rather than jumping to the far edge first, and a closed lyrics panel is let go at once rather than kept until something else redraws the window.
