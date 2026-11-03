@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use koan_ffi::{EntryStatus, Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
@@ -45,12 +45,26 @@ struct Entry {
     reported: bool,
 }
 
+/// How far past its last report a transfer is reckoned: a little over the
+/// time between a healthy download's reports. Reports come as bytes land,
+/// so one that stalls says nothing; past this its glides rest where they
+/// reckoned, never drawn as further on than it might be, and stop
+/// presenting until the next report.
+const RECKONS: Duration = Duration::from_secs(2);
+
+/// A glide for a transfer: reckoned only as far as `RECKONS`.
+fn transfer_glide() -> Glide {
+    let glide = Glide::new();
+    glide.reckon_for(RECKONS);
+    glide
+}
+
 impl Entry {
     fn new() -> Self {
         Self {
             rings: Vec::new(),
-            reach: Glide::new(),
-            bar: Glide::new(),
+            reach: transfer_glide(),
+            bar: transfer_glide(),
             last: None,
             reported: false,
         }
@@ -109,7 +123,7 @@ fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
             return glide.clone();
         }
         // A new colour starts where the last report left the others.
-        let glide = Glide::new();
+        let glide = transfer_glide();
         match entry.last {
             Some(last) => last.apply(&glide),
             None => glide.set_unknown(),
@@ -172,8 +186,15 @@ impl Transfers {
                 report.apply(glide);
             }
         }
+        let running = &self.running;
         self.glides.retain(|track, entry| {
-            let ended = entry.reported && !figures.iter().any(|f| f.track_id == *track);
+            // Reported and no longer, or made for a ring before any report
+            // and not running now: either way nothing will feed it again.
+            let ended = if entry.reported {
+                !figures.iter().any(|f| f.track_id == *track)
+            } else {
+                !running.contains(track)
+            };
             if ended {
                 for glide in entry.glides() {
                     glide.set_moving(false);
@@ -195,6 +216,18 @@ impl Transfers {
             .map(|t| t.track_id)
             .collect();
         if running != self.running {
+            // A ring made before its transfer's first report, for a transfer
+            // that is not running now, is never fed: it stops turning and
+            // goes.
+            self.glides.retain(|track, entry| {
+                let orphan = !entry.reported && !running.contains(track);
+                if orphan {
+                    for glide in entry.glides() {
+                        glide.set_moving(false);
+                    }
+                }
+                !orphan
+            });
             self.running = running;
             cx.notify();
         }

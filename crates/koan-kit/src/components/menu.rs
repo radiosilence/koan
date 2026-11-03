@@ -26,6 +26,8 @@ pub struct MenuEntry {
     data: bool,
     icon: Option<Icon>,
     checked: Option<bool>,
+    /// `checked` is a setting's state, not a choice (`toggled`).
+    toggle: bool,
     destructive: bool,
     disabled: bool,
     detail: Option<(SharedString, bool)>,
@@ -46,6 +48,7 @@ impl MenuEntry {
             data: false,
             icon: None,
             checked: None,
+            toggle: false,
             destructive: false,
             disabled: false,
             detail: None,
@@ -147,6 +150,14 @@ impl MenuEntry {
         self
     }
 
+    /// A setting turned on or off ("group by album"), not a choice among
+    /// others: ticked while `on`, without the ground a chosen place takes.
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.checked = Some(on);
+        self.toggle = true;
+        self
+    }
+
     /// A place to choose, drawn as the Mac's output picker draws one: its
     /// glyph large, the label over `detail`, the chosen one on `surface`.
     pub fn rich(mut self, detail: impl Into<SharedString>) -> Self {
@@ -239,6 +250,8 @@ pub struct Menu {
     /// The least the panel is wide, in points, so a menu whose rows change
     /// while it is open does not change size with them.
     min_width: Option<f32>,
+    /// `min_width` is its width (`width`).
+    fixed: bool,
     _submenu: Vec<Subscription>,
 }
 
@@ -270,6 +283,7 @@ impl Menu {
                 bounds: Rc::default(),
                 ancestors: Vec::new(),
                 min_width: None,
+                fixed: false,
                 _submenu: Vec::new(),
             };
             build(menu, window, cx)
@@ -316,6 +330,7 @@ impl Menu {
             bounds: self.bounds.clone(),
             ancestors: self.ancestors.clone(),
             min_width: self.min_width,
+            fixed: self.fixed,
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
@@ -332,6 +347,7 @@ impl Menu {
         });
         self.entries = built.entries;
         self.min_width = built.min_width;
+        self.fixed = built.fixed;
         self._submenu.clear();
         self.highlighted = was.and_then(|(label, nth)| {
             self.entries
@@ -346,14 +362,23 @@ impl Menu {
     }
 
     /// The width a picker of places (outputs, devices) keeps whatever its
-    /// rows say: a rich row's glyph, its name over one line of detail, and
-    /// its actions' slots, a "move here" among them.
-    pub const PICKER_WIDTH: f32 = 440.0;
+    /// rows say (`width`): a rich row's glyph, its name over one line of
+    /// detail at its widest, and its actions' slots, a glyph and "move here"
+    /// among them.
+    pub const PICKER_WIDTH: f32 = 470.0;
 
     /// Keep the panel at least `points` wide, so it holds its size as rows
     /// come, go and change while it is open.
     pub fn min_width(mut self, points: f32) -> Self {
         self.min_width = Some(points);
+        self
+    }
+
+    /// Exactly `points` wide, so it never changes size while open: a name
+    /// that does not fit is cut, as a detail is.
+    pub fn width(mut self, points: f32) -> Self {
+        self.min_width = Some(points);
+        self.fixed = true;
         self
     }
 
@@ -563,7 +588,7 @@ impl Render for Menu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let menu = cx.entity();
-        let mut panel = MenuPanel::new().min_width(self.min_width);
+        let mut panel = MenuPanel::new().min_width(self.min_width).fixed(self.fixed);
         // Every row keeps as many slots as the fullest needs; the last is
         // wide when any row's last action is words, and a choice's tick then
         // counts as that slot's.
@@ -636,7 +661,7 @@ impl Render for Menu {
                     .destructive(item.destructive)
                     .disabled(item.disabled || item.run.is_none());
                     if let Some(checked) = item.checked {
-                        row = row.checked(checked);
+                        row = row.checked(checked).toggle(item.toggle);
                     }
                     if let Some(icon) = item.icon {
                         row = row.icon(icon);

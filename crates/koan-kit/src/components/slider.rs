@@ -56,6 +56,9 @@ pub struct Slider {
 pub struct Glide(
     pub(crate) Animated,
     Arc<parking_lot::Mutex<Option<(f32, f32, Instant)>>>,
+    /// How far past its anchor it reckons, `None` to the end: see
+    /// `reckon_for`.
+    Arc<parking_lot::Mutex<Option<Duration>>>,
 );
 
 /// How long a small correction takes to ease out, and the largest one eased
@@ -113,12 +116,34 @@ impl Glide {
         self.0.hold(2, 0.0);
     }
 
-    /// Track 0 running from `anchor` at its rate to the end, or held there.
+    /// Reckons at most `horizon` past each anchor, then rests where that
+    /// leaves it until the next: for a value whose rate is only a guess, as a
+    /// download's, which can stall with no report saying so. A stalled one
+    /// is then never drawn as further on than it can be, and stops
+    /// presenting. A playhead, whose rate holds, reckons to the end.
+    pub fn reckon_for(&self, horizon: Duration) {
+        *self.2.lock() = Some(horizon);
+    }
+
+    /// Track 0 running from `anchor` at its rate to the end, or as far as
+    /// the horizon reaches, or held there.
     fn run(&self, (value, rate, since): (f32, f32, Instant)) {
         if rate > 0.0 && value < 1.0 {
-            let length = Duration::from_secs_f32((1.0 - value) / rate);
-            self.0
-                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
+            let to_end = (1.0 - value) / rate;
+            let seconds = match *self.2.lock() {
+                Some(horizon) => to_end.min(horizon.as_secs_f32()),
+                None => to_end,
+            };
+            let to = (value + rate * seconds).min(1.0);
+            self.0.segment(
+                0,
+                value,
+                to,
+                since,
+                Duration::from_secs_f32(seconds),
+                Ease::Linear,
+                Repeat::Once,
+            );
         } else {
             self.0.hold(0, value);
         }
@@ -138,6 +163,8 @@ impl Glide {
             let now = Animated::now();
             self.0.hold(0, self.0.at(0, now));
             self.0.hold(1, 0.0);
+            // An unknown size's turn stops too: nothing left presenting.
+            self.0.hold(2, 0.0);
         }
     }
 
@@ -687,6 +714,22 @@ mod tests {
         assert!(glide.known());
         glide.set_unknown();
         assert!(!glide.known());
+    }
+
+    /// A glide reckoned for a horizon rests where its rate takes it by then:
+    /// a stalled download is never drawn as further on than that, and one
+    /// reckoned to the end still runs there.
+    #[test]
+    fn a_reckoned_glide_rests_at_its_horizon() {
+        let since = Animated::now();
+        let much_later = since + Duration::from_secs(60);
+        let download = Glide::new();
+        download.reckon_for(Duration::from_secs(2));
+        download.set(0.4, 0.1, since);
+        assert!((download.0.at(0, much_later) - 0.6).abs() < 0.01);
+        let playhead = Glide::new();
+        playhead.set(0.4, 0.1, since);
+        assert!((playhead.0.at(0, much_later) - 1.0).abs() < 0.01);
     }
 
     struct Owner {

@@ -1050,7 +1050,7 @@ fn row_menu(
         .item(
             MenuEntry::new("group by album")
                 .icon(Icon::Album)
-                .checked(grouped)
+                .toggled(grouped)
                 .on_click({
                     let view = view.clone();
                     move |_, window, cx| {

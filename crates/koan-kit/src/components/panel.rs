@@ -17,6 +17,8 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, labe
 pub struct MenuPanel {
     children: Vec<AnyElement>,
     min_width: Option<f32>,
+    /// `min_width` is the panel's width, not only its least.
+    fixed: bool,
 }
 
 impl MenuPanel {
@@ -24,12 +26,20 @@ impl MenuPanel {
         Self {
             children: Vec::new(),
             min_width: None,
+            fixed: false,
         }
     }
 
     /// At least `points` wide, where given; 180 points otherwise.
     pub fn min_width(mut self, points: Option<f32>) -> Self {
         self.min_width = points;
+        self
+    }
+
+    /// Exactly its `min_width`, whatever its rows hold: they cut what does
+    /// not fit.
+    pub fn fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
         self
     }
 }
@@ -53,6 +63,9 @@ impl RenderOnce for MenuPanel {
             .flex()
             .flex_col()
             .min_w(look.spaced(self.min_width.unwrap_or(180.)))
+            .when(self.fixed, |panel| {
+                panel.w(look.spaced(self.min_width.unwrap_or(180.)))
+            })
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
             .border(look.hairline)
@@ -87,6 +100,8 @@ pub struct MenuRow {
     label: SharedString,
     icon: Option<Icon>,
     checked: Option<bool>,
+    /// Its tick is a setting's, not a choice's (`toggle`).
+    toggle: bool,
     highlighted: bool,
     destructive: bool,
     disabled: bool,
@@ -120,6 +135,7 @@ impl MenuRow {
             label: label(text),
             icon: None,
             checked: None,
+            toggle: false,
             highlighted: false,
             destructive: false,
             disabled: false,
@@ -227,6 +243,12 @@ impl MenuRow {
     /// kept when not.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+
+    /// Its tick is a setting's state, not a choice: no chosen ground.
+    pub fn toggle(mut self, toggle: bool) -> Self {
+        self.toggle = toggle;
         self
     }
 
@@ -395,11 +417,13 @@ impl RenderOnce for MenuRow {
         let (label, detail, reach) = (self.label, self.detail, self.reach);
         let spoken = label.clone();
         let described = detail.as_ref().map(|(d, _)| d.clone());
+        // A name too long for a fixed panel is cut, not let widen it.
         let name = div()
             .flex()
             .items_center()
+            .min_w_0()
             .gap(look.space(Space::Xs))
-            .child(label)
+            .child(div().min_w_0().truncate().child(label))
             .children(reach.map(|icon| KoanIcon::new(icon).role(TypeRole::Fine).color(muted)));
         // One line of detail, as wide as `DETAIL_WIDTH`; what does not fit
         // is in its tooltip.
