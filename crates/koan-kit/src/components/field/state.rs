@@ -6,7 +6,7 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
+use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine,
     SharedString, Subscription, Task, UTF16Selection, Window, point, px,

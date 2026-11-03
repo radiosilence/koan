@@ -2,8 +2,8 @@
 //! tables and lists, panels and sheets, motion and drag.
 
 use crate::components::field::FieldState as InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{

@@ -18,8 +18,8 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, CursorStyle, Entity, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
@@ -97,7 +97,7 @@ impl TextField {
 impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let id = gpui_kit::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
+        let id = gpui::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
         let answers = super::Answerer::of(&id, window, cx);
         let focused = self.state.read(cx).focus.is_focused(window);
         // Taking the keyboard is answered by a line drawn under the field,
@@ -160,7 +160,7 @@ impl TextArea {
 impl RenderOnce for TextArea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let id = gpui_kit::ElementId::from(("koan-area", self.state.entity_id().as_u64()));
+        let id = gpui::ElementId::from(("koan-area", self.state.entity_id().as_u64()));
         div()
             .p(look.space(Space::S))
             .bg(look.palette.surface.hsla())
@@ -178,12 +178,12 @@ impl RenderOnce for TextArea {
 /// movement keys and Copy, and no edit.
 fn editor(
     state: &Entity<FieldState>,
-    id: &gpui_kit::ElementId,
+    id: &gpui::ElementId,
     label: Option<SharedString>,
     enabled: bool,
     window: &mut Window,
     cx: &mut App,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
+) -> gpui::Stateful<gpui::Div> {
     let look = Look::of(window, cx);
     let s = state.read(cx);
     let focus = s.focus.clone();
@@ -202,11 +202,11 @@ fn editor(
         .collect();
     let a11y = window.is_a11y_active() || cfg!(test);
     let role = if masked {
-        gpui_kit::Role::PasswordInput
+        gpui::Role::PasswordInput
     } else if multi {
-        gpui_kit::Role::MultilineTextInput
+        gpui::Role::MultilineTextInput
     } else {
-        gpui_kit::Role::TextInput
+        gpui::Role::TextInput
     };
     let colours = Colours {
         ink: look.palette.ink.hsla(),
@@ -236,9 +236,7 @@ fn editor(
         .aria_disabled(!enabled)
         // A value the owner set is said as it lands; one being typed is
         // heard as it is typed.
-        .when(announce, |el| {
-            el.aria_live(gpui_kit::accesskit::Live::Polite)
-        })
+        .when(announce, |el| el.aria_live(gpui::accesskit::Live::Polite))
         .when(a11y && !masked, |el| el.aria_value(value.clone()))
         // The text as one run with the selection on it, so a screen reader
         // reads where the caret is and what is selected; and whether it can
@@ -250,7 +248,7 @@ fn editor(
             if masked || !a11y {
                 return;
             }
-            let mut run = gpui_kit::accesskit::Node::new(gpui_kit::Role::TextRun);
+            let mut run = gpui::accesskit::Node::new(gpui::Role::TextRun);
             run.set_value(value.clone());
             run.set_character_lengths(
                 value
@@ -260,18 +258,18 @@ fn editor(
             );
             let id = builder.synthetic_node_id(0);
             builder.push_child(id, run);
-            let at = |character_index| gpui_kit::accesskit::TextPosition {
+            let at = |character_index| gpui::accesskit::TextPosition {
                 node: id,
                 character_index,
             };
             builder
                 .parent_node()
-                .set_text_selection(gpui_kit::accesskit::TextSelection {
+                .set_text_selection(gpui::accesskit::TextSelection {
                     anchor: at(anchor),
                     focus: at(active),
                 });
         })
-        .on_a11y_action(gpui_kit::AccessibleAction::Focus, {
+        .on_a11y_action(gpui::AccessibleAction::Focus, {
             let focus = focus.clone();
             move |_, window, cx| window.focus(&focus, cx)
         })
@@ -283,16 +281,16 @@ fn editor(
     el = el
         .cursor(CursorStyle::IBeam)
         .on_mouse_down(
-            gpui_kit::MouseButton::Left,
+            gpui::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_down),
         )
         .on_mouse_move(window.listener_for(state, FieldState::mouse_move))
         .on_mouse_up(
-            gpui_kit::MouseButton::Left,
+            gpui::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_up),
         )
         .on_mouse_up_out(
-            gpui_kit::MouseButton::Left,
+            gpui::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_up),
         )
         .on_action(window.listener_for(state, FieldState::left))
@@ -324,10 +322,10 @@ fn editor(
         return el;
     }
     // Editing.
-    el.on_a11y_action(gpui_kit::AccessibleAction::SetValue, {
+    el.on_a11y_action(gpui::AccessibleAction::SetValue, {
         let state = state.clone();
         move |data, window, cx| {
-            if let Some(gpui_kit::accesskit::ActionData::Value(value)) = data {
+            if let Some(gpui::accesskit::ActionData::Value(value)) = data {
                 let value = value.to_string();
                 state.update(cx, |s, cx| s.set_by_assistant(value, window, cx));
             }

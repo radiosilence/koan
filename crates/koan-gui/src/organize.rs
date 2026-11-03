@@ -280,10 +280,11 @@ impl OrganizeSheet {
         }));
     }
 
-    /// Reads the selection again after a move that left some files behind:
-    /// the ones that moved are at new paths, which the next preview must
-    /// start from. The result stays on screen meanwhile; previews wait for
-    /// the new selection.
+    /// Reads the selection again after a move that left some files behind,
+    /// or one refused: the ones that moved are at new paths, which the next
+    /// preview must start from, and a library that changed under the plan
+    /// gives a new one. Previews again once it lands, the line saying what
+    /// happened kept above the new plan.
     fn reread(&mut self, cx: &mut Context<Self>) {
         self.selection = None;
         let read = engine(cx).organize_selection(Some(self.track_ids.clone()));
@@ -291,7 +292,12 @@ impl OrganizeSheet {
             let selection = read.await;
             this.update(cx, |this, cx| {
                 match selection {
-                    Ok(selection) => this.selection = Some(selection),
+                    Ok(selection) => {
+                        this.selection = Some(selection);
+                        let said = this.error.take();
+                        this.preview(cx);
+                        this.error = said;
+                    }
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
                 cx.notify();
@@ -396,8 +402,10 @@ impl OrganizeSheet {
                 .into(),
             );
         }
-        let (pattern, ids) = (self.pattern(cx), self.track_ids.clone());
-        let ancillary = self.move_ancillary;
+        let Some(selection) = self.selection.clone() else {
+            return;
+        };
+        let (pattern, ancillary) = (self.pattern(cx), self.move_ancillary);
         let sheet = cx.entity().downgrade();
         ask::confirm(
             ask::Confirm {
@@ -415,16 +423,15 @@ impl OrganizeSheet {
             cx,
             move |cx| {
                 let Some(sheet) = sheet.upgrade() else { return };
-                // The move reads whether ancillary files go with it from the
-                // configuration: the choice previewed is written first.
-                let engine = engine(cx);
-                let set = engine.clone().set_organize_moves_ancillary(ancillary);
-                let execute =
-                    engine.organize_execute(pattern.clone(), Some(ids.clone()), Some(base.clone()));
-                let run = async move {
-                    set.await?;
-                    execute.await
-                };
+                // The plan previewed, from the selection it was previewed
+                // against and with the ancillary choice shown: refused, with
+                // nothing moved, if the library has changed since.
+                let run = engine(cx).organize_execute_previewed(
+                    selection.clone(),
+                    pattern.clone(),
+                    base.clone(),
+                    ancillary,
+                );
                 // Escape leaves the sheet while files move, as its cancel
                 // is disabled: dropping it would stop the move part way.
                 ask::hold(true, cx);
@@ -463,7 +470,13 @@ impl OrganizeSheet {
                                     this.checked = false;
                                     this.reread(cx);
                                 }
-                                Err(e) => this.error = Some(crate::settings::model::describe(&e)),
+                                // Read again, so the plan shown is the one a
+                                // second confirm would run.
+                                Err(e) => {
+                                    this.error = Some(crate::settings::model::describe(&e));
+                                    this.plan = None;
+                                    this.reread(cx);
+                                }
                             }
                             cx.notify();
                         })
@@ -547,7 +560,10 @@ impl Render for OrganizeSheet {
 
         let mut names: Vec<String> = self.patterns.iter().map(|p| p.name.clone()).collect();
         names.push("typed here".into());
-        let chosen = Some(self.chosen.unwrap_or(names.len() - 1));
+        // A named pattern edited is no longer that pattern: the picker says
+        // it is typed here, and names it again if the text comes back.
+        let named = self.chosen.filter(|_| !self.modified(cx));
+        let chosen = Some(named.unwrap_or(names.len() - 1));
         let picker = Picker::keeps_case("organize-pattern", names, chosen)
             .disabled(running)
             .on_change(cx.listener(|this, index: &usize, window, cx| {

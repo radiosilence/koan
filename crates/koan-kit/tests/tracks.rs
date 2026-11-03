@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
+use gpui::{
     Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled, TestAppContext, Track,
     TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead, spring_length,
 };
@@ -374,10 +374,10 @@ impl Render for Quad {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
         cx.set_reduce_motion(true);
     });
@@ -409,7 +409,7 @@ fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
 /// write over any of its floats lets the slot go, so what was written stands.
 #[test]
 fn a_plain_write_over_a_slot_colour_lets_it_go() {
-    use gpui_kit::{ColorSlot, Rgba, ShaderUniforms};
+    use gpui::{ColorSlot, Rgba, ShaderUniforms};
     let red = Rgba {
         r: 1.0,
         g: 0.0,

@@ -1,0 +1,1 @@
+- **Move here, with a controlled device out of view.** While a device is controlled but not listed just now, the apps no longer offer to move music as if this device were in view. The Mac, Android and desktop apps now share one rule for when music can move.

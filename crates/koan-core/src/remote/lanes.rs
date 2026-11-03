@@ -5,10 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::prelude::*;
 
-/// Requests in flight at once to one server. A walk of the server is bound
-/// by round trips, not bandwidth; four hides most of a mobile link's latency
-/// without asking much of the server.
-pub const LANES: usize = 4;
+/// Light requests in flight at once to one server (`getAlbum`,
+/// `getPlaylist`): bound by round trips, not bandwidth. Measured against a
+/// koan server over the internet, 128 `getAlbum`s took 4.3 s at 4 lanes,
+/// 2.3 s at 8, 1.4 s at 16 and 0.8 s at 32, each request's median rising only
+/// from 128 to 171 ms; playlists were quickest at 16. Sixteen takes most of
+/// that while leaving a small server, a Navidrome on a Raspberry Pi, room.
+pub const LANES: usize = 16;
 
 /// `ask` for each of `items`, at most [`LANES`] at once, answers in the
 /// order of `items`. Once `cancel` is set nothing more is asked, and an item

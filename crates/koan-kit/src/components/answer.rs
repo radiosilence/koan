@@ -14,8 +14,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, child};
 use crate::theme::{KoanTheme, Motion};
@@ -397,7 +397,7 @@ impl Answerer {
 mod tests {
     use super::*;
     use core::prelude::v1::test;
-    use gpui_kit::{TestAppContext, VisualTestContext, div, red};
+    use gpui::{TestAppContext, VisualTestContext, div, red};
 
     /// Two controls side by side, each following its own mark.
     struct Two {
@@ -420,10 +420,10 @@ mod tests {
 
     /// A control's answers are its own: one control's mark moving leaves
     /// its neighbour's state where it was.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn each_control_follows_its_own_mark(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| Two {
@@ -445,10 +445,10 @@ mod tests {
 
     /// A change the control's own handler answered is not answered again as
     /// it draws, once; the next change is answered.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_handler_s_answer_holds_off_one_change(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| Two {

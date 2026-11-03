@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use gpui_kit::{
+use gpui::{
     App, Bounds, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla, InspectorElementId,
     IntoElement, LayoutId, Pixels, Point, ShaderProgram, SharedString, Style, TextAlign, TextRun,
     UnderlineStyle, Window, fill, point, px, size,
@@ -66,7 +66,7 @@ impl IntoElement for FieldElement {
     }
 }
 
-impl gpui_kit::Element for FieldElement {
+impl gpui::Element for FieldElement {
     type RequestLayoutState = ();
     type PrepaintState = Prepaint;
 
@@ -267,7 +267,7 @@ impl gpui_kit::Element for FieldElement {
         }
         let origin = bounds.origin - prepaint.scroll;
         let line_height = prepaint.line_height;
-        window.with_content_mask(Some(gpui_kit::ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             for selection in &prepaint.selection {
                 window.paint_quad(fill(*selection, self.colours.selection));
             }
@@ -308,7 +308,7 @@ fn runs(
     line: &Range<usize>,
     colour: Hsla,
     spans: &[(Range<usize>, Hsla)],
-    style: &gpui_kit::TextStyle,
+    style: &gpui::TextStyle,
     marked: Option<&Range<usize>>,
     underline: Pixels,
 ) -> Vec<TextRun> {

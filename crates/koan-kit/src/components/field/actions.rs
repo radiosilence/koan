@@ -1,9 +1,9 @@
 //! What a field's keys do, bound in the `Input` context (which koan's
 //! window-wide shortcuts step aside for while a field has the keyboard).
 
-use gpui_kit::{App, KeyBinding};
+use gpui::{App, KeyBinding};
 
-gpui_kit::actions!(
+gpui::actions!(
     koan_field,
     [
         Backspace,

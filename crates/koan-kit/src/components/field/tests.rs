@@ -1,11 +1,11 @@
-use gpui_kit::{
+use gpui::{
     AppContext as _, Context, Entity, EntityInputHandler as _, IntoElement, Modifiers,
     ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext, Window, div, point,
     px,
 };
 
 use super::*;
-// `gpui_kit::*` brings GPUI's `test` attribute, which would expand its own
+// `gpui::*` brings GPUI's `test` attribute, which would expand its own
 // `#[test]` into itself.
 use core::prelude::v1::test;
 
@@ -27,7 +27,7 @@ impl Render for Host {
 
 fn host(cx: &mut TestAppContext, rows: usize) -> (Entity<Host>, &mut VisualTestContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        crate::app::platform::init(cx);
         crate::theme::init(cx);
     });
     let (host, cx) = cx.add_window_view(|window, cx| {
@@ -67,7 +67,7 @@ fn selected(host: &Entity<Host>, cx: &mut VisualTestContext) -> std::ops::Range<
 
 /// Typing goes in at the caret, and Backspace, Delete and the arrows edit
 /// around it; each change is said.
-#[gpui_kit::test]
+#[gpui::test]
 fn typing_and_editing(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("hello world");
@@ -90,7 +90,7 @@ fn typing_and_editing(cx: &mut TestAppContext) {
 }
 
 /// Typing undoes as one step, as on the Mac; redo puts it back.
-#[gpui_kit::test]
+#[gpui::test]
 fn typing_undoes_as_one_step(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("abc");
@@ -107,7 +107,7 @@ fn typing_undoes_as_one_step(cx: &mut TestAppContext) {
 
 /// An input method composes in place, its text marked, and commits as one
 /// step of the history.
-#[gpui_kit::test]
+#[gpui::test]
 fn an_input_method_composes_and_commits(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("x ");
@@ -135,7 +135,7 @@ fn an_input_method_composes_and_commits(cx: &mut TestAppContext) {
 
 /// The input method's offsets are UTF-16, the text's UTF-8: a character
 /// beyond the basic plane counts two.
-#[gpui_kit::test]
+#[gpui::test]
 fn input_method_offsets_are_utf16(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("a😀b");
@@ -153,7 +153,7 @@ fn input_method_offsets_are_utf16(cx: &mut TestAppContext) {
 
 /// Shift with the arrows selects from where the caret was, either way;
 /// Select All takes the whole text, and typing replaces a selection.
-#[gpui_kit::test]
+#[gpui::test]
 fn selecting_with_the_keys(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("one two three");
@@ -174,7 +174,7 @@ fn selecting_with_the_keys(cx: &mut TestAppContext) {
 }
 
 /// A double click selects the word under it, a triple click the line.
-#[gpui_kit::test]
+#[gpui::test]
 fn double_and_triple_clicks(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("alpha beta gamma");
@@ -185,22 +185,22 @@ fn double_and_triple_clicks(cx: &mut TestAppContext) {
         (f.bounds.expect("drawn"), line.x_for_index(8))
     });
     let at = point(bounds.left() + x, bounds.center().y);
-    cx.simulate_event(gpui_kit::MouseDownEvent {
-        button: gpui_kit::MouseButton::Left,
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
         position: at,
         modifiers: Modifiers::default(),
         click_count: 2,
         first_mouse: false,
     });
-    cx.simulate_event(gpui_kit::MouseUpEvent {
-        button: gpui_kit::MouseButton::Left,
+    cx.simulate_event(gpui::MouseUpEvent {
+        button: gpui::MouseButton::Left,
         position: at,
         modifiers: Modifiers::default(),
         click_count: 2,
     });
     assert_eq!(selected(&host, cx), 6..10, "beta");
-    cx.simulate_event(gpui_kit::MouseDownEvent {
-        button: gpui_kit::MouseButton::Left,
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
         position: at,
         modifiers: Modifiers::default(),
         click_count: 3,
@@ -211,12 +211,12 @@ fn double_and_triple_clicks(cx: &mut TestAppContext) {
 
 /// A single line leaves Up to its owner, which a list it leads takes;
 /// pasted newlines become spaces.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_single_line_leaves_up_to_its_owner(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.dispatch_action(MoveUp);
     assert_eq!(host.read_with(cx, |h, _| h.ups), 1);
-    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("a\nb".into()));
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\nb".into()));
     cx.dispatch_action(Paste);
     assert_eq!(value(&host, cx), "a b");
     cx.dispatch_action(Enter);
@@ -231,7 +231,7 @@ fn a_single_line_leaves_up_to_its_owner(cx: &mut TestAppContext) {
 
 /// Several lines take Return as a new line and move between lines with
 /// the arrows, keeping the distance across.
-#[gpui_kit::test]
+#[gpui::test]
 fn several_lines(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 4);
     cx.simulate_input("abcd");
@@ -251,14 +251,14 @@ fn several_lines(cx: &mut TestAppContext) {
 }
 
 /// A masked field draws bullets and keeps its text off the clipboard.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_masked_field_keeps_its_text(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let f = field(&host, cx);
     f.update(cx, |f, _| f.masked = true);
     cx.simulate_input("secret");
     assert_eq!(f.read_with(cx, |f, _| f.drawn()), "••••••");
-    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("before".into()));
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("before".into()));
     cx.dispatch_action(SelectAll);
     cx.dispatch_action(Copy);
     assert_eq!(
@@ -268,7 +268,7 @@ fn a_masked_field_keeps_its_text(cx: &mut TestAppContext) {
 }
 
 /// `set_value` says no change and starts the history afresh.
-#[gpui_kit::test]
+#[gpui::test]
 fn set_value_is_the_owners(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("typed");
@@ -282,7 +282,7 @@ fn set_value_is_the_owners(cx: &mut TestAppContext) {
 }
 
 /// A long line scrolls to keep the caret in view, and back at Home.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_long_line_scrolls_to_the_caret(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input(&"word ".repeat(40));
@@ -297,7 +297,7 @@ fn a_long_line_scrolls_to_the_caret(cx: &mut TestAppContext) {
 
 /// A Japanese input method: kana composed from romaji, marked as it grows,
 /// then the kanji chosen committed in its place.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_japanese_input_method_composes_kana_into_kanji(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let f = field(&host, cx);
@@ -326,7 +326,7 @@ fn a_japanese_input_method_composes_kana_into_kanji(cx: &mut TestAppContext) {
 
 /// The caret moves, and Backspace deletes, a character as a reader sees
 /// one: an emoji family, a flag, a letter with its combining accent.
-#[gpui_kit::test]
+#[gpui::test]
 fn the_caret_steps_over_whole_characters(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let family = "👨\u{200d}👩\u{200d}👧";
@@ -345,7 +345,7 @@ fn the_caret_steps_over_whole_characters(cx: &mut TestAppContext) {
 
 /// Words are Unicode's: an elided French article is part of its word, and
 /// Greek stops where its words do.
-#[gpui_kit::test]
+#[gpui::test]
 fn words_are_unicode_words(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("l'été καλό");
@@ -360,7 +360,7 @@ fn words_are_unicode_words(cx: &mut TestAppContext) {
 
 /// Hebrew, right to left, goes in, the arrows move through it by its
 /// letters, and it is selected and deleted whole.
-#[gpui_kit::test]
+#[gpui::test]
 fn right_to_left_text_edits_sanely(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     cx.simulate_input("שלום");
@@ -376,7 +376,7 @@ fn right_to_left_text_edits_sanely(cx: &mut TestAppContext) {
 
 /// Ten thousand characters typed one at a time, and a long paste, stay
 /// whole, the paste undoes alone, and the caret ends at the end.
-#[gpui_kit::test]
+#[gpui::test]
 fn long_text_types_and_pastes(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let f = field(&host, cx);
@@ -391,7 +391,7 @@ fn long_text_types_and_pastes(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(value(&host, cx).len(), 10_000);
     let pasted = "kōan ".repeat(20_000);
-    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(pasted.clone()));
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(pasted.clone()));
     cx.dispatch_action(Paste);
     cx.run_until_parked();
     let text = value(&host, cx);
@@ -403,7 +403,7 @@ fn long_text_types_and_pastes(cx: &mut TestAppContext) {
 
 /// The owner's highlighter colours the text as it stands, after typing
 /// and after the owner sets it.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_highlighter_follows_the_text(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let f = field(&host, cx);

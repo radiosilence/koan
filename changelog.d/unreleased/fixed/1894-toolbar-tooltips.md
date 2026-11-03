@@ -1,0 +1,1 @@
+- **Tooltips in the toolbar and transport.** A control in a part of the window that redraws only when its own content changes now shows its tooltip after the usual delay.

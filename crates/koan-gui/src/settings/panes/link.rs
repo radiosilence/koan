@@ -150,7 +150,7 @@ impl Render for LinkDevice {
             .invite
             .as_ref()
             .map(|(invite, _)| invite.qr_link.clone());
-        let side = look.spaced(220.0);
+        let side = look.sized(220.0);
         // Laid out the same while the code is asked for, the caption and the
         // button held invisible, so nothing moves when it arrives.
         let code = match &self.invite {

@@ -8,12 +8,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::{
+use gpui::{
     Div, ElementId, EntityId, InteractiveElement, IntoElement, Pixels, Point, SharedString,
     Stateful, Styled, canvas, div, px,
 };
 
-pub use gpui_kit::{
+pub use gpui::{
     List, ListAlignment, ListOffset, ListState, ScrollStrategy, UniformList,
     UniformListScrollHandle, list, uniform_list,
 };
@@ -34,7 +34,7 @@ where
 /// What a virtualised list sits in for a screen reader: a list named for
 /// what it holds, its rows (`TableRow::spoken`) its items.
 pub fn spoken_list(id: impl Into<ElementId>, name: impl Into<SharedString>) -> Stateful<Div> {
-    super::accessible(div().id(id), gpui_kit::Role::List, Some(name.into()))
+    super::accessible(div().id(id), gpui::Role::List, Some(name.into()))
 }
 
 /// Scrolls the row past row `ix` of a `uniform_list`'s `count` on screen, the

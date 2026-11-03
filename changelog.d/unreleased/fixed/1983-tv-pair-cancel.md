@@ -1,0 +1,1 @@
+- **Cancelling an Apple TV pairing.** Closing the pairing sheet while the TV is still being found now takes the code off the TV, and cancelling while a code is being checked leaves no device of the account set up to wake that TV.

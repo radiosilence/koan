@@ -23,7 +23,7 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 use smallvec::SmallVec;
 
 use super::placeholder::TRACE;

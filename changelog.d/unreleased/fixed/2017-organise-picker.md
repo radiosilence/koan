@@ -1,0 +1,1 @@
+- **Organise names what it will use.** A named pattern edited in Organise shows as typed here, as the edited text is what the preview and the move use.

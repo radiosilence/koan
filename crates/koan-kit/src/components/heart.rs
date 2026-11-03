@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Answer, Answerer, Handler, accessible, answers_click, toggled};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
@@ -155,7 +155,7 @@ impl RenderOnce for Heart {
         // A screen reader hears a toggle named for what it does, whether it
         // is on, and can press it as the pointer does.
         let name = tip.clone();
-        accessible(self.base, gpui_kit::Role::Button, Some(name))
+        accessible(self.base, gpui::Role::Button, Some(name))
             .aria_toggled(toggled(on))
             // Shown while it answers, whatever its owner hides it by.
             .when(live, |d| d.visible())

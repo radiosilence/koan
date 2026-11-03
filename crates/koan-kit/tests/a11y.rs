@@ -5,8 +5,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
-use gpui_kit::{
+use gpui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+use gpui::{
     AnyWindowHandle, Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
     div, px,
 };
@@ -94,7 +94,7 @@ impl Render for Page {
 
 fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Rc<Cell<u32>>, Rc<Cell<f32>>) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let page = Page::default();
@@ -169,7 +169,7 @@ fn send(window: AnyWindowHandle, cx: &mut TestAppContext, action: Action, target
     cx.run_until_parked();
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
@@ -201,7 +201,7 @@ fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     assert_eq!(tunings, 2);
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn components_report_their_state(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
@@ -219,7 +219,7 @@ fn components_report_their_state(cx: &mut TestAppContext) {
     assert!(node(&tree, "queue", "Button").1.get("disabled").is_none());
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn components_answer_a_screen_reader_s_actions(cx: &mut TestAppContext) {
     let (window, queued, seek) = open(cx);
     let tree = tree(window, cx);
@@ -282,10 +282,10 @@ impl Render for Queue {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -375,10 +375,10 @@ fn drawn_rows(tree: &str) -> (usize, usize) {
 /// A reader moving down a list one row at a time keeps going past the
 /// first screen: each row reached scrolls its neighbour on and the window
 /// draws it, with nothing else asking for a frame.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -434,10 +434,10 @@ impl Render for Uniform {
 /// A reader moving up a `uniform_list` from its top row reaches the rows
 /// above the screen: the list knows which row is at its top, so the reveal
 /// goes up rather than down.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let scroll = UniformListScrollHandle::new();
@@ -447,7 +447,7 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
         })
         .into();
     attach(window, cx);
-    scroll.scroll_to_item(150, gpui_kit::ScrollStrategy::Top);
+    scroll.scroll_to_item(150, gpui::ScrollStrategy::Top);
     window
         .update(cx, |_, window, _| window.refresh())
         .expect("the window");
@@ -475,9 +475,9 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
 /// offers no edit, a disabled one says so; a value the owner sets is
 /// announced; and a screen reader's request to set the value is an edit.
 struct Fields {
-    name: gpui_kit::Entity<koan_kit::components::FieldState>,
-    fixed: gpui_kit::Entity<koan_kit::components::FieldState>,
-    secret: gpui_kit::Entity<koan_kit::components::FieldState>,
+    name: gpui::Entity<koan_kit::components::FieldState>,
+    fixed: gpui::Entity<koan_kit::components::FieldState>,
+    secret: gpui::Entity<koan_kit::components::FieldState>,
 }
 
 impl Render for Fields {
@@ -493,12 +493,12 @@ impl Render for Fields {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
-    use gpui_kit::AppContext as _;
+    use gpui::AppContext as _;
     use koan_kit::components::FieldState;
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let window = cx.add_window(|window, cx| Fields {
@@ -553,7 +553,7 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
                     action: Action::SetValue,
                     target_tree: TreeId::ROOT,
                     target_node: id,
-                    data: Some(gpui_kit::accesskit::ActionData::Value("Liz".into())),
+                    data: Some(gpui::accesskit::ActionData::Value("Liz".into())),
                 },
                 cx,
             )

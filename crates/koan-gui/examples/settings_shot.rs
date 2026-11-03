@@ -67,8 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shoot = |cx: &mut HeadlessAppContext, tab: Tab, name: &str| -> Result<(), Box<dyn Error>> {
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
             let view = cx.new(|cx| SettingsWindow::new(tab, window, cx));
-            // gpui-component's focus and click extensions, for the shell's own handling.
-            cx.new(|cx| koan_kit::raw::base::Root::new(view, window, cx))
+            koan_kit::components::host(view, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(true), window, cx)

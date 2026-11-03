@@ -1,0 +1,1 @@
+- **koan-kit takes GPUI from the vendored crates.** GPUI, its platform and its test harness come from the vendored GPUI crates rather than through gpui-kit, which is left only for the components koan-kit has not replaced yet.

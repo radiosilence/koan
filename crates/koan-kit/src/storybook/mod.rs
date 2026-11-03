@@ -15,8 +15,8 @@ mod playground;
 use std::sync::Arc;
 
 use crate::components::field::FieldState as InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use crate::components::{
     Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Cover, CoverArt,
@@ -894,7 +894,7 @@ impl StoryContent {
             ],
             Story::Covers => {
                 let side = look.spaced(120.0);
-                let warm = gpui_kit::hsla(0.05, 0.6, 0.45, 1.0);
+                let warm = gpui::hsla(0.05, 0.6, 0.45, 1.0);
                 vec![
                     SectionHeader::new("Covers").into_any_element(),
                     row()

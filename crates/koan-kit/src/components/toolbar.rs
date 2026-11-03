@@ -2,8 +2,8 @@
 //! SwiftUI's `ToolbarItem` placements are, at the toolbar's height and gaps;
 //! and the toolbar button, a glyph in a 36-point cell.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, KoanTheme, Look};
@@ -100,7 +100,7 @@ impl Toolbar {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        super::accessible(div().id("toolbar"), gpui_kit::Role::Toolbar, None)
+        super::accessible(div().id("toolbar"), gpui::Role::Toolbar, None)
             .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()
