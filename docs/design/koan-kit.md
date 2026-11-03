@@ -226,7 +226,7 @@ A control answers what was done to it, by itself, so every page that uses it ans
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
 
-`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
+`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`. `renderer_mark(color)` takes the bars' place while the music plays on a renderer handed the file itself, where nothing passes through to measure.
 
 `SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 

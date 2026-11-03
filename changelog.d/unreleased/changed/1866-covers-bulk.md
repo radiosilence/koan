@@ -1,0 +1,1 @@
+- **Covers kept ahead arrive much faster.** The cover preload fetches six covers at a time instead of one, and from a kōan server with the new `koanCovers` extension takes the covers the server has ready two hundred to a request.
