@@ -219,9 +219,6 @@ impl AlbumPage {
         }));
     }
 
-    /// A track picked for this record in the search box: the cursor and the
-    /// selection on it, as a click on its row puts them, and scrolled into
-    /// view.
     /// The record did not load: a track picked for it has nowhere to be.
     fn drop_pick(&mut self, cx: &mut Context<Self>) {
         let album = self.album_id;
@@ -230,6 +227,9 @@ impl AlbumPage {
         }
     }
 
+    /// A track picked for this record in the search box: the cursor and the
+    /// selection on it, as a click on its row puts them, and scrolled into
+    /// view.
     fn take_pick(&mut self, cx: &mut Context<Self>) {
         let Some((album, track)) = self.lib.nav.read(cx).pick else {
             return;
@@ -245,6 +245,9 @@ impl AlbumPage {
         self.selection.only(Playable::Track(track));
         super::keys::KeyedList::reveal(self, index, cx);
         self.take_focus = true;
+        // Drawn now, focus included: a record already showing has nothing
+        // else to redraw it.
+        cx.notify();
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
