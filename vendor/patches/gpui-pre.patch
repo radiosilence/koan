@@ -200,6 +200,41 @@ index 0000000..51c3bc3
 +This is a copy of the gpui-pre 0.3.10 crate as published on crates.io (Zed's GPUI, https://github.com/zed-industries/zed), licensed under the Apache License 2.0 (LICENSE-APACHE), with changes made by the kōan project (https://github.com/radiosilence/koan). Each change is marked with a `KOAN:` comment; vendor/patches/gpui-pre.patch in that repository is the whole of it.
 +
 +The accessibility replay for reused views (src/view.rs, src/window.rs, src/window/a11y.rs, src/window/a11y/debug.rs) is the Wormhole project's change to gpui-pre 0.3.9 (https://github.com/wormhole-terminal/gpui-pre, commit 7b47af1, "view: a reused view keeps its accessibility nodes and action listeners"), modified by the Wormhole project and licensed under the Apache License 2.0.
+diff --git a/src/app.rs b/src/app.rs
+index 0f1d59b..cb031b7 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -1409,20 +1409,23 @@ impl App {
+         })
+     }
+ 
++    // KOAN: (#1899) every entity read in the callback, including one read
++    // earlier in the frame. A cached view reused while its parent draws
++    // again adds back only what it recorded, so an entity it read but first
++    // read elsewhere (its own, when its parent created it) would drop out of
++    // the window's tracked entities and its notify would draw nothing.
+     pub(crate) fn detect_accessed_entities<R>(
+         &mut self,
+         callback: impl FnOnce(&mut App) -> R,
+     ) -> (R, FxHashSet<EntityId>) {
+-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
++        let outer = std::mem::take(self.entities.accessed_entities.get_mut());
+         let result = callback(self);
+-        let entities_accessed_in_callback = self
+-            .entities
++        let accessed = std::mem::replace(self.entities.accessed_entities.get_mut(), outer);
++        self.entities
+             .accessed_entities
+             .get_mut()
+-            .difference(&accessed_entities_start)
+-            .copied()
+-            .collect::<FxHashSet<EntityId>>();
+-        (result, entities_accessed_in_callback)
++            .extend(accessed.iter().copied());
++        (result, accessed)
+     }
+ 
+     pub(crate) fn record_entities_accessed(
 diff --git a/src/color.rs b/src/color.rs
 index 3bd893f..e757f27 100644
 --- a/src/color.rs
