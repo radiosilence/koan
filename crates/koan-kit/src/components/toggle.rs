@@ -55,9 +55,24 @@ impl RenderOnce for Toggle {
         let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
-        // Turned on elsewhere (Settings read again, a shortcut), it answers
-        // as a click does.
-        follow_on(&answers, self.checked, accent, window, cx);
+        // Its tick draws itself in, or erases, however it was turned:
+        // a click, Settings read again, a shortcut. With icons hidden, a
+        // ring as before.
+        let icons = look.icons;
+        if icons {
+            answers.follow(
+                self.checked as u64,
+                Answer::Tick(self.checked),
+                accent,
+                window,
+                cx,
+            );
+        } else {
+            follow_on(&answers, self.checked, accent, window, cx);
+        }
+        let tick_side = px(crate::theme::icons::side(BOX * 0.64));
+        let drawing = answers.glyph_live(cx);
+        let tick_drawn = answers.glyph_layer(tick_side, look.palette.bg.hsla(), None, window, cx);
         let edge = fade(
             child(&self.id, "edge"),
             self.checked,
@@ -104,13 +119,19 @@ impl RenderOnce for Toggle {
                             .items_center()
                             .justify_center()
                             .bg(ground)
-                            .when(self.checked, |cell| {
-                                cell.child(
-                                    KoanIcon::new(Icon::Check)
-                                        .points(BOX * 0.64)
-                                        .color(look.palette.bg.hsla()),
-                                )
-                            }),
+                            .child(
+                                div()
+                                    .relative()
+                                    .size(tick_side)
+                                    .when(self.checked && !drawing, |cell| {
+                                        cell.child(
+                                            KoanIcon::new(Icon::Check)
+                                                .points(BOX * 0.64)
+                                                .color(look.palette.bg.hsla()),
+                                        )
+                                    })
+                                    .children(tick_drawn),
+                            ),
                     )
                     .children(answers.layer(window, cx)),
             );
@@ -123,7 +144,9 @@ impl RenderOnce for Toggle {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
                 Arc::new(move |_, window, cx| {
-                    if !checked {
+                    if icons {
+                        answers.start(Answer::Tick(!checked), accent, cx);
+                    } else if !checked {
                         answers.start(Answer::Ring, accent, cx);
                     }
                     on_change(&!checked, window, cx)
@@ -133,7 +156,9 @@ impl RenderOnce for Toggle {
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
-                    if !checked {
+                    if icons {
+                        answers.start(Answer::Tick(!checked), accent, cx);
+                    } else if !checked {
                         answers.start(Answer::Ring, accent, cx);
                     }
                     on_change(&!checked, window, cx)

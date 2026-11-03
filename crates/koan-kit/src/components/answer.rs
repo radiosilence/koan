@@ -55,6 +55,11 @@ pub enum Answer {
     /// A skip's glyph nudged the way it points and back: forward (`true`)
     /// or back.
     Nudge(bool),
+    /// A tick drawing itself in along its stroke (`true`), or erasing.
+    Tick(bool),
+    /// The underline of a choice drawn in from the side the last choice
+    /// stood: from the leading edge (`true`) or the trailing one.
+    Slide(bool),
 }
 
 /// How a glyph turns into another.
@@ -74,6 +79,10 @@ pub enum Morph {
     SpinToOne,
     /// Repeat spinning round, its "one" shrinking away.
     SpinFromOne,
+    /// Copy's two sheets shrinking away as a tick draws in.
+    CopyToTick,
+    /// The tick erasing as the sheets come back.
+    TickToCopy,
 }
 
 impl Answer {
@@ -95,6 +104,11 @@ impl Answer {
             Answer::Morph(Morph::SpinToOne) => 17.0,
             Answer::Morph(Morph::SpinFromOne) => 18.0,
             Answer::Nudge(_) => 19.0,
+            Answer::Tick(true) => 20.0,
+            Answer::Tick(false) => 21.0,
+            Answer::Morph(Morph::CopyToTick) => 22.0,
+            Answer::Morph(Morph::TickToCopy) => 23.0,
+            Answer::Slide(_) => 3.0,
         }
     }
 
@@ -103,14 +117,14 @@ impl Answer {
     pub fn glyph(self) -> bool {
         matches!(
             self,
-            Answer::Fill | Answer::Empty | Answer::Morph(_) | Answer::Nudge(_)
+            Answer::Fill | Answer::Empty | Answer::Morph(_) | Answer::Nudge(_) | Answer::Tick(_)
         )
     }
 
     /// Which way it travels, for a streak: 1 forward, -1 back.
     fn heading(self) -> f32 {
         match self {
-            Answer::Streak(false) | Answer::Nudge(false) => -1.0,
+            Answer::Streak(false) | Answer::Nudge(false) | Answer::Slide(false) => -1.0,
             _ => 1.0,
         }
     }
@@ -122,7 +136,12 @@ impl Answer {
         match self {
             Answer::Ring | Answer::Close | Answer::Streak(_) => Motion::ARRIVE,
             Answer::Burst | Answer::Sweep | Answer::Lift => Motion::SETTLE,
-            Answer::Fill | Answer::Empty | Answer::Morph(_) | Answer::Nudge(_) => Motion::SETTLE,
+            Answer::Fill
+            | Answer::Empty
+            | Answer::Morph(_)
+            | Answer::Nudge(_)
+            | Answer::Tick(_)
+            | Answer::Slide(_) => Motion::SETTLE,
         }
     }
 
@@ -141,7 +160,8 @@ impl Answer {
         match self {
             Answer::Ring | Answer::Close => 6.0,
             Answer::Burst | Answer::Streak(_) => 9.0,
-            Answer::Sweep | Answer::Lift => 0.0,
+            Answer::Sweep | Answer::Lift | Answer::Slide(_) => 0.0,
+            Answer::Tick(_) => 1.0,
             Answer::Fill => 7.0,
             Answer::Empty | Answer::Morph(_) => 2.0,
             Answer::Nudge(_) => 4.0,
@@ -186,7 +206,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         a = 0.3 * (1.0 - t) * clamp(0.75 * pt - abs(d - r) + 0.5, 0.0, 1.0);
     } else if (kind == 3) {
         float line = size.y - pt;
-        bool under = position.y >= line && position.x <= size.x * e;
+        float reach = u[1] < 0.0 ? size.x - position.x : position.x;
+        bool under = position.y >= line && reach <= size.x * e;
         a = under ? 0.6 * (1.0 - t * t) : 0.0;
     } else if (kind == 5) {
         float x = (position.x - c.x) * u[1];
@@ -231,7 +252,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         a = 0.3 * (1.0 - t) * clamp(0.75 * pt - abs(d - r) + 0.5, 0.0, 1.0);
     } else if (kind == 3) {
         let line = size.y - pt;
-        if (position.y >= line && position.x <= size.x * e) {
+        var reach = position.x;
+        if (u[0].y < 0.0) { reach = size.x - position.x; }
+        if (position.y >= line && reach <= size.x * e) {
             a = 0.6 * (1.0 - t * t);
         }
     } else if (kind == 5) {
@@ -304,6 +327,30 @@ float kg_heart(float2 g) {
 float kg_back(float t) {
     float s = t - 1.0;
     return 1.0 + 2.70158 * s * s * s + 1.70158 * s * s;
+}
+float kg_tick(float2 g, float p, float k) {
+    float2 a = float2(5.0, 12.5);
+    float2 b = float2(10.0, 17.5);
+    float2 c = float2(19.0, 7.0);
+    float along = clamp(p, 0.0, 1.0) * 20.963;
+    float cov = 0.0;
+    if (along > 0.0) {
+        cov = kg_line(g, a, mix(a, b, min(along / 7.071, 1.0)), k);
+    }
+    if (along > 7.071) {
+        cov = max(cov, kg_line(g, b, mix(b, c, (along - 7.071) / 13.892), k));
+    }
+    return cov;
+}
+float kg_copy(float2 g, float s, float k) {
+    if (s <= 0.01) { return 0.0; }
+    float2 h = float2(12.0, 12.0) + (g - float2(12.0, 12.0)) / s;
+    float d = min(kg_boxd(h, float2(4.5, 16.5), float2(4.5, 3.5)), kg_boxd(h, float2(4.5, 3.5), float2(15.5, 3.5)));
+    d = min(d, kg_boxd(h, float2(8.5, 7.5), float2(19.5, 7.5)));
+    d = min(d, kg_boxd(h, float2(19.5, 7.5), float2(19.5, 20.5)));
+    d = min(d, kg_boxd(h, float2(19.5, 20.5), float2(8.5, 20.5)));
+    d = min(d, kg_boxd(h, float2(8.5, 20.5), float2(8.5, 7.5)));
+    return clamp((0.75 - d * s) * k + 0.5, 0.0, 1.0) * s;
 }
 float2 kg_turn(float2 g, float a) {
     float2 v = g - float2(12.0, 12.0);
@@ -383,6 +430,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float x = g.x - 2.2 * sin(pi * t) * u[1];
         float2 n = float2(u[1] < 0.0 ? 24.0 - x : x, g.y);
         line = max(kg_tri(n, float2(5.0, 6.0), float2(15.0, 12.0), float2(5.0, 18.0), k), kg_line(n, float2(19.0, 6.0), float2(19.0, 18.0), k));
+    } else if (kind == 20 || kind == 21) {
+        line = kg_tick(g, kind == 20 ? e : 1.0 - e, k);
+    } else if (kind == 22 || kind == 23) {
+        float m = kind == 22 ? e : 1.0 - e;
+        line = max(kg_copy(g, 1.0 - m, k), kg_tick(g, m, k));
     }
     float la = line * u[5];
     float fa = fill * u[11];
@@ -430,6 +482,30 @@ fn kg_heart(g: vec2<f32>) -> f32 {
 fn kg_back(t: f32) -> f32 {
     let s = t - 1.0;
     return 1.0 + 2.70158 * s * s * s + 1.70158 * s * s;
+}
+fn kg_tick(g: vec2<f32>, p: f32, k: f32) -> f32 {
+    let a = vec2<f32>(5.0, 12.5);
+    let b = vec2<f32>(10.0, 17.5);
+    let c = vec2<f32>(19.0, 7.0);
+    let along = clamp(p, 0.0, 1.0) * 20.963;
+    var cov = 0.0;
+    if (along > 0.0) {
+        cov = kg_line(g, a, mix(a, b, min(along / 7.071, 1.0)), k);
+    }
+    if (along > 7.071) {
+        cov = max(cov, kg_line(g, b, mix(b, c, (along - 7.071) / 13.892), k));
+    }
+    return cov;
+}
+fn kg_copy(g: vec2<f32>, s: f32, k: f32) -> f32 {
+    if (s <= 0.01) { return 0.0; }
+    let h = vec2<f32>(12.0, 12.0) + (g - vec2<f32>(12.0, 12.0)) / s;
+    var d = min(kg_boxd(h, vec2<f32>(4.5, 16.5), vec2<f32>(4.5, 3.5)), kg_boxd(h, vec2<f32>(4.5, 3.5), vec2<f32>(15.5, 3.5)));
+    d = min(d, kg_boxd(h, vec2<f32>(8.5, 7.5), vec2<f32>(19.5, 7.5)));
+    d = min(d, kg_boxd(h, vec2<f32>(19.5, 7.5), vec2<f32>(19.5, 20.5)));
+    d = min(d, kg_boxd(h, vec2<f32>(19.5, 20.5), vec2<f32>(8.5, 20.5)));
+    d = min(d, kg_boxd(h, vec2<f32>(8.5, 20.5), vec2<f32>(8.5, 7.5)));
+    return clamp((0.75 - d * s) * k + 0.5, 0.0, 1.0) * s;
 }
 fn kg_turn(g: vec2<f32>, a: f32) -> vec2<f32> {
     let v = g - vec2<f32>(12.0, 12.0);
@@ -517,6 +593,14 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         if (heading < 0.0) { nx = 24.0 - x; }
         let n = vec2<f32>(nx, g.y);
         line = max(kg_tri(n, vec2<f32>(5.0, 6.0), vec2<f32>(15.0, 12.0), vec2<f32>(5.0, 18.0), k), kg_line(n, vec2<f32>(19.0, 6.0), vec2<f32>(19.0, 18.0), k));
+    } else if (kind == 20 || kind == 21) {
+        var p = e;
+        if (kind == 21) { p = 1.0 - e; }
+        line = kg_tick(g, p, k);
+    } else if (kind == 22 || kind == 23) {
+        var m = e;
+        if (kind == 23) { m = 1.0 - e; }
+        line = max(kg_copy(g, 1.0 - m, k), kg_tick(g, m, k));
     }
     let la = line * u[1].y;
     let fa = fill * u[2].w;
@@ -585,6 +669,8 @@ pub(crate) fn glyph_motion(from: u64, to: u64) -> Option<Answer> {
             (Icon::RepeatQueue, Some(false)),
             Morph::Spin,
         ),
+        ((Icon::Copy, None), (Icon::Check, None), Morph::CopyToTick),
+        ((Icon::Check, None), (Icon::Copy, None), Morph::TickToCopy),
     ];
     moves
         .into_iter()
@@ -597,7 +683,13 @@ pub(crate) fn morphs(icon: crate::theme::Icon) -> bool {
     use crate::theme::Icon;
     matches!(
         icon,
-        Icon::Play | Icon::Pause | Icon::Shuffle | Icon::RepeatQueue | Icon::RepeatOne
+        Icon::Play
+            | Icon::Pause
+            | Icon::Shuffle
+            | Icon::RepeatQueue
+            | Icon::RepeatOne
+            | Icon::Copy
+            | Icon::Check
     )
 }
 
