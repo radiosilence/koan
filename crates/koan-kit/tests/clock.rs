@@ -1,12 +1,23 @@
 //! The present clock under a moving lead, in a process of its own: the
-//! clock never runs back, so a lead moved by an hour leaves it an hour ahead
-//! for whatever runs after, which would be every other test's clock.
+//! clock never runs back, so a present made for an hour ahead leaves it an
+//! hour ahead for whatever runs after, which would be every other test's
+//! clock. The kit's present clock follows the presents its colour source
+//! sees, so these drive the source as a window presenting would.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use gpui::{ColorSlot, Rgba, Track, TrackCurve, TrackRepeat, present_now, set_present_lead};
+use gpui::Rgba;
+use koan_kit::components::{
+    ColorSlot, Repeat as TrackRepeat, Track, TrackCurve, install_color_slots, present_now,
+};
+
+/// A present made `lead` ahead of now, as the kit's colour source sees it.
+fn set_present_lead(lead: Duration) {
+    install_color_slots();
+    gpui::refresh_dynamic_colors(Instant::now() + lead);
+}
 use parking_lot::Mutex;
 
 static CLOCK: Mutex<()> = Mutex::new(());
