@@ -457,22 +457,29 @@ fn a_drag_past_the_edges_still_selects(cx: &mut TestAppContext) {
     press(cx, middle, 1);
     let from = selected(&host, cx).start;
     assert!(from > 0);
+    // Past the edge, it selects to the character under the pointer, out
+    // of view, and scrolls to it.
+    let edge = f.read_with(cx, |f, _| {
+        f.offset_at(point(bounds.right(), bounds.center().y))
+    });
     drag_to(cx, point(bounds.right() + px(200.0), bounds.center().y));
     cx.run_until_parked();
-    drag_to(cx, point(bounds.right() + px(400.0), bounds.center().y));
+    assert!(
+        selected(&host, cx).end > edge,
+        "beyond what showed at the edge"
+    );
+    assert!(
+        f.read_with(cx, |f, _| f.scroll.x) > px(0.0),
+        "scrolled to it"
+    );
+    drag_to(cx, point(bounds.right() + px(4000.0), bounds.center().y));
     cx.run_until_parked();
     assert_eq!(
         selected(&host, cx).end,
         text.len(),
         "to the end, past the edge"
     );
-    assert!(
-        f.read_with(cx, |f, _| f.scroll.x) > px(0.0),
-        "scrolled to it"
-    );
-    drag_to(cx, point(bounds.left() - px(200.0), bounds.center().y));
-    cx.run_until_parked();
-    drag_to(cx, point(bounds.left() - px(400.0), bounds.center().y));
+    drag_to(cx, point(bounds.left() - px(4000.0), bounds.center().y));
     cx.run_until_parked();
     assert_eq!(selected(&host, cx), 0..from, "back to the start");
 }
