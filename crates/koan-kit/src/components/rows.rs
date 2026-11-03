@@ -85,14 +85,23 @@ impl NavRow {
     /// Something dropped on the row (tracks on the queue, a record on a
     /// playlist): the row answers with a line drawn under it, so the person
     /// sees where it went, then `handler` takes it.
-    pub fn accept<T: 'static>(
+    pub fn accept<T: 'static>(self, handler: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
+        self.accept_if(|_: &T| true, handler)
+    }
+
+    /// `accept`, for what `takes` says the row takes: a drop it does not
+    /// take is let go without the answer saying it arrived.
+    pub fn accept_if<T: 'static>(
         mut self,
+        takes: impl Fn(&T) -> bool + 'static,
         handler: impl Fn(&T, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.accepts.push(Box::new(move |base, answers, accent| {
             base.on_drop(move |dropped: &T, window, cx| {
-                answers.start(super::Answer::Sweep, accent, cx);
-                handler(dropped, window, cx)
+                if takes(dropped) {
+                    answers.start(super::Answer::Sweep, accent, cx);
+                    handler(dropped, window, cx)
+                }
             })
         }));
         self
