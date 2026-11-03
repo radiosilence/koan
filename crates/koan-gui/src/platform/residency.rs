@@ -164,15 +164,18 @@ fn on_login_lane(change: Option<bool>, cx: &mut App) {
         return;
     }
     let before = cx.global_mut::<Residency>().login_lane.take();
-    let work = cx.background_executor().spawn(async move {
-        let refused = change.and_then(|on| login_item::set(on).err());
-        (change.is_some(), refused, login_item::status())
-    });
     let lane = cx.spawn(async move |cx| {
         if let Some(before) = before {
             before.await;
         }
-        let (changed, refused, login) = work.await;
+        // Started only now, so the system is asked one thing at a time.
+        let (changed, refused, login) = cx
+            .background_executor()
+            .spawn(async move {
+                let refused = change.and_then(|on| login_item::set(on).err());
+                (change.is_some(), refused, login_item::status())
+            })
+            .await;
         cx.update(|cx| {
             if cx.has_global::<Residency>() {
                 let residency = cx.global_mut::<Residency>();
