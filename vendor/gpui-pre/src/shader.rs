@@ -9,10 +9,10 @@
 #![allow(missing_docs)]
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Primitive, ScaledPixels};
 
 /// How many plain floats a shader's uniform block holds, written by the app
 /// when they change: colours, sizes, flags.
@@ -136,7 +136,9 @@ impl Track {
         };
         let (kind, a, b, c) = match self.curve {
             TrackCurve::Linear => (0.0, 0.0, 0.0, 0.0),
-            TrackCurve::Bezier(x1, y1, x2, y2) => (1.0, pack_halves(x1, y1), pack_halves(x2, y2), 0.0),
+            TrackCurve::Bezier(x1, y1, x2, y2) => {
+                (1.0, pack_halves(x1, y1), pack_halves(x2, y2), 0.0)
+            }
             TrackCurve::Spring {
                 stiffness,
                 damping,
@@ -293,7 +295,8 @@ fn from_half(h: u16) -> f32 {
     let exponent = ((h >> 10) & 0x1f) as u32;
     let mantissa = (h & 0x3ff) as u32;
     if exponent == 0 {
-        return f32::from_bits(sign) + (mantissa as f32) * 2f32.powi(-24) * if sign != 0 { -1.0 } else { 1.0 };
+        return f32::from_bits(sign)
+            + (mantissa as f32) * 2f32.powi(-24) * if sign != 0 { -1.0 } else { 1.0 };
     }
     f32::from_bits(sign | (exponent + 127 - 15) << 23 | mantissa << 13)
 }
@@ -335,7 +338,6 @@ pub fn shader_epoch() -> Instant {
     *EPOCH.get_or_init(Instant::now)
 }
 
-
 // KOAN: the present clock (#1859).
 static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
 
@@ -358,7 +360,10 @@ pub fn present_now() -> Instant {
 /// How far ahead of now a frame encoded now is shown, as the platform's
 /// display link reports it.
 pub fn set_present_lead(lead: std::time::Duration) {
-    PRESENT_LEAD.store(lead.as_nanos().min(i64::MAX as u128) as i64, Ordering::Relaxed);
+    PRESENT_LEAD.store(
+        lead.as_nanos().min(i64::MAX as u128) as i64,
+        Ordering::Relaxed,
+    );
 }
 
 /// Signed nanoseconds from [`shader_epoch`] to `at`.
@@ -402,6 +407,13 @@ pub struct ShaderUniforms {
     moving_until: AtomicU64,
     /// The present that lands the last track at its end.
     track_landing: AtomicBool,
+    /// Per plain uniform, the colour slot the four floats from it draw, plus
+    /// one; 0 for a plain colour. Resolved as each present is made, so a
+    /// slot's colour moves in the program with no frame drawn.
+    colors: [AtomicU16; SHADER_PLAIN],
+    /// Whether a slot the uniforms name was moving at the last present: the
+    /// present after it stops lands it.
+    colors_moved: AtomicBool,
 }
 
 // KOAN: written out, since an array of eighty has no derived default
@@ -418,6 +430,8 @@ impl Default for ShaderUniforms {
             landing: AtomicBool::new(false),
             moving_until: AtomicU64::new(0),
             track_landing: AtomicBool::new(false),
+            colors: std::array::from_fn(|_| AtomicU16::new(0)),
+            colors_moved: AtomicBool::new(false),
         }
     }
 }
@@ -427,8 +441,21 @@ impl ShaderUniforms {
         Self::default()
     }
 
-    /// Whether the value changed.
+    /// Whether the value changed. A colour slot whose four floats `index`
+    /// falls in is let go: the value written stands as written.
     pub fn set(&self, index: usize, value: f32) -> bool {
+        // KOAN: #1859.
+        let mut moved = false;
+        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
+            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
+        }
+        if moved {
+            self.changed.store(true, Ordering::Relaxed);
+        }
+        self.write(index, value) || moved
+    }
+
+    fn write(&self, index: usize, value: f32) -> bool {
         let bits = value.to_bits();
         let changed = self.values[index].swap(bits, Ordering::Relaxed) != bits;
         if changed {
@@ -467,13 +494,18 @@ impl ShaderUniforms {
             // KOAN: a moving track keeps the window presenting (#1859).
             || self.tracks_moving(present_now())
             || self.track_landing.load(Ordering::Relaxed)
+            || self.colors_moving(present_now())
+            || self.colors_moved.load(Ordering::Relaxed)
     }
 
     /// Whether a deadline was set and has passed.
     fn lapsed(&self) -> bool {
         let until = self.until.load(Ordering::Relaxed);
         until != 0
-            && (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) >= until
+            && (Instant::now()
+                .saturating_duration_since(shader_epoch())
+                .as_nanos() as u64)
+                >= until
     }
 
     /// Live until `deadline` and no longer; `None` for as long as `live` is
@@ -501,10 +533,14 @@ impl ShaderUniforms {
         let now = present_now();
         let moving = self.tracks_moving(now);
         let track_landed = !moving && self.track_landing.swap(false, Ordering::Relaxed);
+        let colors = self.colors_moving(now);
+        let colors_landed = self.colors_moved.swap(colors, Ordering::Relaxed) && !colors;
         changed
             || landed
             || moving
             || track_landed
+            || colors
+            || colors_landed
             || (self.is_live() && self.continuous.load(Ordering::Relaxed))
     }
 
@@ -540,6 +576,62 @@ impl ShaderUniforms {
         let base = SHADER_PLAIN + k * TRACK_FLOATS;
         let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
         Track::decode(&floats)
+    }
+
+    /// The colour `color` into the four plain uniforms from `index`, as
+    /// red, green, blue and alpha. A colour naming a slot is read from the
+    /// slot as each present is made, its alpha scaling the slot's. Whether
+    /// anything changed.
+    pub fn set_color(&self, index: usize, color: Hsla) -> bool {
+        let slot = crate::color_slot_of(&color).map_or(0, |slot| slot as u16 + 1);
+        let rgba = if slot == 0 {
+            crate::Rgba::from(color)
+        } else {
+            // The alpha, kept to scale the slot's by.
+            crate::Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: color.a,
+            }
+        };
+        // Any other colour these floats overlap stands no more.
+        let mut changed = false;
+        for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
+            if other != index {
+                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
+            }
+        }
+        for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
+            changed |= self.write(index + i, value);
+        }
+        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
+        if changed {
+            self.changed.store(true, Ordering::Relaxed);
+        }
+        changed
+    }
+
+    /// Whether a colour slot the uniforms draw is moving at `at`.
+    fn colors_moving(&self, at: Instant) -> bool {
+        self.colors.iter().any(|slot| {
+            let slot = slot.load(Ordering::Relaxed);
+            slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
+        })
+    }
+
+    /// Every value as the program reads it at `now`: a colour naming a slot
+    /// replaced by the colour the slot shows then.
+    pub fn snapshot_at(&self, now: Instant) -> [f32; SHADER_UNIFORMS] {
+        let mut values = self.snapshot();
+        for (index, slot) in self.colors.iter().enumerate() {
+            let slot = slot.load(Ordering::Relaxed);
+            if slot != 0 {
+                let rgba = crate::color_slot_rgba_at(slot as usize - 1, values[index + 3], now);
+                values[index..index + 4].copy_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
+            }
+        }
+        values
     }
 
     /// Whether a track is moving at `now`.
@@ -603,17 +695,12 @@ impl Default for ShaderInstance {
 impl ShaderInstance {
     pub fn of(shader: &PaintShader, now: Instant) -> Self {
         let time = shader.uniforms.time_at(now);
-        let mut uniforms = shader.uniforms.snapshot();
+        let mut uniforms = shader.uniforms.snapshot_at(now);
         if let Some(prepare) = shader.program.prepare {
             prepare(&mut uniforms, time);
         }
         let rect = |b: &Bounds<ScaledPixels>| {
-            [
-                b.origin.x.0,
-                b.origin.y.0,
-                b.size.width.0,
-                b.size.height.0,
-            ]
+            [b.origin.x.0, b.origin.y.0, b.size.width.0, b.size.height.0]
         };
         Self {
             bounds: rect(&shader.bounds),

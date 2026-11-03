@@ -111,13 +111,20 @@ impl RenderOnce for AvailabilityMark {
         let help = self.state.as_ref().and_then(Availability::help);
         // The file arriving here, seen while the mark shows: a download
         // finishing rings once as its ring gives way to the kept mark.
-        let kept = matches!(self.state, Some(Availability::Stored { on_disk: true, .. }));
+        // Only a transfer seen running and then kept rings: a rescan or a
+        // sync that finds the file here, or a row whose state arrives late,
+        // stays still.
+        let mark = match self.state {
+            Some(Availability::Transferring(_)) => 1,
+            Some(Availability::Stored { on_disk: true, .. }) => 2,
+            _ => 0,
+        };
         let answer = self.id.as_ref().and_then(|id| {
             let answers = super::Answerer::of(id, window, cx);
-            if kept {
-                answers.follow(1, super::Answer::Ring, look.accent.hsla(), window, cx);
+            if mark == 2 && answers.seen(cx) == Some(1) {
+                answers.follow(2, super::Answer::Ring, look.accent.hsla(), window, cx);
             } else {
-                answers.note(0, cx);
+                answers.note(mark, cx);
             }
             answers.layer(window, cx)
         });

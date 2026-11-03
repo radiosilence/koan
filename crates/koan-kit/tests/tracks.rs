@@ -8,9 +8,8 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AppContext, Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled,
-    TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead,
-    spring_length,
+    Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled, TestAppContext, Track,
+    TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead, spring_length,
 };
 use koan_kit::components::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram};
 use koan_kit::theme;
@@ -404,4 +403,26 @@ fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     animated.to(0, 0.5, Duration::from_secs(1), Ease::InOut);
     assert_eq!(animated.track(0).length, 0.0, "written after: held");
     assert_eq!(animated.at(0, Animated::now()), 0.5);
+}
+
+/// A colour naming a slot is read from the slot at each present; a plain
+/// write over any of its floats lets the slot go, so what was written stands.
+#[test]
+fn a_plain_write_over_a_slot_colour_lets_it_go() {
+    use gpui_kit::{ColorSlot, Rgba, ShaderUniforms};
+    let red = Rgba {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let slot = ColorSlot::claim(red).expect("a free slot");
+    let uniforms = ShaderUniforms::new();
+    uniforms.set_color(4, slot.hsla(0.5));
+    let now = std::time::Instant::now();
+    assert_eq!(uniforms.snapshot_at(now)[4..8], [1.0, 0.0, 0.0, 0.5]);
+    uniforms.set(6, 0.25);
+    let values = uniforms.snapshot_at(now);
+    assert_eq!(values[6], 0.25);
+    assert_eq!(values[4], 0.0, "the slot no longer draws over the floats");
 }

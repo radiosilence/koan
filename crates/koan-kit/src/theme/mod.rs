@@ -19,14 +19,13 @@ pub mod wash;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::time::Instant;
 
 use gpui_kit::{
-    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
-    WindowAppearance, WindowId, px,
+    App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
+    Subscription, Task, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
-pub use accent::{Accent, AccentState, Shade};
+pub use accent::{Accent, Shade};
 /// A colour as the theme hands it out, for passing a role's colour along.
 pub use gpui_kit::Hsla;
 pub use icons::{Icon, KoanIcon};
@@ -121,9 +120,7 @@ pub fn init(cx: &mut App) {
         .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())
         .expect("Geist Mono is bundled and loads");
     cx.set_global(KoanTheme::default());
-    let feed = cx.new(|_| AccentFeed {
-        state: AccentState::default(),
-    });
+    let feed = cx.new(|_| AccentFeed::new());
     cx.set_global(AccentHandle(feed));
     read_system_settings(cx);
     #[cfg(target_os = "macos")]
@@ -346,11 +343,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
     let palette = Palette::for_look(dark, koan.contrast);
-    let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
-    if koan.contrast {
-        accent = accent.held(CONTRAST_ACCENT, dark, palette);
-    }
-    let accent = accent.hsla();
+    let accent = accent_shade(dark, koan.contrast, cx).hsla();
     let size = TypeRole::Control.points() * koan.scale().text;
     sync_scrollbar(&palette, cx);
     let current = Theme::global(cx);
@@ -443,10 +436,23 @@ impl KoanTheme {
     /// every change lands.
     pub fn set_accent(accent: Accent, ease: bool, cx: &mut App) {
         let ease = ease && !cx.reduce_motion();
+        let contrast = cx.global::<KoanTheme>().contrast;
         let feed = cx.global::<AccentHandle>().0.clone();
         feed.update(cx, |feed, cx| {
-            if feed.state.target() != accent {
-                feed.state.set(accent, ease, Instant::now());
+            if feed.target == accent {
+                return;
+            }
+            feed.target = accent;
+            feed.aim(contrast, ease);
+            // What reads the accent on the CPU (a shader's uniforms, a path)
+            // reads it again once it has landed; the slots move the rest.
+            if ease && feed.slots.is_some() {
+                feed._landing = Some(cx.spawn(async move |feed, cx| {
+                    cx.background_executor().timer(Motion::DISSOLVE).await;
+                    feed.update(cx, |_, cx| cx.notify()).ok();
+                }));
+            } else {
+                feed._landing = None;
                 cx.notify();
             }
         });
@@ -523,35 +529,100 @@ impl KoanTheme {
 
     /// What a window's root view calls as it renders: dresses gpui-component's
     /// theme for this window (windows render one at a time, so each one's
-    /// text fields read their own appearance, and the caret follows the
-    /// accent as it settles), and while the accent settles, notifies the
-    /// feed once a frame so the views observing it redraw, and only those.
-    /// The root asks for its own next frame too, so the ease runs to its end
-    /// in a window where no view observes the feed. Costs a few comparisons
-    /// once it is at rest.
+    /// text fields read their own appearance). Costs a few comparisons.
     pub fn drive(window: &mut Window, cx: &mut App) {
         sync_components(Look::of(window, cx).dark, cx);
-        if accent_state(cx).settling(Instant::now()) {
-            let feed = cx.global::<AccentHandle>().0.clone();
-            window.on_next_frame(move |_, cx| feed.update(cx, |_, cx| cx.notify()));
-            window.request_animation_frame();
-        }
     }
 }
 
 /// The record's accent as it settles. An entity rather than part of the
 /// global so that a change reaches the views that draw it, not every window.
 pub struct AccentFeed {
-    state: AccentState,
+    target: Accent,
+    /// The accent as drawn: per appearance, a colour slot for fills and one
+    /// for text, mixed by the GPU in OKLab as a new record's accent settles,
+    /// so the hue turns rather than passing through grey and no frame is
+    /// drawn for it. `None` when every slot was taken; the accent then lands
+    /// with each record.
+    slots: Option<[[ColorSlot; 2]; 2]>,
+    /// The contrast the slots were last aimed for.
+    contrast: std::cell::Cell<bool>,
+    _landing: Option<Task<()>>,
+}
+
+impl AccentFeed {
+    fn new() -> Self {
+        let target = Accent::MINT;
+        let claim = || ColorSlot::claim(target.dark.rgba());
+        let slots = (|| Some([[claim()?, claim()?], [claim()?, claim()?]]))();
+        let feed = Self {
+            target,
+            slots,
+            contrast: std::cell::Cell::new(false),
+            _landing: None,
+        };
+        feed.aim(false, false);
+        feed
+    }
+
+    /// Sends the slots to the target as it is drawn with `contrast`: as the
+    /// wash dissolves to the record (`Motion::DISSOLVE`, in-out) when `ease`,
+    /// at once otherwise.
+    fn aim(&self, contrast: bool, ease: bool) {
+        self.contrast.set(contrast);
+        let Some(slots) = &self.slots else {
+            return;
+        };
+        let track = Track {
+            from: 0.0,
+            to: 1.0,
+            start: 0.0,
+            length: Motion::DISSOLVE.as_secs_f32(),
+            curve: crate::components::curve(crate::components::Ease::InOut),
+            repeat: TrackRepeat::Once,
+        };
+        for (dark, [fill, text]) in [true, false].into_iter().zip(slots) {
+            let shade = held(self.target.shade(dark), dark, contrast);
+            let ink = Palette::for_look(dark, contrast).ink.hsla();
+            let to = [shade.rgba(), shade.text_hsla(ink).to_rgb()];
+            for (slot, to) in [fill, text].into_iter().zip(to) {
+                if ease {
+                    slot.to_oklab(to, track);
+                } else {
+                    slot.hold(to);
+                }
+            }
+        }
+    }
+}
+
+/// `shade` as drawn with `contrast`: held to `CONTRAST_ACCENT` when asked.
+fn held(shade: Shade, dark: bool, contrast: bool) -> Shade {
+    if contrast {
+        shade.held(CONTRAST_ACCENT, dark, Palette::for_look(dark, contrast))
+    } else {
+        shade
+    }
+}
+
+/// The accent a window draws, through the feed's slots where it has them.
+/// A change of contrast lands the slots on the held shade at once.
+fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
+    let feed = cx.global::<AccentHandle>().0.read(cx);
+    if feed.contrast.get() != contrast {
+        feed.aim(contrast, false);
+    }
+    let mut shade = held(feed.target.shade(dark), dark, contrast);
+    shade.slot = feed.slots.as_ref().map(|slots| {
+        let [fill, text] = &slots[usize::from(!dark)];
+        [fill.hsla(1.0), text.hsla(1.0)]
+    });
+    shade
 }
 
 struct AccentHandle(Entity<AccentFeed>);
 
 impl Global for AccentHandle {}
-
-fn accent_state(cx: &App) -> &AccentState {
-    &cx.global::<AccentHandle>().0.read(cx).state
-}
 
 /// Redraws a view whenever the accent moves. A cached view that draws the
 /// accent holds the subscription for as long as it lives; an uncached one
@@ -601,10 +672,7 @@ impl Look {
             .unwrap_or_else(|| is_dark(window.appearance()));
         let contrast = theme.contrast;
         let palette = Palette::for_look(dark, contrast);
-        let mut accent = accent_state(cx).at(Instant::now()).shade(dark);
-        if contrast {
-            accent = accent.held(CONTRAST_ACCENT, dark, palette);
-        }
+        let accent = accent_shade(dark, contrast, cx);
         Look {
             dark,
             contrast,
@@ -632,7 +700,7 @@ impl Look {
     /// which reads in `ink` instead.
     pub fn text_color(&self, tone: Tone) -> Hsla {
         match tone {
-            Tone::Accent if !self.accent.reads_as_text => self.palette.ink.hsla(),
+            Tone::Accent => self.accent.text_hsla(self.palette.ink.hsla()),
             tone => self.color(tone),
         }
     }

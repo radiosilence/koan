@@ -222,10 +222,9 @@ impl Answerer {
         if !SHADED || !KoanTheme::motion_allowed(cx) {
             return;
         }
-        let rgba = color.to_rgb();
         self.0.update(cx, |s, cx| {
             s.animated.set_all(0, &[answer.code(), answer.heading()]);
-            s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            s.animated.set_color(2, color);
             let now = Instant::now();
             let at = Animated::now();
             for (k, ease) in [(0, Ease::Linear), (1, answer.ease())] {
@@ -307,8 +306,8 @@ impl Answerer {
         }
     }
 
-    #[cfg(test)]
-    fn seen(&self, cx: &App) -> Option<u64> {
+    /// The mark last followed or noted.
+    pub(crate) fn seen(&self, cx: &App) -> Option<u64> {
         self.0.read(cx).seen
     }
 
