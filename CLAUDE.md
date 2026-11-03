@@ -250,7 +250,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `play.rs` | `run_tui()` — TUI event loop entry point, frame timing, input handling |
 | `app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
-| `rainbow.rs` | The Mac's hidden appearance mode (`Support/Rainbow.swift`): the code that switches it, kept per device, the accent's palette cycle (a timer only while drawn, in front and with motion), the sheen the roots put in the wash through `Painted`, and the tracks that bring it out; drawn on the GPU through koan-kit's prism, which the roots mount (`root.rs`), the analyser feeds (`levels::prism`) and `celebrate` throws confetti from |
+| `rainbow.rs` | The Mac's hidden appearance mode (`Support/Rainbow.swift`): the code that switches it, kept per device, the accent's palette cycle (a timer only while drawn, in front and with motion), the sheen the roots put in the wash, told them through the theme (`KoanTheme::prism`, kept there alone), and the tracks that bring it out; drawn on the GPU through koan-kit's prism, which the roots mount (`root.rs`) and run only while playing, in front and shown, the sheens and gradients with it (`Prisms`), the analyser feeds (`levels::prism`) and `celebrate` throws confetti from |
 | `transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |
 | `queue.rs` | Album-grouped queue with status icons, selection, drag targets |
 | `nav.rs` | Where the TUI is: one page, the history of pages visited, a cursor — browser-like, as the apps' `Navigator` |
