@@ -147,6 +147,8 @@ impl Draft {
 
 /// Work that waits for the writes under way to land.
 type Then = Box<dyn FnOnce(&mut SettingsModel, &mut Context<SettingsModel>)>;
+/// What runs once the file has first been read.
+type Loaded = Box<dyn FnOnce(&mut App)>;
 
 /// What a sign-in is called while it runs, by which the pane knows one is.
 pub const SIGNING_IN: &str = "Signing in";
@@ -165,7 +167,7 @@ pub struct SettingsModel {
     early: Vec<Edit>,
     /// What waits for the file's first read: a link that launched the app
     /// is answered as the settings stand, not as signed out.
-    loaded: Vec<Box<dyn FnOnce(&mut App)>>,
+    loaded: Vec<Loaded>,
     /// What waits for the writes under way to land.
     written: Vec<Then>,
     /// The error shown is a write's.
