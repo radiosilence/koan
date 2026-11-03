@@ -88,8 +88,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for playing in [false, true] {
         if playing {
+            block_on(engine.clone().seek(5_000))?;
             block_on(engine.clone().resume())?;
-            wait_playing(&rx);
+            if !wait_playing(&rx) {
+                return Err("never resumed".into());
+            }
         }
         std::thread::sleep(Duration::from_millis(300));
         let mut rows = Vec::new();
@@ -97,7 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut published = 0;
         for i in 0..20u64 {
             while rx.try_recv().is_ok() {}
-            let target = 5_000 + (i % 5) * 9_000 + if i % 2 == 0 { 0 } else { 30_000 };
+            // Paused, every other seek is past the end, which the player
+            // clamps; playing, none is, so the track never runs out.
+            let past = !playing && i % 2 == 1;
+            let target = 5_000 + (i % 5) * 9_000 + if past { 30_000 } else { 0 };
             let before = engine.seeks();
             // The take, seen by a thread that only watches for it.
             let watching = Arc::new(AtomicBool::new(true));
@@ -119,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let called = Instant::now();
             block_on(future)?;
             let resolved = Instant::now();
+            let ms = |d: Duration| d.as_secs_f64() * 1000.0;
             let mut answered = None;
             let deadline = Instant::now() + Duration::from_secs(2);
             while let Ok((at, slice)) = rx.recv_deadline(deadline) {
@@ -129,13 +136,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 };
                 published += 1;
+                if std::env::var_os("SEEK_TRACE").is_some() {
+                    println!(
+                        "    +{:.3} ms: {position_ms} seek {seek} (before {before})",
+                        ms(at - start)
+                    );
+                }
                 if seek <= before {
                     continue;
                 }
                 // Playing, it may have moved on by the time it was read.
+                // Clamped short of the end, as the player clamps it.
+                let expected = target.min(TRACK_SECS as u64 * 1000 - 500);
                 let slack = if playing { 100 } else { 0 };
-                if position_ms < target || position_ms > target + slack {
+                if position_ms < expected || position_ms > expected + slack {
                     stale += 1;
+                    println!("  asked {target}, expected {expected}, said {position_ms}");
                 }
                 if answered.is_none() {
                     answered = Some(at);
@@ -147,7 +163,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             watching.store(false, Ordering::Relaxed);
             let taken = taker.join().unwrap();
             let answered = answered.ok_or("a seek was never answered")?;
-            let ms = |d: Duration| d.as_secs_f64() * 1000.0;
             rows.push([
                 ms(called - start),
                 taken.map_or(f64::NAN, |t| ms(t - start)),

@@ -2077,6 +2077,17 @@ impl Player {
             return Ok(());
         };
         let (info, start) = (session.track.clone(), session.run);
+        // No probe: what is playing already said what this is. A file read
+        // again would put a disk read between a seek and the playhead
+        // moving, and an Ogg still downloading would wait for its last page.
+        let known = buffer::StreamInfo {
+            codec: info.codec.clone(),
+            sample_rate: info.sample_rate,
+            channels: info.channels,
+            bit_depth: info.bit_depth,
+            bitrate_kbps: info.bitrate_kbps,
+            duration_ms: info.duration_ms,
+        };
 
         match self.shared_state.item_playback_source(info.id) {
             // A renderer takes whole files only: wait for this one to land,
@@ -2090,17 +2101,6 @@ impl Player {
                 bytes_written,
                 total,
             }) => {
-                // No probe: what is playing already said what this is, and
-                // reading an Ogg's last page to learn it again would mean
-                // waiting for the rest of the download.
-                let known = buffer::StreamInfo {
-                    codec: info.codec.clone(),
-                    sample_rate: info.sample_rate,
-                    channels: info.channels,
-                    bit_depth: info.bit_depth,
-                    bitrate_kbps: info.bitrate_kbps,
-                    duration_ms: info.duration_ms,
-                };
                 let source = StreamSource {
                     path,
                     bytes_written,
@@ -2116,7 +2116,7 @@ impl Player {
                 )?;
             }
             Some(PlaybackSource::Ready(path)) => {
-                self.start_playback(info.id, &path, position_ms, start)?;
+                self.open_session(info.id, Source::File(path), Some(known), position_ms, start)?;
             }
             None => return Ok(()),
         }
