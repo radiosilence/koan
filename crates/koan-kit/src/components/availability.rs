@@ -114,17 +114,17 @@ impl RenderOnce for AvailabilityMark {
         // Only a transfer seen running and then kept rings: a rescan or a
         // sync that finds the file here, or a row whose state arrives late,
         // stays still.
-        let mark = match self.state {
+        let stage = match self.state {
             Some(Availability::Transferring(_)) => 1,
             Some(Availability::Stored { on_disk: true, .. }) => 2,
             _ => 0,
         };
         let answer = self.id.as_ref().and_then(|id| {
             let answers = super::Answerer::of(id, window, cx);
-            if mark == 2 && answers.seen(cx) == Some(1) {
+            if stage == 2 && answers.seen(cx) == Some(1) {
                 answers.follow(2, super::Answer::Ring, look.accent.hsla(), window, cx);
             } else {
-                answers.note(mark, cx);
+                answers.note(stage, cx);
             }
             answers.layer(window, cx)
         });
