@@ -198,9 +198,17 @@ impl WindowInvalidator {
             }
             true
         } else {
+            // KOAN: a notify while the window draws still reaches the
+            // entity's observers, after the draw, as the effects flush; the
+            // view itself is drawn by the frame the draw's end asks for
+            // (`Window::draw`). Dropping it left both waiting for input.
+            drop(inner);
+            cx.push_effect(Effect::Notify { emitter: entity });
             false
         }
     }
+
+
 
     pub fn is_dirty(&self) -> bool {
         self.inner.borrow().dirty
@@ -274,6 +282,12 @@ impl WindowInvalidator {
 
     pub fn replace_views(&self, views: FxHashSet<EntityId>) {
         self.inner.borrow_mut().dirty_views = views;
+    }
+
+    // KOAN: views for the next draw to mark dirty, with their ancestors as
+    // that frame's dispatch tree has them.
+    fn note_views(&self, views: impl IntoIterator<Item = EntityId>) {
+        self.inner.borrow_mut().dirty_views.extend(views);
     }
 
     pub fn not_drawing(&self) -> bool {
@@ -3492,6 +3506,7 @@ impl Window {
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.frames_drawn += 1; // KOAN: view.rs.
+        cx.drawing_windows += 1; // KOAN: notifies while drawing, below.
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3625,6 +3640,21 @@ impl Window {
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
+        // KOAN: an entity this frame shows, notified while it was drawn, is
+        // drawn by the next frame, which marking the window dirty asks the
+        // platform for, waking a parked one. What the frame shows is known
+        // only now, so a view drawn for the first time is covered too.
+        cx.drawing_windows -= 1;
+        let notified = mem::take(&mut cx.notified_while_drawing);
+        let shown = cx.tracked_entities.get(&self.handle.window_id());
+        let redraw: Vec<EntityId> = notified
+            .into_iter()
+            .filter(|entity| shown.is_some_and(|shown| shown.contains(entity)))
+            .collect();
+        if !redraw.is_empty() {
+            self.invalidator.note_views(redraw);
+            self.invalidator.set_dirty(true);
+        }
         // Focus listeners may move focus (e.g. a dock forwarding focus to its active
         // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
         // schedule another frame here to render the new focus state and dispatch the
