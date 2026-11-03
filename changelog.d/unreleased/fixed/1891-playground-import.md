@@ -1,0 +1,1 @@
+- **koan-kit builds again.** The motion playground imported the trait its text styling comes from.
