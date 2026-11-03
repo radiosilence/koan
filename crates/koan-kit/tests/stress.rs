@@ -601,3 +601,44 @@ fn a_panic_mid_publish_leaves_the_block_readable() {
     .unwrap();
     assert_eq!(uniforms.snapshot()[0], 2.0, "a later publish is seen");
 }
+
+/// A writer descheduled mid-publish (a background thread at a lower
+/// priority) never holds up a present: the present shows the block as the
+/// last one took it, at once, and the next refresh presents what was written.
+#[test]
+fn a_present_never_waits_on_a_writer() {
+    let _clock = CLOCK.lock();
+    let uniforms = Arc::new(ShaderUniforms::new());
+    uniforms.set(0, 1.0);
+    assert_eq!(uniforms.present_at(present_now()).1[0], 1.0);
+    uniforms.take_present();
+
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let writer = {
+        let uniforms = uniforms.clone();
+        std::thread::spawn(move || {
+            uniforms.publish(|| {
+                uniforms.set(0, 2.0);
+                entered.send(()).unwrap();
+                released.recv().unwrap();
+            })
+        })
+    };
+    inside.recv().unwrap();
+    let started = Instant::now();
+    let (_, values) = uniforms.present_at(present_now());
+    assert!(
+        started.elapsed() < Duration::from_millis(50),
+        "the present waited {:?} on the writer",
+        started.elapsed()
+    );
+    assert_eq!(
+        values[0], 1.0,
+        "the last present's copy, not half a publish"
+    );
+    assert!(uniforms.take_present(), "the next refresh presents again");
+    release.send(()).unwrap();
+    writer.join().unwrap();
+    assert_eq!(uniforms.present_at(present_now()).1[0], 2.0);
+}
