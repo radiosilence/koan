@@ -1,0 +1,1 @@
+- **Records synced from a server keep their year.** A record first synced from its songs alone, such as one added to the server during a sync, stayed undated on the device after later syncs gave its year; the next sync now dates it, by its original release where that is known and by its release otherwise, and an artist's records sort by the same date.

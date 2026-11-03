@@ -382,6 +382,15 @@ pub fn sync_library(
 
     result.finishing.vanished = step.elapsed();
 
+    // An album first written from a song alone — one added to the server
+    // after the listing was read — had no date, and a later sync leaves its
+    // unchanged tracks alone.
+    match queries::fill_album_dates(&db.conn) {
+        Ok(0) => {}
+        Ok(n) => log::info!("{n} undated albums dated from their tracks"),
+        Err(e) => log::warn!("failed to date undated albums: {e}"),
+    }
+
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
     } else {
@@ -994,6 +1003,154 @@ mod tests {
         assert_eq!(positive(Some(0)), None);
         assert_eq!(positive(Some(16)), Some(16));
         assert_eq!(positive(None), None);
+    }
+
+    /// Albums as a server's `getAlbum` sends them, written as a sync writes
+    /// them, each with one song.
+    fn write_server_albums(db: &Database, albums: &[serde_json::Value]) {
+        let client = SubsonicClient::new("http://localhost:4533", "u", "p");
+        let albums: Vec<SubsonicAlbumFull> = albums
+            .iter()
+            .map(|a| serde_json::from_value(a.clone()).unwrap())
+            .collect();
+        let mut result = SyncResult::default();
+        write_albums(db, &client, &albums, &mut result, &mut HashSet::new()).unwrap();
+        assert_eq!(result.tracks_failed, 0);
+    }
+
+    fn server_album(id: &str, name: &str, dates: serde_json::Value) -> serde_json::Value {
+        let mut album = serde_json::json!({
+            "id": id,
+            "name": name,
+            "artist": "Pink Floyd",
+            "artistId": "ar-floyd",
+            "song": [{"id": format!("s-{id}"), "title": format!("{name} 1"), "albumId": id,
+                      "track": 1, "suffix": "flac"}],
+        });
+        album
+            .as_object_mut()
+            .unwrap()
+            .extend(dates.as_object().unwrap().clone());
+        album
+    }
+
+    fn album_dates(db: &Database) -> Vec<(String, Option<String>)> {
+        let artist: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM artists WHERE name = 'Pink Floyd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        queries::albums_for_artist(&db.conn, artist)
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.title, a.date))
+            .collect()
+    }
+
+    /// An album is dated by its original release where the server names it,
+    /// by its year otherwise, and an artist's records come in that order.
+    #[test]
+    fn a_synced_album_is_dated_by_its_original_release() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[
+                // A reissue: released 2016, first released 1971.
+                server_album(
+                    "al-meddle",
+                    "Meddle",
+                    serde_json::json!({"year": 2016,
+                        "originalReleaseDate": {"year": 1971, "month": 10, "day": 30}}),
+                ),
+                // Only an original date.
+                server_album(
+                    "al-piper",
+                    "Piper",
+                    serde_json::json!({"originalReleaseDate": {"year": 1967}}),
+                ),
+                // Only a release date, given in full.
+                server_album(
+                    "al-wall",
+                    "The Wall",
+                    serde_json::json!({"year": 1979,
+                        "releaseDate": {"year": 1979, "month": 11, "day": 30}}),
+                ),
+                server_album(
+                    "al-ahm",
+                    "Atom Heart Mother",
+                    serde_json::json!({"year": 1970}),
+                ),
+            ],
+        );
+        assert_eq!(
+            album_dates(&db),
+            vec![
+                ("Piper".into(), Some("1967".into())),
+                ("Atom Heart Mother".into(), Some("1970".into())),
+                ("Meddle".into(), Some("1971-10-30".into())),
+                ("The Wall".into(), Some("1979".into())),
+            ]
+        );
+    }
+
+    /// A song whose album the listing lacked — one added to the server
+    /// mid-sync — is written without a date. The next sync's listing names
+    /// the year, and the album found by the server's id takes it.
+    #[test]
+    fn an_album_first_written_without_a_year_takes_the_next_syncs() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[server_album("al-wall", "The Wall", serde_json::json!({}))],
+        );
+        assert_eq!(album_dates(&db), vec![("The Wall".into(), None)]);
+
+        write_server_albums(
+            &db,
+            &[server_album(
+                "al-wall",
+                "The Wall",
+                serde_json::json!({"year": 1979}),
+            )],
+        );
+        assert_eq!(
+            album_dates(&db),
+            vec![("The Wall".into(), Some("1979".into()))]
+        );
+    }
+
+    /// A library an earlier build left with an undated album whose tracks are
+    /// dated is filled without the tracks changing.
+    #[test]
+    fn an_undated_album_with_dated_tracks_is_filled() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[
+                server_album("al-wall", "The Wall", serde_json::json!({"year": 1979})),
+                server_album(
+                    "al-meddle",
+                    "Meddle",
+                    serde_json::json!({"year": 2016,
+                        "originalReleaseDate": {"year": 1971, "month": 10, "day": 30}}),
+                ),
+            ],
+        );
+        db.conn
+            .execute("UPDATE albums SET date = NULL", [])
+            .unwrap();
+        assert_eq!(queries::fill_album_dates(&db.conn).unwrap(), 2);
+        assert_eq!(
+            album_dates(&db),
+            vec![
+                ("Meddle".into(), Some("1971-10-30".into())),
+                ("The Wall".into(), Some("1979".into())),
+            ]
+        );
+        assert_eq!(queries::fill_album_dates(&db.conn).unwrap(), 0);
     }
 
     /// The album row is created through its tracks, so it only ever sees what
