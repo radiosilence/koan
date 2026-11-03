@@ -519,8 +519,16 @@ fn pass() {
     crate::remote::queue::cache_limit_changed();
 }
 
+/// How many chunks in a row may fail before the pass gives up on
+/// `koanCovers` and fetches the rest one by one.
+const BULK_FAILURES: usize = 3;
+
 /// `koanCovers` for `ids`, `BULK_MAX` at a time: keeps what the server holds
-/// and says it has none of, and returns the ids it does not hold ready.
+/// and says it has none of, and returns the ids it does not hold ready, or
+/// did not answer. Stops between frames as soon as the pass may not go on
+/// (stopped, quiet, constrained, full), dropping the rest of that answer
+/// unread. A chunk that fails is asked once more, then left to the one by
+/// one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
     client: &SubsonicClient,
     cfg: &Config,
@@ -528,48 +536,77 @@ fn in_bulk(
     tick: &dyn Fn(),
 ) -> (Vec<String>, Option<Halt>) {
     let mut rest = Vec::new();
+    let mut failures = 0;
     let mut chunks = ids.chunks(BULK_MAX);
     for chunk in chunks.by_ref() {
-        if let Err(halt) = may_fetch() {
-            rest.extend(chunk.iter().cloned());
-            rest.extend(chunks.flatten().cloned());
-            return (rest, Some(halt));
-        }
-        crate::remote::client::wait_for_idle_covers();
-        // Each id asked is answered once; a frame for anything else, or
-        // a second for the same id, is ignored.
+        // Each id asked is answered once; a frame for anything else, or a
+        // second for the same id, is ignored.
         let mut unanswered: std::collections::HashSet<&str> =
             chunk.iter().map(String::as_str).collect();
-        let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| {
-            if !unanswered.remove(id.as_str()) {
-                return;
+        let mut halted = None;
+        let mut failed = None;
+        for _attempt in 0..2 {
+            if let Err(halt) = may_fetch() {
+                halted = Some(halt);
+                break;
             }
-            match cover {
-                BulkCover::Cover(data) => {
-                    keep(cfg, &id, Some(PRELOAD_SIZE), &data);
-                    tick();
+            crate::remote::client::wait_for_idle_covers();
+            let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| {
+                if unanswered.remove(id.as_str()) {
+                    match cover {
+                        BulkCover::Cover(data) => {
+                            keep(cfg, &id, Some(PRELOAD_SIZE), &data);
+                            tick();
+                        }
+                        BulkCover::None => {
+                            keep_miss(cfg, &id);
+                            tick();
+                        }
+                        BulkCover::NotHeld => rest.push(id),
+                    }
                 }
-                BulkCover::None => {
-                    keep_miss(cfg, &id);
-                    tick();
+                match may_fetch() {
+                    Ok(()) => true,
+                    Err(halt) => {
+                        halted = Some(halt);
+                        false
+                    }
                 }
-                BulkCover::NotHeld => rest.push(id),
+            });
+            match answered {
+                Ok(()) => {
+                    failed = None;
+                    break;
+                }
+                Err(e) => failed = Some(e),
             }
-        });
-        // What the stream did not answer, whether it failed or ended early
-        // (a server task that stopped, a body cut between frames), is
-        // fetched one by one, which says for itself whether the server is
-        // there.
+            if halted.is_some() || unanswered.is_empty() {
+                break;
+            }
+        }
+        // What the stream did not answer, however it ended, is fetched one
+        // by one, which says for itself whether the server is there.
         rest.extend(
             chunk
                 .iter()
                 .filter(|id| unanswered.contains(id.as_str()))
                 .cloned(),
         );
-        if let Err(e) = answered {
-            log::info!("cover preload: koanCovers failed ({e}); fetching one by one");
+        if let Some(halt) = halted {
             rest.extend(chunks.flatten().cloned());
-            return (rest, None);
+            return (rest, Some(halt));
+        }
+        match failed {
+            None => failures = 0,
+            Some(e) => {
+                failures += 1;
+                log::info!("cover preload: a koanCovers chunk failed twice ({e})");
+                if failures >= BULK_FAILURES {
+                    log::info!("cover preload: koanCovers keeps failing; fetching one by one");
+                    rest.extend(chunks.flatten().cloned());
+                    return (rest, None);
+                }
+            }
         }
     }
     (rest, None)
@@ -601,7 +638,8 @@ fn one_at_a_time(
                     let Some(id) = next.lock().next() else {
                         return;
                     };
-                    crate::remote::client::wait_for_idle_covers();
+                    // Waits for no page's cover in flight and a slot under
+                    // the cover limit, which a page's fetches share.
                     match client.get_cover_art_background(&id, Some(PRELOAD_SIZE)) {
                         Ok(data) if data.is_empty() => keep_miss(cfg, &id),
                         Ok(data) => keep(cfg, &id, Some(PRELOAD_SIZE), &data),
@@ -629,117 +667,6 @@ mod tests {
 
     use super::*;
 
-    /// What the preload costs against a real server: its first albums'
-    /// covers one at a time, then six at a time, then through `koanCovers`
-    /// where the server offers it. The server and sign-in come from the
-    /// environment (`KOAN_MEASURE_URL`, `KOAN_MEASURE_USER`,
-    /// `KOAN_MEASURE_PASS`), never a file; run it with `--ignored
-    /// --nocapture` in release.
-    #[test]
-    #[ignore]
-    fn measure_against_a_server() {
-        let var = |name| std::env::var(name).expect(name);
-        let client = SubsonicClient::new(
-            &var("KOAN_MEASURE_URL"),
-            &var("KOAN_MEASURE_USER"),
-            &var("KOAN_MEASURE_PASS"),
-        );
-        let albums: usize = std::env::var("KOAN_MEASURE_ALBUMS")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(600);
-        let mut ids = Vec::new();
-        while ids.len() < albums {
-            let page = client
-                .get_album_list("alphabeticalByName", 500, ids.len() as u32)
-                .unwrap();
-            if page.is_empty() {
-                break;
-            }
-            ids.extend(page.into_iter().map(|a| a.id));
-        }
-        ids.truncate(albums);
-        let rate = |n: usize, took: std::time::Duration| n as f64 / took.as_secs_f64();
-        let first = &ids[..ids.len() / 6];
-        let started = std::time::Instant::now();
-        let mut bytes = 0;
-        for id in first {
-            bytes += client
-                .get_cover_art_background(id, Some(PRELOAD_SIZE))
-                .unwrap()
-                .len();
-        }
-        let took = started.elapsed();
-        println!(
-            "measure: one at a time: {} in {took:.2?} ({:.1} a second, {} KB each)",
-            first.len(),
-            rate(first.len(), took),
-            bytes / first.len().max(1) / 1024
-        );
-        let rest = &ids[ids.len() / 6..];
-        for own in [false, true] {
-            let started = std::time::Instant::now();
-            let next = Mutex::new(rest.iter());
-            let in_flight = std::sync::atomic::AtomicUsize::new(0);
-            let most = std::sync::atomic::AtomicUsize::new(0);
-            std::thread::scope(|scope| {
-                for _ in 0..WORKERS {
-                    scope.spawn(|| {
-                        let mine = own.then(|| {
-                            SubsonicClient::new(
-                                &var("KOAN_MEASURE_URL"),
-                                &var("KOAN_MEASURE_USER"),
-                                &var("KOAN_MEASURE_PASS"),
-                            )
-                        });
-                        let client = mine.as_ref().unwrap_or(&client);
-                        loop {
-                            // Taken and let go before the request: held through it,
-                            // the workers would ask one at a time.
-                            let taken = next.lock().next();
-                            let Some(id) = taken else { break };
-                            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                            most.fetch_max(now, Ordering::SeqCst);
-                            client
-                                .get_cover_art_background(id, Some(PRELOAD_SIZE))
-                                .unwrap();
-                            in_flight.fetch_sub(1, Ordering::SeqCst);
-                        }
-                    });
-                }
-            });
-            let took = started.elapsed();
-            println!(
-                "measure: {WORKERS} at a time{}: {} in {took:.2?} ({:.1} a second, at most {} asked at once)",
-                if own { ", a client each" } else { "" },
-                rest.len(),
-                rate(rest.len(), took),
-                most.load(Ordering::SeqCst)
-            );
-        }
-        let started = std::time::Instant::now();
-        let mut covers = 0;
-        for chunk in ids.chunks(BULK_MAX) {
-            let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |_, cover| {
-                if matches!(cover, BulkCover::Cover(_)) {
-                    covers += 1;
-                }
-            });
-            if let Err(e) = answered {
-                println!("measure: koanCovers not answered: {e}");
-                return;
-            }
-        }
-        let took = started.elapsed();
-        println!(
-            "measure: koanCovers: {covers} of {} held, in {took:.2?} ({:.1} a second)",
-            ids.len(),
-            rate(covers, took)
-        );
-    }
-
-    /// Frames read back as written, in order; a kind this client does not
-    /// know reads as not held, and the stream's end as `None`.
     #[test]
     fn bulk_frames_read_back_as_written() {
         let mut stream = frame("al-1", BulkCover::Cover(b"jpeg"));
