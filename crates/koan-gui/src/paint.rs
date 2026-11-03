@@ -22,7 +22,6 @@ pub struct Paint {
     /// read as text on the ground.
     pub accent_text: Hsla,
     pub bad: Hsla,
-    pub selection: Hsla,
     pub on_selection: Hsla,
     /// Assistive technology is attached: what only a screen reader reads
     /// (rows' spoken lines, their places) is worked out only then.
@@ -45,14 +44,14 @@ impl Paint {
             accent: look.color(Tone::Accent),
             accent_text: look.text_color(Tone::Accent),
             bad: p.bad.hsla(),
-            selection: p.selection.hsla(),
             on_selection: p.on_selection.hsla(),
             a11y: window.is_a11y_active(),
         }
     }
 
     /// The paint a list row draws with: as it is, or picked, with every
-    /// colour text and marks take (`ink`, `strong`, `muted`, the accent) as
+    /// colour text and marks take (`ink`, `strong`, `muted`, the accent,
+    /// `bad`) as
     /// `on_selection`, as the Mac's selected rows are drawn.
     pub fn picked(&self, selected: bool) -> Paint {
         if !selected {
@@ -65,6 +64,7 @@ impl Paint {
             muted: on,
             accent: on,
             accent_text: on,
+            bad: on,
             ..*self
         }
     }
