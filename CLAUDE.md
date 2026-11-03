@@ -154,6 +154,7 @@ just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an
 just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode; on macOS launched as a dev bundle, so it has Local Network permission of its own
 just vendor-gpui VER [KIT] # the vendored GPUI crates rebuilt from release VER (gpui-base from gpui-kit's KIT) + vendor/patches; fails loudly on a hunk that does not apply
 just vendor-gpui-patches # vendor/patches written from the vendored copies, after editing one
+just gui-smoke  # the GUI app headlessly as used: playing, seeking, hovering every page; fails on a panic, a hang or no track change
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
 just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
 just gui-parity # the parity inventory: the Mac app's views, actions, settings, tooltips as a checklist
@@ -312,6 +313,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `time.rs` | A duration as a clock: `m:ss`, or `h:mm:ss` from an hour |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `fling` flings the album grid to its end and back and prints the process's footprint at each stage; `play` (filling an empty queue from the library first), `hidden` and `play-hidden` set the app up for its CPU use to be read from outside; `frames` and `play-frames` count the frames asked for, skipped and drawn over 20 s |
 | `examples/walk.rs`, `examples/compare.rs` | `just gui-walk`: every page offscreen against a throwaway library, a PNG of each named as the Mac's evidence renders are, and each page's frame times (layout and paint) while scrolled by wheel events; `just gui-compare` sets those beside the SwiftUI app's `KOAN_RENDER_EVIDENCE` renders with the edges either draws alone marked |
+| `examples/smoke.rs` | `just gui-smoke`: the real engine on a muted, generated library, playing, seeking and pausing while the pointer sweeps every page in both appearances, rainbow on; fails on a panic (101), a hang (124) or no track change. Refuses any configuration but a throwaway one |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `examples/` (others) | `settings_shot.rs` (each Settings pane to a PNG), `cold_covers.rs` (a screen of sleeves from a cold cache), `settings_frames.rs` (offscreen frame times), `filter_check.rs`, and `gen_library.rs`, which `just gui-library` runs |
 | `koan-kit: app.rs` | The app model pages are written in: entities, contexts, views, events, actions, focus, tasks, `div` and its layout traits, the platform services the app uses, and `a11y` (roles, actions, live regions) for what a page tells a screen reader that no component says. What a page sizes, colours or draws by hand is not here |

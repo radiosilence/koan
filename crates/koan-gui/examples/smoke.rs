@@ -6,10 +6,13 @@
 //! drawing, hovering and playing reach.
 //!
 //! Headless, as `walk` is: no window is shown and nothing on the screen is
-//! read. It refuses to run without a throwaway `KOAN_CONFIG_DIR`. A library
-//! from `just gui-library` is silent, so playing it makes no sound.
+//! read. It refuses a configuration that is not a throwaway one: muted, and
+//! with only libraries `just gui-library` generated, so nothing real is
+//! scanned or played and the output device hears silence. Playing seeks,
+//! pauses and resumes during the churn, and the run fails unless the
+//! playing track changed. A watchdog ends a hung run with 124.
 //!
-//! KOAN_CONFIG_DIR=… cargo run --release -p koan-gui --example smoke
+//! `just gui-smoke` prepares the configuration and runs it.
 //! `KOAN_SMOKE_SECS` (default 30) sets how long the pointer churns over the
 //! queue while it plays.
 
@@ -30,16 +33,24 @@ use koan_kit::raw::{
 const WIDTH: f32 = 1200.0;
 const HEIGHT: f32 = 750.0;
 
+/// How long a run may take past the churn before the watchdog ends it:
+/// scanning, the pages, and a cold cover cache.
+const BUDGET: Duration = Duration::from_secs(600);
+
 fn main() -> Result<(), Box<dyn Error>> {
-    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
-        return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
-    }
+    throwaway()?;
     let churn = Duration::from_secs(
         std::env::var("KOAN_SMOKE_SECS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(30),
     );
+    let deadline = churn + BUDGET;
+    std::thread::spawn(move || {
+        std::thread::sleep(deadline);
+        eprintln!("smoke: still running after {deadline:?}: hung");
+        std::process::exit(124);
+    });
     // A panic on any thread, the engine's included, fails the run.
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -78,17 +89,47 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shell: Entity<Shell> = shell.ok_or("the shell was not made")?;
     cx.allow_parking();
 
-    // The queue playing, the pointer sweeping it, for the churn's length.
+    // The queue playing, the pointer sweeping it, for the churn's length;
+    // each pass seeks back, pauses and resumes. The tracks are 0.2 s, so
+    // playing moves through them all the while.
+    let playing = |cx: &mut HeadlessAppContext| {
+        cx.update(|cx| {
+            let mirror = cx.global::<koan_gui::mirror::Mirror>().playback.clone();
+            mirror
+                .read(cx)
+                .0
+                .entry
+                .as_ref()
+                .map(|e| e.queue_item_id.clone())
+        })
+    };
+    let first = playing(&mut cx);
+    let mut changes = 0usize;
+    let mut last = first.clone();
     let start = Instant::now();
     let mut frames = 0usize;
     while start.elapsed() < churn {
         frames += sweep(&mut cx, window, 6)?;
         frames += scroll(&mut cx, window, 5)?;
+        let engine = engine.clone();
+        futures::executor::block_on(async move {
+            engine.clone().seek(50).await?;
+            engine.clone().pause().await?;
+            engine.clone().resume().await
+        })?;
+        let now = playing(&mut cx);
+        if now != last {
+            changes += 1;
+            last = now;
+        }
     }
     println!(
-        "queue: {frames} frames over {:.0?} while playing",
+        "queue: {frames} frames and {changes} track changes over {:.0?} while playing",
         start.elapsed()
     );
+    if changes == 0 {
+        return Err("the playing track never changed: playback did not run".into());
+    }
 
     // The rainbow on for the pages, in front, its burst fired: the prism and
     // the burst run only while it is drawn.
@@ -119,6 +160,38 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     println!("no panics");
+    Ok(())
+}
+
+/// Refuses any configuration but a throwaway one: not the person's own, muted,
+/// and holding only generated libraries.
+fn throwaway() -> Result<(), Box<dyn Error>> {
+    let Some(dir) = std::env::var_os("KOAN_CONFIG_DIR") else {
+        return Err("set KOAN_CONFIG_DIR to a throwaway configuration (just gui-smoke)".into());
+    };
+    let dir = std::fs::canonicalize(&dir)?;
+    let own = std::env::var_os("HOME")
+        .map(|home| std::path::Path::new(&home).join(".config/koan"))
+        .and_then(|own| std::fs::canonicalize(own).ok());
+    if own.as_deref() == Some(dir.as_path()) {
+        return Err("KOAN_CONFIG_DIR is your own configuration".into());
+    }
+    let config = koan_core::config::Config::load()?;
+    if !config.playback.muted {
+        return Err("the configuration plays aloud: set [playback] muted = true".into());
+    }
+    if config.library.folders.is_empty() {
+        return Err("the configuration has no library: run `just gui-library`".into());
+    }
+    for folder in &config.library.folders {
+        if !folder.join(".seed.flac").exists() {
+            return Err(format!(
+                "{} is not a library `just gui-library` generated",
+                folder.display()
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 
