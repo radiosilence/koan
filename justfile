@@ -1983,8 +1983,11 @@ gui-run *ARGS:
     # nearby koan appears. The bundle declares the reason, so macOS asks.
     cargo build --profile gui-dev -p koan-gui --features runtime-shaders
     # An ASCII name, so the path matches itself however a tool normalises
-    # the ō: `pkill -f` below did not find "kōan dev.app".
+    # the ō: `pkill -f` below matches bytes.
     app="$PWD/target/gui-dev/koan dev.app"
+    # The bundle under its earlier name holds the same id and the koan scheme,
+    # and LaunchServices may open links with it.
+    rm -rf "$PWD/target/gui-dev/kōan dev.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
     # A new file, never the signed one rewritten in place: macOS keeps a
