@@ -195,14 +195,17 @@ impl ColorSlotSet {
         }
     }
 
+    /// Whether the set names no slot.
     pub fn is_empty(&self) -> bool {
         self.0.iter().all(|word| *word == 0)
     }
 
+    /// Names no slot.
     pub fn clear(&mut self) {
         *self.0 = [0; COLOR_SLOTS.div_ceil(64)];
     }
 
+    /// Adds every slot `other` names.
     pub fn extend(&mut self, other: &Self) {
         for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
             *a |= *b;

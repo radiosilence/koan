@@ -114,6 +114,14 @@ impl RenderOnce for NavRow {
             window,
             cx,
         );
+        let mark = fade(
+            child(&self.id, "mark"),
+            self.selected,
+            look.accent.hsla().opacity(0.0),
+            look.accent.hsla(),
+            window,
+            cx,
+        );
         let on_click = self.on_click;
         let ink = look.palette.ink.hsla();
         let name = self.label.clone();
@@ -147,7 +155,7 @@ impl RenderOnce for NavRow {
                     .top_0()
                     .bottom_0()
                     .w(MARK)
-                    .bg(look.accent.hsla().opacity(on)),
+                    .bg(mark),
             )
             .children(
                 self.icon
