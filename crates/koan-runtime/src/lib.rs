@@ -3083,8 +3083,11 @@ impl KoanEngine {
     /// once it is showing a PIN; `finish_tv_pairing` takes it, within half a
     /// minute.
     pub async fn begin_tv_pairing(self: Arc<Self>, id: String) -> Result<String, KoanError> {
+        // Taken as the call is made, so a cancel made after it, while the TV
+        // is still being found, reaches the pairing it starts.
+        let ticket = koan_core::remote::devices::tv_pairing_ticket();
         offload::offload(move || {
-            koan_core::remote::devices::begin_tv_pairing(&id)
+            koan_core::remote::devices::begin_tv_pairing(&id, ticket)
                 .map_err(|message| KoanError::Remote { message })
         })
         .await

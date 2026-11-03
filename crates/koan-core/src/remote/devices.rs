@@ -1104,13 +1104,70 @@ struct PendingPairing {
     id: String,
     addr: std::net::SocketAddr,
     pairing: crate::remote::companion::Pairing,
-    generation: u64,
 }
 
-static PAIRING: Mutex<Option<PendingPairing>> = Mutex::new(None);
-/// Bumped by every pairing begun or cancelled: a pairing finishing after its
-/// sheet was dismissed is not handed to the server.
-static PAIRING_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PAIRING: Lane<PendingPairing> = Lane::new();
+
+/// One pairing at a time, in the order the calls were made. Each begin takes
+/// a ticket when it is asked for, before it does anything slow; a cancel
+/// moves past every ticket given. A pairing the TV started for a ticket
+/// cancelled meanwhile is not held but dropped, which takes the PIN off the
+/// TV, and one finishing after a cancel is undone.
+struct Lane<T> {
+    held: Mutex<Option<(u64, T)>>,
+    latest: std::sync::atomic::AtomicU64,
+}
+
+impl<T> Lane<T> {
+    const fn new() -> Self {
+        Self {
+            held: Mutex::new(None),
+            latest: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// A ticket for a pairing about to begin, after every one before.
+    fn ticket(&self) -> u64 {
+        let _held = self.held.lock();
+        self.latest.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Hold `value` for `ticket`, unless a cancel or a newer begin came
+    /// since: then it is handed back, for the caller to drop.
+    fn admit(&self, ticket: u64, value: T) -> Result<(), T> {
+        let mut held = self.held.lock();
+        if self.latest.load(Ordering::SeqCst) != ticket {
+            return Err(value);
+        }
+        *held = Some((ticket, value));
+        Ok(())
+    }
+
+    /// The pairing held, to finish, with its ticket.
+    fn take(&self) -> Option<(u64, T)> {
+        self.held.lock().take()
+    }
+
+    /// Whether nothing has cancelled or replaced `ticket`.
+    fn current(&self, ticket: u64) -> bool {
+        let _held = self.held.lock();
+        self.latest.load(Ordering::SeqCst) == ticket
+    }
+
+    /// Cancel whatever is under way, and any begin still on its way.
+    fn cancel(&self) -> Option<T> {
+        let mut held = self.held.lock();
+        self.latest.fetch_add(1, Ordering::SeqCst);
+        held.take().map(|(_, value)| value)
+    }
+}
+
+/// A ticket for the pairing about to begin (`begin_tv_pairing`), taken when
+/// it is asked for: a cancel made after the ask, while the TV is still
+/// being found, then reaches it.
+pub fn tv_pairing_ticket() -> u64 {
+    PAIRING.ticket()
+}
 
 /// How long the server's list is waited on to carry a new pairing.
 const PAIRING_KEPT: Duration = Duration::from_secs(8);
@@ -1121,7 +1178,7 @@ const PAIRING_KEPT: Duration = Duration::from_secs(8);
 /// asked, which the person checks against the screen showing the PIN. The
 /// TV is the one on the host koan there was met at, else the one of its
 /// name, else the only one here.
-pub fn begin_tv_pairing(id: &str) -> Result<String, String> {
+pub fn begin_tv_pairing(id: &str, ticket: u64) -> Result<String, String> {
     use crate::remote::companion;
     if !COMPANION {
         return Err("Waking an Apple TV is set up from an iPhone, iPad or Mac.".into());
@@ -1155,23 +1212,37 @@ pub fn begin_tv_pairing(id: &str) -> Result<String, String> {
         _ => format!("Couldn't tell which Apple TV here is {name}."),
     })?;
     log::info!("tv: pairing {name} at {} ({})", tv.addr, tv.name);
-    let generation = PAIRING_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    if !PAIRING.current(ticket) {
+        return Err(CANCELLED.into());
+    }
     let pairing = companion::begin_pairing(tv.addr).map_err(|e| e.to_string())?;
-    *PAIRING.lock() = Some(PendingPairing {
-        id: id.to_string(),
-        addr: tv.addr,
-        pairing,
-        generation,
-    });
+    // Cancelled while the TV was asked: dropped here, the connection closes
+    // and the TV takes its PIN down.
+    PAIRING
+        .admit(
+            ticket,
+            PendingPairing {
+                id: id.to_string(),
+                addr: tv.addr,
+                pairing,
+            },
+        )
+        .map_err(|_| CANCELLED.to_string())?;
     Ok(tv.name.clone())
 }
 
 /// Finish the pairing `begin_tv_pairing` started with the PIN on the TV, and
 /// wait for the server to keep it for the account: done only once the
 /// account's list carries it back.
+///
+/// A cancel made while it runs wins: before the TV takes the PIN, nothing is
+/// paired; after, the server is not given the pairing, or is told to drop
+/// it again if it already has, so no device of the account is left waking a
+/// TV the person turned away from. (The TV itself keeps it listed under
+/// Remotes and Devices, as after "stop waking": nothing can take it off
+/// from here.)
 pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
-    let pending = PAIRING
-        .lock()
+    let (ticket, pending) = PAIRING
         .take()
         .ok_or("The TV is no longer waiting for a code. Start again.")?;
     let id = pending.id;
@@ -1179,31 +1250,48 @@ pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
         .pairing
         .finish(pin, &own_name())
         .map_err(|e| e.to_string())?;
-    if PAIRING_GEN.load(Ordering::SeqCst) != pending.generation {
-        return Err("Cancelled.".into());
+    if !PAIRING.current(ticket) {
+        return Err(CANCELLED.into());
     }
     log::info!("tv: paired {id}");
     remember_tv_addr(&id, pending.addr);
-    if !link::report(LinkReport::TvPairing {
+    let reported = link::report(LinkReport::TvPairing {
         device: id.clone(),
         pairing: Some(credential.clone()),
-    }) {
+    });
+    let kept = reported && {
+        let kept = || tv_pairing_of(&id).as_ref() == Some(&credential);
+        await_until(kept, PAIRING_KEPT)
+    };
+    // Cancelled while the server was told: told again, to drop it.
+    if !PAIRING.current(ticket) {
+        if reported {
+            link::report(LinkReport::TvPairing {
+                device: id,
+                pairing: None,
+            });
+        }
+        return Err(CANCELLED.into());
+    }
+    if !reported {
         return Err(
             "Paired, but not connected to your server to keep it. Try again once connected.".into(),
         );
     }
-    let kept = || tv_pairing_of(&id).as_ref() == Some(&credential);
-    if !await_until(kept, PAIRING_KEPT) {
+    if !kept {
         return Err("Paired, but your server did not keep it. Try again.".into());
     }
     Ok(())
 }
 
-/// Abandon the pairing under way; the TV takes its PIN down when the
-/// connection closes. A pairing finishing meanwhile is not kept.
+/// What a cancelled pairing ends with.
+const CANCELLED: &str = "Cancelled.";
+
+/// Abandon the pairing under way, and a begin still finding the TV; the TV
+/// takes its PIN down when the connection closes. A pairing finishing
+/// meanwhile is undone (`finish_tv_pairing`).
 pub fn cancel_tv_pairing() {
-    PAIRING_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    PAIRING.lock().take();
+    drop(PAIRING.cancel());
 }
 
 /// Stop waking the Apple TV `id`: the server drops its pairing for every
@@ -2486,6 +2574,36 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A cancel made while a begin is still finding the TV reaches it: the
+    /// pairing the TV starts is handed back to be dropped, not held.
+    #[test]
+    fn a_cancel_before_the_tv_answers_reaches_the_pairing() {
+        let lane: Lane<&str> = Lane::new();
+        let ticket = lane.ticket();
+        assert!(lane.cancel().is_none(), "nothing held yet");
+        assert_eq!(lane.admit(ticket, "pin on screen"), Err("pin on screen"));
+        assert!(lane.take().is_none());
+    }
+
+    /// A pairing held is taken to finish once; a cancel after that leaves
+    /// its ticket no longer current, so the finish is undone. A newer begin
+    /// does the same to an older one.
+    #[test]
+    fn a_cancel_during_the_finish_is_seen_by_it() {
+        let lane: Lane<&str> = Lane::new();
+        let ticket = lane.ticket();
+        assert_eq!(lane.admit(ticket, "pairing"), Ok(()));
+        let (taken, _) = lane.take().unwrap();
+        assert!(lane.current(taken));
+        lane.cancel();
+        assert!(!lane.current(taken), "the finish undoes what it did");
+
+        let older = lane.ticket();
+        let newer = lane.ticket();
+        assert_eq!(lane.admit(older, "first"), Err("first"));
+        assert_eq!(lane.admit(newer, "second"), Ok(()));
+    }
 
     /// Reach follows the device's connections: one not heard from is
     /// reconnecting until a heartbeat has passed, then asleep if something can
