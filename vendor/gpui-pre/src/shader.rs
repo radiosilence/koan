@@ -209,6 +209,11 @@ fn spring(x0: f32, v0: f32, stiffness: f32, damping: f32, t: f32) -> f32 {
         let wd = omega * (1.0 - zeta * zeta).sqrt();
         let envelope = (-zeta * omega * t).exp();
         envelope * (x0 * (wd * t).cos() + (v0 + zeta * omega * x0) / wd * (wd * t).sin())
+    } else if zeta > 1.0 + 1e-4 {
+        let root = (zeta * zeta - 1.0).sqrt();
+        let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
+        let c1 = (v0 - r2 * x0) / (r1 - r2);
+        c1 * (r1 * t).exp() + (x0 - c1) * (r2 * t).exp()
     } else {
         (x0 + (v0 + omega * x0) * t) * (-omega * t).exp()
     }

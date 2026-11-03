@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..0dad7d2 100644
+index 862e62a..d15c8ee 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -126,6 +126,18 @@ pub struct MetalRenderer {
@@ -415,13 +415,13 @@ index 862e62a..0dad7d2 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -1486,8 +1802,261 @@ struct InstanceBindings {
+@@ -1486,8 +1802,268 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
 +    shaders: InstanceBinding, // KOAN: #1641.
- }
- 
++}
++
 +// KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
 +// for a blank one, kept while presents compose them.
 +#[derive(Default)]
@@ -430,8 +430,8 @@ index 862e62a..0dad7d2 100644
 +    width: u64,
 +    height: u64,
 +    layers: Vec<Option<metal::Texture>>,
-+}
-+
+ }
+ 
 +impl ShaderLayerTextures {
 +    fn holds(&self, generation: u64, width: u64, height: u64) -> bool {
 +        self.generation == generation
@@ -585,6 +585,13 @@ index 862e62a..0dad7d2 100644
 +        float wd = w * sqrt(1.0 - z * z);
 +        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
 +    }
++    if (z > 1.0001) {
++        float root = sqrt(z * z - 1.0);
++        float r1 = -w * (z - root);
++        float r2 = -w * (z + root);
++        float c1 = (v0 - r2 * x0) / (r1 - r2);
++        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
++    }
 +    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 +}
 +
@@ -677,7 +684,7 @@ index 862e62a..0dad7d2 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2068,18 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2075,18 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -696,7 +703,7 @@ index 862e62a..0dad7d2 100644
      })
  }
  
-@@ -1799,4 +2380,278 @@ mod tests {
+@@ -1799,4 +2387,284 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
@@ -758,18 +765,24 @@ index 862e62a..0dad7d2 100644
 +        });
 +        scene.finish();
 +        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
++        // The render's moment falls between these two, the program compiled
++        // in between: each track is drawn within what it passes through.
++        let before = uniforms.time_at(gpui::present_now());
 +        let image = renderer
 +            .render_scene_to_image(&scene, size(DevicePixels(5), DevicePixels(1)))
 +            .unwrap();
-+        // The render's moment is a few milliseconds on; every track here
-+        // moves less than a level in that.
-+        let at = uniforms.time_at(gpui::present_now());
++        let after = uniforms.time_at(gpui::present_now());
 +        for (k, t) in tracks.iter().enumerate() {
-+            let expected = (t.at(at) * 255.0).round() as i32;
++            let steps = 64;
++            let levels = (0..=steps).map(|i| {
++                let at = before + (after - before) * i as f32 / steps as f32;
++                (t.at(at) * 255.0).round() as i32
++            });
++            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
 +            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
 +            assert!(
-+                (expected - drawn).abs() <= 2,
-+                "track {k}: drawn {drawn}, expected {expected}"
++                drawn >= low - 2 && drawn <= high + 2,
++                "track {k}: drawn {drawn}, expected {low}..={high}"
 +            );
 +        }
 +    }

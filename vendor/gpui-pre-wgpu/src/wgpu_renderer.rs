@@ -104,6 +104,13 @@ fn koan_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
         let wd = w * sqrt(1.0 - z * z);
         return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
     }
+    if (z > 1.0001) {
+        let root = sqrt(z * z - 1.0);
+        let r1 = -w * (z - root);
+        let r2 = -w * (z + root);
+        let c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+    }
     return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 }
 

@@ -624,10 +624,10 @@ index 6cb3387..40e041a 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..7843ad8
+index 0000000..8aefad5
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,609 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -839,6 +839,11 @@ index 0000000..7843ad8
 +        let wd = omega * (1.0 - zeta * zeta).sqrt();
 +        let envelope = (-zeta * omega * t).exp();
 +        envelope * (x0 * (wd * t).cos() + (v0 + zeta * omega * x0) / wd * (wd * t).sin())
++    } else if zeta > 1.0 + 1e-4 {
++        let root = (zeta * zeta - 1.0).sqrt();
++        let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
++        let c1 = (v0 - r2 * x0) / (r1 - r2);
++        c1 * (r1 * t).exp() + (x0 - c1) * (r2 * t).exp()
 +    } else {
 +        (x0 + (v0 + omega * x0) * t) * (-omega * t).exp()
 +    }

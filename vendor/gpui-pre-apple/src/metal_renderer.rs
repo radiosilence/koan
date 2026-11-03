@@ -1968,6 +1968,13 @@ float koan_spring(float x0, float v0, float k, float c, float t) {
         float wd = w * sqrt(1.0 - z * z);
         return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
     }
+    if (z > 1.0001) {
+        float root = sqrt(z * z - 1.0);
+        float r1 = -w * (z - root);
+        float r2 = -w * (z + root);
+        float c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+    }
     return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 }
 
@@ -2438,18 +2445,24 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         });
         scene.finish();
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        // The render's moment falls between these two, the program compiled
+        // in between: each track is drawn within what it passes through.
+        let before = uniforms.time_at(gpui::present_now());
         let image = renderer
             .render_scene_to_image(&scene, size(DevicePixels(5), DevicePixels(1)))
             .unwrap();
-        // The render's moment is a few milliseconds on; every track here
-        // moves less than a level in that.
-        let at = uniforms.time_at(gpui::present_now());
+        let after = uniforms.time_at(gpui::present_now());
         for (k, t) in tracks.iter().enumerate() {
-            let expected = (t.at(at) * 255.0).round() as i32;
+            let steps = 64;
+            let levels = (0..=steps).map(|i| {
+                let at = before + (after - before) * i as f32 / steps as f32;
+                (t.at(at) * 255.0).round() as i32
+            });
+            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
             let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
             assert!(
-                (expected - drawn).abs() <= 2,
-                "track {k}: drawn {drawn}, expected {expected}"
+                drawn >= low - 2 && drawn <= high + 2,
+                "track {k}: drawn {drawn}, expected {low}..={high}"
             );
         }
     }
