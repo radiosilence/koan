@@ -121,7 +121,7 @@ impl DownloadsPage {
         index: usize,
         t: &Transfer,
         p: &Paint,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = t.track_id;

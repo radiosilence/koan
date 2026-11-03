@@ -18,7 +18,7 @@ use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::nav::Page;
 use super::selection::Selection;
-use super::tokens::{Paint, Type};
+use super::tokens::Paint;
 use crate::components::{
     AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
 };
