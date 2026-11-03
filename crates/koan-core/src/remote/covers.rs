@@ -411,10 +411,14 @@ fn run() {
         crate::quiet::wait_until_awake();
         let generation = signal.generation();
         let now = seen();
+        let mut quieted = false;
         if last.as_ref() != Some(&now) && may_run(&now) {
-            pass();
+            quieted = pass();
         }
-        last = Some(now);
+        // A pass the app's going quiet stopped runs again once it wakes,
+        // though nothing else moved. One the server refused waits for
+        // something to change, rather than asking again at every bump.
+        last = (!quieted).then_some(now);
         signal.wait(generation);
     }
 }
@@ -461,28 +465,29 @@ fn may_fetch() -> Result<(), Halt> {
     Ok(())
 }
 
-/// Fetches every missing cover once: from a server with `koanCovers`, as
+/// Fetches every missing cover once, and says whether it stopped because
+/// the app went quiet: from a server with `koanCovers`, as
 /// many as it holds ready in a few streamed answers, and the rest, or every
 /// one from another server, `WORKERS` at a time. Each request waits while a
 /// page's covers are in flight. Gives up early when the setting goes off,
 /// the person stops it, the server cannot be reached or the app goes quiet;
 /// the next pass carries on from what is kept.
-fn pass() {
+fn pass() -> bool {
     let cfg = Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
-        return;
+        return false;
     };
     let ids = match crate::db::pool::shared().get() {
         Ok(db) => crate::db::queries::remote_cover_ids(&db.conn).unwrap_or_default(),
-        Err(_) => return,
+        Err(_) => return false,
     };
     // A cache kept to nothing keeps no covers ahead either.
     if cfg.cache_limit_bytes() == Some(0) {
-        return;
+        return false;
     }
     let missing: Vec<String> = ids.into_iter().filter(|id| !settled(&cfg, id)).collect();
     if missing.is_empty() {
-        return;
+        return false;
     }
     let total = missing.len() as u64;
     let started = std::time::Instant::now();
@@ -517,6 +522,7 @@ fn pass() {
     set_progress(None);
     // Held to the cache limit with the downloads, the playback window kept.
     crate::remote::queue::cache_limit_changed();
+    matches!(halted, Some(Halt::NotNow)) && !crate::quiet::awake()
 }
 
 /// How many chunks in a row may fail before the pass gives up on
@@ -551,7 +557,14 @@ fn in_bulk(
                 break;
             }
             crate::remote::client::wait_for_idle_covers();
-            let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| {
+            // What is still unanswered: the whole chunk the first time, and
+            // after a stream cut part way, only what it did not reach.
+            let ask: Vec<String> = chunk
+                .iter()
+                .filter(|id| unanswered.contains(id.as_str()))
+                .cloned()
+                .collect();
+            let answered = client.get_covers(&ask, PRELOAD_SIZE, &mut |id, cover| {
                 if unanswered.remove(id.as_str()) {
                     match cover {
                         BulkCover::Cover(data) => {
