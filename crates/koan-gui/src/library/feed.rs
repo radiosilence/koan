@@ -85,11 +85,7 @@ impl Feed {
                 feed.transfers(derived, cx);
             }),
             cx.observe(&mirror.connection, |feed, connection, cx| {
-                let reach = connection
-                    .read(cx)
-                    .0
-                    .as_ref()
-                    .map(|c| (c.signed_in_to.clone(), c.linked, c.server_kind.clone()));
+                let reach = Self::reach(&connection.read(cx).0);
                 feed.connection(reach, cx);
             }),
             // A favourite toggled anywhere in the app: the Dock's menu, or
@@ -133,7 +129,18 @@ impl Feed {
         feed.playback(playing, cx);
         let derived = Self::by_track(&mirror.transfers.read(cx).0);
         feed.transfers(derived, cx);
+        // The connection as it stands is where artwork starts from, not a
+        // change to retry failures for.
+        feed.reach = Self::reach(&mirror.connection.read(cx).0);
         feed
+    }
+
+    fn reach(
+        connection: &Option<koan_ffi::ConnectionInfo>,
+    ) -> Option<(Option<String>, bool, Option<String>)> {
+        connection
+            .as_ref()
+            .map(|c| (c.signed_in_to.clone(), c.linked, c.server_kind.clone()))
     }
 
     fn library(&mut self, version: Option<u64>, cx: &mut Context<Self>) {

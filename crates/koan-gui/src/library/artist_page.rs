@@ -467,7 +467,9 @@ impl ArtistPage {
             }
         }
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
+        self.lib
+            .covers
+            .update(cx, |c, cx| c.request(owner, ranked, cx));
     }
 
     fn pick(&mut self) -> Option<PlayableDrag> {

@@ -751,7 +751,7 @@ impl PlaylistPage {
             .map(|album| Key::new(Art::Album(*album), side, scale))
             .collect();
         let (arts, more) = self.lib.covers.update(cx, |c, cx| {
-            c.request(owner, keys.iter().map(|k| (*k, Priority::Visible)));
+            c.request(owner, keys.iter().map(|k| (*k, Priority::Visible)), cx);
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let arts: Vec<CoverArt> = keys.iter().map(|k| CoverArt::from(c.sleeve(*k))).collect();
             (arts, more)

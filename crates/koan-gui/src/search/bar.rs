@@ -409,7 +409,9 @@ impl SearchBar {
             .map(|album| (Key::new(Art::Album(album), side, scale), Priority::Visible))
             .collect();
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
+        self.lib
+            .covers
+            .update(cx, |c, cx| c.request(owner, ranked, cx));
     }
 }
 

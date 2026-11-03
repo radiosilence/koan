@@ -471,16 +471,28 @@ impl Waker {
     }
 }
 
-/// Each window's waker, made the first time a quad is painted in it.
+/// Each window's waker, made the first time a quad is painted in it, and
+/// let go as its window closes.
 #[derive(Default)]
-struct Wakers(HashMap<WindowId, Waker>);
+struct Wakers {
+    by_window: HashMap<WindowId, Waker>,
+    /// Windows closing are heard, once for the app.
+    observing: bool,
+}
 
 impl Global for Wakers {}
 
 fn waker(window: &mut Window, cx: &mut App) -> Waker {
     let id = window.window_handle().window_id();
-    if let Some(waker) = cx.default_global::<Wakers>().0.get(&id) {
+    if let Some(waker) = cx.default_global::<Wakers>().by_window.get(&id) {
         return waker.clone();
+    }
+    if !cx.default_global::<Wakers>().observing {
+        cx.default_global::<Wakers>().observing = true;
+        cx.on_window_closed(|cx, closed| {
+            cx.default_global::<Wakers>().by_window.remove(&closed);
+        })
+        .detach();
     }
     let (send, mut woken) = unbounded();
     let waker = Waker {
@@ -489,6 +501,9 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
     };
     let pending = waker.pending.clone();
     let handle = window.window_handle();
+    // A clone of the sender can outlive the app (an analyser feed held by
+    // an engine that outlives it, as in the benches): a window that cannot
+    // be reached ends the task without touching the app, which may be gone.
     cx.spawn(async move |cx| {
         while woken.next().await.is_some() {
             pending.store(false, Ordering::Release);
@@ -496,15 +511,14 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
                 .update_window(handle, |_, window, _| window.request_present())
                 .is_err()
             {
-                break;
+                return;
             }
         }
-        cx.update(|cx| {
-            cx.default_global::<Wakers>().0.remove(&id);
-        });
     })
     .detach();
-    cx.default_global::<Wakers>().0.insert(id, waker.clone());
+    cx.default_global::<Wakers>()
+        .by_window
+        .insert(id, waker.clone());
     waker
 }
 

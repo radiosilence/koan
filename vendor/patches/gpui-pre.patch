@@ -2858,7 +2858,7 @@ index 5b63821..e2888a3 100644
          self.nodes_stack.last_mut()
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..d78002e 100644
+index c559412..213abdb 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -70,9 +70,9 @@ mod prompts;
@@ -2973,7 +2973,22 @@ index c559412..d78002e 100644
              pending_input: None,
              pending_modifier: ModifierState::default(),
              pending_input_observers: SubscriberSet::new(),
-@@ -2899,6 +2932,17 @@ impl Window {
+@@ -2718,6 +2751,14 @@ impl Window {
+         AsyncWindowContext::new_context(cx.to_async(), self.handle)
+     }
+ 
++    // KOAN: (#1871) a frame number for work spread over frames.
++    /// The number of the frame being drawn, counted from the window's first:
++    /// what work spread over several frames, such as uploads, can be
++    /// budgeted by.
++    pub fn frame_number(&self) -> u64 {
++        self.frames_drawn
++    }
++
+     /// Schedule the given closure to be run directly after the current frame is rendered.
+     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
+         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+@@ -2899,6 +2940,17 @@ impl Window {
          self.rendered_frame.scene.quads.clone()
      }
  
@@ -2991,7 +3006,7 @@ index c559412..d78002e 100644
      /// Returns the underlines in the most recently rendered frame's scene.
      #[cfg(any(test, feature = "test-support"))]
      pub fn painted_underlines(&self) -> Vec<Underline> {
-@@ -3439,6 +3483,7 @@ impl Window {
+@@ -3439,6 +3491,7 @@ impl Window {
      /// the contents of the new [`Scene`], use [`Self::present`].
      #[profiling::function]
      pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
@@ -2999,7 +3014,7 @@ index c559412..d78002e 100644
          // Drain every draw in profiler builds so a previous frame's
          // first-invalidation timestamp can't be attributed to this one.
          #[cfg(feature = "profiler")]
-@@ -3618,12 +3663,40 @@ impl Window {
+@@ -3618,12 +3671,40 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -3040,7 +3055,7 @@ index c559412..d78002e 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -3913,7 +3986,15 @@ impl Window {
+@@ -3913,7 +3994,15 @@ impl Window {
              traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
  
              for deferred_draw_ix in traversal_order {
@@ -3057,7 +3072,7 @@ index c559412..d78002e 100644
                      let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                      self.element_id_stack
                          .clone_from(&deferred_draw.element_id_stack);
-@@ -3926,12 +4007,16 @@ impl Window {
+@@ -3926,12 +4015,16 @@ impl Window {
                          deferred_draw.rem_size,
                          deferred_draw.absolute_offset,
                          deferred_draw.prepaint_range.clone(),
@@ -3074,7 +3089,7 @@ index c559412..d78002e 100644
                      self.with_rendered_view(current_view, |window| {
                          window.with_rem_size(Some(rem_size), |window| {
                              window.with_absolute_element_offset(absolute_offset, |window| {
-@@ -3939,9 +4024,17 @@ impl Window {
+@@ -3939,9 +4032,17 @@ impl Window {
                              });
                          });
                      });
@@ -3093,7 +3108,7 @@ index c559412..d78002e 100644
                  }
                  let prepaint_end = self.prepaint_index();
                  self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
-@@ -3985,6 +4078,11 @@ impl Window {
+@@ -3985,6 +4086,11 @@ impl Window {
                  })
              } else {
                  self.reuse_paint(deferred_draw.paint_range.clone());
@@ -3105,7 +3120,7 @@ index c559412..d78002e 100644
              }
              let paint_end = self.paint_index();
              deferred_draw.paint_range = paint_start..paint_end;
-@@ -4058,6 +4156,7 @@ impl Window {
+@@ -4058,6 +4164,7 @@ impl Window {
                      absolute_offset: deferred_draw.absolute_offset,
                      prepaint_range: deferred_draw.prepaint_range.clone(),
                      paint_range: deferred_draw.paint_range.clone(),
@@ -3113,7 +3128,7 @@ index c559412..d78002e 100644
                  }),
          );
      }
-@@ -4540,6 +4639,7 @@ impl Window {
+@@ -4540,6 +4647,7 @@ impl Window {
              absolute_offset,
              prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
              paint_range: PaintIndex::default()..PaintIndex::default(),
@@ -3121,7 +3136,7 @@ index c559412..d78002e 100644
          });
      }
  
-@@ -4690,6 +4790,110 @@ impl Window {
+@@ -4690,6 +4798,110 @@ impl Window {
          }
      }
  
@@ -3232,7 +3247,7 @@ index c559412..d78002e 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4981,12 @@ impl Window {
+@@ -4777,7 +4989,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -3246,7 +3261,7 @@ index c559412..d78002e 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7051,6 +7260,30 @@ impl Window {
+@@ -7051,6 +7268,30 @@ impl Window {
          self.a11y.is_active()
      }
  
@@ -3277,7 +3292,7 @@ index c559412..d78002e 100644
      /// Debug representation of the last frame's accessibility information.
      pub fn debug_a11y_tree_json(&self) -> Option<String> {
          self.a11y.debug_tree_json()
-@@ -7074,6 +7307,22 @@ impl Window {
+@@ -7074,6 +7315,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

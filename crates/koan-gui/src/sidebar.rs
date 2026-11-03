@@ -765,6 +765,7 @@ impl Sidebar {
                 keys.iter()
                     .flatten()
                     .map(|key| (*key, Priority::Ahead(0.0))),
+                cx,
             );
             let more = c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx);
             let sleeves = keys

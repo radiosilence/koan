@@ -2751,6 +2751,14 @@ impl Window {
         AsyncWindowContext::new_context(cx.to_async(), self.handle)
     }
 
+    // KOAN: (#1871) a frame number for work spread over frames.
+    /// The number of the frame being drawn, counted from the window's first:
+    /// what work spread over several frames, such as uploads, can be
+    /// budgeted by.
+    pub fn frame_number(&self) -> u64 {
+        self.frames_drawn
+    }
+
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
