@@ -16,10 +16,10 @@ runtime-shaders = ["gpui_platform/runtime_shaders"]
 test-support = ["gpui/test-support"]
 
 [dependencies]
-# GPUI itself (our vendored copy; the library is named `gpui`) and its
-# platform: the app model, elements, the platform and the test harness.
-gpui = { package = "gpui-pre", version = "=0.3.10" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10" }
+# GPUI and its platform (koan's fork, from the workspace): the app model,
+# elements, the platform and the test harness.
+gpui.workspace = true
+gpui_platform.workspace = true
 # The wash's bake and the accent's sampling, in the version GPUI builds
 # against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
@@ -30,7 +30,7 @@ smallvec = "1"
 unicode-segmentation = "1.13"
 
 [dev-dependencies]
-gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 serde_json = "1"
 
 # Reduce Motion, Increase Contrast, Reduce Transparency and Low Power Mode,

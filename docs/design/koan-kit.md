@@ -9,7 +9,7 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 ## Crates
 
 ```
-GPUI (vendor/gpui-pre*)  ->  koan-kit  ->  koan-gui
+GPUI (radiosilence/zed, gpui-koan-*)  ->  koan-kit  ->  koan-gui
 ```
 
 koan-kit takes GPUI, its platform and its test harness from the vendored GPUI crates, and every component from itself: the text field, the window's root (`Root`) and focus trap (`focus_trap`), the scrollbar (`Scrollbar`) and the panels controls open (`opens_panel`).
@@ -246,7 +246,7 @@ progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engin
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
 - `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
-The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
+The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (the fork's shader quad commit describes the layering).
 
 ### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
 

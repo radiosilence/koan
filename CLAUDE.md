@@ -153,8 +153,6 @@ just android-run [ABIS] # build, install and open the Android app on the device 
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
 just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode; on macOS launched as a dev bundle, so it has Local Network permission of its own
-just vendor-gpui VER # the vendored GPUI crates rebuilt from release VER + vendor/patches; fails loudly on a hunk that does not apply
-just vendor-gpui-patches # vendor/patches written from the vendored copies, after editing one
 just gui-smoke  # the GUI app headlessly as used: playing, seeking, hovering every page; fails on a panic, a hang or no track change
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
 just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
@@ -391,7 +389,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/runtime_files.rs` | The app's runtime files (window and browse state, the desktop device's id and devices, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
 
-The workspace's `vendor/` holds patched copies of GPUI (`[patch.crates-io]` in the root `Cargo.toml`): its macOS and Linux backends, so an idle window stops waking at every display refresh (#1609), its core and renderers, for shader quads whose uniforms are read at present (#1641); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
+GPUI comes from koan's fork of Zed, radiosilence/zed, whose default branch `koan` is Zed's main with koan's commits on top: each generic and proposed upstream as a pull request cut from `main` (the idle window that stops waking each refresh, cached views redrawn alone, shader quads, keyframe tracks and the present clock, layer groups, dynamic colours, the accessibility states and test hooks), plus the crates renamed `gpui-koan-*` and the workflows that sync with Zed weekly and publish. The workspace's `gpui` and `gpui_platform` dependencies pin a revision of `koan` (root `Cargo.toml`); moving the pin is how koan takes a GPUI change. A change to GPUI itself is a commit on the fork with its own test, never a patch here.
 
 `LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-runtime) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 
