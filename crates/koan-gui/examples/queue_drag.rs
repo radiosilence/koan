@@ -1,5 +1,6 @@
 //! Drags a row of the queue in the real window, headlessly, and checks the
-//! queue's order moved: the first track dropped below the third. GPUI's
+//! queue's order moved: the first track dropped below the third, grouped
+//! by record as the queue opens or, with `KOAN_DRAG_FLAT`, flat. GPUI's
 //! headless renderer draws the window and the pointer is synthetic input
 //! delivered to it; nothing on the screen is read.
 //!
@@ -68,13 +69,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     cx.allow_parking();
     settle(&mut cx, window)?;
 
-    // Flat, so every row is one track and row n is queue item n.
+    // Grouped by record, as the queue opens, unless `KOAN_DRAG_FLAT` asks
+    // for a row per track.
+    let grouped = std::env::var_os("KOAN_DRAG_FLAT").is_none();
     cx.update(|cx| {
-        koan_gui::window_state::GROUPED.store(false, std::sync::atomic::Ordering::Relaxed);
+        koan_gui::window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
         let queue = cx.global::<Mirror>().queue.clone();
-        koan_gui::mirror::regroup(&queue, false, cx);
+        koan_gui::mirror::regroup(&queue, grouped, cx);
     });
     settle(&mut cx, window)?;
+    // The first record's first and third tracks: under its heading when
+    // grouped.
+    let (first, third) = if grouped { (1, 3) } else { (0, 2) };
 
     let order = |cx: &mut HeadlessAppContext| {
         cx.update(|cx| {
@@ -91,7 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let bounds = |row: usize, cx: &mut HeadlessAppContext| -> Option<Bounds<Pixels>> {
         cx.update(|cx| shell.read(cx).queue().read(cx).row_bounds(row))
     };
-    let (Some(from), Some(to)) = (bounds(0, &mut cx), bounds(2, &mut cx)) else {
+    let (Some(from), Some(to)) = (bounds(first, &mut cx), bounds(third, &mut cx)) else {
         return Err("the queue's rows were not drawn".into());
     };
     // Below the third row's middle: after it.
