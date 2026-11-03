@@ -636,6 +636,44 @@ impl ShaderUniforms {
         values
     }
 
+    // KOAN: (#1741) `time` grows from the origin for as long as a quad is
+    // drawn, and an f32 of days is coarser than a frame.
+    /// What the program is handed at `now`: `time` and every track's start
+    /// as seconds from the last whole hour of `time`, and a repeating
+    /// track's start moved up to its latest whole cycle, all worked out in
+    /// f64. The program reckons the same motion, to the frame, however long
+    /// the quad has been drawn; nothing stored changes, so writers on other
+    /// threads never see a base move under them. A program reading `time`
+    /// alone sees it fall back by an hour once an hour.
+    pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
+        const BASE: f64 = 3600.0;
+        let mut values = self.snapshot_at(now);
+        let t = (since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9;
+        let base = (t / BASE).floor() * BASE;
+        if base == 0.0 {
+            return (t as f32, values);
+        }
+        for k in 0..SHADER_TRACKS {
+            let at = SHADER_PLAIN + k * TRACK_FLOATS;
+            let mut track = Track::decode(&values[at..at + TRACK_FLOATS]);
+            if track.length <= 0.0 {
+                continue;
+            }
+            let mut start = track.start as f64;
+            let period = match track.repeat {
+                TrackRepeat::Once => 0.0,
+                TrackRepeat::Loop => track.length as f64,
+                TrackRepeat::Alternate => 2.0 * track.length as f64,
+            };
+            if period > 0.0 && start < t {
+                start += ((t - start) / period).floor() * period;
+            }
+            track.start = (start - base) as f32;
+            values[at..at + TRACK_FLOATS].copy_from_slice(&track.encode());
+        }
+        ((t - base) as f32, values)
+    }
+
     /// Whether a track is moving at `now`.
     pub fn tracks_moving(&self, now: Instant) -> bool {
         let until = self.moving_until.load(Ordering::Relaxed);
@@ -702,8 +740,8 @@ impl Default for ShaderInstance {
 
 impl ShaderInstance {
     pub fn of(shader: &PaintShader, now: Instant) -> Self {
-        let time = shader.uniforms.time_at(now);
-        let mut uniforms = shader.uniforms.snapshot_at(now);
+        // KOAN: time and tracks from a recent base (#1741).
+        let (time, mut uniforms) = shader.uniforms.present_at(now);
         if let Some(prepare) = shader.program.prepare {
             prepare(&mut uniforms, time);
         }
@@ -735,6 +773,45 @@ impl ShaderInstance {
                 ],
                 (None, None) => [0.0; 4],
             },
+        }
+    }
+}
+
+// KOAN: (#1741).
+#[cfg(test)]
+mod present_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Three days on, a loop drawn since the origin is handed to the program
+    /// at the phase f64 reckons, within a millisecond's motion.
+    #[test]
+    fn a_quad_drawn_for_days_is_reckoned_to_the_frame() {
+        let uniforms = ShaderUniforms::new();
+        let origin = Instant::now();
+        uniforms.set_origin(origin);
+        uniforms.set_track(
+            0,
+            Track {
+                from: 0.0,
+                to: 1.0,
+                start: 0.0,
+                length: 1.0,
+                curve: TrackCurve::Linear,
+                repeat: TrackRepeat::Loop,
+            },
+        );
+        for offset in [0.25, 0.5, 0.75] {
+            let now = origin + Duration::from_secs_f64(3.0 * 86_400.0 + offset);
+            let (time, values) = uniforms.present_at(now);
+            let at = SHADER_PLAIN;
+            let track = Track::decode(&values[at..at + TRACK_FLOATS]);
+            let drawn = track.at(time);
+            assert!(
+                (drawn - offset as f32).abs() < 1e-3,
+                "{offset}s into a cycle drew {drawn}"
+            );
+            assert!((0.0..3600.0).contains(&time), "time {time} kept its base");
         }
     }
 }

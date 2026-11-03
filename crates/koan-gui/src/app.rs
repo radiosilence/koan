@@ -143,6 +143,9 @@ pub fn start(
 #[derive(Default)]
 struct MainWindowSlot {
     handle: Option<AnyWindowHandle>,
+    /// The shell it draws, for what the app's menus ask of it from any
+    /// window.
+    shell: Option<WeakEntity<Shell>>,
     ready: bool,
     /// Its saved bounds are being read to open it again: asked again
     /// meanwhile, it is not opened twice.
@@ -209,6 +212,12 @@ pub fn show_window(cx: &mut App) -> bool {
 }
 
 /// The main window, while it is open. Settings, EQ and About are not it.
+/// The main window's shell, while the window is open.
+pub fn main_shell(cx: &App) -> Option<Entity<Shell>> {
+    main_window(cx)?;
+    cx.try_global::<MainWindowSlot>()?.shell.as_ref()?.upgrade()
+}
+
 pub fn main_window(cx: &App) -> Option<AnyWindowHandle> {
     let handle = cx.try_global::<MainWindowSlot>()?.handle?;
     cx.windows().contains(&handle).then_some(handle)
@@ -263,6 +272,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
                 true
             });
             let shell = cx.new(|cx| Shell::new(window, cx));
+            cx.global_mut::<MainWindowSlot>().shell = Some(shell.downgrade());
             cx.new(|cx| WindowRoot::new(shell, window, cx))
         });
     match opened {

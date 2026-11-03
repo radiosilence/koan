@@ -18,7 +18,7 @@ gui-library dir albums="5000" tracks="10":
     cargo run --release -p koan-gui --features runtime-shaders --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
     mkdir -p "{{dir}}/config"
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
-    KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
+    KOAN_CONFIG_DIR="{{dir}}/config" KOAN_PLACES_DIR="{{dir}}/config/places" cargo run --release -p koan-cli -- scan
 
 # The kōan GUI app headlessly as it is used: playing, the pointer churning
 # over every page while it redraws, the wheel scrolling; fails on any panic.
@@ -58,7 +58,7 @@ gui-compare out="target/gui-compare":
     printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
     # The record, artist and playlist the walk drew.
     set -a && . "{{out}}/gui/ids.env" && set +a
-    KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
+    KOAN_CONFIG_DIR="$cfg" KOAN_PLACES_DIR="$cfg/places" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
         KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
         -ApplePersistenceIgnoreState YES
     cargo run --release -p koan-gui --features runtime-shaders --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
@@ -1593,6 +1593,8 @@ _demo-server library out:
     cargo build -q -p koan-cli
     koan=${CARGO_TARGET_DIR:-target}/debug/koan
     dir=$(mktemp -d)
+    # Its runtime files with it, so nothing outlives the temporary directory.
+    export KOAN_PLACES_DIR="$dir/places"
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     password=demo-$RANDOM$RANDOM
     [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
@@ -1968,6 +1970,8 @@ gui-run *ARGS:
     set -euo pipefail
     if [ -z "${KOAN_CONFIG_DIR:-}" ]; then
         export KOAN_CONFIG_DIR="$PWD/target/gui-config"
+        # Its window state, locks and caches under target/ too.
+        export KOAN_PLACES_DIR="$PWD/target/gui-places"
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
@@ -1983,8 +1987,11 @@ gui-run *ARGS:
     # nearby koan appears. The bundle declares the reason, so macOS asks.
     cargo build --profile gui-dev -p koan-gui --features runtime-shaders
     # An ASCII name, so the path matches itself however a tool normalises
-    # the ō: `pkill -f` below did not find "kōan dev.app".
+    # the ō: `pkill -f` below matches bytes.
     app="$PWD/target/gui-dev/koan dev.app"
+    # The bundle under its earlier name holds the same id and the koan scheme,
+    # and LaunchServices may open links with it.
+    rm -rf "$PWD/target/gui-dev/kōan dev.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
     # A new file, never the signed one rewritten in place: macOS keeps a

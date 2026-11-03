@@ -32,8 +32,10 @@ pub fn name_unbundled() {
     use objc2::{class, msg_send};
     use objc2_foundation::NSString;
     // SAFETY: messages to AppKit's own classes on the main thread before
-    // the application runs; `setObject:forKey:` is sent only to a mutable
-    // dictionary.
+    // the application runs. Whether the bundle's dictionary is mutable
+    // cannot be asked: a CF dictionary is of the mutable class either way.
+    // An immutable one raises on `setObject:forKey:`, which `catch` turns
+    // into an error before it unwinds into Rust.
     unsafe {
         let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
         let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
@@ -44,13 +46,17 @@ pub fn name_unbundled() {
         if info.is_null() {
             return;
         }
-        // An immutable dictionary answers `respondsToSelector:` for the
-        // setter too, being of the same class cluster: its class says.
-        let mutable: bool = msg_send![info, isKindOfClass: class!(NSMutableDictionary)];
-        if mutable {
-            let name = NSString::from_str("kōan");
-            let key = NSString::from_str("CFBundleName");
+        let name = NSString::from_str("kōan");
+        let key = NSString::from_str("CFBundleName");
+        // Nothing the closure touches outlives it if it unwinds.
+        if objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
             let _: () = msg_send![info, setObject: &*name, forKey: &*key];
+        }))
+        .is_err()
+        {
+            log::debug!(
+                "the bundle's info dictionary is immutable; the menu bar keeps the binary's name"
+            );
         }
     }
 }

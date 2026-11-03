@@ -256,6 +256,13 @@ impl RenderOnce for Button {
         let glyph_only = matches!(kind, ButtonKind::Icon | ButtonKind::IconOutlined)
             || (kind == ButtonKind::Toolbar && look.icons && self.icon.is_some());
         let show_glyph = glyph_only || look.icons;
+        // A press is answered by a ring off a glyph alone; a button showing
+        // its word is lifted instead, under the word, never ringed through it.
+        let worded = !glyph_only && self.label.is_some();
+        let answer = match kind.answer() {
+            Some(super::Answer::Ring) if worded => Some(super::Answer::Lift),
+            answer => answer,
+        };
         debug_assert!(
             !glyph_only || self.help.is_some() || self.label.is_some(),
             "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
@@ -291,7 +298,6 @@ impl RenderOnce for Button {
             button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
-                let answer = kind.answer();
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     if let Some(answer) = answer {
@@ -337,16 +343,16 @@ impl RenderOnce for Button {
             .map(|icon| KoanIcon::new(icon).role(role).color(color));
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
-        // A ring leaves the glyph and its word, not the hit area around them;
-        // a lift fills the button.
-        let ring_answer = kind.answer() == Some(super::Answer::Ring);
+        // A ring leaves a glyph alone, not the hit area around it; a lift
+        // fills the button under its content, over its fills.
+        let ring_answer = answer == Some(super::Answer::Ring);
         let answered = answers.layer(window, cx);
         let (inner_answer, outer_answer) = if ring_answer {
             (answered, None)
         } else {
             (None, answered)
         };
-        button = button.child(
+        button = button.children(outer_answer).child(
             div()
                 .relative()
                 .flex()
@@ -368,8 +374,6 @@ impl RenderOnce for Button {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));
         }
-        button
-            .children(outer_answer)
-            .children(ring(&handle, &look, window))
+        button.children(ring(&handle, &look, window))
     }
 }

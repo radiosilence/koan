@@ -1,0 +1,1 @@
+- **Playlist pages let go of their covers.** In the kōan GUI app a playlist page left behind no longer keeps its header's sleeves asked for, so cover memory follows what is on screen after visiting many playlists.

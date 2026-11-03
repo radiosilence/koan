@@ -123,18 +123,20 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             |_, _, cx| move_music(None, cx),
         );
     }
-    let mut menu = menu.min_width(Menu::PICKER_WIDTH).section("control");
+    let mut menu = menu.width(Menu::PICKER_WIDTH).section("control");
     // The system keeps the app off the local network until the person allows
     // it, and says nothing otherwise: without this the list would just be
     // short.
     if view.network_blocked {
-        menu = menu.item(
-            MenuEntry::new("kōan can't see this network")
-                .icon(Icon::NetworkBlocked)
-                .rich("Allow Local Network for kōan in System Settings → Privacy & Security to find devices here.")
-                .warns(true)
-                .disabled(true),
-        );
+        // The instruction as a note, wrapped and read whole, not a row's
+        // detail cut to one line.
+        menu = menu
+            .item(
+                MenuEntry::new("kōan can't see this network")
+                    .icon(Icon::NetworkBlocked)
+                    .disabled(true),
+            )
+            .note("Allow Local Network for kōan in System Settings → Privacy & Security to find devices here.");
     }
     let mut menu = menu.item(this);
     for device in &view.devices {

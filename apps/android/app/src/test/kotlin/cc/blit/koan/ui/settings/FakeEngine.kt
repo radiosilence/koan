@@ -58,6 +58,7 @@ fun settings(signedIn: Boolean = true, url: String = "https://music.example.com"
     autoSync = true,
     autoSyncIntervalMins = 60u,
     playQueue = false,
+    preloadCovers = true,
     replaygain = "off",
     preAmpDb = 0.0,
     fadeOnPause = true,
