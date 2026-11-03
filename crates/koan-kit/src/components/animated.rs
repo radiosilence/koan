@@ -81,6 +81,8 @@ struct Inner {
     /// changes.
     waker: Mutex<Option<Waker>>,
     running: AtomicBool,
+    /// When a `run_for` stops by itself.
+    until: Mutex<Option<Instant>>,
     /// Decorative and the person asked for less motion: tracks hold their
     /// ends.
     still: AtomicBool,
@@ -315,6 +317,7 @@ impl Animated {
     /// drawing that moves with `time`.
     pub fn run(&self, running: bool) {
         self.0.uniforms.set_live_until(None);
+        *self.0.until.lock() = None;
         if self.0.running.swap(running, Ordering::Relaxed) != running {
             self.0.uniforms.set_continuous(running);
             self.0.uniforms.set_live(running);
@@ -325,17 +328,30 @@ impl Animated {
     /// Runs the clock for `length` from now and then stops by itself, with
     /// nothing to stop it: a transition.
     pub fn run_for(&self, length: Duration) {
-        self.0
-            .uniforms
-            .set_live_until(Some(Instant::now() + length));
+        let until = Instant::now() + length;
+        self.0.uniforms.set_live_until(Some(until));
+        *self.0.until.lock() = Some(until);
         self.0.running.store(true, Ordering::Relaxed);
         self.0.uniforms.set_continuous(true);
         self.0.uniforms.set_live(true);
         self.wake();
     }
 
+    /// Whether the clock runs; a `run_for` past its length has stopped.
     pub fn is_running(&self) -> bool {
-        self.0.running.load(Ordering::Relaxed)
+        if !self.0.running.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut until = self.0.until.lock();
+        if until.is_some_and(|until| Instant::now() >= until) {
+            *until = None;
+            self.0.running.store(false, Ordering::Relaxed);
+            self.0.uniforms.set_live_until(None);
+            self.0.uniforms.set_continuous(false);
+            self.0.uniforms.set_live(false);
+            return false;
+        }
+        true
     }
 
     fn wake(&self) {
