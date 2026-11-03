@@ -23,6 +23,9 @@ pub struct Residency {
     /// XPC round trip on macOS and a file read on Linux, which no frame
     /// waits on.
     login: Option<Login>,
+    /// The last read or change of the login item, which the next waits for:
+    /// they reach the system and land in the order asked.
+    login_lane: Option<Task<()>>,
     #[cfg(target_os = "macos")]
     status: Option<super::status_item::StatusItem>,
 }
@@ -158,39 +161,47 @@ pub fn login(cx: &App) -> Login {
 }
 
 /// Asks the system whether it opens kōan at login, off the main thread, and
-/// redraws what shows it.
-fn read_login(cx: &mut App) {
-    let read = cx
-        .background_executor()
-        .spawn(async { login_item::status() });
-    cx.spawn(async move |cx| {
-        let login = read.await;
-        cx.update(|cx| {
-            if cx.has_global::<Residency>() {
-                cx.global_mut::<Residency>().login = Some(login);
-                cx.refresh_windows();
-            }
-        });
-    })
-    .detach();
+/// redraws what shows it. Settings asks again as it comes to the front: the
+/// item can be turned off in the system's settings without kōan being told.
+pub fn read_login(cx: &mut App) {
+    on_login_lane(None, cx);
 }
 
 /// Asks the system to open kōan at login, or not, off the main thread,
 /// keeping why it refused for Settings to show, then reads what it says now.
 pub fn set_login(on: bool, cx: &mut App) {
-    let change = cx
-        .background_executor()
-        .spawn(async move { login_item::set(on).err() });
-    cx.spawn(async move |cx| {
-        let refused = change.await;
+    on_login_lane(Some(on), cx);
+}
+
+/// A change of the login item (`Some`), or none, then a read of it, after
+/// whatever was asked before has landed: two quick toggles reach the system
+/// in order, and the status shown is the last one read.
+fn on_login_lane(change: Option<bool>, cx: &mut App) {
+    if !cx.has_global::<Residency>() {
+        return;
+    }
+    let before = cx.global_mut::<Residency>().login_lane.take();
+    let work = cx.background_executor().spawn(async move {
+        let refused = change.and_then(|on| login_item::set(on).err());
+        (change.is_some(), refused, login_item::status())
+    });
+    let lane = cx.spawn(async move |cx| {
+        if let Some(before) = before {
+            before.await;
+        }
+        let (changed, refused, login) = work.await;
         cx.update(|cx| {
             if cx.has_global::<Residency>() {
-                cx.global_mut::<Residency>().login_error = refused;
-                read_login(cx);
+                let residency = cx.global_mut::<Residency>();
+                if changed {
+                    residency.login_error = refused;
+                }
+                residency.login = Some(login);
+                cx.refresh_windows();
             }
         });
-    })
-    .detach();
+    });
+    cx.global_mut::<Residency>().login_lane = Some(lane);
 }
 
 /// Why the system last refused to change the login item.
@@ -362,23 +373,26 @@ mod login_item {
             })
     }
 
-    /// `path` as a quoted argument of a desktop entry's `Exec`: `"`, `` ` ``,
-    /// `$` and `\` escaped inside the quotes, and `%` doubled, as the Desktop
-    /// Entry specification asks.
+    /// `path` as a quoted argument of a desktop entry's `Exec`, as the Desktop
+    /// Entry specification asks: `"`, `` ` ``, `$` and `\` escaped inside
+    /// the quotes and `%` doubled, then every backslash escaped again for the
+    /// value's string escaping, which a reader undoes first.
     fn quoted(path: &str) -> String {
-        let mut out = String::from("\"");
+        let mut arg = String::from("\"");
         for c in path.chars() {
             match c {
                 '"' | '`' | '$' | '\\' => {
-                    out.push('\\');
-                    out.push(c);
+                    arg.push('\\');
+                    arg.push(c);
                 }
-                '%' => out.push_str("%%"),
-                c => out.push(c),
+                '%' => arg.push_str("%%"),
+                c => arg.push(c),
             }
         }
-        out.push('"');
-        out
+        arg.push('"');
+        // The value's own escaping comes first when it is read: every
+        // backslash the quoting put in is itself escaped.
+        arg.replace('\\', "\\\\")
     }
 
     pub fn set(on: bool) -> Result<(), String> {
@@ -409,7 +423,7 @@ mod login_item {
             assert_eq!(quoted("/opt/kōan/koan-gui"), "\"/opt/kōan/koan-gui\"");
             assert_eq!(
                 quoted("/home/a b/50%/$x\"`\\"),
-                "\"/home/a b/50%%/\\$x\\\"\\`\\\\\""
+                "\"/home/a b/50%%/\\\\$x\\\\\"\\\\`\\\\\\\\\""
             );
         }
 
