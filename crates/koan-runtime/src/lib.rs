@@ -478,23 +478,27 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 }
 
 /// Whether the music of the device in view can be moved to `to` (this
-/// device with `None`): `controlled` is the device controlled, `None` while
-/// this one is in view. Both ends must play from the same library, and there
-/// must be music to move: a queue here, or another device playing or paused
-/// and in reach. Moving to the device already in view moves nothing.
+/// device with `None`). `target` is the id of the device controlled, `None`
+/// while this one is in view, and `controlled` that device as listed: a
+/// target not listed just now is out of reach, and has nothing to move from
+/// here. Both ends must play from the same library, and there must be music
+/// to move: a queue here, or another device playing or paused and in reach.
+/// Moving to the device already in view moves nothing.
 pub fn can_move_music(
     to: Option<DeviceInfo>,
+    target: Option<String>,
     controlled: Option<DeviceInfo>,
     has_queue: bool,
 ) -> bool {
-    if to.as_ref().map(|d| d.id.as_str()) == controlled.as_ref().map(|d| d.id.as_str()) {
+    if to.as_ref().map(|d| d.id.as_str()) == target.as_deref() {
         return false;
     }
     if to.as_ref().is_some_and(|d| d.problem.is_some()) {
         return false;
     }
-    match &controlled {
-        Some(source) => {
+    match (&target, &controlled) {
+        (Some(_), None) => return false,
+        (Some(_), Some(source)) => {
             if !source.same_library
                 || source.state == PlayState::Stopped
                 || source.problem.is_some()
@@ -502,8 +506,8 @@ pub fn can_move_music(
                 return false;
             }
         }
-        None if !has_queue => return false,
-        None => {}
+        (None, _) if !has_queue => return false,
+        (None, _) => {}
     }
     to.is_none_or(|d| d.same_library)
 }
@@ -8478,24 +8482,40 @@ mod move_tests {
         let phone = device("phone", true, PlayState::Playing);
         let stranger = device("stranger", false, PlayState::Playing);
         // From here: needs a queue, and a device on the same library.
-        assert!(can_move_music(Some(tv.clone()), None, true));
-        assert!(!can_move_music(Some(tv.clone()), None, false));
-        assert!(!can_move_music(Some(stranger.clone()), None, true));
+        let id = |d: &DeviceInfo| Some(d.id.clone());
+        assert!(can_move_music(Some(tv.clone()), None, None, true));
+        assert!(!can_move_music(Some(tv.clone()), None, None, false));
+        assert!(!can_move_music(Some(stranger.clone()), None, None, true));
         // Nowhere to move to while this device is in view.
-        assert!(!can_move_music(None, None, true));
+        assert!(!can_move_music(None, None, None, true));
         // From a device controlled: it must have music and share the library.
-        assert!(can_move_music(None, Some(phone.clone()), false));
-        assert!(can_move_music(Some(tv.clone()), Some(phone.clone()), false));
-        assert!(!can_move_music(None, Some(tv.clone()), true));
-        assert!(!can_move_music(None, Some(stranger), true));
+        assert!(can_move_music(None, id(&phone), Some(phone.clone()), false));
+        assert!(can_move_music(
+            Some(tv.clone()),
+            id(&phone),
+            Some(phone.clone()),
+            false
+        ));
+        assert!(!can_move_music(None, id(&tv), Some(tv.clone()), true));
+        assert!(!can_move_music(None, id(&stranger), Some(stranger), true));
         assert!(!can_move_music(
             Some(phone.clone()),
+            id(&phone),
             Some(phone.clone()),
             true
         ));
-        let mut away = tv;
+        let mut away = tv.clone();
         away.problem = Some("out of reach".into());
-        assert!(!can_move_music(Some(away), Some(phone), true));
+        assert!(!can_move_music(
+            Some(away),
+            id(&phone),
+            Some(phone.clone()),
+            true
+        ));
+        // A device controlled but not listed just now is not this one in
+        // view: nothing moves from it, and its queue here is not the music.
+        assert!(!can_move_music(None, id(&phone), None, true));
+        assert!(!can_move_music(Some(tv), id(&phone), None, true));
     }
 }
 

@@ -298,17 +298,20 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 }
 
 /// Whether the music of the device in view can be moved to `to` (this
-/// device with `None`): `controlled` is the device controlled, `None` while
-/// this one is in view. Both ends must play from the same library, and there
-/// must be music to move: a queue here, or another device playing or paused
-/// and in reach. Moving to the device already in view moves nothing.
+/// device with `None`). `target` is the id of the device controlled, `None`
+/// while this one is in view, and `controlled` that device as listed: a
+/// target not listed just now is out of reach, and has nothing to move from
+/// here. Both ends must play from the same library, and there must be music
+/// to move: a queue here, or another device playing or paused and in reach.
+/// Moving to the device already in view moves nothing.
 #[uniffi::export]
 pub fn can_move_music(
     to: Option<DeviceInfo>,
+    target: Option<String>,
     controlled: Option<DeviceInfo>,
     has_queue: bool,
 ) -> bool {
-    koan_runtime::can_move_music(to, controlled, has_queue)
+    koan_runtime::can_move_music(to, target, controlled, has_queue)
 }
 
 /// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
