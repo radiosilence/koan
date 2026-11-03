@@ -104,10 +104,9 @@ impl RenderOnce for ProgressBar {
                     .into_any_element()
             }
             None if SHADED && KoanTheme::motion_allowed(cx) => {
-                let rgba = accent.to_rgb();
                 let running = Animated::new();
                 running.set_all(0, &[0.0, 0.3, 0.0, 0.0]);
-                running.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+                running.set_color(4, accent);
                 running.segment(
                     0,
                     0.0,
