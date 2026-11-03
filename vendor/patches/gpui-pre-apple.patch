@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 9b98a23..66b76d8 100644
+index 9b98a23..637abd8 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -143,6 +143,21 @@ pub struct MetalRenderer {
@@ -957,7 +957,15 @@ index 9b98a23..66b76d8 100644
      })
  }
  
-@@ -2141,4 +2962,287 @@ mod tests {
+@@ -2127,6 +2948,7 @@ mod tests {
+                 &scene,
+                 &target_texture,
+                 size(DevicePixels(16), DevicePixels(16)),
++                false, // KOAN: #1641.
+             )
+             .unwrap();
+         if !uses_shared_storage {
+@@ -2141,4 +2963,287 @@ mod tests {
          assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
          assert_eq!(read_texture_to_image(&target_texture).unwrap(), image);
      }
@@ -1455,3 +1463,17 @@ index 2b52bb9..3845dbc 100644
 +  return select(1.055 * pow(linear_rgb, float3(1.0 / 2.4)) - 0.055, 12.92 * linear_rgb,
 +                linear_rgb <= 0.0031308);
 +}
+diff --git a/src/text_system.rs b/src/text_system.rs
+index 74cd7cc..995320a 100644
+--- a/src/text_system.rs
++++ b/src/text_system.rs
+@@ -863,6 +863,9 @@ mod tests {
+         }
+     }
+ 
++    // KOAN: it embeds Zed's Lilex font from the repository's assets, which
++    // the published crate does not carry.
++    #[cfg(any())]
+     #[test]
+     fn test_layout_line_breaks_ligatures_between_runs() {
+         let fonts = AppleTextSystem::new();

@@ -863,6 +863,9 @@ mod tests {
         }
     }
 
+    // KOAN: it embeds Zed's Lilex font from the repository's assets, which
+    // the published crate does not carry.
+    #[cfg(any())]
     #[test]
     fn test_layout_line_breaks_ligatures_between_runs() {
         let fonts = AppleTextSystem::new();

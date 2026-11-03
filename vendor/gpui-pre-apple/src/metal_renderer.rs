@@ -2948,6 +2948,7 @@ mod tests {
                 &scene,
                 &target_texture,
                 size(DevicePixels(16), DevicePixels(16)),
+                false, // KOAN: #1641.
             )
             .unwrap();
         if !uses_shared_storage {
