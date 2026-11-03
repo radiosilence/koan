@@ -316,7 +316,7 @@ impl Render for TvWake {
                 )
                 .into_any_element(),
         };
-        ask::panel(look)
+        ask::panel("wake from sleep", look)
             .child(ask::head("Wake from Sleep", vec![close.into_any_element()], look))
             .child(
                 ask::body("tv-wake", look)

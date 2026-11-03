@@ -13,17 +13,21 @@ use gpui_kit::*;
 use super::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
-/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
-pub fn panel(look: &Look) -> Stateful<Div> {
-    // A dialog to a screen reader. The sheet's head names it.
-    super::accessible(div().id("sheet-panel"), gpui_kit::Role::Dialog, None)
-        .flex()
-        .flex_col()
-        .w(px(560.0))
-        .max_h(relative(0.85))
-        .bg(look.palette.bg.hsla())
-        .border(look.hairline)
-        .border_color(look.palette.rule.hsla())
+/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
+/// a screen reader, named `name` in the app's words: what its head says.
+pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
+    super::accessible(
+        div().id("sheet-panel"),
+        gpui_kit::Role::Dialog,
+        Some(label(name)),
+    )
+    .flex()
+    .flex_col()
+    .w(px(560.0))
+    .max_h(relative(0.85))
+    .bg(look.palette.bg.hsla())
+    .border(look.hairline)
+    .border_color(look.palette.rule.hsla())
 }
 
 /// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
@@ -35,8 +39,8 @@ pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
-pub fn wide_panel(look: &Look) -> Stateful<Div> {
-    panel(look).w(px(880.0)).h(relative(0.85))
+pub fn wide_panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
+    panel(name, look).w(px(880.0)).h(relative(0.85))
 }
 
 /// A sheet's head: its title in the app's words, and its actions trailing.
@@ -474,7 +478,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                panel(&look)
+                panel(ask.title.as_ref(), &look)
                     .child(head(
                         ask.title.as_ref(),
                         vec![cancel.into_any_element(), verb.into_any_element()],

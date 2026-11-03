@@ -594,7 +594,7 @@ impl RenderOnce for Slider {
         let mut slider = accessible(
             div().id(self.id.clone()),
             gpui_kit::Role::Slider,
-            self.name.clone(),
+            self.name.clone().or_else(|| super::spoken_id(&self.id)),
         )
         .aria_disabled(self.disabled)
         .aria_numeric_value(value as f64)
