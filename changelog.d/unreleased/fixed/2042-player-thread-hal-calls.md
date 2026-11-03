@@ -1,0 +1,1 @@
+- **Stopping, skipping and route changes no longer wait on the audio system.** Tearing down the last track's output and re-reading the output device's EQ after a route change now happen off the player thread, so a busy CoreAudio no longer holds up the next command.
