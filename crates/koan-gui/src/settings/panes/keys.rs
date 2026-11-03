@@ -84,7 +84,9 @@ async fn list(engine: Arc<KoanEngine>, kind: Kind) -> Result<Vec<Row>, KoanError
 
 impl Keys {
     pub fn new(kind: Kind, ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("The app it is for"));
+        let name = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::theme::label("The app it is for"))
+        });
         let mut keys = Self {
             kind,
             engine: ctx.model.read(cx).engine().clone(),

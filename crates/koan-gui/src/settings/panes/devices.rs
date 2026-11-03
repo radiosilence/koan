@@ -35,9 +35,11 @@ impl DevicesPane {
         let field = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
+        // The code's own form, in capitals as the other device shows it; the
+        // rest are the app's words, lowercase.
         let code = field("XXXX-XXXX", window, cx);
         let address = field("host or host:port", window, cx);
-        let grantee = field("Their username on this server", window, cx);
+        let grantee = field("their username on this server", window, cx);
         let subscriptions = vec![
             cx.observe(&ctx.model, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
