@@ -5,8 +5,8 @@
 //!
 //! | Key | Does |
 //! |---|---|
-//! | ↑ ↓ | light a row |
-//! | Return | with no row lit, every result on the results page; on a lit row, play a track (after the queue's end) or open a record or an artist |
+//! | ↑ ↓ | light a row, or "All results…" after the last |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, play a track (after the queue's end) or open a record or an artist |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -26,7 +26,7 @@ use koan_kit::app::*;
 use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
-use crate::components::{CommandBar, Cover, CoverArt, RowMetrics, SuggestionRow};
+use crate::components::{CommandBar, Cover, CoverArt, SuggestionRow};
 use crate::library::Lib;
 use crate::library::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::Playable;
@@ -44,8 +44,8 @@ pub struct Dismissed;
 struct Item {
     kind: Kind,
     id: i64,
-    /// The record whose sleeve the row shows.
-    album: Option<i64>,
+    /// The sleeve the row shows: its record's, or the artist's photo.
+    art: Option<Art>,
     title: SharedString,
     detail: Option<SharedString>,
     length: Option<SharedString>,
@@ -69,12 +69,12 @@ fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
-/// How many of each kind the box lists, as the Mac's search suggestions
-/// do: enough to recognise what was meant. Everything else is behind
-/// Return, on the results page.
-const TRACKS: usize = 5;
-const ALBUMS: usize = 4;
-const ARTISTS: usize = 4;
+/// How many of each kind the box lists: enough to recognise what was meant,
+/// as full rows that fit the panel. Everything else is behind Return, or
+/// "All results…", on the results page.
+const TRACKS: usize = 3;
+const ALBUMS: usize = 3;
+const ARTISTS: usize = 3;
 
 /// The search's answer as rows, in the order they are listed: tracks,
 /// records, artists, each kind capped.
@@ -82,7 +82,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let tracks = s.tracks.iter().take(TRACKS).map(|t| Item {
         kind: Kind::Track,
         id: t.id,
-        album: t.album_id,
+        art: t.album_id.map(Art::Album),
         title: t.title.clone().into(),
         detail: Some(format!("{} · {}", credit(&t.artist_credit), t.album_title).into()),
         length: Some(crate::library::format::duration(t.duration_ms).into()),
@@ -90,7 +90,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let albums = s.albums.iter().take(ALBUMS).map(|a| Item {
         kind: Kind::Album,
         id: a.id,
-        album: Some(a.id),
+        art: Some(Art::Album(a.id)),
         title: a.title.clone().into(),
         detail: Some(credit(&a.artist_credit).into()),
         length: None,
@@ -98,7 +98,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let artists = s.artists.iter().take(ARTISTS).map(|a| Item {
         kind: Kind::Artist,
         id: a.id,
-        album: None,
+        art: Some(Art::Artist(a.id)),
         title: a.name.clone().into(),
         detail: None,
         length: None,
@@ -270,7 +270,9 @@ impl SearchBar {
     }
 
     fn arrow(&mut self, down: bool, cx: &mut Context<Self>) {
-        let count = self.rows(cx).len();
+        let rows = self.rows(cx).len();
+        // The rows, then "All results…".
+        let count = if rows == 0 { 0 } else { rows + 1 };
         self.lit = step(self.lit, down, count);
         cx.notify();
     }
@@ -303,7 +305,8 @@ impl SearchBar {
         let picking = !self.ticked.is_empty();
         // Return with no row lit and nothing ticked is the query itself:
         // every result, as the Mac's search field submits.
-        if verb == Verb::Take && !picking && self.lit.is_none() {
+        let all = self.lit == Some(rows.len());
+        if all || (verb == Verb::Take && !picking && self.lit.is_none()) {
             if !self.input.read(cx).value().trim().is_empty() {
                 self.search.update(cx, |s, cx| s.submit(cx));
                 cx.emit(Dismissed);
@@ -420,8 +423,8 @@ impl SearchBar {
         let scale = window.scale_factor();
         let ranked: Vec<(Key, Priority)> = found
             .iter()
-            .filter_map(|r| r.album)
-            .map(|album| (Key::new(Art::Album(album), side, scale), Priority::Visible))
+            .filter_map(|r| r.art)
+            .map(|art| (Key::new(art, side, scale), Priority::Visible))
             .collect();
         let owner = cx.entity_id();
         self.lib
@@ -433,7 +436,7 @@ impl SearchBar {
 impl Render for SearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        let side = RowMetrics::sleeve(&p.look);
+        let side = SuggestionRow::sleeve(&p.look, true);
         let found = self.found(cx);
         self.aim(&found, side, window, cx);
         if self.lib.covers.update(cx, |c, cx| {
@@ -449,7 +452,7 @@ impl Render for SearchBar {
         // found, by kind.
         let mut sections: Vec<(Option<Kind>, Vec<SuggestionRow>)> = Vec::new();
         for (ix, item) in rows.iter().enumerate() {
-            let mut row = SuggestionRow::new(("search-bar-row", ix), item.title.clone());
+            let mut row = SuggestionRow::new(("search-bar-row", ix), item.title.clone()).tall();
             if let Some(detail) = &item.detail {
                 row = row.detail(detail.clone());
             }
@@ -463,13 +466,18 @@ impl Render for SearchBar {
                     Kind::Artist => Icon::Artist,
                 });
             } else {
-                row = match item.album {
-                    Some(album) => {
-                        let key = Key::new(Art::Album(album), side, scale);
+                row = match item.art {
+                    Some(art) => {
+                        let key = Key::new(art, side, scale);
                         let sleeve = self.lib.covers.update(cx, |c, _| c.sleeve(key));
-                        row.art(Cover::new(CoverArt::from(sleeve), side))
+                        let row = row.art(Cover::new(CoverArt::from(sleeve), side));
+                        if matches!(art, Art::Artist(_)) {
+                            row.round()
+                        } else {
+                            row
+                        }
                     }
-                    None => row.icon(Icon::Artist),
+                    None => row.icon(Icon::Track),
                 };
             }
             let row = row
@@ -498,13 +506,31 @@ impl Render for SearchBar {
         for (kind, list) in sections {
             bar = bar.section(kind.map_or("ticked", Kind::heading), list);
         }
+        // After the last row: every result, on the results page.
+        let all = rows.len();
+        bar = bar.last(
+            SuggestionRow::new("search-bar-all", "All results…")
+                .tall()
+                .icon(Icon::Search)
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered && this.lit != Some(all) {
+                        this.lit = Some(all);
+                        cx.notify();
+                    }
+                }))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.lit = Some(all);
+                    this.act(Verb::All, window, cx);
+                })),
+        );
         if !self.input.read(cx).value().trim().is_empty() && self.answered(cx) {
             bar = bar.empty("nothing found");
         }
         // What the keys do: with nothing lit or ticked, Return is the query
         // and the arrows choose a row; on a row, or a pick, the verbs act on
         // it. With nothing yet found, only Escape does anything.
-        let chosen = picking || self.lit.is_some();
+        let on_all = self.lit == Some(rows.len());
+        let chosen = picking || (self.lit.is_some() && !on_all);
         let bar = if rows.is_empty() {
             bar
         } else if !chosen {
@@ -571,7 +597,7 @@ mod tests {
         Item {
             kind,
             id,
-            album: None,
+            art: None,
             title: SharedString::default(),
             detail: None,
             length: None,

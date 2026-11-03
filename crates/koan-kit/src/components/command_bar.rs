@@ -32,6 +32,9 @@ pub struct CommandBar {
     keys: Vec<(SharedString, SharedString)>,
     /// What the body says with nothing found.
     empty: Option<SharedString>,
+    /// A row after every section, under no heading ("All results…"); lit as
+    /// the row after the last section's last.
+    last: Option<SuggestionRow>,
     on_dismiss: Option<super::Handler<()>>,
 }
 
@@ -48,8 +51,16 @@ impl CommandBar {
             lit: None,
             keys: Vec::new(),
             empty: None,
+            last: None,
             on_dismiss: None,
         }
+    }
+
+    /// The row after every section, under no heading: what goes further
+    /// than the list does ("All results…"). Shown only with results.
+    pub fn last(mut self, row: SuggestionRow) -> Self {
+        self.last = Some(row);
+        self
     }
 
     /// A group of results; one with none is left out.
@@ -105,6 +116,12 @@ impl RenderOnce for CommandBar {
                 items.push(row.lit(self.lit == Some(row_ix)).into_any_element());
                 row_ix += 1;
             }
+        }
+        if let Some(row) = self.last.filter(|_| found) {
+            if self.lit == Some(row_ix) {
+                reveal = Some(items.len());
+            }
+            items.push(row.lit(self.lit == Some(row_ix)).into_any_element());
         }
         let body = if found {
             // Takes what the panel has left after the query and the keys, and

@@ -110,9 +110,24 @@ pub struct SuggestionRow {
     lit: bool,
     picked: Option<bool>,
     figure: Option<SharedString>,
+    /// A full row: a larger sleeve, the title in `body` and the detail in
+    /// `meta`, for a list that is the whole of what it shows (the search
+    /// box). The sidebar's suggestions stay compact.
+    tall: bool,
+    /// The art drawn round: an artist's photo.
+    round: bool,
 }
 
 impl SuggestionRow {
+    /// The art's side: a full row's or a compact one's.
+    pub fn sleeve(look: &Look, tall: bool) -> Pixels {
+        if tall {
+            px((44.0 * look.scale.size).round())
+        } else {
+            RowMetrics::sleeve(look)
+        }
+    }
+
     /// A suggestion names a thing, so its title keeps its case.
     pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
         Self {
@@ -124,7 +139,21 @@ impl SuggestionRow {
             lit: false,
             picked: None,
             figure: None,
+            tall: false,
+            round: false,
         }
+    }
+
+    /// A full row; see [`SuggestionRow::sleeve`].
+    pub fn tall(mut self) -> Self {
+        self.tall = true;
+        self
+    }
+
+    /// The art drawn round, for an artist's photo.
+    pub fn round(mut self) -> Self {
+        self.round = true;
+        self
     }
 
     /// In a list things are picked from (the picker): the tick in the art's
@@ -174,7 +203,12 @@ impl StatefulInteractiveElement for SuggestionRow {}
 impl RenderOnce for SuggestionRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let side = RowMetrics::sleeve(&look);
+        let side = Self::sleeve(&look, self.tall);
+        let (title_role, detail_role) = if self.tall {
+            (TypeRole::Body, TypeRole::Meta)
+        } else {
+            (TypeRole::Meta, TypeRole::Fine)
+        };
         let line = |text: SharedString, role: TypeRole, color: Hsla| {
             div()
                 .min_w_0()
@@ -201,7 +235,11 @@ impl RenderOnce for SuggestionRow {
                         .role(TypeRole::Body)
                         .tone(Tone::Muted)
                 }),
-            (None, Some(art), _) => div().size(side).flex_none().child(art),
+            (None, Some(art), _) => div()
+                .size(side)
+                .flex_none()
+                .when(self.round, |d| d.rounded_full().overflow_hidden())
+                .child(art),
             (None, None, icon) => div()
                 .size(side)
                 .flex_none()
@@ -220,7 +258,7 @@ impl RenderOnce for SuggestionRow {
             .items_center()
             .gap(look.space(Space::S))
             .px(look.space(Space::S))
-            .py(look.space(Space::Xs))
+            .py(look.space(if self.tall { Space::S } else { Space::Xs }))
             .cursor_pointer()
             .when(self.lit, |d| d.bg(look.palette.surface.hsla()))
             .child(art)
@@ -230,10 +268,10 @@ impl RenderOnce for SuggestionRow {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .child(line(self.title, TypeRole::Meta, look.palette.ink.hsla()))
+                    .child(line(self.title, title_role, look.palette.ink.hsla()))
                     .children(
                         self.detail
-                            .map(|d| line(d, TypeRole::Fine, look.palette.muted.hsla())),
+                            .map(|d| line(d, detail_role, look.palette.muted.hsla())),
                     ),
             )
             .children(self.figure.map(|figure| {
