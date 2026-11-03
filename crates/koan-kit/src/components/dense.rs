@@ -7,8 +7,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 

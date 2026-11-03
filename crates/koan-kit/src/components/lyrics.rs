@@ -15,9 +15,9 @@
 
 use std::time::Instant;
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::base::Scrollbar;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 use crate::theme::{KoanStyled, KoanTheme, Look, Motion, TypeRole};
@@ -486,7 +486,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
@@ -511,10 +511,10 @@ mod tests {
 
     /// A click on a line hands its index over, an empty line keeping its
     /// place among the others.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_click_names_the_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let clicked = Rc::new(Cell::new(None));

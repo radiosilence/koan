@@ -8,9 +8,9 @@
 //! The owner holds the query's `InputState`, decides what is found and
 //! what each key does: the bar draws what it is given.
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::{ScrollArea, SuggestionHeading, SuggestionRow, TextField, sheet};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -115,7 +115,7 @@ impl RenderOnce for CommandBar {
                     // The results, a list box for a screen reader.
                     super::accessible(
                         div().id(super::child(&self.id, "list")).size_full(),
-                        gpui_kit::Role::ListBox,
+                        gpui::Role::ListBox,
                         Some(label("results")),
                     )
                     .child(ScrollArea::items(super::child(&self.id, "rows"), items).reveal(reveal)),
@@ -165,7 +165,7 @@ impl RenderOnce for CommandBar {
                 // results.
                 super::accessible(
                     div().id(super::child(&self.id, "bar")),
-                    gpui_kit::Role::Dialog,
+                    gpui::Role::Dialog,
                     Some(label("search")),
                 )
                 .w(look.spaced(Self::WIDTH))
@@ -179,7 +179,7 @@ impl RenderOnce for CommandBar {
                 .child(
                     super::accessible(
                         div().id(super::child(&self.id, "query")),
-                        gpui_kit::Role::ComboBox,
+                        gpui::Role::ComboBox,
                         Some(label("search")),
                     )
                     .flex()

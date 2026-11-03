@@ -14,5 +14,7 @@ pub mod theme;
 /// page takes from here is counted by `just gui-theme-leaks`, with a comment
 /// saying why.
 pub mod raw {
-    pub use gpui_kit::*;
+    pub use crate::app::platform::{application, init};
+    pub use gpui::*;
+    pub use gpui_platform as platform;
 }

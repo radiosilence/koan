@@ -8,9 +8,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::base::FocusTrapElement as _;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::{MenuPanel, MenuRow, MenuSeparator};
 use crate::theme::{Icon, KoanStyled, Look, Space};
@@ -1161,10 +1161,10 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::TestAppContext;
+    use gpui::TestAppContext;
 
     use super::*;
-    // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
+    // `gpui::*` brings GPUI's `test` attribute, which would expand its
     // own `#[test]` into itself.
     use core::prelude::v1::test;
 
@@ -1199,16 +1199,16 @@ mod tests {
     /// A playlist chosen with the pointer from "add to playlist" runs its
     /// choice: the press in the submenu, drawn outside the menu it opened
     /// from, closes neither before the click completes.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_choice_in_a_submenu_runs(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let chosen = Rc::new(Cell::new(None));
         let held = chosen.clone();
         let (_, cx) = cx.add_window_view(move |_, _| Page { chosen: held });
-        let cx: &mut gpui_kit::VisualTestContext = cx;
+        let cx: &mut gpui::VisualTestContext = cx;
         cx.run_until_parked();
         let page = cx.debug_bounds("page").expect("drawn");
         cx.simulate_mouse_down(
@@ -1270,17 +1270,17 @@ mod tests {
     /// A slot's menu opened with nothing focused, closed by Escape, gives
     /// the keyboard to the app's fallback, which may update the very view
     /// holding the slot, as the shell's does, without it being leased.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_slot_menu_with_nowhere_to_return_runs_the_fallback(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|_, _| Bar {
             slot: MenuSlot::default(),
             focused: false,
         });
-        let cx: &mut gpui_kit::VisualTestContext = cx;
+        let cx: &mut gpui::VisualTestContext = cx;
         let weak = bar.downgrade();
         cx.update(|_, cx| {
             on_menu_focus_lost(
@@ -1310,10 +1310,10 @@ mod tests {
     /// Refilled as renderers arrive, the menu keeps the row highlighted
     /// while it is still there, wherever it moves, and drops the highlight
     /// when it is gone.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let window = cx.add_empty_window();

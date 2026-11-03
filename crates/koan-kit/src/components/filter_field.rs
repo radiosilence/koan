@@ -6,9 +6,9 @@
 //! around it. The caller owns the `InputState` and listens to it: emptying
 //! the field is a change like any other.
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::component::input::{Escape, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::TextField;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
@@ -156,11 +156,7 @@ impl RenderOnce for FilterButton {
         } else {
             self.text.clone()
         };
-        let row = super::accessible(
-            div().id(self.id),
-            gpui_kit::Role::Button,
-            Some(shown.clone()),
-        );
+        let row = super::accessible(div().id(self.id), gpui::Role::Button, Some(shown.clone()));
         let row = match self.on_click {
             Some(run) => super::answers_click(row, run.clone())
                 .cursor_pointer()
@@ -194,7 +190,7 @@ impl RenderOnce for FilterButton {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext, point};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
 
     use super::*;
     use crate::components::{Toolbar, ToolbarButton, ToolbarGroup};
@@ -232,10 +228,10 @@ mod tests {
     }
 
     /// The field takes its width in a toolbar, and a click on it focuses it.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_filter_field_in_a_toolbar_takes_its_width_and_a_click(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (bar, cx) = cx.add_window_view(|window, cx| Bar {
@@ -262,10 +258,10 @@ mod tests {
 
     /// In a narrow toolbar the field gives up its width, down to its
     /// minimum, before the buttons beside it give up any.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_filter_field_shrinks_before_the_toolbar_buttons(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|window, cx| Bar {
@@ -306,10 +302,10 @@ mod tests {
     /// Typing shows the clear mark; a press on it empties the field, tells
     /// the owner, and leaves the keyboard in the field. Escape empties it
     /// too, and with nothing left goes on to what is around it.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_clear_mark_and_escape_empty_the_field(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (field, cx) = cx.add_window_view(|window, cx| Field {

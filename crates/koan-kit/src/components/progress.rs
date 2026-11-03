@@ -7,8 +7,8 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Animated, AnimatedQuad, Ease, Handler, Repeat, SHADED, ShaderProgram};
 use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, TypeRole};
@@ -239,7 +239,7 @@ impl RenderOnce for ProgressRow {
         // it has come where that is known, its counts as the value said.
         super::accessible(
             div().id(self.id.clone()),
-            gpui_kit::Role::ProgressIndicator,
+            gpui::Role::ProgressIndicator,
             Some(self.title.clone()),
         )
         .when_some(self.fraction, |d, f| {

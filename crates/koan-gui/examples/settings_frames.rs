@@ -72,8 +72,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let window = cx.open_window(size(px(900.), px(820.)), move |window, cx| {
         let view = cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx));
         held.set(Some(view.clone()));
-        // gpui-component's focus and click extensions, for the shell's own handling.
-        cx.new(|cx| koan_kit::raw::base::Root::new(view, window, cx))
+        koan_kit::components::host(view, window, cx)
     })?;
     let view = made.take().expect("the window was made");
     let window: AnyWindowHandle = window.into();

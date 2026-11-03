@@ -10,8 +10,8 @@
 //! (the user's call over the spec's 30 % `hover`): what shows under the
 //! pointer is the play mark and the heart, through `ROW_GROUP`.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Handler, RowKind, RowMetrics};
 use crate::theme::{KoanStyled, Look, TypeRole};
@@ -369,9 +369,9 @@ impl RenderOnce for TableRow {
             Some(name) => super::accessible(
                 base,
                 if heading {
-                    gpui_kit::Role::Heading
+                    gpui::Role::Heading
                 } else {
-                    gpui_kit::Role::ListItem
+                    gpui::Role::ListItem
                 },
                 Some(name),
             )
@@ -388,7 +388,7 @@ impl RenderOnce for TableRow {
         let list_view = window.current_view();
         let base = match self.reveal {
             Some(reveal) => base.on_a11y_action(
-                gpui_kit::AccessibleAction::ScrollIntoView,
+                gpui::AccessibleAction::ScrollIntoView,
                 move |_, window, cx| {
                     reveal(&(), window, cx);
                     cx.notify(list_view);

@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use gpui_kit::{
+use gpui::{
     AppContext, Context, Entity, IntoElement, Modifiers, ParentElement, Render, StyleRefinement,
     Styled, TestAppContext, Window, div, point, px,
 };
@@ -36,7 +36,7 @@ impl Render for Root {
     }
 }
 
-fn hover_finds_a_tooltip(cx: &mut gpui_kit::VisualTestContext) -> bool {
+fn hover_finds_a_tooltip(cx: &mut gpui::VisualTestContext) -> bool {
     cx.run_until_parked();
     let before = TOOLTIPS_DRAWN.load(Ordering::Relaxed);
     (0..200).step_by(4).any(|x| {
@@ -47,10 +47,10 @@ fn hover_finds_a_tooltip(cx: &mut gpui_kit::VisualTestContext) -> bool {
     })
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn a_toolbar_button_in_a_cached_view_shows_its_tooltip(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, cx| Root(cx.new(|_| Page)));
@@ -60,10 +60,10 @@ fn a_toolbar_button_in_a_cached_view_shows_its_tooltip(cx: &mut TestAppContext) 
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn a_toolbar_button_shows_its_tooltip(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Page);

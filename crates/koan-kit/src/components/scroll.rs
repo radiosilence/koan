@@ -4,8 +4,8 @@
 //! (`theme::sync_scrollbar`); a list keeps its own handle and lays a
 //! `Scrollbar` over itself the same way.
 
+use gpui::*;
 use gpui_kit::base::Scrollbar;
-use gpui_kit::*;
 
 use super::child;
 

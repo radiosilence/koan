@@ -6,8 +6,8 @@
 //! On the Mac a form is a column of sections on the ground, no cards or
 //! boxes, each row its label in a fixed column and what it holds after it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::ScrollArea;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};

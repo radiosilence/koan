@@ -10,8 +10,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::layer::{AnimatedLayer, sliding};
 use super::{SHADED, child};
