@@ -114,6 +114,8 @@ impl LyricsPanel {
         self.loading = Some(song.clone());
         self.fetching = None;
         self.active = None;
+        // A line clicked in the last song is not this one's.
+        self.sought = None;
         self._follow = None;
         let engine = engine(cx);
         let Song::Track(track) = song.clone() else {
@@ -181,11 +183,14 @@ impl LyricsPanel {
         let position = anchor.at(Instant::now(), 0) as f64 / 1000.0;
         let (mut active, next) = place(&lyrics.lines, position);
         let mut landed = true;
+        // How long the clicked line is still held, for a timer to end it at.
+        let mut held = None;
         match self.sought {
             Some((line, _)) if active == Some(line) => {}
             Some((line, at)) if at.elapsed() < SEEK_LANDS => {
                 active = Some(line);
                 landed = false;
+                held = Some((SEEK_LANDS - at.elapsed()).as_secs_f64());
             }
             _ => {}
         }
@@ -206,8 +211,12 @@ impl LyricsPanel {
             self.since = since;
             cx.notify();
         }
-        let (true, Some(wait)) = (anchor.playing, next) else {
-            return;
+        // The next line while playing, and the hold's end either way: a
+        // seek that does not land (paused, refused) gives the line back.
+        let wait = match (next.filter(|_| anchor.playing), held) {
+            (Some(next), Some(held)) => next.min(held),
+            (Some(wait), None) | (None, Some(wait)) => wait,
+            (None, None) => return,
         };
         self._follow = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -247,7 +256,10 @@ impl Render for LyricsPanel {
         let lyrics = self.lyrics(cx).cloned();
         let mut panel = Inspector::new("lyrics").clear(washed);
         if loading {
-            panel = panel.trailing(Spinner::new(look.font_size(crate::theme::TypeRole::Fine)));
+            panel = panel.trailing(
+                Spinner::new(look.font_size(crate::theme::TypeRole::Fine))
+                    .announced("lyrics-loading", "looking up lyrics"),
+            );
         } else if let Some(source) = lyrics.as_ref().and_then(|l| l.source.clone()) {
             panel = panel.trailing(source);
         }

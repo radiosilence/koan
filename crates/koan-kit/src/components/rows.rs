@@ -85,14 +85,23 @@ impl NavRow {
     /// Something dropped on the row (tracks on the queue, a record on a
     /// playlist): the row answers with a line drawn under it, so the person
     /// sees where it went, then `handler` takes it.
-    pub fn accept<T: 'static>(
+    pub fn accept<T: 'static>(self, handler: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
+        self.accept_if(|_: &T| true, handler)
+    }
+
+    /// `accept`, for what `takes` says the row takes: a drop it does not
+    /// take is let go without the answer saying it arrived.
+    pub fn accept_if<T: 'static>(
         mut self,
+        takes: impl Fn(&T) -> bool + 'static,
         handler: impl Fn(&T, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.accepts.push(Box::new(move |base, answers, accent| {
             base.on_drop(move |dropped: &T, window, cx| {
-                answers.start(super::Answer::Sweep, accent, cx);
-                handler(dropped, window, cx)
+                if takes(dropped) {
+                    answers.start(super::Answer::Sweep, accent, cx);
+                    handler(dropped, window, cx)
+                }
             })
         }));
         self
@@ -472,7 +481,6 @@ impl RenderOnce for FigureCell {
             .flex_none()
             .text_right()
             .text_role(TypeRole::Meta, &look)
-            .text_color(look.palette.muted.hsla())
             .child(self.0)
     }
 }
@@ -493,6 +501,13 @@ impl RenderOnce for ListRow {
             on
         } else if self.playing {
             look.text_color(crate::theme::Tone::Accent)
+        } else {
+            look.palette.muted.hsla()
+        };
+        // Detail and figures are muted, which the selection's fill would
+        // swallow: on it they take `on_selection` with the title.
+        let quiet = if self.selected {
+            on
         } else {
             look.palette.muted.hsla()
         };
@@ -534,7 +549,7 @@ impl RenderOnce for ListRow {
                     .children(self.detail.map(|detail| {
                         div()
                             .text_role(TypeRole::Meta, &look)
-                            .text_color(look.palette.muted.hsla())
+                            .text_color(quiet)
                             .truncate()
                             .child(detail)
                     })),
@@ -542,7 +557,7 @@ impl RenderOnce for ListRow {
             .children(
                 self.trailing
                     .into_iter()
-                    .map(|cell| div().relative().child(cell)),
+                    .map(|cell| div().relative().text_color(quiet).child(cell)),
             );
         row.when_some(on_click, |row, on_click| {
             row.on_click(move |event, window, cx| on_click(event, window, cx))

@@ -688,8 +688,9 @@ impl QueueView {
                 .id(("sleeve", row as u64))
                 .into_any_element()
         });
-        // What a track row reads beyond its item: its heart. A transfer's
-        // progress its availability mark reads each frame it is drawn.
+        // What a track row reads beyond its item: its heart, and its
+        // transfer, whose progress the availability mark's ring glides on
+        // the GPU.
         let mut favourite = None;
         let mut availability = None;
         if let Row::Track { ix, .. } = r {
@@ -875,7 +876,9 @@ fn row_menu(
         return menu;
     };
     let ids = this.acting_on(row, cx);
-    let grouped = this.queue.read(cx).grouped;
+    // What was asked for, not what is laid out: a regroup lands on the
+    // background executor, and a second toggle before it would undo the first.
+    let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
@@ -1048,7 +1051,7 @@ fn row_menu(
         .item(
             MenuEntry::new("group by album")
                 .icon(Icon::Album)
-                .checked(grouped)
+                .toggled(grouped)
                 .on_click({
                     let view = view.clone();
                     move |_, window, cx| {
@@ -1506,7 +1509,8 @@ impl QueueView {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
-        let grouped = queue.grouped;
+        // What was asked for, not what is laid out yet.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();
@@ -1677,11 +1681,7 @@ impl QueueView {
         count: usize,
         cx: &mut Context<Self>,
     ) {
-        let last = count
-            .checked_sub(1)
-            .and_then(|last| self.list.row_bounds(last))
-            .map(|b| b.bottom());
-        let Some(wanted) = page_drop(page.contains(&at), last, at.y, count) else {
+        let Some(wanted) = drag_over_page(&self.list, page, at, count) else {
             return;
         };
         if self.drop_at != wanted {
@@ -1691,13 +1691,38 @@ impl QueueView {
     }
 }
 
-/// Where a drag over the queue's page, outside its rows, puts the insertion
-/// point: none outside the page, the end below the last row drawn (at
-/// `last`, its bottom edge), and otherwise what the rows said, which is
-/// `None` here.
-fn page_drop(inside: bool, last: Option<Pixels>, y: Pixels, count: usize) -> Option<Option<usize>> {
+/// Where a drag over a page of `count` rows in `list` (the queue's or a
+/// playlist's), outside the rows, puts the insertion point; see
+/// `page_drop`.
+pub(crate) fn drag_over_page(
+    list: &crate::components::RowListState,
+    page: Bounds<Pixels>,
+    at: Point<Pixels>,
+    count: usize,
+) -> Option<Option<usize>> {
+    let first = list.row_bounds(0).filter(|_| count > 0).map(|b| b.top());
+    let last = count
+        .checked_sub(1)
+        .and_then(|last| list.row_bounds(last))
+        .map(|b| b.bottom());
+    page_drop(page.contains(&at), first, last, at.y, count)
+}
+
+/// Where a drag over a page, outside its rows, puts the insertion point:
+/// none outside the page, the start above the first row drawn (`first`,
+/// its top edge), the end below the last (`last`, its bottom edge), and
+/// otherwise what the rows said, which is `None` here.
+fn page_drop(
+    inside: bool,
+    first: Option<Pixels>,
+    last: Option<Pixels>,
+    y: Pixels,
+    count: usize,
+) -> Option<Option<usize>> {
     if !inside {
         Some(None)
+    } else if first.is_some_and(|top| y < top) {
+        Some(Some(0))
     } else if last.is_some_and(|bottom| y > bottom) {
         Some(Some(count))
     } else {
@@ -1833,15 +1858,21 @@ impl Render for QueueView {
 mod tests {
     use super::*;
 
-    /// Below the last row the drop is at the end, whatever row the pointer
-    /// last crossed; outside the page there is none; over the rows, theirs.
+    /// Below the last row the drop is at the end and above the first at the
+    /// start, whatever row the pointer last crossed; outside the page there
+    /// is none; over the rows, theirs.
     #[test]
-    fn the_blank_under_the_rows_is_the_end() {
+    fn the_blank_around_the_rows_is_the_start_or_the_end() {
         let at = |y: f32| Pixels::from(y);
-        assert_eq!(page_drop(true, Some(at(200.)), at(260.), 5), Some(Some(5)));
-        assert_eq!(page_drop(false, Some(at(200.)), at(260.), 5), Some(None));
-        assert_eq!(page_drop(true, Some(at(200.)), at(120.), 5), None);
-        // The last row off screen: the list fills the page, nothing is blank.
-        assert_eq!(page_drop(true, None, at(260.), 5), None);
+        let rows = (Some(at(40.)), Some(at(200.)));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(260.), 5), Some(Some(5)));
+        assert_eq!(page_drop(false, rows.0, rows.1, at(260.), 5), Some(None));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(120.), 5), None);
+        // Above the first row, under the header: the start.
+        assert_eq!(page_drop(true, rows.0, rows.1, at(20.), 5), Some(Some(0)));
+        // The first and last rows off screen: the list fills the page,
+        // nothing is blank.
+        assert_eq!(page_drop(true, None, None, at(260.), 5), None);
+        assert_eq!(page_drop(true, None, None, at(20.), 5), None);
     }
 }

@@ -60,8 +60,9 @@ impl RowListState {
         super::lists::reveal_around_list(&self.0, ix);
     }
 
-    /// Where row `ix` was drawn last frame, in the window; `None` while it
-    /// is off screen.
+    /// Where row `ix` was laid out last frame, in the window: for a row
+    /// past the viewport's edge, outside it. `None` for a row the list has
+    /// not laid out.
     pub fn row_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.bounds_for_item(ix)
     }

@@ -361,6 +361,11 @@ impl StoryContent {
                     CopyText::new("story-copy-text", "koan.rocks/pair/7KQ2-M9XD")
                         .help("copy the link")
                         .into_any_element(),
+                    SectionHeader::new("Popover panel").into_any_element(),
+                    crate::components::popover_panel(240.0, look)
+                        .child(div().child("Codec: FLAC"))
+                        .child(div().child("Sample rate: 96 kHz"))
+                        .into_any_element(),
                     SectionHeader::new("Filter field and suggestions").into_any_element(),
                     div()
                         .relative()

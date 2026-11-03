@@ -129,7 +129,7 @@ pub use lists::{
     spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
-pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
@@ -556,8 +556,12 @@ pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> S
         .child(fill)
 }
 
-/// A fill under a control, in `color`, faded with `transition`.
+/// A fill under a control, in `color`, faded with `transition`. Out, and
+/// not fading, it is nothing: a control at rest puts no quad in the scene.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
+    if transition.at(0, Animated::now()) <= 0.0 && !transition.moving() {
+        return gpui_kit::Empty.into_any_element();
+    }
     if !SHADED {
         let amount = transition.at(0, Animated::now());
         return div()

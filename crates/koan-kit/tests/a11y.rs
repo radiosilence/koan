@@ -13,7 +13,7 @@ use gpui_kit::{
 use koan_kit::components::{
     Badge, Banner, Button, ButtonKind, EmptyState, IconToggle, NavNote, NavRow, PageHeader,
     PlayButton, ProgressRow, RowKind, RowList, RowListState, SectionHeading, Segmented,
-    ShuffleButton, Slider, Stepper, TableRow, Toggle, Toolbar, UniformListScrollHandle,
+    ShuffleButton, Slider, Spinner, Stepper, TableRow, Toggle, Toolbar, UniformListScrollHandle,
     reveal_around, spoken, uniform_list,
 };
 use koan_kit::theme::{self, Icon, Tone};
@@ -256,6 +256,7 @@ impl Render for Queue {
                 Tone::Bad,
             ))
             .child(NavNote::new("Waiting for the TV to wake", Tone::Muted))
+            .child(Spinner::new(px(16.)).announced("keys-loading", "loading keys"))
             .child(
                 div().h(px(400.)).child(
                     RowList::new(&self.list, move |ix, _, _| {
@@ -315,6 +316,9 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     assert_eq!(banner["value"], "the server can't be reached");
     let (_, note) = node(&tree, "Waiting for the TV to wake", "Status");
     assert_eq!(note["live"], "Polite");
+    // A spinner standing for content says what is on its way.
+    let (_, loading) = node(&tree, "loading keys", "Status");
+    assert_eq!(loading["live"], "Polite");
 
     send(window, cx, Action::ScrollIntoView, row);
     assert_eq!(revealed.get(), Some(2));

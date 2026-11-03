@@ -537,9 +537,10 @@ impl Render for AlbumPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(crate::components::Spinner::new(
-                    p.look.font_size(crate::theme::TypeRole::Body),
-                ))
+                .child(
+                    crate::components::Spinner::new(p.look.font_size(crate::theme::TypeRole::Body))
+                        .announced("record-loading", "loading the record"),
+                )
                 .into_any_element(),
             _ => div().into_any_element(),
         };
