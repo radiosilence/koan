@@ -301,6 +301,7 @@ impl<V: TileHost> Render for TileView<V> {
             None
         };
         let art = TileArt::new(side, sleeve)
+            .id(("tile-art", id as u64))
             .codec(record.codec.clone())
             .badge(record.badge.clone())
             .mark(mark)

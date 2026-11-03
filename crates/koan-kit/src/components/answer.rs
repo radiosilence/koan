@@ -254,6 +254,11 @@ impl Answerer {
         }
     }
 
+    #[cfg(test)]
+    fn seen(&self, cx: &App) -> Option<u64> {
+        self.0.read(cx).seen
+    }
+
     /// The answer being drawn, as a quad over the control and a little past
     /// it, for the control to add as its last child; nothing at rest. The
     /// control is `relative`.
@@ -281,6 +286,51 @@ impl Answerer {
 mod tests {
     use super::*;
     use core::prelude::v1::test;
+    use gpui_kit::{TestAppContext, VisualTestContext, div, red};
+
+    /// Two controls side by side, each following its own mark.
+    struct Two {
+        marks: [u64; 2],
+        answers: Vec<Answerer>,
+    }
+
+    impl Render for Two {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.answers = (0..2)
+                .map(|i| {
+                    let answers = Answerer::of(&ElementId::from(("control", i)), window, cx);
+                    answers.follow(self.marks[i], Answer::Sweep, red(), window, cx);
+                    answers
+                })
+                .collect();
+            div()
+        }
+    }
+
+    /// A control's answers are its own: one control's mark moving leaves
+    /// its neighbour's state where it was.
+    #[gpui_kit::test]
+    fn each_control_follows_its_own_mark(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Two {
+            marks: [0, 0],
+            answers: Vec::new(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        view.update(cx, |two, cx| {
+            two.marks[0] = 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let seen = view.update(cx, |two, cx| {
+            two.answers.iter().map(|a| a.seen(cx)).collect::<Vec<_>>()
+        });
+        assert_eq!(seen, [Some(1), Some(0)]);
+    }
 
     #[test]
     fn every_answer_is_within_the_motion_tokens() {
