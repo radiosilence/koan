@@ -1257,6 +1257,8 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    // KOAN: how many frames this window has drawn (#1871).
+    drawn_frames: u64,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
@@ -2182,6 +2184,7 @@ impl Window {
             focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            drawn_frames: 0, // KOAN: #1871.
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
@@ -2742,6 +2745,12 @@ impl Window {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
+    /// KOAN: the frame being drawn, counted from the window's first: what
+    /// work spread over frames, such as uploads, is budgeted by (#1871).
+    pub fn frame_number(&self) -> u64 {
+        self.drawn_frames
+    }
+
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
         self.platform_window.schedule_frame();
@@ -3462,6 +3471,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.drawn_frames += 1; // KOAN: #1871.
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
