@@ -202,6 +202,30 @@ pub struct MenuTarget {
     pub after: After,
 }
 
+/// What the menu key's menu acts on: the pick when the item under the
+/// keyboard's cursor is in it, the item alone otherwise. `album` is the
+/// record of a single track, for "go to album".
+pub fn keyed_target(
+    selection: &super::selection::Selection,
+    item: Playable,
+    album: Option<i64>,
+) -> MenuTarget {
+    let picked = selection.picked();
+    if selection.contains(item) && picked.len() > 1 {
+        MenuTarget {
+            items: picked.into(),
+            album: None,
+            after: None,
+        }
+    } else {
+        MenuTarget {
+            items: Arc::from([item]),
+            album,
+            after: None,
+        }
+    }
+}
+
 /// A page with one context menu over its list, rather than one per row: a
 /// row notes what was right-clicked, and the list's menu acts on it.
 pub trait Menus: Sized + 'static {

@@ -75,6 +75,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", SelectNext, ctx),
         KeyBinding::new("shift-up", ExtendPrevious, ctx),
         KeyBinding::new("shift-down", ExtendNext, ctx),
+        KeyBinding::new("menu", crate::components::list_actions::ShowMenu, ctx),
+        KeyBinding::new("shift-f10", crate::components::list_actions::ShowMenu, ctx),
     ]
 }
 
@@ -580,7 +582,7 @@ impl QueueView {
         &mut self,
         row: usize,
         p: &Paint,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows(cx).len();
@@ -588,6 +590,8 @@ impl QueueView {
             return div().into_any_element();
         }
         let selected = self.is_selected(row, cx);
+        let cursor = self.focus.is_focused(window)
+            && self.cursor.as_ref().and_then(|r| self.row_of(r, cx)) == Some(row);
         // The insertion line keeps the accent over a picked row.
         let insertion = p.accent;
         let p = &p.picked(selected);
@@ -702,6 +706,7 @@ impl QueueView {
         let list = self.list.clone();
         row_frame
             .selected(selected)
+            .cursor(cursor)
             .when(p.a11y, |frame| {
                 frame
                     .place(row, count)
@@ -1656,6 +1661,18 @@ impl Render for QueueView {
                     cx.notify();
                 }
             }))
+            // The menu key: the row under the cursor, before the list's menu
+            // on this element opens over it.
+            .capture_action(cx.listener(
+                |this, _: &crate::components::list_actions::ShowMenu, _, cx| {
+                    this.menu_row = this.cursor.as_ref().and_then(|r| this.row_of(r, cx));
+                    // On screen, so the menu opens over it.
+                    if let Some(row) = this.menu_row {
+                        this.list.reveal(row);
+                        cx.notify();
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::play_selected))
             .on_action(cx.listener(Self::remove_selected))
             .on_action(cx.listener(Self::select_previous))

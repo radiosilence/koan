@@ -53,6 +53,7 @@ enum Items {
 pub struct CollectionSection {
     heading: SectionHeading,
     items: Items,
+    reveal: Option<usize>,
 }
 
 impl CollectionSection {
@@ -66,6 +67,7 @@ impl CollectionSection {
                     .map(IntoElement::into_any_element)
                     .collect(),
             ),
+            reveal: None,
         }
     }
 
@@ -79,6 +81,7 @@ impl CollectionSection {
         Self {
             heading,
             items: Items::Tiles(grid, tiles.into_iter().collect()),
+            reveal: None,
         }
     }
 
@@ -88,7 +91,15 @@ impl CollectionSection {
         Self {
             heading,
             items: Items::Rows(rows.into_iter().collect()),
+            reveal: None,
         }
+    }
+
+    /// Scrolls item `ix` of this section into view when it changes: the
+    /// one under the page's keyboard cursor.
+    pub fn reveal(mut self, ix: Option<usize>) -> Self {
+        self.reveal = ix;
+        self
     }
 
     fn is_empty(&self) -> bool {
@@ -157,47 +168,64 @@ impl RenderOnce for Collection {
 
         let inset = |content: AnyElement| div().w_full().px(margin).child(content);
         let empty = self.sections.is_empty();
-        let mut column = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .pt(RowMetrics::page_top(&look))
-            .pb(look.space(Space::Xl))
-            .children(
-                self.header
-                    .map(|h| inset(h.into_any_element()).pb(RowMetrics::header_gap(&look))),
-            );
+        // One line per heading, pill flow, row of tiles and table row, so
+        // any of them can be scrolled into view.
+        let mut lines: Vec<AnyElement> =
+            vec![div().h(RowMetrics::page_top(&look)).into_any_element()];
+        lines.extend(self.header.map(|h| {
+            inset(h.into_any_element())
+                .pb(RowMetrics::header_gap(&look))
+                .into_any_element()
+        }));
+        let mut reveal = None;
         for section in self.sections {
-            column = column.child(inset(section.heading.into_any_element()));
-            column = column.child(match section.items {
-                Items::Pills(pills) => inset(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(Pill::gap(&look))
-                        .children(pills)
+            lines.push(inset(section.heading.into_any_element()).into_any_element());
+            let first = lines.len();
+            match section.items {
+                Items::Pills(pills) => {
+                    reveal = reveal.or(section.reveal.map(|_| first));
+                    lines.push(
+                        inset(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap(Pill::gap(&look))
+                                .children(pills)
+                                .into_any_element(),
+                        )
                         .into_any_element(),
-                ),
+                    );
+                }
                 Items::Tiles(grid, tiles) => {
-                    let mut rows = div().flex().flex_col();
+                    let columns = grid.columns.max(1);
+                    reveal = reveal.or(section.reveal.map(|ix| first + ix / columns));
                     let mut tiles = tiles.into_iter().peekable();
                     while tiles.peek().is_some() {
-                        rows = rows.child(
+                        // On the grid's own inset: the page's margin and a
+                        // share of the spare width, so the tiles keep their
+                        // size as the window resizes.
+                        lines.push(
                             div()
+                                .w_full()
+                                .px(grid.inset)
                                 .flex()
                                 .gap(grid.gap)
                                 .h(grid.row)
-                                .children(tiles.by_ref().take(grid.columns)),
+                                .children(tiles.by_ref().take(columns))
+                                .into_any_element(),
                         );
                     }
-                    // On the grid's own inset: the page's margin and a share of
-                    // the spare width, so the tiles keep their size as the
-                    // window resizes.
-                    div().w_full().px(grid.inset).child(rows)
                 }
-                Items::Rows(rows) => div().w_full().flex().flex_col().children(rows),
-            });
+                Items::Rows(rows) => {
+                    reveal = reveal.or(section.reveal.map(|ix| first + ix));
+                    lines.extend(
+                        rows.into_iter()
+                            .map(|row| div().w_full().child(row).into_any_element()),
+                    );
+                }
+            }
         }
+        lines.push(div().h(look.space(Space::Xl)).into_any_element());
 
         div()
             .relative()
@@ -209,10 +237,10 @@ impl RenderOnce for Collection {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .child(column)
+                        .child(div().w_full().flex().flex_col().children(lines))
                         .child(div().flex_1().flex().child(state)),
                 ),
-                _ => d.child(ScrollArea::new(self.id, column)),
+                _ => d.child(ScrollArea::items(self.id, lines).reveal(reveal)),
             })
     }
 }

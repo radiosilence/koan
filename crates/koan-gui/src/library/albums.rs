@@ -125,6 +125,10 @@ pub struct AlbumGrid {
     restore: Option<Pixels>,
     rewinds: u64,
     focus: FocusHandle,
+    /// The keyboard's place in the grid, by record.
+    cursor: crate::components::ListCursor,
+    /// The grid holds the keyboard, as of the last frame.
+    keyed: bool,
     search: Entity<chrome::SearchField>,
     filters: Entity<chrome::FilterPanel>,
     /// The list's height as of the last frame, to tell when it moved.
@@ -212,6 +216,8 @@ impl AlbumGrid {
             restore,
             rewinds,
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             search,
             filters,
             viewport: 0.0,
@@ -507,6 +513,7 @@ impl AlbumGrid {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&record.id),
+                cursor: self.keyed && self.cursor.at == Some(start + ix),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -751,6 +758,11 @@ impl TileHost for AlbumGrid {
     ) {
         window.focus(&self.focus, cx);
         let item = Playable::Album(album);
+        // The keyboard carries on from the tile clicked.
+        if let Some(index) = self.records.iter().position(|r| r.id == album) {
+            self.cursor.at = Some(index);
+            self.cursor.anchor = Some(index);
+        }
         if self
             .selection
             .take(item, modifiers.shift, modifiers.secondary(cx), &self.order)
@@ -902,40 +914,104 @@ impl Render for AlbumGrid {
             None => div().into_any_element(),
         };
 
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .size_full()
-            .flex()
-            .flex_col()
-            .typeset(p, Type::Body, p.ink)
-            .when(!held, |d| d.child(header))
-            .child(actions::list_menu(
-                div()
-                    .id("album-grid")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
-                    .child(measure)
-                    .child(body)
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(crate::components::list_scrollbar(&self.scroll)),
-                cx.weak_entity(),
-                window,
+        self.keyed = self.focus.is_focused(window);
+        self.cursor.clamp(count);
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .size_full()
+        .flex()
+        .flex_col()
+        .typeset(p, Type::Body, p.ink)
+        .when(!held, |d| d.child(header))
+        .child(
+            div()
+                .id("album-grid")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
+                .child(measure)
+                .child(body)
+                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
+                .child(crate::components::list_scrollbar(&self.scroll)),
+        )
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
                 cx,
             ))
-            .when(self.selection.is_active(), |d| {
-                d.child(chrome::selection_bar(
-                    p,
-                    &self.lib,
-                    &self.selection,
-                    cx.entity(),
-                    cx,
-                ))
-            })
+        })
+    }
+}
+
+impl super::keys::KeyedList for AlbumGrid {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    fn columns(&self) -> usize {
+        self.grid.map_or(1, |grid| grid.columns)
+    }
+
+    fn page(&self) -> usize {
+        self.heading.borrow().visible.len().max(1)
+    }
+
+    /// One record is marked, as a plain click on a list row marks it,
+    /// without starting a pick: the tiles still play on a click. A range
+    /// starts one.
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let item = |ix: usize| Playable::Album(self.records[ix].id);
+        if from == to {
+            self.selection.mark(item(from));
+        } else {
+            self.selection.only(item(from));
+            self.selection.click(item(to), true, &self.order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let item = Playable::Album(self.records[ix].id);
+        self.selection.click(item, false, &self.order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        if let Some(grid) = self.grid {
+            self.scroll.scroll_to_item(
+                ix / grid.columns.max(1),
+                crate::components::ScrollStrategy::Nearest,
+            );
+        }
+    }
+
+    /// Return opens the record, as a click on its title does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let album = self.records[ix].id;
+        self.lib
+            .nav
+            .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+        });
     }
 }
 
