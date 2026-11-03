@@ -258,10 +258,9 @@ pub struct Mirror {
 impl Global for Mirror {}
 
 impl Mirror {
-    /// Starts following the engine. The loop ends when the engine goes, since
-    /// the stream holds it weakly and answers `None` then.
-    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
-        let mirror = Self {
+    /// Every slice as it stands before the engine says anything.
+    pub fn empty(cx: &mut App) -> Self {
+        Self {
             playback: cx.new(|_| Playback(idle())),
             playhead: cx.new(|_| Playhead {
                 position_ms: 0,
@@ -286,7 +285,13 @@ impl Mirror {
             devices: cx.new(|_| Slice(Devices::default())),
             connection: cx.new(|_| Slice(None)),
             renderers: cx.new(|_| Slice(Renderers::default())),
-        };
+        }
+    }
+
+    /// Starts following the engine. The loop ends when the engine goes, since
+    /// the stream holds it weakly and answers `None` then.
+    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
+        let mirror = Self::empty(cx);
         let stream = engine.observe();
         let held = mirror.clone();
         // Whether the app is still there: the engine can outlive it, as in
