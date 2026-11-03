@@ -100,7 +100,10 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &RebuildIndex, cx| {
         let d = d.clone();
         cx.defer(move |cx| {
-            let Some(window) = cx.active_window() else {
+            // Questions are drawn in the main window, not Settings' or the
+            // EQ's: it comes forward to ask.
+            crate::platform::to_front(cx);
+            let Some(window) = crate::app::main_window(cx) else {
                 return;
             };
             window
@@ -415,7 +418,10 @@ fn clear_downloads(cx: &mut App) {
         );
         return;
     }
-    let Some(window) = cx.active_window() else {
+    // Questions are drawn in the main window, not Settings' or the EQ's: it
+    // comes forward to ask.
+    crate::platform::to_front(cx);
+    let Some(window) = crate::app::main_window(cx) else {
         return;
     };
     window

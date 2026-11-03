@@ -348,7 +348,7 @@ impl ArtistPage {
                 }
             }
             Item::Track(i) => Anchored::Track(record.appearances.get(*i)?.id),
-            Item::About => return None,
+            Item::About => Anchored::About,
         };
         Some(Anchor {
             at,
@@ -378,6 +378,7 @@ impl ArtistPage {
             (Item::Track(i), Anchored::Track(id)) => {
                 record.appearances.get(*i).is_some_and(|t| t.id == id)
             }
+            (Item::About, Anchored::About) => true,
             _ => false,
         });
         match item_ix {
