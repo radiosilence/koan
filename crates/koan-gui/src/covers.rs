@@ -136,7 +136,10 @@ impl Covers {
             }
             covers.waiting.retain(|key| !albums.contains(&key.0));
             for key in keys {
-                if let Some(Held::Ready(image, _)) = covers.held.remove(&key) {
+                // Every state goes, a fetch's `Loading` included, so the next
+                // draw asks again under the new epoch.
+                let held = covers.held.remove(&key);
+                if let Some(Held::Ready(image, _)) = held {
                     covers.ready -= 1;
                     cx.drop_image(image, None);
                 }
