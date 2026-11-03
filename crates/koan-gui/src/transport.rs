@@ -391,7 +391,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Devices,
-            trailing_item(p)
+            trailing_item(p, false)
                 .id("devices")
                 .tooltip(tip(if away {
                     format!("{name} is out of reach")
@@ -423,7 +423,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Eq,
-            trailing_item(p)
+            trailing_item(p, p.look.icons)
                 .id("eq")
                 .text_color(color)
                 .hover(|s| s.opacity(0.8))
@@ -712,7 +712,7 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     } else {
         div().child(label).into_any_element()
     };
-    trailing_item(p)
+    trailing_item(p, p.look.icons)
         .group(TEXT_BUTTON)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
@@ -721,8 +721,17 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
 
 /// One of the trailing group's items, as the Mac lays them out: as wide as
 /// what it shows, the full bar's height and half the gap either side to hit.
-fn trailing_item(p: &Paint) -> Div {
-    let reach = TransportMetrics::trailing_gap(&p.look) / 2.;
+/// A glyph alone reaches further, over the gap, so it is at least `HIT` wide
+/// to click: padding taken back by an equal negative margin, so the item's
+/// own bounds grow and nothing moves.
+fn trailing_item(p: &Paint, glyph_only: bool) -> Div {
+    let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
+    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
+    let reach = if glyph_only {
+        gap.max((theme::HIT - glyph) / 2.)
+    } else {
+        gap
+    };
     div()
         .flex()
         .items_center()
