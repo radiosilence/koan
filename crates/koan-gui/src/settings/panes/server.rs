@@ -215,6 +215,7 @@ impl ServerPane {
                 invite.username
             )
         };
+        let title = format!("Sign in as {} on {host}?", invite.username);
         let join = {
             let model = model.clone();
             move |_: &[String], _: &mut Window, cx: &mut App| {
@@ -222,7 +223,7 @@ impl ServerPane {
                 model.update(cx, |m, cx| m.join_invite(invite, cx))
             }
         };
-        let sheet = Sheet::new(format!("Sign in as {} on {host}?", invite.username))
+        let sheet = Sheet::new(title)
             .message(message)
             .action(Action::new("Sign In", join));
         self.ctx
