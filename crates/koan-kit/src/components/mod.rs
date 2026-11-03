@@ -95,7 +95,7 @@ pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
     ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
-pub use answer::{ANSWER, Answer, Answerer};
+pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};

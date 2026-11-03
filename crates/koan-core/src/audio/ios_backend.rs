@@ -203,6 +203,10 @@ impl AudioBackend for IosAudioBackend {
         }
     }
 
+    fn rate_watch_on_player(&self) -> bool {
+        true
+    }
+
     fn watch_device_sample_rate(
         &self,
         _device: &DeviceInfo,

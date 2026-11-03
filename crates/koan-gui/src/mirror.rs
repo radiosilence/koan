@@ -486,6 +486,7 @@ fn idle() -> NowPlaying {
         sleep: None,
         sleep_fading: false,
         start_failure: None,
+        output_wait: None,
     }
 }
 

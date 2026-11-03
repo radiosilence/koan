@@ -18,6 +18,7 @@ pub mod mirror;
 pub mod navigator;
 pub mod notice;
 pub mod organize;
+pub mod output_wait;
 pub mod paint;
 pub mod platform;
 pub mod queue;

@@ -9,6 +9,17 @@ use super::state::{PlayMode, PlaylistItem, QueueItemId, QueueMode, Repeat, Sleep
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
 pub enum PlayerCommand {
+    /// An output opened off the player thread, or why it did not
+    /// (`Player::spawn_open`). Dropped when a newer one was asked for since.
+    OutputOpened(super::OutputReady),
+    /// Ask the output again while it is still opening: the attempt under way
+    /// is abandoned. Refused while an earlier abandoned attempt is still
+    /// stuck, so a wedged audio system cannot pile up threads.
+    RetryOutput,
+    /// Stop waiting for the output: the system's default is opened in place
+    /// of a device that would not open, or with the default already wanted,
+    /// playback stops.
+    CancelOutput,
     /// Set the cursor and start playback.
     Play(QueueItemId),
     /// Set the cursor and load `id` at `position_ms`, playing or paused.

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use gpui::prelude::FluentBuilder as _;
+
 use gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
@@ -268,6 +270,22 @@ impl RenderOnce for Button {
             "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
         );
         let role = kind.role();
+        // Play and pause fold into each other as the state they show moves,
+        // whoever moved it; the glyph is drawn by the program meanwhile.
+        // Only a glyph alone, a toggle's face: a labelled button with one of
+        // those glyphs (a "Play" header button) shows no state to move.
+        let morphing = glyph_only && self.icon.is_some_and(super::answer::morphs);
+        if let Some(icon) = self.icon.filter(|_| morphing) {
+            let mark = super::answer::glyph_mark(icon, None);
+            if let Some(answer) = answers
+                .seen(cx)
+                .and_then(|from| super::answer::glyph_motion(from, mark))
+            {
+                answers.follow(mark, answer, look.accent.hsla(), window, cx);
+            } else {
+                answers.note(mark, cx);
+            }
+        }
 
         // Named by its label, or a glyph's by what its tooltip says it does.
         let name = self.label.clone().or_else(|| self.help.clone());
@@ -300,7 +318,8 @@ impl RenderOnce for Button {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                    if let Some(answer) = answer {
+                    // A glyph that morphs answers as its state lands.
+                    if let Some(answer) = answer.filter(|_| !morphing) {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
@@ -337,10 +356,24 @@ impl RenderOnce for Button {
             _ => {}
         }
 
-        let glyph = self
-            .icon
-            .filter(|_| show_glyph)
-            .map(|icon| KoanIcon::new(icon).role(role).color(color));
+        let hidden = answers.glyph_live(cx);
+        let drawn = answers.glyph_layer(
+            px(crate::theme::icons::side(look.points(role))),
+            color,
+            None,
+            window,
+            cx,
+        );
+        let glyph = self.icon.filter(|_| show_glyph).map(|icon| {
+            div()
+                .relative()
+                .child(
+                    div()
+                        .when(hidden, |d| d.invisible())
+                        .child(KoanIcon::new(icon).role(role).color(color)),
+                )
+                .children(drawn)
+        });
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
         // A ring leaves a glyph alone, not the hit area around it; a lift

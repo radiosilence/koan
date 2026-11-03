@@ -1,0 +1,1 @@
+- **Pages and hover fades no longer wait for the pointer.** A change made while the window was drawing, such as opening a record or leaving a button, could sit unseen until the next input.
