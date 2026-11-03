@@ -1,0 +1,1 @@
+- **The filter field gives way in a narrow toolbar, and the rainbow washes the whole window.** The toolbar's groups no longer hold the field at its full width, and the rainbow's sheen shows under the sidebar and toolbar with colours from the record off. A build outside a bundle names itself without writing to a dictionary it cannot know is mutable.

@@ -1,0 +1,1 @@
+- **Throwaway configurations keep their caches and state with them.** `KOAN_PLACES_DIR` puts a configuration's runtime files in one directory; the desktop app's examples and `just gui-run` point it inside their throwaway, so deleting it reclaims them.

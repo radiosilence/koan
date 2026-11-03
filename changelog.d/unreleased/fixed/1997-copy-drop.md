@@ -1,0 +1,1 @@
+- **Drops at a playlist's edges, and copyable values from the keyboard.** A drag over the blank space below a playlist's rows lands at the end, and above the first row of a playlist or the queue at the start, rather than at the last row crossed. Settings' copyable values take the keyboard focus, copy on Return or Space, and are named for screen readers.

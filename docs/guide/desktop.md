@@ -32,7 +32,7 @@ On macOS the desktop app's Dock menu shows what is playing, with its heart, and 
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the kōan button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
@@ -42,12 +42,13 @@ The app reads the configuration every kōan front end does, `~/.config/koan/` (o
 
 Settings → Devices → In the background keeps kōan running with its window closed, so your other devices can still see and control this computer: on macOS it moves from the Dock to the menu bar, whose item shows what is playing and opens the window again; on Linux, opening kōan again brings the window back. Open at login asks the system to start kōan when you log in (Login Items on macOS, which may ask for approval in System Settings; an autostart entry on Linux). A computer cannot be woken from another device, so a kōan that has quit is out of reach until it is opened again.
 
-What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. Files an earlier version left in the configuration directory are moved there on the first launch.
+What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. `KOAN_PLACES_DIR` puts all of them in one directory instead (`state/`, `runtime/` and `cache/` inside it), which `just gui-run` and the examples point inside their throwaway configuration, so deleting it deletes them. Files an earlier version left in the configuration directory are moved there on the first launch.
 
 ## Running a build from source
 
 ```bash
-KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui --features runtime-shaders
+dir=$(mktemp -d)
+KOAN_CONFIG_DIR=$dir KOAN_PLACES_DIR=$dir/places cargo run --release -p koan-gui --features runtime-shaders
 ```
 
 On a Mac, `runtime-shaders` has GPUI compile its Metal shaders when the app starts, so the Command Line Tools are enough to build it (`just gui-run` turns it on). Without it the shaders are compiled with the app, which needs Xcode's Metal toolchain; releases are built that way.
@@ -76,7 +77,7 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Remove | Delete or Backspace, or the context menu |
 | Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
 | Undo, redo | ⌘Z, ⇧⌘Z |
-| Follow what's playing | The crosshair in the toolbar; it stays on, keeping the playing track in view, until you scroll |
+| Follow what's playing | The crosshair in the toolbar keeps the playing track in view as the queue plays and changes. It stops when you scroll the queue, jump to its top or end, press the crosshair again, or nothing is left under the cursor |
 
 The queue keeps its place and selection when you visit another page and come back.
 

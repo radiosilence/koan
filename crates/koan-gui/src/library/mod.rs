@@ -99,6 +99,12 @@ impl Lib {
     ) -> Self {
         let feed = cx.new(|cx| feed::Feed::new(engine.clone(), cx));
         let covers = cx.new(|cx| covers::Covers::new(engine.clone(), cx));
+        // The transport's and the viewer's sleeves forget what the library
+        // lost, as the library's own do.
+        cx.subscribe(&covers, |_, gone: &covers::Evicted, cx| {
+            crate::covers::Covers::forget(&gone.albums, cx)
+        })
+        .detach();
         let search = cx.new(|_| crate::search::Search::new(engine.clone(), navigator.clone()));
         let nav = cx.new(|cx| nav::Nav::new(navigator, cx));
         let browse = cx.new(|_| browse);
@@ -161,5 +167,4 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(all, SelectAll, Some("Library")),
         KeyBinding::new("escape", Dismiss, Some("Library")),
     ]);
-    history::bind_keys(cx);
 }
