@@ -699,26 +699,6 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
 /// How far an arrow key moves the seek bar.
 const SEEK_KEY_MS: u64 = 5_000;
 
-/// The theme's text button: the label in `muted`, `ink` under the pointer.
-/// The control's glyph with icons on, its label without: the theme's two
-/// variants. The label is what the plain variant shows, so it is lowercase.
-fn glyph_or_label(
-    icon: Icon,
-    label: &'static str,
-    role: TypeRole,
-    color: Hsla,
-    p: &Paint,
-) -> AnyElement {
-    if p.look.icons {
-        KoanIcon::new(icon)
-            .role(role)
-            .color(color)
-            .into_any_element()
-    } else {
-        div().child(label).into_any_element()
-    }
-}
-
 /// The theme's text button, or with icons its icon button: `muted`, `ink`
 /// under the pointer.
 fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
