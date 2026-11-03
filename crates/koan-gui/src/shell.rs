@@ -96,8 +96,11 @@ impl Shell {
         let nav = cx.new(|_| Navigator::default());
         // A measuring run can open on the page it measures.
         #[cfg(feature = "profiler")]
-        if let Some(route) = crate::measure::route() {
-            nav.update(cx, |nav, _| nav.go(route));
+        {
+            if let Some(route) = crate::measure::route() {
+                nav.update(cx, |nav, _| nav.go(route));
+            }
+            cx.set_global(crate::measure::Nav(nav.clone()));
         }
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
         let queue_controls = cx.new(|cx| {

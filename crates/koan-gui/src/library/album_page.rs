@@ -464,6 +464,11 @@ impl TrackList for AlbumPage {
 
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A measuring run times a record from its route to its rows drawn.
+        #[cfg(feature = "profiler")]
+        if !self.tracks.is_empty() {
+            crate::measure::drawn(self.album_id);
+        }
         let p = &Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(super::covers::UPLOAD_BYTES_PER_FRAME, Some(window), cx)

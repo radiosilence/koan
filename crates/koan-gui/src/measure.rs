@@ -60,6 +60,12 @@ pub fn start(cx: &mut App) {
         // whatever else the machine is doing.
         Ok("frames") => frames(cx, false),
         Ok("play-frames") => frames(cx, true),
+        // Opens records one after another with no input, and prints how long
+        // each took from its route to its rows drawn: the window has to draw
+        // on its own. With `KOAN_GUI_MEASURE_LOAD=scan`, while a forced
+        // rescan runs; with `KOAN_GUI_MEASURE_HIDE=1`, hidden (where no frame
+        // comes, so nothing draws).
+        Ok("album") => album(cx),
         // The same with the app hidden, which stops the window's frames.
         Ok("hidden") => cx.hide(),
         Ok("play-hidden") => {
@@ -282,6 +288,114 @@ fn fling(cx: &mut App) {
         dispatch(Box::new(crate::platform::actions::ShowQueue), cx);
         settle(5).await;
         println!("back on the queue: {}", footprint());
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// The shell's navigator, lent to a measuring run that moves between pages.
+pub struct Nav(pub Entity<crate::navigator::Navigator>);
+
+impl Global for Nav {}
+
+/// The record whose page first drew its rows, and when.
+static DRAWN: parking_lot::Mutex<Option<(i64, std::time::Instant)>> = parking_lot::Mutex::new(None);
+
+/// An album page drew with its rows; the first draw for a record is kept.
+pub fn drawn(album_id: i64) {
+    let mut drawn = DRAWN.lock();
+    if drawn.is_none_or(|(id, _)| id != album_id) {
+        *drawn = Some((album_id, std::time::Instant::now()));
+    }
+}
+
+/// The record whose page last drew its rows first, and when.
+pub fn last_drawn() -> Option<(i64, std::time::Instant)> {
+    *DRAWN.lock()
+}
+
+fn album(cx: &mut App) {
+    if std::env::var_os("KOAN_GUI_MEASURE_HIDE").is_some() {
+        cx.hide();
+    }
+    let engine = crate::engine::engine(cx);
+    let background = cx.background_executor().clone();
+    let load = std::env::var("KOAN_GUI_MEASURE_LOAD").ok();
+    cx.spawn(async move |cx| {
+        background.timer(Duration::from_secs(3)).await;
+        let albums = engine
+            .clone()
+            .albums(
+                None,
+                koan_runtime::AlbumSort::Title,
+                0,
+                None,
+                Default::default(),
+            )
+            .await
+            .unwrap_or_default();
+        let ids: Vec<i64> = albums
+            .iter()
+            .step_by((albums.len() / 30).max(1))
+            .map(|a| a.id)
+            .take(30)
+            .collect();
+        if load.as_deref() == Some("scan") {
+            let engine = engine.clone();
+            background
+                .spawn(async move {
+                    let _ = engine.scan_reporting(true, None).await;
+                })
+                .detach();
+            background.timer(Duration::from_millis(500)).await;
+        }
+        let mut took = Vec::new();
+        for id in ids {
+            let asked = std::time::Instant::now();
+            cx.update(|cx| {
+                let nav = cx.global::<Nav>().0.clone();
+                nav.update(cx, |nav, cx| {
+                    nav.go(crate::navigator::Route::Album(id));
+                    cx.notify();
+                });
+            });
+            let deadline = asked + Duration::from_secs(20);
+            let landed = loop {
+                if let Some((at_id, at)) = last_drawn()
+                    && at_id == id
+                    && at >= asked
+                {
+                    break Some(at - asked);
+                }
+                if std::time::Instant::now() > deadline {
+                    break None;
+                }
+                background.timer(Duration::from_millis(2)).await;
+            };
+            match landed {
+                Some(t) => {
+                    println!("album {id}: rows in {t:?}");
+                    took.push(t);
+                }
+                None => println!("album {id}: no rows in 20 s"),
+            }
+            cx.update(|cx| {
+                let nav = cx.global::<Nav>().0.clone();
+                nav.update(cx, |nav, cx| {
+                    nav.go(crate::navigator::Route::Albums);
+                    cx.notify();
+                });
+            });
+            background.timer(Duration::from_millis(200)).await;
+        }
+        took.sort();
+        if let (Some(first), Some(last)) = (took.first(), took.last()) {
+            println!(
+                "{} records: fastest {first:?}, median {:?}, slowest {last:?}",
+                took.len(),
+                took[took.len() / 2]
+            );
+        }
         cx.update(|cx| cx.quit());
     })
     .detach();

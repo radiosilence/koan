@@ -1751,7 +1751,9 @@ impl KoanEngine {
     /// calls it would take two connections, and whenever the pool has to open
     /// one (schema DDL and a WAL checkpoint) a click costs about 300ms.
     pub async fn album_page(self: Arc<Self>, album_id: i64) -> Result<AlbumPage, KoanError> {
+        let asked = std::time::Instant::now();
         offload::offload(move || {
+            let started = asked.elapsed();
             let waited = std::time::Instant::now();
             let db = self.db()?;
             let pool = waited.elapsed();
@@ -1767,8 +1769,14 @@ impl KoanEngine {
             // well under a millisecond; anything near a frame means something
             // else had the database, and which half stalled is the whole
             // question when it happens.
-            if pool + query > std::time::Duration::from_millis(50) {
-                log::warn!("slow album page {album_id}: pool {pool:?}, query {query:?}");
+            if started + pool + query > std::time::Duration::from_millis(50) {
+                log::warn!(
+                    "slow album page {album_id}: started after {started:?}, pool {pool:?}, query {query:?}"
+                );
+            } else {
+                log::debug!(
+                    "album page {album_id}: started after {started:?}, pool {pool:?}, query {query:?}"
+                );
             }
             Ok(AlbumPage { album, tracks })
         })
