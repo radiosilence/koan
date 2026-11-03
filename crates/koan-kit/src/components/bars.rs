@@ -177,3 +177,27 @@ pub fn bars_overlay(paint: impl Fn(&mut Window) + 'static) -> impl IntoElement {
         .absolute()
         .size_full()
 }
+
+/// In the playing bars' place while the music plays on a renderer that is
+/// handed the file itself: nothing passes through here to measure, so the
+/// slot says where it plays rather than standing still, and its tooltip why.
+pub fn renderer_mark(color: Hsla) -> impl IntoElement {
+    div()
+        .id("renderer-mark")
+        .tooltip(|window, cx| {
+            super::Tooltip::view(
+                "playing on a network speaker, which plays the file itself".into(),
+                window,
+                cx,
+            )
+        })
+        .flex_shrink_0()
+        .h(BarMetrics::HEIGHT)
+        .flex()
+        .items_center()
+        .child(
+            crate::theme::KoanIcon::new(crate::theme::Icon::Renderer)
+                .points(f32::from(BarMetrics::HEIGHT))
+                .color(color),
+        )
+}

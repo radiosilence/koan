@@ -1,0 +1,1 @@
+- **Network speakers.** The volume slider stays where it is let go while the speaker takes the change, and a playing row shows a speaker mark instead of still bars while the speaker plays the file itself.
