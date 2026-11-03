@@ -156,6 +156,7 @@ impl Render for LinkDevice {
         let code = match &self.invite {
             Some((_, code)) => code.element(side, look.spaced(14.0)).into_any_element(),
             None => crate::components::Spinner::new(look.spaced(24.0))
+                .announced("invite-loading", "making an invite")
                 .reserving(Size {
                     width: side,
                     height: side,

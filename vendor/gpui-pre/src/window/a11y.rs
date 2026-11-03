@@ -107,6 +107,7 @@ use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
+use std::mem;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -149,6 +150,10 @@ pub(crate) struct A11y {
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    /// The previous frame's [`Self::action_listeners`]. Listeners are registered while painting,
+    /// which a reused view skips, so [`Self::reuse_action_listeners`] moves its nodes' listeners
+    /// from here into the frame being built.
+    retired_action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
     window_title: Option<SharedString>,
@@ -177,6 +182,7 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            retired_action_listeners: FxHashMap::default(),
             window_title,
             last_focus_without_node: None,
             debug: debug::A11yDebug::default(),
@@ -211,6 +217,13 @@ impl A11y {
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {
         self.active_this_frame = self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
+    }
+
+    // KOAN: (#1899) Wormhole's a11y replay, from here to `CapturedA11y`.
+    /// The tree sent in the last frame that built one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
+        self.debug.last_tree_update()
     }
 
     pub(crate) fn is_enabled(&self) -> bool {
@@ -282,8 +295,102 @@ impl A11y {
     pub(crate) fn begin_frame(&mut self) {
         self.focus_ids.clear();
         self.node_bounds.clear();
+        mem::swap(
+            &mut self.action_listeners,
+            &mut self.retired_action_listeners,
+        );
         self.action_listeners.clear();
         self.nodes.begin_frame(self.window_title.as_ref());
+    }
+
+    /// Note where a view's prepaint starts, to [`Self::capture`] what it adds to the tree.
+    // KOAN: (#1899) Wormhole's a11y replay: mark, capture, replay, listeners.
+    pub(crate) fn mark(&self) -> A11yMark {
+        A11yMark {
+            nodes: self.nodes.all_nodes.len(),
+            parent_children: self
+                .nodes
+                .nodes_stack
+                .last()
+                .map_or(0, |parent| parent.children().len()),
+            active_descendant: self.nodes.active_descendant,
+        }
+    }
+
+    /// Everything added to the tree since `mark`, for [`Self::replay`] when the view is reused.
+    ///
+    /// Must be called with the same node on top of the stack as at `mark`, after every node
+    /// pushed in between has been popped.
+    pub(crate) fn capture(&self, mark: &A11yMark) -> CapturedA11y {
+        let nodes = self.nodes.all_nodes[mark.nodes..].to_vec();
+        let roots = self
+            .nodes
+            .nodes_stack
+            .last()
+            .and_then(|parent| parent.children().get(mark.parent_children..))
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .collect();
+        let bounds = nodes
+            .iter()
+            .filter_map(|(id, _)| Some((*id, *self.node_bounds.get(id)?)))
+            .collect();
+        let focusable = nodes
+            .iter()
+            .filter_map(|(id, _)| Some((*id, *self.focus_ids.get(id)?)))
+            .collect();
+        // The claim only counts while the node that was focused when it was made still is.
+        let active_descendant = self
+            .nodes
+            .active_descendant
+            .filter(|id| mark.active_descendant != Some(*id))
+            .zip(self.nodes.focus);
+        #[cfg(debug_assertions)]
+        let info = nodes
+            .iter()
+            .filter_map(|(id, _)| Some((*id, self.nodes.node_info.get(id)?.clone())))
+            .collect();
+        CapturedA11y {
+            nodes,
+            roots,
+            bounds,
+            focusable,
+            active_descendant,
+            #[cfg(debug_assertions)]
+            info,
+        }
+    }
+
+    /// Add a [`Self::capture`]d subtree to the tree being built, as the view's prepaint did when it
+    /// ran: its top-level nodes become children of the node on top of the stack. `focus` is the
+    /// window's focused element, which decides whether a replayed node reports focus.
+    pub(crate) fn replay(&mut self, captured: &CapturedA11y, focus: Option<FocusId>) {
+        self.nodes.replay(captured);
+        for (id, bounds) in &captured.bounds {
+            self.node_bounds.insert(*id, *bounds);
+        }
+        for (id, focus_id) in &captured.focusable {
+            self.set_focusable(*id, *focus_id);
+            if focus == Some(*focus_id) {
+                self.set_focus(*id);
+            }
+        }
+        if let Some((id, anchor)) = captured.active_descendant
+            && self.nodes.focus == Some(anchor)
+        {
+            self.nodes.set_active_descendant(id);
+        }
+    }
+
+    /// Keep the action listeners of `captured`'s nodes for the frame being built. Listeners are
+    /// registered while painting, so a view whose paint is reused calls this instead.
+    pub(crate) fn reuse_action_listeners(&mut self, captured: &CapturedA11y) {
+        for (id, _) in &captured.nodes {
+            if let Some(listeners) = self.retired_action_listeners.remove(id) {
+                self.action_listeners.insert(*id, listeners);
+            }
+        }
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
@@ -304,6 +411,36 @@ impl A11y {
     pub(crate) fn debug_tree_json(&self) -> Option<String> {
         self.debug.to_json()
     }
+}
+
+/// Where a view's prepaint started in the tree being built. See [`A11y::mark`].
+// KOAN: (#1899) Wormhole's a11y replay.
+pub(crate) struct A11yMark {
+    nodes: usize,
+    parent_children: usize,
+    active_descendant: Option<NodeId>,
+}
+
+/// The accessibility nodes one view's prepaint added to the tree, kept with the view so that a
+/// frame which reuses its prepaint (a [cached view]) can add them again. A view's own prepaint
+/// is skipped in such a frame, and the tree is rebuilt from nothing every frame.
+///
+/// Action listeners are not kept here, as they cannot be cloned: see
+/// [`A11y::reuse_action_listeners`].
+///
+/// [cached view]: crate::Entity::cached
+// KOAN: (#1899) Wormhole's a11y replay.
+pub(crate) struct CapturedA11y {
+    /// Every node the view pushed, children before their parents.
+    nodes: Vec<(NodeId, accesskit::Node)>,
+    /// The view's top-level nodes: the ones that became children of the node it was embedded in.
+    roots: SmallVec<[NodeId; 4]>,
+    bounds: Vec<(NodeId, Bounds<Pixels>)>,
+    focusable: Vec<(NodeId, FocusId)>,
+    /// A node claiming to be the active descendant, and the node that was focused at the time.
+    active_descendant: Option<(NodeId, NodeId)>,
+    #[cfg(debug_assertions)]
+    info: Vec<(NodeId, debug::NodeDebugInfo)>,
 }
 
 /// Builder API for synthetic children. See the docs for
@@ -461,6 +598,28 @@ impl A11yNodeBuilder {
         }
         self.all_nodes.push((id, node));
         true
+    }
+
+    /// Add the nodes of a view that is reused, with its top-level nodes as children of the
+    /// current top-of-stack node. A node whose id is already in the tree is dropped, as in
+    /// [`Self::push`].
+    fn replay(&mut self, captured: &CapturedA11y) {
+        for (id, node) in &captured.nodes {
+            if self.seen_ids.insert(*id) {
+                self.all_nodes.push((*id, node.clone()));
+            } else {
+                debug_assert!(false, "Duplicate a11y node id: {id:?}");
+            }
+        }
+        if let Some(parent) = self.nodes_stack.last_mut() {
+            for id in &captured.roots {
+                parent.push_child(*id);
+            }
+        }
+        #[cfg(debug_assertions)]
+        for (id, info) in &captured.info {
+            self.node_info.insert(*id, info.clone());
+        }
     }
 
     pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {

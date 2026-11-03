@@ -294,9 +294,11 @@ impl Render for Keys {
                     &look,
                 ));
             }
-            None if self.error.is_none() => {
-                rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element())
-            }
+            None if self.error.is_none() => rows.push(
+                Spinner::new(look.font_size(TypeRole::Body))
+                    .announced("keys-loading", "loading keys")
+                    .into_any_element(),
+            ),
             None => {}
         }
         let (header, about) = match self.kind {

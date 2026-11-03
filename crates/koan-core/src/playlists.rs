@@ -438,7 +438,9 @@ pub fn follow_edit(
 /// side's change is judged against its own record: the server's `changed`
 /// against the stamp it had at the last sync, the local `changed_at` against
 /// the one that sync covered. Only one side moved: that side wins. Both moved:
-/// last writer wins on `changed`. Neither: nothing is fetched at all.
+/// last writer wins on `changed`. Neither: nothing is fetched at all. A pull
+/// whose local copy is edited or pushed between the decision and the store
+/// is left for the next sync to weigh again.
 ///
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
@@ -533,7 +535,7 @@ pub fn reconcile_playlists(
     for chunk in pulls.chunks(FETCHING * 4) {
         let fetched = fetch_playlists(client, chunk.iter().map(|(s, _)| s.id.as_str()));
         for ((summary, local), full) in chunk.iter().zip(fetched) {
-            let (summary, local) = (*summary, local.clone());
+            let (summary, local) = (*summary, local.as_ref());
             let full = match full {
                 Ok(full) => full,
                 Err(e) => {
@@ -562,19 +564,35 @@ pub fn reconcile_playlists(
             let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
             let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
+            // A push in flight records what it did only once the server has
+            // answered: one of this playlist (`push_lock`), or one creating a
+            // playlist there that this listing may already hold (`CREATING`),
+            // is waited for, so the check below sees what it wrote.
+            let lock = match local {
+                Some(local) => push_lock(local.id),
+                None => CREATING.clone(),
+            };
+            let _push = lock.lock();
             // All of it or none: a copy renamed but not refilled, or refilled but
             // not marked synced, would push back as an edit nobody made.
             let stored = queries::atomically(&db.conn, || {
-                // Edited here, or made here from another listing, since it was
+                // Edited here, made here from another listing, or pushed (which
+                // moves the synced stamp, not the revision) since it was
                 // decided to pull it: the next sync weighs it again rather than
                 // writing over the edit.
                 let now = queries::playlist_by_remote_id(&db.conn, &summary.id)?;
-                if now.as_ref().map(|p| (p.id, p.revision))
-                    != local.as_ref().map(|p| (p.id, p.revision))
-                {
+                let seen = |p: &queries::PlaylistRow| {
+                    (
+                        p.id,
+                        p.revision,
+                        p.synced_revision,
+                        p.remote_changed.clone(),
+                    )
+                };
+                if now.as_ref().map(seen) != local.map(seen) {
                     return Ok(false);
                 }
-                let id = match &local {
+                let id = match local {
                     Some(local) => local.id,
                     None => queries::create_playlist(
                         &db.conn,
@@ -670,10 +688,18 @@ pub(crate) fn forget_unsent_order() {
     ORDER_UNSENT.store(false, Ordering::Relaxed);
 }
 
-/// Held while the order goes either way, and while a reorder is written, so
-/// a sync never adopts the server's order over a reorder on its way there,
-/// and two sends land in the order they were made.
+/// Held while a reorder is written, while a sync adopts the server's order,
+/// and while a send reads the order and settles, never across a request: a
+/// reorder waits only for the database, never for the network.
 static ORDER_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Held across a send's request, so two sends land in the order they were
+/// made. Only another send waits on it.
+static SEND_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// A send is on its way to the server: a sync does not adopt a listing
+/// meanwhile, since the server may not have the order yet.
+static ORDER_SENDING: AtomicBool = AtomicBool::new(false);
 
 /// Moved by every reorder written here and every send. A sync adopts the
 /// server's listing only if this has not moved since the listing was asked
@@ -695,12 +721,15 @@ fn sync_order(
     if !keeps_order {
         return;
     }
-    let _lane = ORDER_LANE.lock();
-    if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+    let lane = ORDER_LANE.lock();
+    if ORDER_UNSENT.load(Ordering::Relaxed) {
+        drop(lane);
         send_order(db, client);
         return;
     }
-    if ORDER_GENERATION.load(Ordering::Acquire) != listed_at {
+    if ORDER_SENDING.load(Ordering::Relaxed)
+        || ORDER_GENERATION.load(Ordering::Acquire) != listed_at
+    {
         return;
     }
     let order: Vec<String> = listing.iter().map(|p| p.id.clone()).collect();
@@ -711,12 +740,25 @@ fn sync_order(
     }
 }
 
-/// Send the sidebar's order as it stands, under [`ORDER_LANE`]. A failure
-/// leaves it unsent for the next sync.
+/// Send the sidebar's order as it stands, if a reorder has not been sent:
+/// read under [`ORDER_LANE`], sent under [`SEND_LANE`] alone, so a reorder
+/// or a sync never waits for the request. A failure leaves it unsent for
+/// the next sync.
 fn send_order(db: &Database, client: &SubsonicClient) {
-    let sent = queries::remote_playlist_order(&db.conn)
+    let _send = SEND_LANE.lock();
+    let ids = {
+        let _lane = ORDER_LANE.lock();
+        if !ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        ORDER_SENDING.store(true, Ordering::Relaxed);
+        queries::remote_playlist_order(&db.conn)
+    };
+    let sent = ids
         .map_err(|e| e.to_string())
         .and_then(|ids| client.set_playlist_order(&ids).map_err(|e| e.to_string()));
+    let _lane = ORDER_LANE.lock();
+    ORDER_SENDING.store(false, Ordering::Relaxed);
     match sent {
         Ok(()) => {
             ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
@@ -787,10 +829,7 @@ pub fn push_order() {
             let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
-            let _lane = ORDER_LANE.lock();
-            if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
-                send_order(&db, &client);
-            }
+            send_order(&db, &client);
         })
         .ok();
 }
@@ -895,6 +934,13 @@ fn push_lock(id: i64) -> std::sync::Arc<parking_lot::Mutex<()>> {
         .clone()
 }
 
+/// Held by a push that creates a playlist on the server, from before the
+/// create until its server id is recorded here. A sync whose listing already
+/// holds that playlist, with no local copy known for it yet, waits for it
+/// rather than pulling it in as a second copy.
+static CREATING: std::sync::LazyLock<std::sync::Arc<parking_lot::Mutex<()>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Send a playlist's name and contents to the server, in order.
 ///
 /// `createPlaylist` with a `playlistId` replaces the contents wholesale, which
@@ -917,6 +963,9 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
     let remote_id = local.remote_id.as_deref();
+    // Taken after this playlist's own lock, as a sync takes either alone.
+    let creating = CREATING.clone();
+    let _creating = remote_id.is_none().then(|| creating.lock());
     let song_ids = match queries::remote_ids_for_playlist(&db.conn, id) {
         Ok(ids) => ids,
         Err(e) => {
@@ -1659,10 +1708,85 @@ mod tests {
         }
     }
 
-    /// Held by the tests that read or move `ORDER_GENERATION` and
-    /// `ORDER_UNSENT`, which are the process's: run side by side, one's
-    /// change lands in the other's sync.
+    /// The order tests move the process-wide marks and generation.
     static ORDER_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    /// A send waiting on a server that does not answer holds the send lane,
+    /// never the one a reorder writes and a sync adopts under.
+    #[test]
+    fn a_send_does_not_hold_the_order_lane() {
+        let _order = ORDER_TESTS.lock();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        drop(Database::open(&path).unwrap());
+        // Accepts the connection and never answers.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", silent.local_addr().unwrap());
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        let send = std::thread::spawn(move || {
+            let db = Database::open(&path).unwrap();
+            send_order(&db, &SubsonicClient::new(&url, "u", "pw"));
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ORDER_SENDING.load(Ordering::Relaxed) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the send never started"
+            );
+            std::thread::yield_now();
+        }
+        assert!(
+            ORDER_LANE
+                .try_lock_for(std::time::Duration::from_secs(1))
+                .is_some(),
+            "a reorder would have waited for the request"
+        );
+        assert!(
+            SEND_LANE.try_lock().is_none(),
+            "the send holds its own lane"
+        );
+        // The send fails once the server goes, and is left for the next
+        // sync; the next test starts with nothing unsent.
+        drop(silent);
+        send.join().unwrap();
+        ORDER_UNSENT.store(false, Ordering::Relaxed);
+    }
+
+    /// While a send is on its way, a sync does not adopt the server's
+    /// listing, which may not have the order yet.
+    #[test]
+    fn a_sync_does_not_adopt_during_a_send() {
+        let _order = ORDER_TESTS.lock();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let (p1, p2) = (id("p1"), id("p2"));
+        queries::reorder_playlists(&db.conn, &[p2, p1]).unwrap();
+        let listing = client.get_playlists().unwrap();
+        let listed_at = ORDER_GENERATION.load(Ordering::Acquire);
+        ORDER_SENDING.store(true, Ordering::Relaxed);
+        sync_order(&db, &client, &listing, listed_at);
+        ORDER_SENDING.store(false, Ordering::Relaxed);
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(order, [p2, p1], "the order on its way stands");
+    }
 
     /// A reorder left unsent when a server is left is not sent to the next
     /// account: its order is adopted.

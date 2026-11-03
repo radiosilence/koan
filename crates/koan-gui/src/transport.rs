@@ -49,6 +49,8 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: CoverArt,
+    /// The display's scale as of the last frame, which sizes the sleeve.
+    scale: f32,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -188,7 +190,7 @@ impl Transport {
                             .entry
                             .as_ref()
                             .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, cx).is_some() {
+                        if covers::image(album, COVER, this.scale, cx).is_some() {
                             cx.notify();
                         }
                     }
@@ -218,6 +220,7 @@ impl Transport {
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
+            scale: 2.0,
             eq: None,
             eq_profile: None,
             eq_library: mirror.library.read(cx).version,
@@ -501,7 +504,7 @@ struct OutputView {
 /// has its EQ button, in the accent while an EQ is in force there. Under the
 /// renderer in use, its own volume and what it is sent.
 fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
-    let menu = menu.min_width(ThemeMenu::PICKER_WIDTH);
+    let menu = menu.width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
         // This device's own outputs are on their way; another device that
@@ -758,12 +761,16 @@ fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<D
     } else {
         gap
     };
+    // A glyph's reach can pass its neighbour's at small gaps: each item
+    // blocks the ones drawn before it, so a press in the overlap goes to
+    // one item, never two.
     base.flex()
         .items_center()
         .justify_center()
         .h(theme::HIT)
         .px(reach)
         .mx(-reach)
+        .occlude()
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
 }
@@ -795,7 +802,8 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
+        self.scale = window.scale_factor();
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, self.scale, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -1455,6 +1463,24 @@ impl Render for Seek {
     }
 }
 
+/// What the control button draws from the devices: the device controlled,
+/// how it can be reached, and its name.
+type ControlledShown = (
+    Option<String>,
+    Option<koan_runtime::DeviceReach>,
+    Option<String>,
+);
+
+fn controlled_shown(view: &Devices) -> ControlledShown {
+    let name = view.target.as_ref().and_then(|t| {
+        view.devices
+            .iter()
+            .find(|d| &d.id == t)
+            .map(|d| d.name.clone())
+    });
+    (view.target.clone(), view.target_reach.clone(), name)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -1503,22 +1529,4 @@ mod tests {
         let heard = Some((TRACK - 100, now - Duration::from_millis(400)));
         assert_eq!(shown_position(TRACK - 50, heard, true, now, TRACK), TRACK);
     }
-}
-
-/// What the control button draws from the devices: the device controlled,
-/// how it can be reached, and its name.
-type ControlledShown = (
-    Option<String>,
-    Option<koan_runtime::DeviceReach>,
-    Option<String>,
-);
-
-fn controlled_shown(view: &Devices) -> ControlledShown {
-    let name = view.target.as_ref().and_then(|t| {
-        view.devices
-            .iter()
-            .find(|d| &d.id == t)
-            .map(|d| d.name.clone())
-    });
-    (view.target.clone(), view.target_reach.clone(), name)
 }

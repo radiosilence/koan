@@ -899,6 +899,39 @@ struct RemoteSeek {
     position_ms: u64,
     at: Instant,
     playing: bool,
+    /// Which device it was sent to (`device_key`): a seek stored just after
+    /// the target changed is not the new device's.
+    device: u64,
+}
+
+/// A device's id as `RemoteSeek` keeps it.
+fn device_key(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Until when the seek in `held` holds the playhead of the device `target`,
+/// at `now`, and whether a seek was let go here. One held for another device
+/// (stored after the target changed) or past its patience is let go, so the
+/// state thread never waits for a deadline already past: a lapsed hold left
+/// in place had it wake at once, over and over, until the target next
+/// changed.
+fn remote_hold(
+    held: &mut Option<RemoteSeek>,
+    target: Option<&str>,
+    now: Instant,
+) -> (Option<Instant>, bool) {
+    let Some(seek) = *held else {
+        return (None, false);
+    };
+    let until = seek.at + REMOTE_SEEK_PATIENCE;
+    if target.map(device_key) != Some(seek.device) || until <= now {
+        *held = None;
+        return (None, true);
+    }
+    (Some(until), false)
 }
 
 /// How long a playhead may read the same while playing before it is called
@@ -1337,10 +1370,13 @@ impl KoanEngine {
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         // Every client's bar lands where it was asked to now, not when the
         // player thread, or the device being controlled, gets there.
-        let target = koan_core::remote::devices::target_device();
+        // The device the command goes to, as `control::send` routes it: a
+        // target set but not listed just now is still sent the seek, so its
+        // playhead is held as that device's, not this one's.
+        let target = koan_core::remote::devices::target();
         match &target {
             None => self.state.request_seek(position_ms),
-            Some(device) => self.remote_seek_requested(device, position_ms),
+            Some(id) => self.remote_seek_requested(id, position_ms),
         }
         let state = self.state.clone();
         let engine = self.clone();
@@ -2029,6 +2065,24 @@ impl KoanEngine {
             Ok(lyrics::settle(&db.conn, track_id, fetched, cached)
                 .ok()
                 .map(Into::into))
+        })
+        .await
+    }
+
+    /// LRCLIB asked by tags, for a queue entry the library no longer has: it
+    /// plays from its own metadata, and nothing is cached for it.
+    pub async fn lyrics_by_tags(
+        self: Arc<Self>,
+        artist: String,
+        title: String,
+        album: String,
+        duration_ms: Option<u64>,
+    ) -> Option<Lyrics> {
+        offload::offload(move || {
+            let duration_secs = duration_ms.unwrap_or(0) / 1000;
+            koan_core::lyrics::fetch_from_lrclib(&artist, &title, &album, duration_secs)
+                .ok()
+                .map(Into::into)
         })
         .await
     }
@@ -6058,11 +6112,23 @@ impl KoanEngine {
 
                     // A seek held for the controlled device gives its
                     // playhead back when its patience runs out, whether or
-                    // not the device says anything more by then.
-                    let held_until = engine
-                        .remote_seek
-                        .lock()
-                        .map(|seek| seek.at + REMOTE_SEEK_PATIENCE);
+                    // not the device says anything more by then. One let go
+                    // here is said at once, without waiting.
+                    let (held_until, let_go) = remote_hold(
+                        &mut engine.remote_seek.lock(),
+                        target.as_deref(),
+                        Instant::now(),
+                    );
+                    if let_go {
+                        last_devices = u64::MAX;
+                        continue;
+                    }
+                    // This device's own seek lapsing, if the player never
+                    // takes it, moves the playhead back: woken for it.
+                    let held_until = match (held_until, engine.state.seek_deadline()) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
@@ -6225,8 +6291,11 @@ impl KoanEngine {
     /// A seek sent to `device`: its playhead reads as landed from now, held
     /// until it reports being there, as this device's own is
     /// (`SharedPlayerState::request_seek`).
-    fn remote_seek_requested(&self, device: &koan_core::remote::devices::Device, position_ms: u64) {
-        let st = device.state.as_ref();
+    fn remote_seek_requested(&self, id: &str, position_ms: u64) {
+        let device = koan_core::remote::devices::list()
+            .into_iter()
+            .find(|d| d.id == id);
+        let st = device.as_ref().and_then(|d| d.state.as_ref());
         let duration = st.map_or(0, |s| s.duration_ms);
         let position_ms = if duration > 0 {
             position_ms.min(duration)
@@ -6238,6 +6307,7 @@ impl KoanEngine {
             position_ms,
             at: Instant::now(),
             playing,
+            device: device_key(id),
         });
         // The state thread waits no longer than the hold, which it learns of
         // here, not from the device: one that never reports again still has
@@ -8481,5 +8551,55 @@ mod clock_end_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("the next track's anchor");
         assert!(next.is_some_and(|ms| ms < 100), "{next:?}");
+    }
+}
+
+#[cfg(test)]
+mod remote_hold_tests {
+    use std::time::{Duration, Instant};
+
+    use super::{REMOTE_SEEK_PATIENCE, RemoteSeek, device_key, remote_hold};
+
+    fn seek(device: &str, at: Instant) -> Option<RemoteSeek> {
+        Some(RemoteSeek {
+            position_ms: 30_000,
+            at,
+            playing: true,
+            device: device_key(device),
+        })
+    }
+
+    #[test]
+    fn a_hold_waits_until_its_patience_runs_out() {
+        let now = Instant::now();
+        let mut held = seek("tv", now);
+        assert_eq!(
+            remote_hold(&mut held, Some("tv"), now),
+            (Some(now + REMOTE_SEEK_PATIENCE), false)
+        );
+        assert!(held.is_some());
+    }
+
+    /// The spin: a hold past its deadline is let go once, and the next look
+    /// finds nothing to wait for, rather than a deadline already past.
+    #[test]
+    fn a_lapsed_hold_is_let_go_once() {
+        let now = Instant::now();
+        let mut held = seek("tv", now);
+        let later = now + REMOTE_SEEK_PATIENCE + Duration::from_millis(1);
+        assert_eq!(remote_hold(&mut held, Some("tv"), later), (None, true));
+        assert_eq!(remote_hold(&mut held, Some("tv"), later), (None, false));
+    }
+
+    /// A seek stored after the target changed, for the device left or with
+    /// no device controlled, holds nothing.
+    #[test]
+    fn a_hold_for_another_device_is_let_go() {
+        let now = Instant::now();
+        let mut held = seek("tv", now);
+        assert_eq!(remote_hold(&mut held, Some("phone"), now), (None, true));
+        let mut held = seek("tv", now);
+        assert_eq!(remote_hold(&mut held, None, now), (None, true));
+        assert!(held.is_none());
     }
 }

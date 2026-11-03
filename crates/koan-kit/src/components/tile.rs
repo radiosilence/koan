@@ -411,6 +411,11 @@ mod tests {
         let scale = Scale::of(100);
         let narrow = TileGrid::for_width(px(300.0), &scale);
         assert_eq!(narrow.columns, 1);
+        // One tile stands on the margin too, not centred.
+        assert_eq!(
+            narrow.inset,
+            crate::components::RowMetrics::page_margin_on(&scale)
+        );
         let a = TileGrid::for_width(px(1200.0), &scale);
         let b = TileGrid::for_width(px(1240.0), &scale);
         assert_eq!(

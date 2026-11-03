@@ -287,6 +287,9 @@ impl Mirror {
         };
         let stream = engine.observe();
         let held = mirror.clone();
+        // Whether the app is still there: the engine can outlive it, as in
+        // the benches, which open one engine for several apps.
+        let app = mirror.playback.downgrade();
         let background = cx.background_executor().clone();
         cx.spawn(async move |cx| {
             loop {
@@ -304,6 +307,9 @@ impl Mirror {
                     })
                     .await;
                 let Some(batch) = batch else { break };
+                if app.upgrade().is_none() {
+                    break;
+                }
                 let replaced = cx.update(|cx| held.apply(batch, cx));
                 if !replaced.is_empty() {
                     background.spawn(async move { drop(replaced) }).detach();
