@@ -652,10 +652,17 @@ impl Render for Menu {
                         row = row.trailing(make(window, cx));
                     }
                     for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
-                        let run = run.clone();
+                        let (run, menu) = (run.clone(), menu.clone());
                         let id = ("action", index * 8 + k);
                         let act = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
-                            run(event, window, cx)
+                            run(event, window, cx);
+                            // An action that opened a sheet or a question
+                            // has taken the keyboard: the menu makes way.
+                            menu.update(cx, |menu, cx| {
+                                if !menu.focus.contains_focused(window, cx) {
+                                    cx.emit(DismissEvent);
+                                }
+                            });
                         };
                         row = match face {
                             super::panel::ActionFace::Glyph(icon) => {

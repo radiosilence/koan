@@ -1,0 +1,1 @@
+- **Setting up an Apple TV's waking.** In the kōan GUI app the Play on menu closes when its button opens the pairing sheet, rather than covering it, and a fifth digit typed or pasted into the TV's code no longer leaves the sheet stuck.
