@@ -11,10 +11,18 @@ index a15c2ad..193def2 100644
      "CAMetalDisplayLink",
      "CAMetalLayer",
 diff --git a/src/display_link.rs b/src/display_link.rs
-index 90a2597..3223d3a 100644
+index 90a2597..dcadf30 100644
 --- a/src/display_link.rs
 +++ b/src/display_link.rs
-@@ -129,7 +129,7 @@ fn debug_assert_main_thread() {
+@@ -126,10 +126,15 @@ fn debug_assert_main_thread() {
+     );
+ }
+ 
++// KOAN: set once a `CAMetalDisplayLink` has delivered a frame: from then on
++// it sets the present lead, not the `CVDisplayLink` (#1859).
++pub(crate) static METAL_FRAMES: std::sync::atomic::AtomicBool =
++    std::sync::atomic::AtomicBool::new(false);
++
  unsafe extern "C" fn display_link_output_callback(
      _display_link_out: *mut sys::CVDisplayLink,
      current_time: *const sys::CVTimeStamp,
@@ -23,27 +31,27 @@ index 90a2597..3223d3a 100644
      _flags_in: i64,
      _flags_out: *mut i64,
      display_id: *mut c_void,
-@@ -148,6 +148,24 @@ unsafe extern "C" fn display_link_output_callback(
+@@ -148,6 +153,24 @@ unsafe extern "C" fn display_link_output_callback(
              received_at,
          )
      });
 +    // KOAN: how far ahead of now the frame asked for is shown: shaders reckon
 +    // their time at that moment (#1859). Where frames come from a
-+    // `CAMetalDisplayLink`, `metal_frame` in window.rs sets it instead.
-+    {
++    // `CAMetalDisplayLink`, `metal_frame` in window.rs sets it instead, and
++    // this link leaves it alone.
++    if !METAL_FRAMES.load(std::sync::atomic::Ordering::Relaxed) {
 +        // SAFETY: CoreVideo owns these timestamps for the lifetime of the callback.
 +        let output = unsafe { output_time.as_ref() };
 +        let now = objc2_core_video::CVGetCurrentHostTime();
 +        let frequency = objc2_core_video::CVGetHostClockFrequency();
-+        if let Some(output) = output.filter(|t| {
-+            t.version == 0 && t.flags & sys::kCVTimeStampHostTimeValid != 0
-+        }) && frequency.is_finite()
-+            && frequency > 0.0
-+            && let Some(ticks) = output.host_time.checked_sub(now)
-+            && let Ok(lead) = Duration::try_from_secs_f64(ticks as f64 / frequency)
-+        {
-+            gpui::set_present_lead(lead.min(Duration::from_millis(100)));
-+        }
++        // A late or unreadable timestamp leaves no lead rather than the last one.
++        let lead = output
++            .filter(|t| t.version == 0 && t.flags & sys::kCVTimeStampHostTimeValid != 0)
++            .filter(|_| frequency.is_finite() && frequency > 0.0)
++            .and_then(|output| output.host_time.checked_sub(now))
++            .and_then(|ticks| Duration::try_from_secs_f64(ticks as f64 / frequency).ok())
++            .unwrap_or(Duration::ZERO);
++        gpui::set_present_lead(lead.min(Duration::from_millis(100)));
 +    }
      let display_id = display_id as usize as CGDirectDisplayID;
      let registry = lock_registry();
@@ -219,20 +227,22 @@ index aa0bc2d..4795feb 100644
                  drop(lock);
                  result = callback(action.as_ref());
 diff --git a/src/window.rs b/src/window.rs
-index 32a6a54..ebc56c9 100644
+index 32a6a54..97388ae 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -3447,6 +3447,13 @@ fn metal_frame(
+@@ -3447,6 +3447,15 @@ fn metal_frame(
      };
      lock.renderer.set_frame_drawable(Some(update.drawable()));
      drop(lock);
 +    // KOAN: how far ahead of now this frame is shown: shaders reckon their
-+    // time at that moment (#1859).
-+    let lead = unsafe { update.targetPresentationTimestamp() }
-+        - objc2_quartz_core::CACurrentMediaTime();
-+    if let Ok(lead) = std::time::Duration::try_from_secs_f64(lead) {
-+        gpui::set_present_lead(lead.min(std::time::Duration::from_millis(100)));
-+    }
++    // time at that moment (#1859). An update that arrives late leaves no
++    // lead rather than the last one.
++    // SAFETY: the update is the one CoreAnimation handed this callback, valid
++    // for its duration.
++    let target = unsafe { update.targetPresentationTimestamp() };
++    let lead = (target - objc2_quartz_core::CACurrentMediaTime()).clamp(0.0, 0.1);
++    gpui::set_present_lead(std::time::Duration::from_secs_f64(lead));
++    crate::display_link::METAL_FRAMES.store(true, std::sync::atomic::Ordering::Relaxed);
      metal_frames.begin_frame();
      callback(RequestFrameOptions {
          signal_at,

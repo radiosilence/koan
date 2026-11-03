@@ -126,6 +126,11 @@ fn debug_assert_main_thread() {
     );
 }
 
+// KOAN: set once a `CAMetalDisplayLink` has delivered a frame: from then on
+// it sets the present lead, not the `CVDisplayLink` (#1859).
+pub(crate) static METAL_FRAMES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 unsafe extern "C" fn display_link_output_callback(
     _display_link_out: *mut sys::CVDisplayLink,
     current_time: *const sys::CVTimeStamp,
@@ -150,21 +155,21 @@ unsafe extern "C" fn display_link_output_callback(
     });
     // KOAN: how far ahead of now the frame asked for is shown: shaders reckon
     // their time at that moment (#1859). Where frames come from a
-    // `CAMetalDisplayLink`, `metal_frame` in window.rs sets it instead.
-    {
+    // `CAMetalDisplayLink`, `metal_frame` in window.rs sets it instead, and
+    // this link leaves it alone.
+    if !METAL_FRAMES.load(std::sync::atomic::Ordering::Relaxed) {
         // SAFETY: CoreVideo owns these timestamps for the lifetime of the callback.
         let output = unsafe { output_time.as_ref() };
         let now = objc2_core_video::CVGetCurrentHostTime();
         let frequency = objc2_core_video::CVGetHostClockFrequency();
-        if let Some(output) = output.filter(|t| {
-            t.version == 0 && t.flags & sys::kCVTimeStampHostTimeValid != 0
-        }) && frequency.is_finite()
-            && frequency > 0.0
-            && let Some(ticks) = output.host_time.checked_sub(now)
-            && let Ok(lead) = Duration::try_from_secs_f64(ticks as f64 / frequency)
-        {
-            gpui::set_present_lead(lead.min(Duration::from_millis(100)));
-        }
+        // A late or unreadable timestamp leaves no lead rather than the last one.
+        let lead = output
+            .filter(|t| t.version == 0 && t.flags & sys::kCVTimeStampHostTimeValid != 0)
+            .filter(|_| frequency.is_finite() && frequency > 0.0)
+            .and_then(|output| output.host_time.checked_sub(now))
+            .and_then(|ticks| Duration::try_from_secs_f64(ticks as f64 / frequency).ok())
+            .unwrap_or(Duration::ZERO);
+        gpui::set_present_lead(lead.min(Duration::from_millis(100)));
     }
     let display_id = display_id as usize as CGDirectDisplayID;
     let registry = lock_registry();

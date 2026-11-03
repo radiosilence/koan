@@ -3448,12 +3448,14 @@ fn metal_frame(
     lock.renderer.set_frame_drawable(Some(update.drawable()));
     drop(lock);
     // KOAN: how far ahead of now this frame is shown: shaders reckon their
-    // time at that moment (#1859).
-    let lead = unsafe { update.targetPresentationTimestamp() }
-        - objc2_quartz_core::CACurrentMediaTime();
-    if let Ok(lead) = std::time::Duration::try_from_secs_f64(lead) {
-        gpui::set_present_lead(lead.min(std::time::Duration::from_millis(100)));
-    }
+    // time at that moment (#1859). An update that arrives late leaves no
+    // lead rather than the last one.
+    // SAFETY: the update is the one CoreAnimation handed this callback, valid
+    // for its duration.
+    let target = unsafe { update.targetPresentationTimestamp() };
+    let lead = (target - objc2_quartz_core::CACurrentMediaTime()).clamp(0.0, 0.1);
+    gpui::set_present_lead(std::time::Duration::from_secs_f64(lead));
+    crate::display_link::METAL_FRAMES.store(true, std::sync::atomic::Ordering::Relaxed);
     metal_frames.begin_frame();
     callback(RequestFrameOptions {
         signal_at,
