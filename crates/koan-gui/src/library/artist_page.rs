@@ -163,7 +163,7 @@ impl ArtistPage {
             tiles: Tiles::default(),
             menu: None,
             starting: HashSet::new(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             keyed: false,
             _subscriptions: subscriptions,

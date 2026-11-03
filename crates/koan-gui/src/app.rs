@@ -258,7 +258,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             // Closing the last window quits, unless kōan is kept running,
             // and quitting waits for nothing spawned: a file of a few bytes,
             // written now.
-            window.on_window_should_close(cx, |window, cx| {
+            window.on_window_should_close(cx, |window, _| {
                 window_state::write(window.window_bounds());
                 true
             });
