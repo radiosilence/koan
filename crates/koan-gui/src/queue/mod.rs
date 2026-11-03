@@ -1312,7 +1312,6 @@ pub(crate) fn track(
 /// The heart, as the Mac's: shown while the track is a favourite or the row
 /// is under the pointer, and toggling it.
 fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
-    let p = look.p;
     let slot = div().flex().justify_center();
     let (Some(track), Some(favourite), Some(feed)) =
         (item.track_id, extras.favourite, extras.feed.clone())
