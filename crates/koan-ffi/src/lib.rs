@@ -2606,14 +2606,14 @@ impl KoanEngine {
 
     /// Stop fetching these tracks. Queue entries waiting on them fail as
     /// cancelled and are skipped until retried; a transfer running stops and
-    /// leaves no row.
+    /// leaves its row failed as cancelled, which is how it is retried.
     pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         self.0.clone().cancel_downloads(track_ids).await
     }
 
     /// Fetch these tracks again after a failure or a cancel: queue entries
-    /// that failed for them wait again, and a track no entry wants is
-    /// fetched into the cache.
+    /// that failed for them wait again, and a track asked into the cache
+    /// that no entry wants is fetched into it again.
     pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         self.0.clone().retry_downloads(track_ids).await
     }
