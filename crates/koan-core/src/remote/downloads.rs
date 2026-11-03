@@ -499,7 +499,9 @@ impl DownloadStore {
     /// feed a decoder reading it may be parked on.
     ///
     /// A transfer that never listed — its file was found on disk, or it failed
-    /// before fetching anything — leaves no row. Nor does a withdrawn one.
+    /// before fetching anything — leaves no row. Nor does one withdrawn because
+    /// nothing wanted it; one the person cancelled stays, failed as
+    /// [`CANCELLED`], so it can be retried.
     fn end(&self, track_id: i64, outcome: Outcome) -> Option<(Vec<QueueItemId>, Arc<ByteFeed>)> {
         let mut entries = self.entries.write();
         let ix = entries
