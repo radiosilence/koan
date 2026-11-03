@@ -334,6 +334,7 @@ static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 /// preload.
 pub fn set_constrained(constrained: bool) {
     if CONSTRAINED.swap(constrained, Ordering::Relaxed) != constrained {
+        crate::remote::client::wake_cover_waiters();
         crate::signal::engine_changed().bump();
     }
 }
@@ -346,7 +347,13 @@ pub fn progress() -> Option<Preload> {
 /// Stops the running preload, keeping what it fetched.
 pub fn stop() {
     STOPPED.store(true, Ordering::Relaxed);
+    crate::remote::client::wake_cover_waiters();
     crate::signal::engine_changed().bump();
+}
+
+/// Whether the person stopped the preload.
+pub(crate) fn stopped() -> bool {
+    STOPPED.load(Ordering::Relaxed)
 }
 
 /// The setting was turned on, or the person asked for the covers again:

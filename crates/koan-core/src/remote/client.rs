@@ -336,10 +336,6 @@ struct CoverSlots {
     background: bool,
 }
 
-/// How often a background wait looks again at whether its work may go on
-/// (stopped, quiet, full), which nothing signals to the cover slots.
-const BACKGROUND_RECHECK: std::time::Duration = std::time::Duration::from_millis(250);
-
 /// How long a bulk answer stops reading, between frames, while a page's
 /// covers are in flight: long enough for a page's fetches to finish, short
 /// of the downloads' client giving up on a stalled read.
@@ -382,8 +378,8 @@ impl CoverSlots {
 
     /// A background fetch's slot: once no page's cover is in flight and the
     /// background slots have room. `Busy` as soon as `go_on` says the work
-    /// should stop, which it is asked each time a slot frees and every
-    /// `BACKGROUND_RECHECK` meanwhile.
+    /// should stop, which it is asked each time a slot frees and each time
+    /// what it reads changes (`wake_cover_waiters`).
     fn take_background(go_on: &dyn Fn() -> bool) -> Result<Self, SubsonicError> {
         let mut busy = COVERS_IN_FLIGHT.lock();
         let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
@@ -394,7 +390,7 @@ impl CoverSlots {
             if busy.foreground() == 0 && busy.background < limit() {
                 break;
             }
-            COVER_FREED.wait_for(&mut busy, BACKGROUND_RECHECK);
+            COVER_FREED.wait(&mut busy);
         }
         busy.all += 1;
         busy.background += 1;
@@ -408,9 +404,20 @@ impl CoverSlots {
 fn give_way_to_pages(most: std::time::Duration, go_on: &dyn Fn() -> bool) {
     let deadline = std::time::Instant::now() + most;
     let mut busy = COVERS_IN_FLIGHT.lock();
-    while busy.foreground() > 0 && std::time::Instant::now() < deadline && go_on() {
-        COVER_FREED.wait_for(&mut busy, BACKGROUND_RECHECK);
+    while busy.foreground() > 0 && go_on() {
+        if COVER_FREED.wait_until(&mut busy, deadline).timed_out() {
+            break;
+        }
     }
+}
+
+/// Something background cover work asks before going on changed (the
+/// preload stopped, the app went quiet, the network became constrained, the
+/// configuration was written): every waiter looks again. Taken under the
+/// lock, so a waiter between its check and its wait still hears it.
+pub fn wake_cover_waiters() {
+    drop(COVERS_IN_FLIGHT.lock());
+    COVER_FREED.notify_all();
 }
 
 impl Drop for CoverSlots {
@@ -2396,23 +2403,22 @@ mod tests {
         );
     }
 
-    /// A background wait ends once its work may not go on, though no slot
-    /// frees: the person stopped it, or the app went quiet.
+    /// A background wait ends once the preload is stopped, though no slot
+    /// frees: `stop` wakes it.
     #[test]
-    fn a_background_wait_ends_when_its_work_stops() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+    fn stopping_the_preload_ends_a_background_wait() {
         let _slots = COVER_SLOT_TESTS.lock();
         let page = CoverSlots::take().unwrap();
-        let going = AtomicBool::new(true);
-        let go_on = || going.load(Ordering::Relaxed);
+        let go_on = || !crate::remote::covers::stopped();
         std::thread::scope(|s| {
             let waiting = s.spawn(|| CoverSlots::take_background(&go_on).map(drop));
             std::thread::sleep(Duration::from_millis(50));
-            going.store(false, Ordering::Relaxed);
+            crate::remote::covers::stop();
             let started = Instant::now();
             assert!(matches!(waiting.join().unwrap(), Err(SubsonicError::Busy)));
             assert!(started.elapsed() < Duration::from_secs(1));
         });
+        crate::remote::covers::resume();
         drop(page);
         assert_eq!(COVERS_IN_FLIGHT.lock().all, 0);
     }
