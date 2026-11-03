@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index b4940fb..85ad0d5 100644
+index b7dd52c..77d5df1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -48,11 +48,6 @@ name = "gpui_wgpu"
@@ -174,7 +174,7 @@ index 074d430..2538748 100644
      return out;
  }
 diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
-index f6611df..e84f959 100644
+index c3650ed..3437597 100644
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
 @@ -45,6 +45,198 @@ const SUBPIXEL_SHADERS: &str = concat!(
@@ -414,7 +414,7 @@ index f6611df..e84f959 100644
  }
  
  struct CachedTextureBindGroup {
-@@ -523,6 +741,17 @@ impl WgpuRendererCore {
+@@ -553,6 +771,17 @@ impl WgpuRendererCore {
                          },
                          count: None,
                      },
@@ -432,7 +432,7 @@ index f6611df..e84f959 100644
                  ],
              });
  
-@@ -1077,6 +1306,10 @@ impl WgpuRenderer {
+@@ -1107,6 +1336,10 @@ impl WgpuRenderer {
              core.dual_source_blending,
              core.uses_webgl_instance_data,
          );
@@ -443,7 +443,7 @@ index f6611df..e84f959 100644
  
          if let RendererState::Ready { surface, core } = &self.state {
              surface.configure(&core.resources.device, &self.surface_config);
-@@ -1191,13 +1424,27 @@ impl WgpuRenderer {
+@@ -1221,13 +1454,27 @@ impl WgpuRenderer {
              .create_view(&wgpu::TextureViewDescriptor::default());
          let premultiplied_alpha =
              self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
@@ -478,7 +478,7 @@ index f6611df..e84f959 100644
              log::error!("{error:#}");
              return false;
          }
-@@ -1247,6 +1494,13 @@ impl WgpuRendererCore {
+@@ -1277,6 +1524,13 @@ impl WgpuRendererCore {
              usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
              mapped_at_creation: false,
          });
@@ -492,7 +492,7 @@ index f6611df..e84f959 100644
          let (
              instance_data,
              instance_data_capacity,
-@@ -1306,6 +1560,11 @@ impl WgpuRendererCore {
+@@ -1336,6 +1590,11 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -504,7 +504,7 @@ index f6611df..e84f959 100644
              ],
          });
          let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-@@ -1328,9 +1587,47 @@ impl WgpuRendererCore {
+@@ -1358,9 +1617,47 @@ impl WgpuRendererCore {
                          size: NonZeroU64::new(gamma_size),
                      }),
                  },
@@ -552,7 +552,7 @@ index f6611df..e84f959 100644
  
          Self {
              resources: WgpuResources {
-@@ -1343,11 +1640,18 @@ impl WgpuRendererCore {
+@@ -1373,11 +1670,18 @@ impl WgpuRendererCore {
                  globals_buffer,
                  globals_bind_group,
                  path_globals_bind_group,
@@ -571,7 +571,7 @@ index f6611df..e84f959 100644
              },
              atlas,
              path_globals_offset,
-@@ -1462,6 +1766,7 @@ impl WgpuRendererCore {
+@@ -1492,6 +1796,7 @@ impl WgpuRendererCore {
              self.gamma_offset,
              bytemuck::bytes_of(&gamma_params),
          );
@@ -579,7 +579,7 @@ index f6611df..e84f959 100644
  
          self.record_frame(scene, target_view, clear_color)
              .inspect_err(|_| {
-@@ -1492,6 +1797,22 @@ impl WgpuRendererCore {
+@@ -1522,6 +1827,22 @@ impl WgpuRendererCore {
                  )
              })?;
          self.prepare_texture_bind_groups(scene);
@@ -602,7 +602,7 @@ index f6611df..e84f959 100644
  
          let mut encoder =
              self.resources()
-@@ -1607,6 +1928,24 @@ impl WgpuRendererCore {
+@@ -1637,6 +1958,24 @@ impl WgpuRendererCore {
                      // Surfaces are macOS-only for video playback and are not
                      // implemented by the WGPU renderer.
                      PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -627,7 +627,7 @@ index f6611df..e84f959 100644
                  }
              }
          }
-@@ -1688,6 +2027,11 @@ impl WgpuRendererCore {
+@@ -1718,6 +2057,11 @@ impl WgpuRendererCore {
                  PrimitiveBatch::MonochromeSprites { texture_id, .. }
                  | PrimitiveBatch::SubpixelSprites { texture_id, .. }
                  | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
@@ -639,7 +639,7 @@ index f6611df..e84f959 100644
                  _ => continue,
              };
              if !texture_ids.contains(&texture_id) {
-@@ -1727,6 +2071,37 @@ impl WgpuRendererCore {
+@@ -1757,6 +2101,37 @@ impl WgpuRendererCore {
          }
      }
  
@@ -677,7 +677,7 @@ index f6611df..e84f959 100644
      fn draw_instances(
          &self,
          instances: &InstanceBinding,
-@@ -1775,6 +2150,448 @@ impl WgpuRendererCore {
+@@ -1805,6 +2180,448 @@ impl WgpuRendererCore {
          Ok(())
      }
  
@@ -1126,7 +1126,7 @@ index f6611df..e84f959 100644
      unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
          unsafe {
              std::slice::from_raw_parts(
-@@ -2400,11 +3217,33 @@ impl WgpuHeadlessRenderer {
+@@ -2436,11 +3253,33 @@ impl WgpuHeadlessRenderer {
              .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
              .view
              .clone();
@@ -1160,7 +1160,7 @@ index f6611df..e84f959 100644
      /// Copies the current render target back to the CPU. Dimensions come from the
      /// target texture itself, so the copy can never disagree with what was rendered.
      fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
-@@ -2921,4 +3760,220 @@ mod tests {
+@@ -2957,4 +3796,220 @@ mod tests {
              ]
          );
      }

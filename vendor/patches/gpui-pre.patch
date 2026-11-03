@@ -1,8 +1,8 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 7890ed3..60a11e5 100644
+index 4d7754f..7fd20e0 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -94,186 +94,6 @@ x11 = ["scap?/x11"]
+@@ -95,186 +95,6 @@ x11 = ["scap?/x11"]
  name = "gpui"
  path = "src/gpui.rs"
  
@@ -449,7 +449,7 @@ index 0000000..df9fef2
 +    GENERATION.load(Ordering::Relaxed)
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..2c5b9ec 100644
+index 9b34aa2..877a0d7 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -484,7 +484,7 @@ index 11f0b72..2c5b9ec 100644
      pub(crate) numeric_value: Option<f64>,
      pub(crate) min_numeric_value: Option<f64>,
      pub(crate) max_numeric_value: Option<f64>,
-@@ -3608,6 +3626,14 @@ impl Interactivity {
+@@ -3610,6 +3628,14 @@ impl Interactivity {
          if let Some(toggled) = self.aria.toggled {
              node.set_toggled(toggled);
          }
@@ -500,29 +500,29 @@ index 11f0b72..2c5b9ec 100644
              node.set_numeric_value(value);
          }
 diff --git a/src/gpui.rs b/src/gpui.rs
-index 2328e95..f00ef65 100644
+index 5b31a35..8068a26 100644
 --- a/src/gpui.rs
 +++ b/src/gpui.rs
-@@ -52,6 +52,8 @@ pub mod queue;
- #[cfg(any(test, feature = "bench-support"))]
- pub mod randomized_element_tree;
+@@ -47,6 +47,8 @@ mod path_builder;
+ mod platform;
+ mod platform_scheduler;
  mod scene;
 +mod shader; // KOAN: #1641.
 +mod color_slots; // KOAN: #1859.
- #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
- mod seeds;
  mod shared_uri;
-@@ -200,6 +202,8 @@ pub use profiler::*;
- pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
+ mod spring;
+ mod style;
+@@ -138,6 +140,8 @@ pub use platform::*;
+ pub use profiler::*;
  pub use refineable::*;
  pub use scene::*;
 +pub use shader::*; // KOAN: #1641.
 +pub use color_slots::*; // KOAN: #1859.
  pub use shared_uri::*;
- use std::{any::Any, future::Future};
+ pub use spring::*;
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..57c1f12 100644
+index a4116aa..1fc3fbd 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -50,6 +50,41 @@ pub struct Scene {
@@ -1673,7 +1673,7 @@ index 0000000..4fcacc5
 +    }
 +}
 diff --git a/src/view.rs b/src/view.rs
-index 76688b7..6ef8b65 100644
+index b613805..6341062 100644
 --- a/src/view.rs
 +++ b/src/view.rs
 @@ -8,7 +8,6 @@ use crate::{Empty, Window};
@@ -1684,7 +1684,7 @@ index 76688b7..6ef8b65 100644
  use std::{
      any::{TypeId, type_name},
      fmt,
-@@ -560,7 +559,11 @@ fn prepaint_view(
+@@ -565,7 +564,11 @@ fn prepaint_view(
                      return (None, element_state);
                  }
  
@@ -1697,7 +1697,7 @@ index 76688b7..6ef8b65 100644
                  let prepaint_start = window.prepaint_index();
                  let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                      let mut element = render(window, cx);
-@@ -570,7 +573,6 @@ fn prepaint_view(
+@@ -575,7 +578,6 @@ fn prepaint_view(
                  });
  
                  let prepaint_end = window.prepaint_index();
@@ -1705,18 +1705,18 @@ index 76688b7..6ef8b65 100644
  
                  (
                      Some(element),
-@@ -623,9 +625,9 @@ fn paint_view(
-                     let paint_start = window.paint_index();
- 
+@@ -635,9 +637,9 @@ fn paint_view(
+                     // actually painted, and output replayed under a different opacity is
+                     // redrawn on the next frame.
                      if let Some(element) = element {
 -                        let refreshing = mem::replace(&mut window.refreshing, true);
 +                        // KOAN: as in prepaint, the cached views inside are
 +                        // left to their own keys.
                          element.paint(window, cx);
 -                        window.refreshing = refreshing;
+                         element_state.cache_key.opacity = opacity;
                      } else {
                          window.reuse_paint(element_state.paint_range.clone());
-                     }
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
 index ae98aa5..ea0f6a4 100644
 --- a/src/window/a11y/debug.rs
@@ -1755,11 +1755,11 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..161492e 100644
+index c2ba13d..a72d4bf 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -1281,6 +1281,10 @@ pub struct Window {
-         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
+@@ -1274,6 +1274,10 @@ pub struct Window {
+         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
      hovered: Rc<Cell<bool>>,
      pub(crate) needs_present: Rc<Cell<bool>>,
 +    // KOAN: the colour slot table's generation as last presented, and
@@ -1769,7 +1769,7 @@ index c559412..161492e 100644
      /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
      /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
      pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
-@@ -1913,28 +1917,45 @@ impl Window {
+@@ -2048,7 +2052,18 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -1788,6 +1788,8 @@ index c559412..161492e 100644
 +                {
                      handle
                          .update(&mut cx, |_, window, _| window.present())
+                         .with_context(|| {
+@@ -2057,13 +2072,19 @@ impl Window {
                          .log_err();
                  }
  
@@ -1806,7 +1808,14 @@ index c559412..161492e 100644
                          }
 +                        live
                      })
+                     .with_context(|| {
+                         format!(
+@@ -2071,14 +2092,15 @@ impl Window {
+                             handle.window_id()
+                         )
+                     })
 -                    .log_err();
++                    .log_err()
 +                    .unwrap_or(false);
  
                  // Platforms that stop requesting frames for idle windows only
@@ -1819,8 +1828,8 @@ index c559412..161492e 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -2184,6 +2205,8 @@ impl Window {
-             visibility_observers: SubscriberSet::new(),
+@@ -2396,6 +2418,8 @@ impl Window {
+             visibility_observers: SingleSubscriberSet::new(),
              hovered,
              needs_present,
 +            color_slot_generation: Cell::new(0), // KOAN: #1859.
@@ -1828,7 +1837,7 @@ index c559412..161492e 100644
              input_rate_tracker,
              #[cfg(feature = "profiler")]
              window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
-@@ -3618,12 +3641,40 @@ impl Window {
+@@ -3827,12 +3851,40 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -1869,7 +1878,7 @@ index c559412..161492e 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4741,107 @@ impl Window {
+@@ -4899,6 +4951,107 @@ impl Window {
          }
      }
  
@@ -1977,7 +1986,7 @@ index c559412..161492e 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7226,22 @@ impl Window {
+@@ -7297,6 +7450,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

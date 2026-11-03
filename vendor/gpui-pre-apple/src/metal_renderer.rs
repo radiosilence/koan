@@ -1,30 +1,37 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
-use core_graphics::geometry::CGSize;
 use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
     PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
-use objc2::runtime::AnyObject;
-
-use core_graphics::color_space::{CGColorSpace, kCGColorSpaceDisplayP3};
-use foreign_types::{ForeignType, ForeignTypeRef};
-use metal::{
-    CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
-    NSUInteger,
-};
-use objc2_core_foundation::CFRetained;
+use objc2::{Message, rc::Retained, runtime::ProtocolObject};
+use objc2_core_foundation::{CFRetained, CGSize};
+use objc2_core_graphics::{CGColorSpace, kCGColorSpaceDisplayP3};
 use objc2_core_video::{
     CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVPixelBufferGetHeight,
     CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
     CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
 };
+use objc2_foundation::{NSRange, NSString};
+#[cfg(target_os = "macos")]
+use objc2_metal::MTLCopyAllDevices;
+use objc2_metal::{
+    MTLBlendFactor, MTLBlendOperation, MTLBuffer, MTLClearColor, MTLCommandBuffer,
+    MTLCommandEncoder, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable,
+    MTLGPUFamily, MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
+    MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
+    MTLRenderPipelineState, MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture,
+    MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
+};
+#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
+use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
@@ -43,20 +50,17 @@ const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
 
-pub unsafe fn new_renderer(
+pub fn new_renderer(
     context: self::Context,
-    _native_window: *mut c_void,
-    _native_view: *mut c_void,
-    _bounds: gpui::Size<f32>,
     transparent: bool,
     use_display_p3: bool,
-) -> Renderer {
+) -> Result<Renderer> {
     MetalRenderer::new(context, transparent, use_display_p3)
 }
 
 pub struct InstanceBufferPool {
     buffer_size: usize,
-    buffers: Vec<metal::Buffer>,
+    buffers: Vec<InstanceBuffer>,
 }
 
 impl Default for InstanceBufferPool {
@@ -68,10 +72,13 @@ impl Default for InstanceBufferPool {
     }
 }
 
-pub(crate) struct InstanceBuffer {
-    metal_buffer: metal::Buffer,
+struct InstanceBuffer {
+    metal_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     size: usize,
 }
+
+// SAFETY: Each buffer has one CPU writer and returns to the mutex-protected pool only after GPU completion.
+unsafe impl Send for InstanceBuffer {}
 
 impl InstanceBufferPool {
     pub(crate) fn reset(&mut self, buffer_size: usize) {
@@ -79,81 +86,89 @@ impl InstanceBufferPool {
         self.buffers.clear();
     }
 
-    pub(crate) fn acquire(
+    fn acquire(
         &mut self,
-        device: &metal::Device,
+        device: &ProtocolObject<dyn MTLDevice>,
         unified_memory: bool,
-    ) -> InstanceBuffer {
-        let buffer = self.buffers.pop().unwrap_or_else(|| {
-            let options = if unified_memory {
-                MTLResourceOptions::StorageModeShared
-                    // Buffers are write only which can benefit from the combined cache
-                    // https://developer.apple.com/documentation/metal/mtlresourceoptions/cpucachemodewritecombined
-                    | MTLResourceOptions::CPUCacheModeWriteCombined
-            } else {
-                MTLResourceOptions::StorageModeManaged
-            };
-
-            device.new_buffer(self.buffer_size as u64, options)
-        });
-        InstanceBuffer {
+    ) -> Result<InstanceBuffer> {
+        if let Some(buffer) = self.buffers.pop() {
+            return Ok(buffer);
+        }
+        let options = if unified_memory {
+            MTLResourceOptions::StorageModeShared
+                // Buffers are write only which can benefit from the combined cache
+                // https://developer.apple.com/documentation/metal/mtlresourceoptions/cpucachemodewritecombined
+                | MTLResourceOptions::CPUCacheModeWriteCombined
+        } else {
+            MTLResourceOptions::StorageModeManaged
+        };
+        let buffer = device
+            .newBufferWithLength_options(self.buffer_size, options)
+            .with_context(|| format!("allocating {}-byte instance buffer", self.buffer_size))?;
+        Ok(InstanceBuffer {
             metal_buffer: buffer,
             size: self.buffer_size,
-        }
+        })
     }
 
-    pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
+    fn release(&mut self, buffer: InstanceBuffer) {
         if buffer.size == self.buffer_size {
-            self.buffers.push(buffer.metal_buffer)
+            self.buffers.push(buffer)
         }
     }
 }
 
+enum DisplayLinkMode {
+    Detached,
+    Attached {
+        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    },
+}
+
 pub struct MetalRenderer {
-    device: metal::Device,
-    layer: Option<metal::MetalLayer>,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
+    layer: Option<Retained<CAMetalLayer>>,
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    display_link_mode: DisplayLinkMode,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
-    command_queue: CommandQueue,
-    paths_rasterization_pipeline_state: metal::RenderPipelineState,
-    path_sprites_pipeline_state: metal::RenderPipelineState,
-    shadows_pipeline_state: metal::RenderPipelineState,
-    quads_pipeline_state: metal::RenderPipelineState,
-    underlines_pipeline_state: metal::RenderPipelineState,
-    monochrome_sprites_pipeline_state: metal::RenderPipelineState,
-    polychrome_sprites_pipeline_state: metal::RenderPipelineState,
-    surfaces_pipeline_state: metal::RenderPipelineState,
+    command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    paths_rasterization_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    path_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    shadows_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    quads_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    underlines_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    monochrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    polychrome_sprites_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    surfaces_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     // KOAN: each shader program's pipeline, compiled the first time it is
     // drawn; `None` for one that would not compile, which is not tried again
     // (#1641).
-    shader_pipelines: std::cell::RefCell<
-        std::collections::HashMap<&'static str, Option<metal::RenderPipelineState>>,
-    >,
+    shader_pipelines:
+        std::cell::RefCell<std::collections::HashMap<&'static str, Option<Pipeline>>>,
     // KOAN: the last frame drawn as the layers its shaders are drawn
     // between, which each present composes with the shaders (#1641).
     shader_layers: ShaderLayerTextures,
     // KOAN: each layer group's texture, and the frame they were drawn for
     // (#1859).
-    group_textures: Vec<Option<metal::Texture>>,
+    group_textures: Vec<Option<Texture>>,
     group_generation: u64,
     compose_pipelines: Option<ComposePipelines>,
     /// What a shader with no image is given to sample.
-    blank_texture: Option<metal::Texture>,
-    unit_vertices: metal::Buffer,
-    #[allow(clippy::arc_with_non_send_sync)]
+    blank_texture: Option<Texture>,
+    unit_vertices: Retained<ProtocolObject<dyn MTLBuffer>>,
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CFRetained<CVMetalTextureCache>,
-    path_intermediate_texture: Option<metal::Texture>,
-    path_intermediate_msaa_texture: Option<metal::Texture>,
+    path_intermediate_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
+    path_intermediate_msaa_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
     path_sample_count: u32,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    headless_render_target: Option<metal::Texture>,
+    headless_render_target: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
 }
 
 #[repr(C)]
@@ -170,9 +185,9 @@ impl MetalRenderer {
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
         transparent: bool,
         use_display_p3: bool,
-    ) -> Self {
-        let device = Self::create_device();
-        let layer = metal::MetalLayer::new();
+    ) -> Result<Self> {
+        let device = Self::create_device()?;
+        let layer = CAMetalLayer::new();
         Self::configure_layer(&layer, &device, transparent, use_display_p3);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
@@ -182,63 +197,47 @@ impl MetalRenderer {
     /// `CAMetalLayer`. The renderer retains the layer.
     pub fn from_layer(
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-        layer: &objc2_quartz_core::CAMetalLayer,
+        layer: &CAMetalLayer,
         transparent: bool,
-    ) -> Self {
-        let device = Self::create_device();
-        // Both types bind the same Objective-C class, so this only changes which
-        // Rust wrapper views the live layer. `to_owned` retains it.
-        let layer = unsafe {
-            metal::MetalLayerRef::from_ptr(ptr::from_ref(layer).cast_mut().cast::<CAMetalLayer>())
-        }
-        .to_owned();
+    ) -> Result<Self> {
+        let device = Self::create_device()?;
+        let layer = layer.retain();
         Self::configure_layer(&layer, &device, transparent, false);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
 
     fn configure_layer(
-        layer: &metal::MetalLayerRef,
-        device: &metal::DeviceRef,
+        layer: &CAMetalLayer,
+        device: &ProtocolObject<dyn MTLDevice>,
         transparent: bool,
         use_display_p3: bool,
     ) {
-        layer.set_device(device);
-        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        // metal-rs doesn't bind these setters, so view the same object through
-        // objc2's typed CAMetalLayer binding.
-        let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
+        layer.setDevice(Some(device));
+        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
         if use_display_p3 {
             // SAFETY: The constant is extern, from Core Graphics
             let display_p3_name = unsafe { kCGColorSpaceDisplayP3 };
-            if let Some(display_p3_color_space) = CGColorSpace::create_with_name(display_p3_name) {
-                // SAFETY: `layer` is a CAMetalLayer and the color space remains valid for the call.
-                // 'metal-rs' does not expose CAMetalLayer's typed `colorspace` setter.
-                // Could be replaced with a native binding via objc2-* in future
-                unsafe {
-                    let _: () = objc2::msg_send![
-                        objc2_layer,
-                        setColorspace: display_p3_color_space.as_ptr().cast::<c_void>()
-                    ];
-                }
+            if let Some(display_p3_color_space) = CGColorSpace::with_name(Some(display_p3_name)) {
+                layer.setColorspace(Some(&display_p3_color_space));
             } else {
                 log::error!("unable to create the Display P3 color space");
             }
         }
         // Support direct-to-display rendering if the window is not transparent
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
-        layer.set_opaque(!transparent);
-        layer.set_maximum_drawable_count(3);
+        layer.setOpaque(!transparent);
+        layer.setMaximumDrawableCount(3);
         // Allow texture reading for visual tests and UI automation screenshots
         // (captures without ScreenCaptureKit). Only debug builds pay the
         // presentation cost, even when `test-support` is compiled in.
         #[cfg(all(feature = "test-support", debug_assertions))]
-        layer.set_framebuffer_only(false);
-        objc2_layer.setAllowsNextDrawableTimeout(false);
-        objc2_layer.setNeedsDisplayOnBoundsChange(true);
+        layer.setFramebufferOnly(false);
+        layer.setAllowsNextDrawableTimeout(false);
+        layer.setNeedsDisplayOnBoundsChange(true);
         // UIKit sizes a view's backing layer itself; only AppKit-hosted
         // layers need to track their superlayer's bounds.
         #[cfg(target_os = "macos")]
-        objc2_layer.setAutoresizingMask(
+        layer.setAutoresizingMask(
             objc2_quartz_core::CAAutoresizingMask::LayerWidthSizable
                 | objc2_quartz_core::CAAutoresizingMask::LayerHeightSizable,
         );
@@ -249,21 +248,21 @@ impl MetalRenderer {
     /// This renderer can render scenes to images without requiring a CAMetalLayer,
     /// window, or AppKit. Use `render_scene_to_image()` to render scenes.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
-        let device = Self::create_device();
+    pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Result<Self> {
+        let device = Self::create_device()?;
         Self::new_internal(device, None, true, instance_buffer_pool)
     }
 
     #[cfg(target_os = "macos")]
-    fn create_device() -> metal::Device {
+    fn create_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
-        if let Some(d) = metal::Device::all()
-            .into_iter()
-            .min_by_key(|d| (d.is_removable(), !d.is_low_power()))
+        if let Some(device) = MTLCopyAllDevices()
+            .iter()
+            .min_by_key(|device| (device.isRemovable(), !device.isLowPower()))
         {
-            d
+            Ok(device)
         } else {
             // For some reason `all()` can return an empty list, see https://github.com/zed-industries/zed/issues/37689
             // In that case, we fall back to the system default device.
@@ -275,31 +274,33 @@ impl MetalRenderer {
     }
 
     #[cfg(target_os = "ios")]
-    fn create_device() -> metal::Device {
+    fn create_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
         Self::system_default_device()
     }
 
-    fn system_default_device() -> metal::Device {
-        metal::Device::system_default().unwrap_or_else(|| {
-            log::error!("unable to access a compatible graphics device");
-            std::process::exit(1);
-        })
+    fn system_default_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
+        MTLCreateSystemDefaultDevice().context("accessing a compatible Metal device")
     }
 
     fn new_internal(
-        device: metal::Device,
-        layer: Option<metal::MetalLayer>,
+        device: Retained<ProtocolObject<dyn MTLDevice>>,
+        layer: Option<Retained<CAMetalLayer>>,
         opaque: bool,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-    ) -> Self {
+    ) -> Result<Self> {
         #[cfg(feature = "runtime_shaders")]
         let library = device
-            .new_library_with_source(&SHADERS_SOURCE_FILE, &metal::CompileOptions::new())
-            .expect("error building metal library");
+            .newLibraryWithSource_options_error(
+                &NSString::from_str(SHADERS_SOURCE_FILE),
+                Some(&objc2_metal::MTLCompileOptions::new()),
+            )
+            .context("building Metal library")?;
         #[cfg(not(feature = "runtime_shaders"))]
         let library = device
-            .new_library_with_data(SHADERS_METALLIB)
-            .expect("error building metal library");
+            .newLibraryWithData_error(&dispatch2::DispatchData::from_static_bytes(
+                SHADERS_METALLIB,
+            ))
+            .context("loading Metal library")?;
 
         fn to_float2_bits(point: PointF) -> u64 {
             let mut output = point.y.to_bits() as u64;
@@ -312,12 +313,12 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
         // iOS does not support managed resources. Its simulator may report a
         // non-unified host GPU even though resources must still use shared storage.
-        let is_unified_memory = cfg!(target_os = "ios") || device.has_unified_memory();
+        let is_unified_memory = cfg!(target_os = "ios") || device.hasUnifiedMemory();
         // Apple GPU families support memoryless textures, which can significantly reduce
         // memory usage by keeping render targets in on-chip tile memory instead of
         // allocating backing store in system memory.
         // https://developer.apple.com/documentation/metal/mtlgpufamily
-        let is_apple_gpu = device.supports_family(MTLGPUFamily::Apple1);
+        let is_apple_gpu = device.supportsFamily(MTLGPUFamily::Apple1);
 
         let unit_vertices = [
             to_float2_bits(point(0., 0.)),
@@ -327,16 +328,20 @@ impl MetalRenderer {
             to_float2_bits(point(1., 0.)),
             to_float2_bits(point(1., 1.)),
         ];
-        let unit_vertices = device.new_buffer_with_data(
-            unit_vertices.as_ptr() as *const c_void,
-            mem::size_of_val(&unit_vertices) as u64,
-            if is_unified_memory {
-                MTLResourceOptions::StorageModeShared
-                    | MTLResourceOptions::CPUCacheModeWriteCombined
-            } else {
-                MTLResourceOptions::StorageModeManaged
-            },
-        );
+        // SAFETY: Metal copies the live array using its exact byte length.
+        let unit_vertices = unsafe {
+            device.newBufferWithBytes_length_options(
+                ptr::NonNull::from(&unit_vertices).cast(),
+                mem::size_of_val(&unit_vertices),
+                if is_unified_memory {
+                    MTLResourceOptions::StorageModeShared
+                        | MTLResourceOptions::CPUCacheModeWriteCombined
+                } else {
+                    MTLResourceOptions::StorageModeManaged
+                },
+            )
+        }
+        .context("allocating unit vertex buffer")?;
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
             &device,
@@ -346,7 +351,7 @@ impl MetalRenderer {
             "path_rasterization_fragment",
             MTLPixelFormat::BGRA8Unorm,
             PATH_SAMPLE_COUNT,
-        );
+        )?;
         let path_sprites_pipeline_state = build_path_sprite_pipeline_state(
             &device,
             &library,
@@ -354,7 +359,7 @@ impl MetalRenderer {
             "path_sprite_vertex",
             "path_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let shadows_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -362,7 +367,7 @@ impl MetalRenderer {
             "shadow_vertex",
             "shadow_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let quads_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -370,7 +375,7 @@ impl MetalRenderer {
             "quad_vertex",
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let underlines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -378,7 +383,7 @@ impl MetalRenderer {
             "underline_vertex",
             "underline_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -386,7 +391,7 @@ impl MetalRenderer {
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -394,7 +399,7 @@ impl MetalRenderer {
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -402,35 +407,33 @@ impl MetalRenderer {
             "surface_vertex",
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
 
-        let command_queue = device.new_command_queue();
+        let command_queue = device.newCommandQueue().context("creating command queue")?;
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
+        #[expect(
+            clippy::arc_with_non_send_sync,
+            reason = "PlatformWindow::sprite_atlas requires Arc, not Send or Sync"
+        )]
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage));
-        // metal and objc2-metal expose the same Objective-C device; the borrowed
-        // protocol object remains valid while `device` owns it.
-        let core_video_texture_cache = unsafe {
-            let mut cache = ptr::null_mut();
-            let status = CVMetalTextureCache::create(
-                None,
-                None,
-                &*device
-                    .as_ptr()
-                    .cast::<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>(),
-                None,
-                ptr::NonNull::from(&mut cache),
-            );
-            assert_eq!(
-                status, kCVReturnSuccess,
-                "failed to create CoreVideo Metal texture cache"
-            );
-            CFRetained::from_raw(ptr::NonNull::new(cache).expect("CoreVideo returned a null cache"))
+        let mut cache = ptr::null_mut();
+        // SAFETY: The output pointer is writable and both optional attribute dictionaries are absent.
+        let status = unsafe {
+            CVMetalTextureCache::create(None, None, &device, None, ptr::NonNull::from(&mut cache))
         };
+        anyhow::ensure!(
+            status == kCVReturnSuccess,
+            "creating CoreVideo Metal texture cache: status {status}"
+        );
+        let cache = ptr::NonNull::new(cache).context("retrieving CoreVideo Metal texture cache")?;
+        // SAFETY: The successful create call transfers ownership of this non-null cache.
+        let core_video_texture_cache = unsafe { CFRetained::from_raw(cache) };
 
-        Self {
+        Ok(Self {
             device,
             layer,
             presents_with_transaction: false,
+            display_link_mode: DisplayLinkMode::Detached,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -439,16 +442,16 @@ impl MetalRenderer {
             path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
-            shader_pipelines: Default::default(), // KOAN: #1641.
-            shader_layers: Default::default(), // KOAN: #1641.
-            group_textures: Vec::new(),        // KOAN: #1859.
-            group_generation: 0,
-            compose_pipelines: None,           // KOAN: #1641.
-            blank_texture: None,               // KOAN: #1641.
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            shader_pipelines: Default::default(), // KOAN: #1641.
+            shader_layers: Default::default(),    // KOAN: #1641.
+            group_textures: Vec::new(),           // KOAN: #1859.
+            group_generation: 0,
+            compose_pipelines: None, // KOAN: #1641.
+            blank_texture: None,     // KOAN: #1641.
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -458,17 +461,17 @@ impl MetalRenderer {
             path_sample_count: PATH_SAMPLE_COUNT,
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             headless_render_target: None,
-        }
+        })
     }
 
-    pub fn layer(&self) -> Option<&metal::MetalLayerRef> {
-        self.layer.as_ref().map(|l| l.as_ref())
+    pub fn layer(&self) -> Option<&CAMetalLayer> {
+        self.layer.as_deref()
     }
 
     pub fn layer_ptr(&self) -> *mut CAMetalLayer {
         self.layer
             .as_ref()
-            .map(|l| l.as_ptr())
+            .map(|layer| Retained::as_ptr(layer).cast_mut())
             .unwrap_or(ptr::null_mut())
     }
 
@@ -476,62 +479,132 @@ impl MetalRenderer {
         &self.sprite_atlas
     }
 
+    /// Draw the next frame into `drawable` instead of asking the layer for one.
+    ///
+    /// A `CAMetalDisplayLink` hands out each frame's drawable early enough for
+    /// the frame to reach the display on time; `nextDrawable` would instead
+    /// wait for the compositor to release one. Pass `None` once the frame is
+    /// done, so a drawable the frame did not use goes back to the layer.
+    ///
+    /// Returns the drawable this replaces: after a frame, `Some` means the
+    /// frame neither drew nor presented.
+    ///
+    /// This is a setter rather than a guard scoped to one frame because the
+    /// window releases its lock on the renderer while GPUI draws.
+    pub fn set_frame_drawable(
+        &mut self,
+        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    ) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
+        match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable: current } => mem::replace(current, drawable),
+            DisplayLinkMode::Detached => {
+                // Only a live link hands out drawables, and a link is detached
+                // only after it has been invalidated.
+                debug_assert!(
+                    drawable.is_none(),
+                    "received a display link drawable while detached"
+                );
+                None
+            }
+        }
+    }
+
+    /// Record whether a `CAMetalDisplayLink` drives the layer. While one
+    /// does, frames are drawn only into the drawables it hands out.
+    pub fn set_display_link_attached(&mut self, attached: bool) {
+        self.display_link_mode = if attached {
+            DisplayLinkMode::Attached { drawable: None }
+        } else {
+            DisplayLinkMode::Detached
+        };
+    }
+
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         self.presents_with_transaction = presents_with_transaction;
         if let Some(layer) = &self.layer {
-            layer.set_presents_with_transaction(presents_with_transaction);
+            layer.setPresentsWithTransaction(presents_with_transaction);
         }
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         if let Some(layer) = &self.layer {
-            layer.set_drawable_size(CGSize::new(size.width.0 as f64, size.height.0 as f64));
+            layer.setDrawableSize(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
-        self.update_path_intermediate_textures(size);
+        if let Err(error) = self.update_path_intermediate_textures(size) {
+            log::error!("failed to resize path textures: {error:#}");
+        }
     }
 
-    fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
+    fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) -> Result<()> {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
         if size.width.0 <= 0 || size.height.0 <= 0 {
             self.path_intermediate_texture = None;
             self.path_intermediate_msaa_texture = None;
-            return;
+            return Ok(());
         }
 
-        let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_width(size.width.0 as u64);
-        texture_descriptor.set_height(size.height.0 as u64);
-        texture_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
-        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-        texture_descriptor
-            .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-        self.path_intermediate_texture = Some(self.device.new_texture(&texture_descriptor));
+        if self
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| {
+                texture.width() == size.width.0 as usize
+                    && texture.height() == size.height.0 as usize
+            })
+        {
+            return Ok(());
+        }
 
-        if self.path_sample_count > 1 {
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
+        let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
+        unsafe {
+            texture_descriptor.setWidth(size.width.0 as usize);
+            texture_descriptor.setHeight(size.height.0 as usize);
+        }
+        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.setStorageMode(MTLStorageMode::Private);
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        let intermediate_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .context("allocating path intermediate texture")?;
+
+        let msaa_texture = if self.path_sample_count > 1 {
             // https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
             // Rendering MSAA textures are done in a single pass, so we can use memory-less storage on Apple Silicon
             let storage_mode = if self.is_apple_gpu {
-                metal::MTLStorageMode::Memoryless
+                MTLStorageMode::Memoryless
             } else {
-                metal::MTLStorageMode::Private
+                MTLStorageMode::Private
             };
 
             let msaa_descriptor = texture_descriptor;
-            msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-            msaa_descriptor.set_storage_mode(storage_mode);
-            msaa_descriptor.set_sample_count(self.path_sample_count as _);
-            self.path_intermediate_msaa_texture = Some(self.device.new_texture(&msaa_descriptor));
+            msaa_descriptor.setTextureType(MTLTextureType::Type2DMultisample);
+            msaa_descriptor.setStorageMode(storage_mode);
+            // SAFETY: The multisample texture uses the same sample count as its render pipeline.
+            unsafe {
+                msaa_descriptor.setSampleCount(self.path_sample_count as _);
+            }
+            Some(
+                self.device
+                    .newTextureWithDescriptor(&msaa_descriptor)
+                    .context("allocating multisample path texture")?,
+            )
         } else {
-            self.path_intermediate_msaa_texture = None;
-        }
+            None
+        };
+        self.path_intermediate_texture = Some(intermediate_texture);
+        self.path_intermediate_msaa_texture = msaa_texture;
+        Ok(())
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
         self.opaque = !transparent;
         if let Some(layer) = &self.layer {
-            layer.set_opaque(!transparent);
+            layer.setOpaque(!transparent);
         }
     }
 
@@ -549,20 +622,32 @@ impl MetalRenderer {
                 return;
             }
         };
-        let viewport_size = layer.drawable_size();
-        let viewport_size: Size<DevicePixels> = size(
-            (viewport_size.width.ceil() as i32).into(),
-            (viewport_size.height.ceil() as i32).into(),
-        );
-        let drawable = if let Some(drawable) = layer.next_drawable() {
-            drawable
-        } else {
-            log::error!(
-                "failed to retrieve next drawable, drawable size: {:?}",
-                viewport_size
-            );
-            return;
+        let drawable = match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable } => {
+                let Some(drawable) = drawable.take() else {
+                    log::error!("skipped a frame drawn outside its display link's update");
+                    return;
+                };
+                drawable
+            }
+            DisplayLinkMode::Detached => {
+                let Some(drawable) = layer.nextDrawable() else {
+                    log::error!(
+                        "failed to retrieve next drawable, drawable size: {:?}",
+                        layer.drawableSize()
+                    );
+                    return;
+                };
+                drawable
+            }
         };
+        // A display link's drawable was sized when the link handed it out,
+        // which can be before a resize the layer has since taken.
+        let texture = drawable.texture();
+        let viewport_size: Size<DevicePixels> = size(
+            (texture.width() as i32).into(),
+            (texture.height() as i32).into(),
+        );
 
         // KOAN: each layer group drawn into its texture, once per frame
         // drawn (#1859).
@@ -574,10 +659,10 @@ impl MetalRenderer {
         // shaders, so re-presenting a moving shader costs the shaders and a
         // few full-screen copies, not the scene (#1641).
         let rendered = if scene.shader_layers.is_some() {
-            self.compose_frame(scene, drawable.texture(), viewport_size)
+            self.compose_frame(scene, &texture, viewport_size)
         } else {
             self.shader_layers.release();
-            self.render_frame(scene, drawable.texture(), viewport_size, false)
+            self.render_frame(scene, &texture, viewport_size, false)
         };
         let command_buffer = match rendered {
             Ok(command_buffer) => command_buffer,
@@ -589,10 +674,10 @@ impl MetalRenderer {
 
         if self.presents_with_transaction {
             command_buffer.commit();
-            command_buffer.wait_until_scheduled();
+            command_buffer.waitUntilScheduled();
             drawable.present();
         } else {
-            command_buffer.present_drawable(drawable);
+            command_buffer.presentDrawable(ProtocolObject::from_ref(&*drawable));
             command_buffer.commit();
         }
     }
@@ -600,18 +685,21 @@ impl MetalRenderer {
     fn render_frame(
         &mut self,
         scene: &Scene,
-        texture: &metal::TextureRef,
+        texture: &ProtocolObject<dyn MTLTexture>,
         viewport_size: Size<DevicePixels>,
         transparent: bool, // KOAN: a layer of a scene with shaders (#1641).
-    ) -> Result<metal::CommandBuffer> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
+        if self.path_intermediate_texture.is_none() {
+            self.update_path_intermediate_textures(viewport_size)?;
+        }
         let mut writer = InstanceBufferWriter::new(
             &self.device,
             &self.instance_buffer_pool,
             self.is_unified_memory,
-        );
+        )?;
         let instance_bindings = write_instances(scene, &mut writer).with_context(|| {
             format!(
-                "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                "writing instance data: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                 scene.paths.len(),
                 scene.shadows.len(),
                 scene.quads.len(),
@@ -621,25 +709,30 @@ impl MetalRenderer {
                 scene.surfaces.len(),
             )
         })?;
+        let mut surface_textures = Vec::new();
         let command_buffer = self.draw_primitives_to_texture(
             scene,
             &instance_bindings,
             &mut writer,
             texture,
             viewport_size,
+            &mut surface_textures,
             transparent,
         )?;
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
-        let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
-            if let Some(instance_buffer) = instance_buffer.take() {
-                instance_buffer_pool.lock().release(instance_buffer);
-            }
-        });
-        // SAFETY: Both pointee types are opaque views of the same Objective-C block pointer ABI.
+        let frame_resources = Cell::new(Some((writer.finish(), surface_textures)));
+        let block = RcBlock::new(
+            move |_: ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                if let Some((instance_buffer, _surface_textures)) = frame_resources.take() {
+                    instance_buffer_pool.lock().release(instance_buffer);
+                }
+            },
+        );
+        // SAFETY: Metal copies the live block and invokes it once after this frame completes.
+        // Its captures own the frame resources and use the pool mutex when returning the buffer.
         unsafe {
-            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
+            command_buffer.addCompletedHandler(RcBlock::as_ptr(&block));
         }
 
         Ok(command_buffer)
@@ -657,22 +750,13 @@ impl MetalRenderer {
             .layer
             .clone()
             .ok_or_else(|| anyhow::anyhow!("render_to_image requires a layer-backed renderer"))?;
-        let viewport_size = layer.drawable_size();
+        let viewport_size = layer.drawableSize();
         let viewport_size: Size<DevicePixels> = size(
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .next_drawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size, false)?;
-
-        // Commit and wait for completion without presenting
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
-
-        read_texture_to_image(drawable.texture())
+        // CAMetalDisplayLink owns the drawable, so render into a texture we own.
+        self.render_offscreen(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
@@ -692,92 +776,58 @@ impl MetalRenderer {
         // Headless callers do not have a Cocoa event-loop pool to release
         // autoreleased command buffers and render-pass descriptors.
         objc2::rc::autoreleasepool(|_| {
-            // Update path intermediate textures for this size
-            self.update_path_intermediate_textures(size);
-            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
-
-            // Create an offscreen texture as render target
-            let texture_descriptor = metal::TextureDescriptor::new();
-            texture_descriptor.set_width(size.width.0 as u64);
-            texture_descriptor.set_height(size.height.0 as u64);
-            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor.set_usage(
-                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-            );
-            // Like the atlas, only Apple GPUs can create shared textures on macOS;
-            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.set_storage_mode(if uses_shared_storage {
-                metal::MTLStorageMode::Shared
-            } else {
-                metal::MTLStorageMode::Managed
-            });
-            let target_texture = self.device.new_texture(&texture_descriptor);
-
-            let command_buffer = self.render_frame(scene, &target_texture, size, false)?;
-
-            // Managed textures require an explicit blit synchronize before the CPU
-            // can read back the rendered data. Without this, get_bytes returns
-            // stale zeros.
-            if !uses_shared_storage {
-                let blit = command_buffer.new_blit_command_encoder();
-                blit.synchronize_resource(&target_texture);
-                blit.end_encoding();
-            }
-
-            // Commit and wait for completion
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-
-            read_texture_to_image(&target_texture)
+            self.update_path_intermediate_textures(size)?;
+            self.render_offscreen(scene, size)
         })
     }
 
-    // KOAN: (#1641) renders a scene as a window with shaders presents it,
-    // the base first and the shaders composed over it, `presents` times,
-    // for checking against `render_scene_to_image`.
+    /// Renders a scene into a new offscreen texture of `size` and reads it
+    /// back, without presenting anything.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub fn compose_scene_to_image(
-        &mut self,
-        scene: &Scene,
-        size: Size<DevicePixels>,
-        presents: usize,
-    ) -> Result<RgbaImage> {
-        objc2::rc::autoreleasepool(|_| {
-            self.update_path_intermediate_textures(size);
-            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
-            let texture_descriptor = metal::TextureDescriptor::new();
-            texture_descriptor.set_width(size.width.0 as u64);
-            texture_descriptor.set_height(size.height.0 as u64);
-            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor.set_usage(
-                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-            );
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.set_storage_mode(if uses_shared_storage {
-                metal::MTLStorageMode::Shared
-            } else {
-                metal::MTLStorageMode::Managed
-            });
-            let target_texture = self.device.new_texture(&texture_descriptor);
-            let mut last = None;
-            for _ in 0..presents.max(1) {
-                let command_buffer = self.compose_frame(scene, &target_texture, size)?;
-                command_buffer.commit();
-                last = Some(command_buffer);
-            }
-            let command_buffer = last.context("no present")?;
-            command_buffer.wait_until_completed();
-            if !uses_shared_storage {
-                let command_buffer = self.command_queue.new_command_buffer();
-                let blit = command_buffer.new_blit_command_encoder();
-                blit.synchronize_resource(&target_texture);
-                blit.end_encoding();
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
-            }
-            read_texture_to_image(&target_texture)
-        })
+    fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            anyhow::bail!("Invalid size for render_offscreen: {:?}", size);
+        }
+        self.draw_layer_groups(scene, size)?; // KOAN: #1859.
+
+        let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
+        unsafe {
+            texture_descriptor.setWidth(size.width.0 as usize);
+            texture_descriptor.setHeight(size.height.0 as usize);
+        }
+        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        // Like the atlas, only Apple GPUs can create shared textures on macOS;
+        // Intel Macs cannot, even with unified memory. iOS has no managed storage.
+        let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+        texture_descriptor.setStorageMode(if uses_shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .context("allocating offscreen render target")?;
+
+        let command_buffer = self.render_frame(scene, &target_texture, size, false)?;
+
+        // Managed textures require an explicit blit synchronize before the CPU
+        // can read back the rendered data. Without this, get_bytes returns
+        // stale zeros.
+        if !uses_shared_storage {
+            let blit = command_buffer
+                .blitCommandEncoder()
+                .context("creating blit command encoder")?;
+            blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+            blit.endEncoding();
+        }
+
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+
+        read_texture_to_image(&target_texture)
     }
 
     /// Renders a scene to a reused offscreen texture without reading pixels
@@ -794,26 +844,32 @@ impl MetalRenderer {
         }
 
         objc2::rc::autoreleasepool(|_| {
-            self.update_path_intermediate_textures(size);
+            self.update_path_intermediate_textures(size)?;
 
             let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
-                texture.width() != size.width.0 as u64 || texture.height() != size.height.0 as u64
+                texture.width() != size.width.0 as usize
+                    || texture.height() != size.height.0 as usize
             });
             if needs_new_target {
-                let texture_descriptor = metal::TextureDescriptor::new();
-                texture_descriptor.set_width(size.width.0 as u64);
-                texture_descriptor.set_height(size.height.0 as u64);
-                texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-                texture_descriptor.set_usage(
-                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                let texture_descriptor = MTLTextureDescriptor::new();
+                unsafe {
+                    texture_descriptor.setWidth(size.width.0 as usize);
+                    texture_descriptor.setHeight(size.height.0 as usize);
+                }
+                texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+                texture_descriptor
+                    .setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+                texture_descriptor.setStorageMode(MTLStorageMode::Private);
+                self.headless_render_target = Some(
+                    self.device
+                        .newTextureWithDescriptor(&texture_descriptor)
+                        .context("allocating headless render target")?,
                 );
-                texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-                self.headless_render_target = Some(self.device.new_texture(&texture_descriptor));
             }
             let target_texture = self
                 .headless_render_target
                 .clone()
-                .expect("just ensured the render target exists");
+                .context("retrieving headless render target")?;
 
             let command_buffer = self.render_frame(scene, &target_texture, size, false)?;
 
@@ -829,61 +885,69 @@ impl MetalRenderer {
         scene: &Scene,
         instance_bindings: &InstanceBindings,
         writer: &mut InstanceBufferWriter,
-        texture: &metal::TextureRef,
+        texture: &ProtocolObject<dyn MTLTexture>,
         viewport_size: Size<DevicePixels>,
+        surface_textures: &mut Vec<CFRetained<CVMetalTexture>>,
         transparent: bool, // KOAN: #1641.
-    ) -> Result<metal::CommandBuffer> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
         let command_queue = self.command_queue.clone();
-        let command_buffer = command_queue.new_command_buffer();
+        let command_buffer = command_queue
+            .commandBuffer()
+            .context("creating command buffer")?;
         let alpha = if self.opaque && !transparent { 1. } else { 0. };
 
         let mut command_encoder = new_command_encoder_for_texture(
-            command_buffer,
+            &command_buffer,
             texture,
             viewport_size,
-            Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
-        );
+            Some(MTLClearColor {
+                red: 0.,
+                green: 0.,
+                blue: 0.,
+                alpha,
+            }),
+        )?;
 
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(range) => {
-                    self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
+                    self.draw_shadows(range, instance_bindings, viewport_size, &command_encoder)
                 }
                 PrimitiveBatch::Quads(range) => {
-                    self.draw_quads(range, instance_bindings, viewport_size, command_encoder)
+                    self.draw_quads(range, instance_bindings, viewport_size, &command_encoder)
                 }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
-                    command_encoder.end_encoding();
+                    command_encoder.endEncoding();
 
                     let did_draw = self.draw_paths_to_intermediate(
                         paths,
                         writer,
                         viewport_size,
-                        command_buffer,
+                        &command_buffer,
                     )?;
 
                     command_encoder = new_command_encoder_for_texture(
-                        command_buffer,
+                        &command_buffer,
                         texture,
                         viewport_size,
                         None,
-                    );
+                    )?;
 
                     if did_draw {
                         if let Err(error) = self.draw_paths_from_intermediate(
                             paths,
                             writer,
                             viewport_size,
-                            command_encoder,
+                            &command_encoder,
                         ) {
-                            command_encoder.end_encoding();
+                            command_encoder.endEncoding();
                             return Err(error);
                         }
                     }
                 }
                 PrimitiveBatch::Underlines(range) => {
-                    self.draw_underlines(range, instance_bindings, viewport_size, command_encoder)
+                    self.draw_underlines(range, instance_bindings, viewport_size, &command_encoder)
                 }
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => self
                     .draw_monochrome_sprites(
@@ -891,7 +955,7 @@ impl MetalRenderer {
                         range,
                         instance_bindings,
                         viewport_size,
-                        command_encoder,
+                        &command_encoder,
                     ),
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => self
                     .draw_polychrome_sprites(
@@ -899,7 +963,7 @@ impl MetalRenderer {
                         range,
                         instance_bindings,
                         viewport_size,
-                        command_encoder,
+                        &command_encoder,
                     ),
                 // KOAN: shader quads (#1641).
                 PrimitiveBatch::Shaders {
@@ -914,22 +978,28 @@ impl MetalRenderer {
                     range,
                     instance_bindings,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
-                PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
-                    &scene.surfaces[range.clone()],
-                    range.start,
-                    instance_bindings,
-                    viewport_size,
-                    command_encoder,
-                ),
+                PrimitiveBatch::Surfaces(range) => {
+                    if let Err(error) = self.draw_surfaces(
+                        &scene.surfaces[range.clone()],
+                        range.start,
+                        instance_bindings,
+                        viewport_size,
+                        &command_encoder,
+                        surface_textures,
+                    ) {
+                        command_encoder.endEncoding();
+                        return Err(error);
+                    }
+                }
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             }
         }
 
-        command_encoder.end_encoding();
+        command_encoder.endEncoding();
 
-        Ok(command_buffer.to_owned())
+        Ok(command_buffer)
     }
 
     fn draw_paths_to_intermediate(
@@ -937,7 +1007,7 @@ impl MetalRenderer {
         paths: &[Path<ScaledPixels>],
         writer: &mut InstanceBufferWriter,
         viewport_size: Size<DevicePixels>,
-        command_buffer: &metal::CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     ) -> Result<bool> {
         if paths.is_empty() {
             return Ok(false);
@@ -958,47 +1028,61 @@ impl MetalRenderer {
         }
         let vertex_instance_bindings = writer.write(&vertices)?;
 
-        let render_pass_descriptor = metal::RenderPassDescriptor::new();
-        let color_attachment = render_pass_descriptor
-            .color_attachments()
-            .object_at(0)
-            .unwrap();
-        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 0.));
+        let render_pass_descriptor = MTLRenderPassDescriptor::new();
+        // SAFETY: Index zero is within the render pass's color attachment array.
+        let color_attachment = unsafe {
+            render_pass_descriptor
+                .colorAttachments()
+                .objectAtIndexedSubscript(0)
+        };
+        color_attachment.setLoadAction(MTLLoadAction::Clear);
+        color_attachment.setClearColor(MTLClearColor {
+            red: 0.,
+            green: 0.,
+            blue: 0.,
+            alpha: 0.,
+        });
 
         if let Some(msaa_texture) = &self.path_intermediate_msaa_texture {
-            color_attachment.set_texture(Some(msaa_texture));
-            color_attachment.set_resolve_texture(Some(intermediate_texture));
-            color_attachment.set_store_action(metal::MTLStoreAction::MultisampleResolve);
+            color_attachment.setTexture(Some(msaa_texture));
+            color_attachment.setResolveTexture(Some(intermediate_texture));
+            color_attachment.setStoreAction(MTLStoreAction::MultisampleResolve);
         } else {
-            color_attachment.set_texture(Some(intermediate_texture));
-            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            color_attachment.setTexture(Some(intermediate_texture));
+            color_attachment.setStoreAction(MTLStoreAction::Store);
         }
 
-        let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
-        command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            PathRasterizationInputIndex::Vertices as u64,
-            Some(&vertex_instance_bindings.buffer),
-            vertex_instance_bindings.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            PathRasterizationInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-        command_encoder.set_fragment_buffer(
-            PathRasterizationInputIndex::Vertices as u64,
-            Some(&vertex_instance_bindings.buffer),
-            vertex_instance_bindings.offset as u64,
-        );
-        command_encoder.draw_primitives(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            vertices.len() as u64,
-        );
+        let command_encoder = command_buffer
+            .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
+            .context("creating path render command encoder")?;
+        command_encoder.setRenderPipelineState(&self.paths_rasterization_pipeline_state);
+        // SAFETY: The binding contains vertices.len() shader-compatible vertices at an aligned offset.
+        // Metal retains the buffer, and writer.finish publishes CPU writes before submission.
+        // The viewport bytes are copied from a live value into the matching shader slot.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&vertex_instance_bindings.buffer),
+                vertex_instance_bindings.offset,
+                PathRasterizationInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                PathRasterizationInputIndex::ViewportSize as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&vertex_instance_bindings.buffer),
+                vertex_instance_bindings.offset,
+                PathRasterizationInputIndex::Vertices as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount(
+                MTLPrimitiveType::Triangle,
+                0,
+                vertices.len(),
+            );
+        }
 
-        command_encoder.end_encoding();
+        command_encoder.endEncoding();
         Ok(true)
     }
 
@@ -1007,47 +1091,127 @@ impl MetalRenderer {
         shadows: Range<usize>,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if shadows.is_empty() {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
+        command_encoder.setRenderPipelineState(&self.shadows_pipeline_state);
         // KOAN: colour slots (#1859).
-        command_encoder.set_vertex_buffer(
-            COLOR_SLOTS_INDEX,
-            Some(&instance_bindings.color_slots.buffer),
-            instance_bindings.color_slots.offset as u64,
-        );
-        command_encoder.set_vertex_buffer(
-            ShadowInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            ShadowInputIndex::Shadows as u64,
-            Some(&instance_bindings.shadows.buffer),
-            instance_bindings.shadows.offset as u64,
-        );
-        command_encoder.set_fragment_buffer(
-            ShadowInputIndex::Shadows as u64,
-            Some(&instance_bindings.shadows.buffer),
-            instance_bindings.shadows.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            ShadowInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
+        // SAFETY: the table was written with the frame's instances and lives as long.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.color_slots.buffer),
+                instance_bindings.color_slots.offset,
+                COLOR_SLOTS_INDEX,
+            );
+        }
+        // SAFETY: Six unit vertices and the scene's shadow range match the uploaded shader layouts and slots.
+        // Metal retains the buffers, writer.finish publishes their writes, and viewport bytes are copied.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                ShadowInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.shadows.buffer),
+                instance_bindings.shadows.offset,
+                ShadowInputIndex::Shadows as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.shadows.buffer),
+                instance_bindings.shadows.offset,
+                ShadowInputIndex::Shadows as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                ShadowInputIndex::ViewportSize as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                shadows.len(),
+                shadows.start,
+            );
+        }
+    }
 
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            shadows.len() as u64,
-            shadows.start as u64,
-        );
+    // KOAN: (#1641) renders a scene as a window with shaders presents it,
+    // the base first and the shaders composed over it, `presents` times,
+    // for checking against `render_scene_to_image`.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    pub fn compose_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+        presents: usize,
+    ) -> Result<RgbaImage> {
+        objc2::rc::autoreleasepool(|_| {
+            self.update_path_intermediate_textures(size)?;
+            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
+            let texture_descriptor = MTLTextureDescriptor::new();
+            // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
+            unsafe {
+                texture_descriptor.setWidth(size.width.0 as usize);
+                texture_descriptor.setHeight(size.height.0 as usize);
+            }
+            texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+            texture_descriptor
+                .setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+            texture_descriptor.setStorageMode(if uses_shared_storage {
+                MTLStorageMode::Shared
+            } else {
+                MTLStorageMode::Managed
+            });
+            let target_texture = self
+                .device
+                .newTextureWithDescriptor(&texture_descriptor)
+                .context("allocating compose target")?;
+            let mut last = None;
+            for _ in 0..presents.max(1) {
+                let command_buffer = self.compose_frame(scene, &target_texture, size)?;
+                command_buffer.commit();
+                last = Some(command_buffer);
+            }
+            let command_buffer = last.context("no present")?;
+            command_buffer.waitUntilCompleted();
+            if !uses_shared_storage {
+                let command_buffer = self
+                    .command_queue
+                    .commandBuffer()
+                    .context("creating command buffer")?;
+                let blit = command_buffer
+                    .blitCommandEncoder()
+                    .context("creating blit command encoder")?;
+                blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+                blit.endEncoding();
+                command_buffer.commit();
+                command_buffer.waitUntilCompleted();
+            }
+            read_texture_to_image(&target_texture)
+        })
+    }
+
+    // KOAN: a texture the size of the frame, to draw a layer into and read
+    // back texel for texel (#1641).
+    fn layer_texture(&self, width: usize, height: usize) -> Result<Texture> {
+        let descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are the drawable's and this descriptor creates a 2D texture.
+        unsafe {
+            descriptor.setWidth(width);
+            descriptor.setHeight(height);
+        }
+        descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        descriptor.setStorageMode(MTLStorageMode::Private);
+        self.device
+            .newTextureWithDescriptor(&descriptor)
+            .context("allocating a layer texture")
     }
 
     // KOAN: shader quads (#1641). Composes the scene's layers and shaders
@@ -1056,19 +1220,29 @@ impl MetalRenderer {
     fn compose_frame(
         &mut self,
         scene: &Scene,
-        texture: &metal::TextureRef,
+        texture: &ProtocolObject<dyn MTLTexture>,
         viewport_size: Size<DevicePixels>,
-    ) -> Result<metal::CommandBuffer> {
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
         let plan = scene.shader_layers.as_deref().context("no shader layers")?;
-        let width = i32::from(viewport_size.width) as u64;
-        let height = i32::from(viewport_size.height) as u64;
+        let width = i32::from(viewport_size.width) as usize;
+        let height = i32::from(viewport_size.height) as usize;
+        if self.path_intermediate_texture.is_none() {
+            self.update_path_intermediate_textures(viewport_size)?;
+        }
         if self.blank_texture.is_none() {
-            let descriptor = metal::TextureDescriptor::new();
-            descriptor.set_width(1);
-            descriptor.set_height(1);
-            descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-            self.blank_texture = Some(self.device.new_texture(&descriptor));
+            let descriptor = MTLTextureDescriptor::new();
+            // SAFETY: a 1×1 2D texture.
+            unsafe {
+                descriptor.setWidth(1);
+                descriptor.setHeight(1);
+            }
+            descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+            descriptor.setStorageMode(MTLStorageMode::Private);
+            self.blank_texture = Some(
+                self.device
+                    .newTextureWithDescriptor(&descriptor)
+                    .context("allocating the blank texture")?,
+            );
         }
         if self.compose_pipelines.is_none() {
             self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
@@ -1089,17 +1263,10 @@ impl MetalRenderer {
                     drawn.push(None);
                     continue;
                 }
-                let target = pool.pop().unwrap_or_else(|| {
-                    let descriptor = metal::TextureDescriptor::new();
-                    descriptor.set_width(width);
-                    descriptor.set_height(height);
-                    descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-                    descriptor.set_usage(
-                        metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-                    );
-                    descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-                    self.device.new_texture(&descriptor)
-                });
+                let target = match pool.pop() {
+                    Some(target) => target,
+                    None => self.layer_texture(width, height)?,
+                };
                 // The same queue runs these before the compose that reads them.
                 self.render_frame(layer, &target, viewport_size, k > 0)?
                     .commit();
@@ -1111,7 +1278,11 @@ impl MetalRenderer {
                 width,
                 height,
                 layers: drawn,
-                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
+                moving: plan
+                    .layers
+                    .iter()
+                    .map(|l| l.color_slots_moving(now))
+                    .collect(),
             };
         } else {
             let written = self.shader_layers.slot_generation != slot_generation;
@@ -1141,7 +1312,7 @@ impl MetalRenderer {
             &self.device,
             &self.instance_buffer_pool,
             self.is_unified_memory,
-        );
+        )?;
         // KOAN: the present clock (#1859).
         let now = gpui::present_now();
         let shaders = writer.write_iter(
@@ -1150,24 +1321,36 @@ impl MetalRenderer {
                 .iter()
                 .map(|shader| gpui::ShaderInstance::of(shader, now)),
         )?;
-        let command_buffer = self.command_queue.new_command_buffer().to_owned();
-        let render_pass_descriptor = metal::RenderPassDescriptor::new();
-        let color_attachment = render_pass_descriptor
-            .color_attachments()
-            .object_at(0)
-            .unwrap();
-        color_attachment.set_texture(Some(texture));
-        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+        let command_buffer = self
+            .command_queue
+            .commandBuffer()
+            .context("creating command buffer")?;
+        let render_pass_descriptor = MTLRenderPassDescriptor::new();
+        // SAFETY: Index zero is within the render pass's color attachment array.
+        let color_attachment = unsafe {
+            render_pass_descriptor
+                .colorAttachments()
+                .objectAtIndexedSubscript(0)
+        };
+        color_attachment.setTexture(Some(texture));
+        color_attachment.setStoreAction(MTLStoreAction::Store);
         let first = self.shader_layers.layers.first().cloned().flatten();
         if first.is_some() {
-            color_attachment.set_load_action(metal::MTLLoadAction::DontCare);
+            color_attachment.setLoadAction(MTLLoadAction::DontCare);
         } else {
             let alpha = if self.opaque { 1. } else { 0. };
-            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-            color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
+            color_attachment.setLoadAction(MTLLoadAction::Clear);
+            color_attachment.setClearColor(MTLClearColor {
+                red: 0.,
+                green: 0.,
+                blue: 0.,
+                alpha,
+            });
         }
-        let encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
-        encoder.set_viewport(metal::MTLViewport {
+        let encoder = command_buffer
+            .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
+            .context("creating render command encoder")?;
+        encoder.setViewport(MTLViewport {
             originX: 0.0,
             originY: 0.0,
             width: width as f64,
@@ -1175,15 +1358,19 @@ impl MetalRenderer {
             znear: 0.0,
             zfar: 1.0,
         });
-        let layer = |encoder: &metal::RenderCommandEncoderRef,
-                     pipeline: &metal::RenderPipelineState,
-                     texture: &metal::Texture| {
-            encoder.set_render_pipeline_state(pipeline);
-            encoder.set_fragment_texture(0, Some(texture));
-            encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 3);
+        let layer = |encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+                     pipeline: &Pipeline,
+                     texture: &Texture| {
+            encoder.setRenderPipelineState(pipeline);
+            // SAFETY: the compose program reads texture 0 texel for texel and
+            // draws one triangle covering the target.
+            unsafe {
+                encoder.setFragmentTexture_atIndex(Some(texture), 0);
+                encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 3);
+            }
         };
         if let Some(first) = &first {
-            layer(encoder, &pipelines.copy, first);
+            layer(&encoder, &pipelines.copy, first);
         }
         let bindings = ShaderBindings(shaders);
         for (k, group) in plan.groups.iter().enumerate() {
@@ -1191,7 +1378,11 @@ impl MetalRenderer {
             while start < group.end {
                 let head = &scene.shaders[start];
                 let key = |s: &gpui::PaintShader| {
-                    (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
+                    (
+                        s.program.name,
+                        s.image.as_ref().map(|t| t.texture_id),
+                        s.group,
+                    )
                 };
                 let end = scene.shaders[start..group.end]
                     .iter()
@@ -1204,26 +1395,28 @@ impl MetalRenderer {
                     start..end,
                     &bindings,
                     viewport_size,
-                    encoder,
+                    &encoder,
                 );
                 start = end;
             }
             if let Some(Some(over)) = self.shader_layers.layers.get(k + 1) {
-                layer(encoder, &pipelines.over, over);
+                layer(&encoder, &pipelines.over, over);
             }
         }
-        encoder.end_encoding();
+        encoder.endEncoding();
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
-            if let Some(instance_buffer) = instance_buffer.take() {
-                instance_buffer_pool.lock().release(instance_buffer);
-            }
-        });
+        let block = RcBlock::new(
+            move |_: ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                if let Some(instance_buffer) = instance_buffer.take() {
+                    instance_buffer_pool.lock().release(instance_buffer);
+                }
+            },
+        );
         // SAFETY: as in `render_frame`.
         unsafe {
-            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
+            command_buffer.addCompletedHandler(RcBlock::as_ptr(&block));
         }
         Ok(command_buffer)
     }
@@ -1236,16 +1429,24 @@ impl MetalRenderer {
             self.group_textures.clear();
             return Ok(());
         }
-        let width = i32::from(viewport_size.width) as u64;
-        let height = i32::from(viewport_size.height) as u64;
-        let fits = self.group_textures.iter().flatten().all(|t| {
-            t.width() == width && t.height() == height
-        });
+        let width = i32::from(viewport_size.width) as usize;
+        let height = i32::from(viewport_size.height) as usize;
+        let fits = self
+            .group_textures
+            .iter()
+            .flatten()
+            .all(|t| t.width() == width && t.height() == height);
         if self.group_generation == scene.generation && fits {
             return Ok(());
         }
-        let mut pool: Vec<metal::Texture> = if fits {
-            std::mem::take(&mut self.group_textures).into_iter().flatten().collect()
+        if self.path_intermediate_texture.is_none() {
+            self.update_path_intermediate_textures(viewport_size)?;
+        }
+        let mut pool: Vec<Texture> = if fits {
+            std::mem::take(&mut self.group_textures)
+                .into_iter()
+                .flatten()
+                .collect()
         } else {
             Vec::new()
         };
@@ -1255,19 +1456,13 @@ impl MetalRenderer {
                 drawn.push(None);
                 continue;
             }
-            let target = pool.pop().unwrap_or_else(|| {
-                let descriptor = metal::TextureDescriptor::new();
-                descriptor.set_width(width);
-                descriptor.set_height(height);
-                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-                descriptor.set_usage(
-                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-                );
-                descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-                self.device.new_texture(&descriptor)
-            });
+            let target = match pool.pop() {
+                Some(target) => target,
+                None => self.layer_texture(width, height)?,
+            };
             // The same queue runs these before whatever samples them.
-            self.render_frame(group, &target, viewport_size, true)?.commit();
+            self.render_frame(group, &target, viewport_size, true)?
+                .commit();
             drawn.push(Some(target));
         }
         self.group_textures = drawn;
@@ -1278,32 +1473,36 @@ impl MetalRenderer {
     // KOAN: shader quads (#1641). A program's pipeline is compiled from its
     // source the first time it is drawn: the app's `shade` between a prelude
     // declaring the instance and a vertex and fragment function calling it.
-    fn shader_pipeline(
-        &self,
-        program: &'static gpui::ShaderProgram,
-    ) -> Option<metal::RenderPipelineState> {
+    fn shader_pipeline(&self, program: &'static gpui::ShaderProgram) -> Option<Pipeline> {
         let mut pipelines = self.shader_pipelines.borrow_mut();
         pipelines
             .entry(program.name)
             .or_insert_with(|| {
                 let source = format!("{SHADER_PRELUDE}\n{}\n{SHADER_MAIN}", program.msl);
-                match self
-                    .device
-                    .new_library_with_source(&source, &metal::CompileOptions::new())
-                {
-                    Ok(library) => Some(build_pipeline_state(
-                        &self.device,
-                        &library,
-                        program.name,
-                        "koan_shader_vertex",
-                        "koan_shader_fragment",
-                        MTLPixelFormat::BGRA8Unorm,
-                    )),
+                let library = match self.device.newLibraryWithSource_options_error(
+                    &NSString::from_str(&source),
+                    Some(&objc2_metal::MTLCompileOptions::new()),
+                ) {
+                    Ok(library) => library,
                     Err(error) => {
-                        log::error!("shader {} did not compile: {error}", program.name);
-                        None
+                        log::error!(
+                            "shader {} did not compile: {}",
+                            program.name,
+                            error.localizedDescription()
+                        );
+                        return None;
                     }
-                }
+                };
+                build_pipeline_state(
+                    &self.device,
+                    &library,
+                    program.name,
+                    "koan_shader_vertex",
+                    "koan_shader_fragment",
+                    MTLPixelFormat::BGRA8Unorm,
+                )
+                .inspect_err(|error| log::error!("shader {}: {error:#}", program.name))
+                .ok()
             })
             .clone()
     }
@@ -1317,7 +1516,7 @@ impl MetalRenderer {
         shaders: Range<usize>,
         instance_bindings: &impl HasShaders,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         let binding = instance_bindings.shaders();
         if shaders.is_empty() {
@@ -1326,32 +1525,44 @@ impl MetalRenderer {
         let Some(pipeline) = self.shader_pipeline(program) else {
             return;
         };
-        command_encoder.set_render_pipeline_state(&pipeline);
-        command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
-        command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
-        command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
+        command_encoder.setRenderPipelineState(&pipeline);
         // KOAN: a layer group's texture, drawn this frame (#1859).
         let image = group
             .and_then(|group| self.group_textures.get(group).cloned().flatten())
             .or_else(|| texture.and_then(|id| self.sprite_atlas.metal_texture(id)))
             .or_else(|| self.blank_texture.clone());
-        command_encoder.set_fragment_texture(0, image.as_deref());
         let viewport = [
             i32::from(viewport_size.width) as f32,
             i32::from(viewport_size.height) as f32,
         ];
-        command_encoder.set_vertex_bytes(
-            2,
-            mem::size_of_val(&viewport) as u64,
-            viewport.as_ptr() as *const c_void,
-        );
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            shaders.len() as u64,
-            shaders.start as u64,
-        );
+        // SAFETY: six unit vertices and the shader range match the instances
+        // written for this frame; the viewport bytes are copied.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(Some(&self.unit_vertices), 0, 0);
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&binding.buffer),
+                binding.offset,
+                1,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&binding.buffer),
+                binding.offset,
+                1,
+            );
+            command_encoder.setFragmentTexture_atIndex(image.as_deref(), 0);
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport).cast(),
+                mem::size_of_val(&viewport),
+                2,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                shaders.len(),
+                shaders.start,
+            );
+        }
     }
 
     fn draw_quads(
@@ -1359,47 +1570,53 @@ impl MetalRenderer {
         quads: Range<usize>,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if quads.is_empty() {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
+        command_encoder.setRenderPipelineState(&self.quads_pipeline_state);
         // KOAN: colour slots (#1859).
-        command_encoder.set_vertex_buffer(
-            COLOR_SLOTS_INDEX,
-            Some(&instance_bindings.color_slots.buffer),
-            instance_bindings.color_slots.offset as u64,
-        );
-        command_encoder.set_vertex_buffer(
-            QuadInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            QuadInputIndex::Quads as u64,
-            Some(&instance_bindings.quads.buffer),
-            instance_bindings.quads.offset as u64,
-        );
-        command_encoder.set_fragment_buffer(
-            QuadInputIndex::Quads as u64,
-            Some(&instance_bindings.quads.buffer),
-            instance_bindings.quads.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            QuadInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            quads.len() as u64,
-            quads.start as u64,
-        );
+        // SAFETY: the table was written with the frame's instances and lives as long.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.color_slots.buffer),
+                instance_bindings.color_slots.offset,
+                COLOR_SLOTS_INDEX,
+            );
+        }
+        // SAFETY: Six unit vertices and the scene's quad range match the uploaded shader layouts and slots.
+        // Metal retains the buffers, writer.finish publishes their writes, and viewport bytes are copied.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                QuadInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.quads.buffer),
+                instance_bindings.quads.offset,
+                QuadInputIndex::Quads as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.quads.buffer),
+                instance_bindings.quads.offset,
+                QuadInputIndex::Quads as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                QuadInputIndex::ViewportSize as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                quads.len(),
+                quads.start,
+            );
+        }
     }
 
     fn draw_paths_from_intermediate(
@@ -1407,9 +1624,9 @@ impl MetalRenderer {
         paths: &[Path<ScaledPixels>],
         writer: &mut InstanceBufferWriter,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
-        let Some(first_path) = paths.first() else {
+        let (Some(first_path), Some(last_path)) = (paths.first(), paths.last()) else {
             return Ok(());
         };
         let intermediate_texture = self
@@ -1417,22 +1634,25 @@ impl MetalRenderer {
             .as_ref()
             .context("missing path intermediate texture")?;
 
-        command_encoder.set_render_pipeline_state(&self.path_sprites_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_bytes(
-            SpriteInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-
-        command_encoder.set_fragment_texture(
-            SpriteInputIndex::AtlasTexture as u64,
-            Some(intermediate_texture),
-        );
+        command_encoder.setRenderPipelineState(&self.path_sprites_pipeline_state);
+        // SAFETY: The shader slots match the unit vertices, copied viewport, and retained path texture.
+        // The preceding render pass writes this tracked texture before it is sampled.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                SpriteInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                SpriteInputIndex::ViewportSize as usize,
+            );
+            command_encoder.setFragmentTexture_atIndex(
+                Some(intermediate_texture),
+                SpriteInputIndex::AtlasTexture as usize,
+            );
+        }
 
         // When copying paths from the intermediate texture to the drawable,
         // each pixel must only be copied once, in case of transparent paths.
@@ -1442,7 +1662,7 @@ impl MetalRenderer {
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
         let sprites;
-        if paths.last().unwrap().order == first_path.order {
+        if last_path.order == first_path.order {
             sprites = paths
                 .iter()
                 .map(|path| PathSprite {
@@ -1458,18 +1678,21 @@ impl MetalRenderer {
         }
 
         let sprite_instance_bindings = writer.write(&sprites)?;
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Sprites as u64,
-            Some(&sprite_instance_bindings.buffer),
-            sprite_instance_bindings.offset as u64,
-        );
-
-        command_encoder.draw_primitives_instanced(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            sprites.len() as u64,
-        );
+        // SAFETY: The draw uses six unit vertices and exactly the sprites written at this aligned binding.
+        // Metal retains the buffer, and writer.finish publishes CPU writes before submission.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&sprite_instance_bindings.buffer),
+                sprite_instance_bindings.offset,
+                SpriteInputIndex::Sprites as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                sprites.len(),
+            );
+        }
         Ok(())
     }
 
@@ -1478,47 +1701,53 @@ impl MetalRenderer {
         underlines: Range<usize>,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if underlines.is_empty() {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
+        command_encoder.setRenderPipelineState(&self.underlines_pipeline_state);
         // KOAN: colour slots (#1859).
-        command_encoder.set_vertex_buffer(
-            COLOR_SLOTS_INDEX,
-            Some(&instance_bindings.color_slots.buffer),
-            instance_bindings.color_slots.offset as u64,
-        );
-        command_encoder.set_vertex_buffer(
-            UnderlineInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            UnderlineInputIndex::Underlines as u64,
-            Some(&instance_bindings.underlines.buffer),
-            instance_bindings.underlines.offset as u64,
-        );
-        command_encoder.set_fragment_buffer(
-            UnderlineInputIndex::Underlines as u64,
-            Some(&instance_bindings.underlines.buffer),
-            instance_bindings.underlines.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            UnderlineInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            underlines.len() as u64,
-            underlines.start as u64,
-        );
+        // SAFETY: the table was written with the frame's instances and lives as long.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.color_slots.buffer),
+                instance_bindings.color_slots.offset,
+                COLOR_SLOTS_INDEX,
+            );
+        }
+        // SAFETY: Six unit vertices and the scene's underline range match the uploaded shader layouts and slots.
+        // Metal retains the buffers, writer.finish publishes their writes, and viewport bytes are copied.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                UnderlineInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.underlines.buffer),
+                instance_bindings.underlines.offset,
+                UnderlineInputIndex::Underlines as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.underlines.buffer),
+                instance_bindings.underlines.offset,
+                UnderlineInputIndex::Underlines as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                UnderlineInputIndex::ViewportSize as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                underlines.len(),
+                underlines.start,
+            );
+        }
     }
 
     fn draw_monochrome_sprites(
@@ -1527,7 +1756,7 @@ impl MetalRenderer {
         sprites: Range<usize>,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if sprites.is_empty() {
             return;
@@ -1540,47 +1769,56 @@ impl MetalRenderer {
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
         );
-        command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
+        command_encoder.setRenderPipelineState(&self.monochrome_sprites_pipeline_state);
         // KOAN: colour slots (#1859).
-        command_encoder.set_vertex_buffer(
-            COLOR_SLOTS_INDEX,
-            Some(&instance_bindings.color_slots.buffer),
-            instance_bindings.color_slots.offset as u64,
-        );
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Sprites as u64,
-            Some(&instance_bindings.monochrome_sprites.buffer),
-            instance_bindings.monochrome_sprites.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            SpriteInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-        command_encoder.set_vertex_bytes(
-            SpriteInputIndex::AtlasTextureSize as u64,
-            mem::size_of_val(&texture_size) as u64,
-            &texture_size as *const Size<DevicePixels> as *const _,
-        );
-        command_encoder.set_fragment_buffer(
-            SpriteInputIndex::Sprites as u64,
-            Some(&instance_bindings.monochrome_sprites.buffer),
-            instance_bindings.monochrome_sprites.offset as u64,
-        );
-        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
-
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            sprites.len() as u64,
-            sprites.start as u64,
-        );
+        // SAFETY: the table was written with the frame's instances and lives as long.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.color_slots.buffer),
+                instance_bindings.color_slots.offset,
+                COLOR_SLOTS_INDEX,
+            );
+        }
+        // SAFETY: The scene's sprite range, six unit vertices, and copied sizes match the shader layouts and slots.
+        // Metal retains the buffers and texture, and writer.finish publishes the instance writes.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                SpriteInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.monochrome_sprites.buffer),
+                instance_bindings.monochrome_sprites.offset,
+                SpriteInputIndex::Sprites as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                SpriteInputIndex::ViewportSize as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&texture_size).cast(),
+                mem::size_of_val(&texture_size),
+                SpriteInputIndex::AtlasTextureSize as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.monochrome_sprites.buffer),
+                instance_bindings.monochrome_sprites.offset,
+                SpriteInputIndex::Sprites as usize,
+            );
+            command_encoder.setFragmentTexture_atIndex(
+                Some(&texture),
+                SpriteInputIndex::AtlasTexture as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                sprites.len(),
+                sprites.start,
+            );
+        }
     }
 
     fn draw_polychrome_sprites(
@@ -1589,7 +1827,7 @@ impl MetalRenderer {
         sprites: Range<usize>,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if sprites.is_empty() {
             return;
@@ -1602,41 +1840,47 @@ impl MetalRenderer {
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
         );
-        command_encoder.set_render_pipeline_state(&self.polychrome_sprites_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            SpriteInputIndex::Sprites as u64,
-            Some(&instance_bindings.polychrome_sprites.buffer),
-            instance_bindings.polychrome_sprites.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            SpriteInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-        command_encoder.set_vertex_bytes(
-            SpriteInputIndex::AtlasTextureSize as u64,
-            mem::size_of_val(&texture_size) as u64,
-            &texture_size as *const Size<DevicePixels> as *const _,
-        );
-        command_encoder.set_fragment_buffer(
-            SpriteInputIndex::Sprites as u64,
-            Some(&instance_bindings.polychrome_sprites.buffer),
-            instance_bindings.polychrome_sprites.offset as u64,
-        );
-        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
-
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            sprites.len() as u64,
-            sprites.start as u64,
-        );
+        command_encoder.setRenderPipelineState(&self.polychrome_sprites_pipeline_state);
+        // SAFETY: The scene's sprite range, six unit vertices, and copied sizes match the shader layouts and slots.
+        // Metal retains the buffers and texture, and writer.finish publishes the instance writes.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                SpriteInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.polychrome_sprites.buffer),
+                instance_bindings.polychrome_sprites.offset,
+                SpriteInputIndex::Sprites as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                SpriteInputIndex::ViewportSize as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&texture_size).cast(),
+                mem::size_of_val(&texture_size),
+                SpriteInputIndex::AtlasTextureSize as usize,
+            );
+            command_encoder.setFragmentBuffer_offset_atIndex(
+                Some(&instance_bindings.polychrome_sprites.buffer),
+                instance_bindings.polychrome_sprites.offset,
+                SpriteInputIndex::Sprites as usize,
+            );
+            command_encoder.setFragmentTexture_atIndex(
+                Some(&texture),
+                SpriteInputIndex::AtlasTexture as usize,
+            );
+            command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                MTLPrimitiveType::Triangle,
+                0,
+                6,
+                sprites.len(),
+                sprites.start,
+            );
+        }
     }
 
     fn draw_surfaces(
@@ -1645,28 +1889,33 @@ impl MetalRenderer {
         first_surface: usize,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
-    ) {
+        command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+        surface_textures: &mut Vec<CFRetained<CVMetalTexture>>,
+    ) -> Result<()> {
         if surfaces.is_empty() {
-            return;
+            return Ok(());
         }
 
-        command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            SurfaceInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_buffer(
-            SurfaceInputIndex::Surfaces as u64,
-            Some(&instance_bindings.surfaces.buffer),
-            instance_bindings.surfaces.offset as u64,
-        );
-        command_encoder.set_vertex_bytes(
-            SurfaceInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
+        command_encoder.setRenderPipelineState(&self.surfaces_pipeline_state);
+        // SAFETY: The unit vertices, SurfaceBounds instances, and copied viewport match the shader layouts and slots.
+        // Metal retains the buffers, and writer.finish publishes CPU writes before submission.
+        unsafe {
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.unit_vertices),
+                0,
+                SurfaceInputIndex::Vertices as usize,
+            );
+            command_encoder.setVertexBuffer_offset_atIndex(
+                Some(&instance_bindings.surfaces.buffer),
+                instance_bindings.surfaces.offset,
+                SurfaceInputIndex::Surfaces as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&viewport_size).cast(),
+                mem::size_of_val(&viewport_size),
+                SurfaceInputIndex::ViewportSize as usize,
+            );
+        }
 
         for (index, surface) in surfaces.iter().enumerate() {
             let image_buffer = &surface.image_buffer;
@@ -1675,88 +1924,106 @@ impl MetalRenderer {
                 DevicePixels::from(CVPixelBufferGetHeight(image_buffer) as i32),
             );
 
-            assert_eq!(
-                CVPixelBufferGetPixelFormatType(image_buffer),
-                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            let pixel_format = CVPixelBufferGetPixelFormatType(image_buffer);
+            anyhow::ensure!(
+                pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                "unsupported surface pixel format: {pixel_format:#x}"
             );
 
-            let plane_texture = |plane, format| unsafe {
+            let plane_texture = |plane, format| -> Result<CFRetained<CVMetalTexture>> {
+                let width = CVPixelBufferGetWidthOfPlane(image_buffer, plane);
+                let height = CVPixelBufferGetHeightOfPlane(image_buffer, plane);
                 let mut texture = ptr::null_mut();
-                let status = CVMetalTextureCache::create_texture_from_image(
-                    None,
-                    &self.core_video_texture_cache,
-                    image_buffer,
-                    None,
-                    format,
-                    CVPixelBufferGetWidthOfPlane(image_buffer, plane),
-                    CVPixelBufferGetHeightOfPlane(image_buffer, plane),
-                    plane,
-                    ptr::NonNull::from(&mut texture),
+                // SAFETY: The buffer has two planes matching these formats and dimensions, and the output pointer is writable.
+                let status = unsafe {
+                    CVMetalTextureCache::create_texture_from_image(
+                        None,
+                        &self.core_video_texture_cache,
+                        image_buffer,
+                        None,
+                        format,
+                        width,
+                        height,
+                        plane,
+                        ptr::NonNull::from(&mut texture),
+                    )
+                };
+                anyhow::ensure!(
+                    status == kCVReturnSuccess,
+                    "creating CoreVideo Metal texture for plane {plane}: status {status}"
                 );
-                assert_eq!(
-                    status, kCVReturnSuccess,
-                    "failed to create CoreVideo Metal texture"
-                );
-                CFRetained::<CVMetalTexture>::from_raw(
-                    ptr::NonNull::new(texture).expect("CoreVideo returned a null texture"),
-                )
+                let texture =
+                    ptr::NonNull::new(texture).context("retrieving CoreVideo Metal texture")?;
+                // SAFETY: The successful create call transfers ownership of this non-null texture.
+                Ok(unsafe { CFRetained::from_raw(texture) })
             };
-            let y_texture = plane_texture(0, objc2_metal::MTLPixelFormat::R8Unorm);
-            let cb_cr_texture = plane_texture(1, objc2_metal::MTLPixelFormat::RG8Unorm);
+            let y_texture = plane_texture(0, MTLPixelFormat::R8Unorm)?;
+            let cb_cr_texture = plane_texture(1, MTLPixelFormat::RG8Unorm)?;
+            let y_metal_texture =
+                CVMetalTextureGetTexture(&y_texture).context("retrieving luma Metal texture")?;
+            let cb_cr_metal_texture = CVMetalTextureGetTexture(&cb_cr_texture)
+                .context("retrieving chroma Metal texture")?;
 
-            command_encoder.set_vertex_bytes(
-                SurfaceInputIndex::TextureSize as u64,
-                mem::size_of_val(&texture_size) as u64,
-                &texture_size as *const Size<DevicePixels> as *const _,
-            );
-            command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(&y_texture)
-                    .expect("CoreVideo returned no Metal texture");
-                Some(metal::TextureRef::from_ptr(
-                    objc2::rc::Retained::as_ptr(&texture) as *mut _,
-                ))
-            });
-            command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(&cb_cr_texture)
-                    .expect("CoreVideo returned no Metal texture");
-                Some(metal::TextureRef::from_ptr(
-                    objc2::rc::Retained::as_ptr(&texture) as *mut _,
-                ))
-            });
+            // SAFETY: The size is copied from a live value, and both planes match their shader texture slots.
+            // The frame completion handler retains the CoreVideo wrappers until GPU reads finish.
+            unsafe {
+                command_encoder.setVertexBytes_length_atIndex(
+                    ptr::NonNull::from(&texture_size).cast(),
+                    mem::size_of_val(&texture_size),
+                    SurfaceInputIndex::TextureSize as usize,
+                );
+                command_encoder.setFragmentTexture_atIndex(
+                    Some(&y_metal_texture),
+                    SurfaceInputIndex::YTexture as usize,
+                );
+                command_encoder.setFragmentTexture_atIndex(
+                    Some(&cb_cr_metal_texture),
+                    SurfaceInputIndex::CbCrTexture as usize,
+                );
+            }
+            surface_textures.extend([y_texture, cb_cr_texture]);
 
-            command_encoder.draw_primitives_instanced_base_instance(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                6,
-                1,
-                (first_surface + index) as u64,
-            );
+            // SAFETY: Six unit vertices draw one instance within the uploaded scene's surface range.
+            unsafe {
+                command_encoder.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                    MTLPrimitiveType::Triangle,
+                    0,
+                    6,
+                    1,
+                    first_surface + index,
+                );
+            }
         }
+        Ok(())
     }
 }
 
-fn new_command_encoder_for_texture<'a>(
-    command_buffer: &'a metal::CommandBufferRef,
-    texture: &'a metal::TextureRef,
+fn new_command_encoder_for_texture(
+    command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+    texture: &ProtocolObject<dyn MTLTexture>,
     viewport_size: Size<DevicePixels>,
-    clear_color: Option<metal::MTLClearColor>,
-) -> &'a metal::RenderCommandEncoderRef {
-    let render_pass_descriptor = metal::RenderPassDescriptor::new();
-    let color_attachment = render_pass_descriptor
-        .color_attachments()
-        .object_at(0)
-        .unwrap();
-    color_attachment.set_texture(Some(texture));
-    color_attachment.set_store_action(metal::MTLStoreAction::Store);
+    clear_color: Option<MTLClearColor>,
+) -> Result<Retained<ProtocolObject<dyn MTLRenderCommandEncoder>>> {
+    let render_pass_descriptor = MTLRenderPassDescriptor::new();
+    // SAFETY: Index zero is within the render pass's color attachment array.
+    let color_attachment = unsafe {
+        render_pass_descriptor
+            .colorAttachments()
+            .objectAtIndexedSubscript(0)
+    };
+    color_attachment.setTexture(Some(texture));
+    color_attachment.setStoreAction(MTLStoreAction::Store);
     if let Some(clear_color) = clear_color {
-        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-        color_attachment.set_clear_color(clear_color);
+        color_attachment.setLoadAction(MTLLoadAction::Clear);
+        color_attachment.setClearColor(clear_color);
     } else {
-        color_attachment.set_load_action(metal::MTLLoadAction::Load);
+        color_attachment.setLoadAction(MTLLoadAction::Load);
     }
 
-    let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
-    command_encoder.set_viewport(metal::MTLViewport {
+    let command_encoder = command_buffer
+        .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
+        .context("creating render command encoder")?;
+    command_encoder.setViewport(MTLViewport {
         originX: 0.0,
         originY: 0.0,
         width: i32::from(viewport_size.width) as f64,
@@ -1764,149 +2031,154 @@ fn new_command_encoder_for_texture<'a>(
         znear: 0.0,
         zfar: 1.0,
     });
-    command_encoder
+    Ok(command_encoder)
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-fn read_texture_to_image(texture: &metal::TextureRef) -> Result<RgbaImage> {
+fn read_texture_to_image(texture: &ProtocolObject<dyn MTLTexture>) -> Result<RgbaImage> {
     let width = texture.width() as u32;
     let height = texture.height() as u32;
     let bytes_per_row = width as usize * 4;
     let mut pixels = vec![0u8; height as usize * bytes_per_row];
 
-    let region = metal::MTLRegion {
-        origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
-        size: metal::MTLSize {
-            width: width as u64,
-            height: height as u64,
+    let region = MTLRegion {
+        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+        size: MTLSize {
+            width: width as usize,
+            height: height as usize,
             depth: 1,
         },
     };
-    texture.get_bytes(
-        pixels.as_mut_ptr() as *mut std::ffi::c_void,
-        bytes_per_row as u64,
-        region,
-        0,
-    );
+    unsafe {
+        texture.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+            ptr::NonNull::from(pixels.as_mut_slice()).cast(),
+            bytes_per_row,
+            region,
+            0,
+        );
+    }
 
     // Convert BGRA to RGBA (swap B and R channels)
     for chunk in pixels.chunks_exact_mut(4) {
         chunk.swap(0, 2);
     }
 
-    RgbaImage::from_raw(width, height, pixels).context("failed to create RgbaImage from pixel data")
+    RgbaImage::from_raw(width, height, pixels).context("creating RGBA image from pixel data")
 }
 
 fn build_pipeline_state(
-    device: &metal::DeviceRef,
-    library: &metal::LibraryRef,
+    device: &ProtocolObject<dyn MTLDevice>,
+    library: &ProtocolObject<dyn MTLLibrary>,
     label: &str,
     vertex_fn_name: &str,
     fragment_fn_name: &str,
-    pixel_format: metal::MTLPixelFormat,
-) -> metal::RenderPipelineState {
+    pixel_format: MTLPixelFormat,
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
-        .get_function(vertex_fn_name, None)
-        .expect("error locating vertex function");
+        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
-        .get_function(fragment_fn_name, None)
-        .expect("error locating fragment function");
+        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
-    let descriptor = metal::RenderPipelineDescriptor::new();
-    descriptor.set_label(label);
-    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
-    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
-    color_attachment.set_pixel_format(pixel_format);
-    color_attachment.set_blending_enabled(true);
-    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
-    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    let descriptor = MTLRenderPipelineDescriptor::new();
+    descriptor.setLabel(Some(&NSString::from_str(label)));
+    descriptor.setVertexFunction(Some(vertex_fn.as_ref()));
+    descriptor.setFragmentFunction(Some(fragment_fn.as_ref()));
+    // SAFETY: Index zero is within the pipeline's color attachment array.
+    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+    color_attachment.setPixelFormat(pixel_format);
+    color_attachment.setBlendingEnabled(true);
+    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::SourceAlpha);
+    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
+    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
 
     device
-        .new_render_pipeline_state(&descriptor)
-        .expect("could not create render pipeline state")
+        .newRenderPipelineStateWithDescriptor_error(&descriptor)
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 fn build_path_sprite_pipeline_state(
-    device: &metal::DeviceRef,
-    library: &metal::LibraryRef,
+    device: &ProtocolObject<dyn MTLDevice>,
+    library: &ProtocolObject<dyn MTLLibrary>,
     label: &str,
     vertex_fn_name: &str,
     fragment_fn_name: &str,
-    pixel_format: metal::MTLPixelFormat,
-) -> metal::RenderPipelineState {
+    pixel_format: MTLPixelFormat,
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
-        .get_function(vertex_fn_name, None)
-        .expect("error locating vertex function");
+        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
-        .get_function(fragment_fn_name, None)
-        .expect("error locating fragment function");
+        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
-    let descriptor = metal::RenderPipelineDescriptor::new();
-    descriptor.set_label(label);
-    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
-    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
-    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
-    color_attachment.set_pixel_format(pixel_format);
-    color_attachment.set_blending_enabled(true);
-    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    let descriptor = MTLRenderPipelineDescriptor::new();
+    descriptor.setLabel(Some(&NSString::from_str(label)));
+    descriptor.setVertexFunction(Some(vertex_fn.as_ref()));
+    descriptor.setFragmentFunction(Some(fragment_fn.as_ref()));
+    // SAFETY: Index zero is within the pipeline's color attachment array.
+    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+    color_attachment.setPixelFormat(pixel_format);
+    color_attachment.setBlendingEnabled(true);
+    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
+    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
+    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
 
     device
-        .new_render_pipeline_state(&descriptor)
-        .expect("could not create render pipeline state")
+        .newRenderPipelineStateWithDescriptor_error(&descriptor)
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 fn build_path_rasterization_pipeline_state(
-    device: &metal::DeviceRef,
-    library: &metal::LibraryRef,
+    device: &ProtocolObject<dyn MTLDevice>,
+    library: &ProtocolObject<dyn MTLLibrary>,
     label: &str,
     vertex_fn_name: &str,
     fragment_fn_name: &str,
-    pixel_format: metal::MTLPixelFormat,
+    pixel_format: MTLPixelFormat,
     path_sample_count: u32,
-) -> metal::RenderPipelineState {
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
-        .get_function(vertex_fn_name, None)
-        .expect("error locating vertex function");
+        .newFunctionWithName(&NSString::from_str(vertex_fn_name))
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
-        .get_function(fragment_fn_name, None)
-        .expect("error locating fragment function");
+        .newFunctionWithName(&NSString::from_str(fragment_fn_name))
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
-    let descriptor = metal::RenderPipelineDescriptor::new();
-    descriptor.set_label(label);
-    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
-    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    let descriptor = MTLRenderPipelineDescriptor::new();
+    descriptor.setLabel(Some(&NSString::from_str(label)));
+    descriptor.setVertexFunction(Some(vertex_fn.as_ref()));
+    descriptor.setFragmentFunction(Some(fragment_fn.as_ref()));
     if path_sample_count > 1 {
-        descriptor.set_raster_sample_count(path_sample_count as _);
-        descriptor.set_alpha_to_coverage_enabled(false);
+        descriptor.setRasterSampleCount(path_sample_count as _);
+        descriptor.setAlphaToCoverageEnabled(false);
     }
-    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
-    color_attachment.set_pixel_format(pixel_format);
-    color_attachment.set_blending_enabled(true);
-    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    // SAFETY: Index zero is within the pipeline's color attachment array.
+    let color_attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+    color_attachment.setPixelFormat(pixel_format);
+    color_attachment.setBlendingEnabled(true);
+    color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
+    color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
+    color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
+    color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
 
     device
-        .new_render_pipeline_state(&descriptor)
-        .expect("could not create render pipeline state")
+        .newRenderPipelineStateWithDescriptor_error(&descriptor)
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 #[derive(Clone)]
 struct InstanceBinding {
-    buffer: metal::Buffer,
+    buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     offset: usize,
 }
 
@@ -1917,13 +2189,17 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
-    shaders: InstanceBinding, // KOAN: #1641.
+    shaders: InstanceBinding,     // KOAN: #1641.
     color_slots: InstanceBinding, // KOAN: #1859.
 }
 
+// KOAN: the Metal objects the shader-quad code holds (#1641).
+type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
+type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
+
 // KOAN: the vertex buffer the stock shaders read the colour slots from
 // (#1859).
-const COLOR_SLOTS_INDEX: u64 = 20;
+const COLOR_SLOTS_INDEX: usize = 20;
 
 // KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
 // for a blank one, kept while presents compose them.
@@ -1931,16 +2207,16 @@ const COLOR_SLOTS_INDEX: u64 = 20;
 struct ShaderLayerTextures {
     generation: u64,
     slot_generation: u64, // KOAN: #1859.
-    width: u64,
-    height: u64,
-    layers: Vec<Option<metal::Texture>>,
+    width: usize,
+    height: usize,
+    layers: Vec<Option<Texture>>,
     /// KOAN: whether each layer's colour slots were moving when it was
     /// last drawn (#1859).
     moving: Vec<bool>,
 }
 
 impl ShaderLayerTextures {
-    fn holds(&self, generation: u64, width: u64, height: u64) -> bool {
+    fn holds(&self, generation: u64, width: usize, height: usize) -> bool {
         self.generation == generation
             && self.width == width
             && self.height == height
@@ -1948,7 +2224,7 @@ impl ShaderLayerTextures {
     }
 
     /// The textures, to be drawn again, where they are the size wanted.
-    fn take(&mut self, width: u64, height: u64) -> Vec<metal::Texture> {
+    fn take(&mut self, width: usize, height: usize) -> Vec<Texture> {
         let same = self.width == width && self.height == height;
         let layers = std::mem::take(&mut self.layers);
         if same {
@@ -2006,42 +2282,50 @@ fragment float4 koan_compose_fragment(
 
 #[derive(Clone)]
 struct ComposePipelines {
-    copy: metal::RenderPipelineState,
-    over: metal::RenderPipelineState,
+    copy: Pipeline,
+    over: Pipeline,
 }
 
 impl ComposePipelines {
-    fn new(device: &metal::Device) -> Result<Self> {
+    fn new(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self> {
         let library = device
-            .new_library_with_source(COMPOSE_SOURCE, &metal::CompileOptions::new())
-            .map_err(|error| anyhow::anyhow!("compose shader: {error}"))?;
+            .newLibraryWithSource_options_error(
+                &NSString::from_str(COMPOSE_SOURCE),
+                Some(&objc2_metal::MTLCompileOptions::new()),
+            )
+            .map_err(|error| anyhow::anyhow!("compose shader: {}", error.localizedDescription()))?;
         let vertex = library
-            .get_function("koan_compose_vertex", None)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+            .newFunctionWithName(&NSString::from_str("koan_compose_vertex"))
+            .context("locating koan_compose_vertex")?;
         let fragment = library
-            .get_function("koan_compose_fragment", None)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+            .newFunctionWithName(&NSString::from_str("koan_compose_fragment"))
+            .context("locating koan_compose_fragment")?;
         let pipeline = |over: bool| {
-            let descriptor = metal::RenderPipelineDescriptor::new();
-            descriptor.set_label(if over { "koan_compose_over" } else { "koan_compose_copy" });
-            descriptor.set_vertex_function(Some(&vertex));
-            descriptor.set_fragment_function(Some(&fragment));
-            let color = descriptor.color_attachments().object_at(0).unwrap();
-            color.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            color.set_blending_enabled(over);
+            let descriptor = MTLRenderPipelineDescriptor::new();
+            descriptor.setLabel(Some(&NSString::from_str(if over {
+                "koan_compose_over"
+            } else {
+                "koan_compose_copy"
+            })));
+            descriptor.setVertexFunction(Some(vertex.as_ref()));
+            descriptor.setFragmentFunction(Some(fragment.as_ref()));
+            // SAFETY: Index zero is within the pipeline's color attachment array.
+            let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+            color.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+            color.setBlendingEnabled(over);
             if over {
-                color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-                color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-                color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-                color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-                color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-                color.set_destination_alpha_blend_factor(
-                    metal::MTLBlendFactor::OneMinusSourceAlpha,
-                );
+                color.setRgbBlendOperation(MTLBlendOperation::Add);
+                color.setAlphaBlendOperation(MTLBlendOperation::Add);
+                color.setSourceRGBBlendFactor(MTLBlendFactor::One);
+                color.setSourceAlphaBlendFactor(MTLBlendFactor::One);
+                color.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+                color.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
             }
             device
-                .new_render_pipeline_state(&descriptor)
-                .map_err(|error| anyhow::anyhow!("compose pipeline: {error}"))
+                .newRenderPipelineStateWithDescriptor_error(&descriptor)
+                .map_err(|error| {
+                    anyhow::anyhow!("compose pipeline: {}", error.localizedDescription())
+                })
         };
         Ok(Self {
             copy: pipeline(false)?,
@@ -2227,7 +2511,7 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
 }
 
 struct InstanceBufferWriter {
-    device: metal::Device,
+    device: Retained<ProtocolObject<dyn MTLDevice>>,
     pool: Arc<Mutex<InstanceBufferPool>>,
     unified_memory: bool,
     filled: Vec<(InstanceBuffer, usize)>,
@@ -2237,19 +2521,19 @@ struct InstanceBufferWriter {
 
 impl InstanceBufferWriter {
     fn new(
-        device: &metal::Device,
+        device: &ProtocolObject<dyn MTLDevice>,
         pool: &Arc<Mutex<InstanceBufferPool>>,
         unified_memory: bool,
-    ) -> Self {
-        let current = pool.lock().acquire(device, unified_memory);
-        Self {
-            device: device.clone(),
+    ) -> Result<Self> {
+        let current = pool.lock().acquire(device, unified_memory)?;
+        Ok(Self {
+            device: device.retain(),
             pool: pool.clone(),
             unified_memory,
             filled: Vec::new(),
             current,
             offset: 0,
-        }
+        })
     }
 
     fn allocate<T>(&mut self, count: usize) -> Result<(InstanceBinding, &mut [MaybeUninit<T>])> {
@@ -2265,10 +2549,15 @@ impl InstanceBufferWriter {
             buffer: self.current.metal_buffer.clone(),
             offset,
         };
-        // Safety: the reservation lies within a buffer this frame owns
-        // exclusively, and never overlaps one handed out earlier.
+        // SAFETY: The aligned reservation lies within this frame's exclusively owned buffer and does not overlap prior writes.
         let values = unsafe {
-            let start = (self.current.metal_buffer.contents() as *mut u8).add(offset);
+            let start = self
+                .current
+                .metal_buffer
+                .contents()
+                .as_ptr()
+                .cast::<u8>()
+                .add(offset);
             slice::from_raw_parts_mut(start.cast::<MaybeUninit<T>>(), count)
         };
         Ok((binding, values))
@@ -2276,6 +2565,7 @@ impl InstanceBufferWriter {
 
     fn write<T>(&mut self, values: &[T]) -> Result<InstanceBinding> {
         let (binding, destination) = self.allocate::<T>(values.len())?;
+        // SAFETY: The disjoint source and destination hold the same number of T values, and the destination stays MaybeUninit.
         unsafe {
             ptr::copy_nonoverlapping(
                 values.as_ptr(),
@@ -2314,7 +2604,7 @@ impl InstanceBufferWriter {
             log::info!("increased instance buffer size to {buffer_size}");
             pool.reset(buffer_size);
         }
-        let buffer = pool.acquire(&self.device, self.unified_memory);
+        let buffer = pool.acquire(&self.device, self.unified_memory)?;
         drop(pool);
 
         let filled = mem::replace(&mut self.current, buffer);
@@ -2337,15 +2627,15 @@ impl InstanceBufferWriter {
                 if *written == 0 {
                     continue;
                 }
-                buffer.metal_buffer.did_modify_range(NSRange {
+                buffer.metal_buffer.didModifyRange(NSRange {
                     location: 0,
-                    length: *written as NSUInteger,
+                    length: *written,
                 });
             }
             if offset > 0 {
-                current.metal_buffer.did_modify_range(NSRange {
+                current.metal_buffer.didModifyRange(NSRange {
                     location: 0,
-                    length: offset as NSUInteger,
+                    length: offset,
                 });
             }
         }
@@ -2423,10 +2713,10 @@ pub struct MetalHeadlessRenderer {
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 impl MetalHeadlessRenderer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let instance_buffer_pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
-        let renderer = MetalRenderer::new_headless(instance_buffer_pool);
-        Self { renderer }
+        let renderer = MetalRenderer::new_headless(instance_buffer_pool)?;
+        Ok(Self { renderer })
     }
 }
 
@@ -2458,11 +2748,122 @@ mod tests {
         CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
+    use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn path_intermediate_textures_are_reused_until_resize() -> Result<()> {
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let initial_size = size(DevicePixels(64), DevicePixels(64));
+        renderer.update_path_intermediate_textures(initial_size)?;
+        let initial_texture = renderer
+            .path_intermediate_texture
+            .clone()
+            .context("missing path intermediate texture")?;
+        let initial_msaa_texture = renderer.path_intermediate_msaa_texture.clone();
+
+        renderer.update_path_intermediate_textures(initial_size)?;
+        assert!(ptr::eq(
+            &*initial_texture,
+            renderer
+                .path_intermediate_texture
+                .as_deref()
+                .context("missing reused texture")?,
+        ));
+        assert_eq!(
+            initial_msaa_texture.as_ref().map(Retained::as_ptr),
+            renderer
+                .path_intermediate_msaa_texture
+                .as_ref()
+                .map(Retained::as_ptr),
+        );
+
+        renderer.update_path_intermediate_textures(size(DevicePixels(128), DevicePixels(64)))?;
+        let resized_texture = renderer
+            .path_intermediate_texture
+            .as_deref()
+            .context("missing resized texture")?;
+        assert_eq!(
+            (resized_texture.width(), resized_texture.height()),
+            (128, 64)
+        );
+        assert!(!ptr::eq(&*initial_texture, resized_texture));
+        if let Some(texture) = &renderer.path_intermediate_msaa_texture {
+            assert_eq!((texture.width(), texture.height()), (128, 64));
+        }
+
+        for (width, height) in [(0, 64), (64, 0), (-1, 64), (64, -1)] {
+            renderer.update_path_intermediate_textures(size(
+                DevicePixels(width),
+                DevicePixels(height),
+            ))?;
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.update_path_intermediate_textures(initial_size)?;
+            assert!(renderer.path_intermediate_texture.is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        for (width, height) in [(0, 0), (0, 64), (64, 0)] {
+            renderer.update_drawable_size(size(DevicePixels(width), DevicePixels(height)));
+            assert!(renderer.render_to_image(&Scene::default()).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn display_link_mode_consumes_and_clears_drawables() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+        let drawable = renderer
+            .layer()
+            .and_then(|layer| layer.nextDrawable())
+            .context("window renderer must supply a drawable")?;
+
+        renderer.set_display_link_attached(true);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: Some(_) }
+        ));
+        renderer.draw(&Scene::default());
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        // A frame that drew consumed its drawable; one that didn't hands it back.
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(renderer.set_frame_drawable(None).is_some());
+
+        renderer.set_frame_drawable(Some(drawable));
+        renderer.set_display_link_attached(false);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Detached
+        ));
+        Ok(())
+    }
 
     #[test]
     fn render_core_video_surface() {
+        let surface_properties_key = unsafe { kCVPixelBufferIOSurfacePropertiesKey };
         let attributes = CFDictionary::from_slices(
-            &[unsafe { kCVPixelBufferIOSurfacePropertiesKey }],
+            &[surface_properties_key],
             &[&*CFDictionary::<CFType, CFType>::empty()],
         );
         let mut image_buffer = ptr::null_mut();
@@ -2479,8 +2880,8 @@ mod tests {
             },
             kCVReturnSuccess
         );
-        let image_buffer =
-            unsafe { CFRetained::from_raw(ptr::NonNull::new(image_buffer).unwrap()) };
+        let image_buffer = ptr::NonNull::new(image_buffer).unwrap();
+        let image_buffer = unsafe { CFRetained::from_raw(image_buffer) };
         unsafe {
             assert_eq!(
                 CVPixelBufferLockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
@@ -2512,7 +2913,9 @@ mod tests {
         drop(image_buffer);
         scene.finish();
 
-        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let mut renderer =
+            MetalRenderer::new_headless(Arc::new(Mutex::new(InstanceBufferPool::default())))
+                .unwrap();
         let image = renderer
             .render_scene_to_image(&scene, size(DevicePixels(16), DevicePixels(16)))
             .unwrap();
@@ -2522,6 +2925,42 @@ mod tests {
             assert!(blue.abs_diff(128) <= 2);
             assert_eq!(*alpha, 255);
         }
+
+        let descriptor = MTLTextureDescriptor::new();
+        unsafe {
+            descriptor.setWidth(16);
+            descriptor.setHeight(16);
+        }
+        descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        descriptor.setUsage(MTLTextureUsage::RenderTarget);
+        let uses_shared_storage = cfg!(target_os = "ios") || renderer.is_apple_gpu;
+        descriptor.setStorageMode(if uses_shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target_texture = renderer
+            .device
+            .newTextureWithDescriptor(&descriptor)
+            .unwrap();
+        let command_buffer = renderer
+            .render_frame(
+                &scene,
+                &target_texture,
+                size(DevicePixels(16), DevicePixels(16)),
+            )
+            .unwrap();
+        if !uses_shared_storage {
+            let blit = command_buffer.blitCommandEncoder().unwrap();
+            blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+            blit.endEncoding();
+        }
+        drop(scene);
+        drop(renderer);
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
+        assert_eq!(read_texture_to_image(&target_texture).unwrap(), image);
     }
 
     // KOAN: (#1859) the prelude's `koan_track` draws each curve where
@@ -2581,7 +3020,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             group: None,
         });
         scene.finish();
-        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default()))).unwrap();
         // The render's moment falls between these two, the program compiled
         // in between: each track is drawn within what it passes through.
         let before = uniforms.time_at(gpui::present_now());
@@ -2660,7 +3099,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             scene
         };
         let viewport = size(DevicePixels(64), DevicePixels(32));
-        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default()))).unwrap();
         // Layers over a shader are composed premultiplied in 8 bits, so a
         // translucent edge may round a level apart.
         let close = |a: &RgbaImage, b: &RgbaImage| {
@@ -2731,7 +3170,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         assert!(plan.layers[1].quads.len() == 2, "the text follows the menu");
 
         let viewport = size(DevicePixels(64), DevicePixels(32));
-        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default()))).unwrap();
         let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
         let composed = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
         assert_eq!(whole.get_pixel(36, 16), composed.get_pixel(36, 16), "the text is on top");

@@ -1,17 +1,20 @@
 diff --git a/src/input/base/blink_cursor.rs b/src/input/base/blink_cursor.rs
-index b41f2bb..0338d2b 100644
+index 2929754..48f31ea 100644
 --- a/src/input/base/blink_cursor.rs
 +++ b/src/input/base/blink_cursor.rs
-@@ -1,4 +1,7 @@
--use gpui::{Context, Pixels, Task, px};
+@@ -1,4 +1,10 @@
+-use gpui::{App, Context, Pixels, Subscription, Task, px};
 +use std::cell::Cell;
 +use std::sync::Arc;
 +
-+use gpui::{AnyWindowHandle, AppContext as _, Context, Pixels, ShaderUniforms, Task, px};
++use gpui::{
++    AnyWindowHandle, App, AppContext as _, Context, Pixels, ShaderUniforms, Subscription, Task,
++    px,
++};
  use instant::Duration;
+ use web_time::Instant;
  
- static INTERVAL: Duration = Duration::from_millis(500);
-@@ -6,6 +9,23 @@ static PAUSE_DELAY: Duration = Duration::from_millis(300);
+@@ -7,6 +13,23 @@ static PAUSE_DELAY: Duration = Duration::from_millis(300);
  
  pub(super) const CURSOR_WIDTH: Pixels = px(1.);
  
@@ -32,13 +35,13 @@ index b41f2bb..0338d2b 100644
 +    prepare: None,
 +};
 +
- /// To manage the Input cursor blinking.
+ /// Application-wide caret visibility policy.
  ///
- /// It will start blinking with a interval of 500ms.
-@@ -16,6 +36,14 @@ pub(crate) struct BlinkCursor {
-     visible: bool,
-     paused: bool,
+ /// The default blinks every 500 ms without an idle timeout.
+@@ -85,6 +108,14 @@ pub(crate) struct BlinkCursor {
      epoch: usize,
+     last_activity: Option<Instant>,
+     policy: CursorBlink,
 +    // KOAN: a blink presented, not drawn (#1786). With `presented`, a blink
 +    // writes the caret's visibility into the uniforms the caret's shader
 +    // reads and asks the window last painted in for a present, instead of
@@ -47,26 +50,29 @@ index b41f2bb..0338d2b 100644
 +    presented: bool,
 +    uniforms: Arc<ShaderUniforms>,
 +    window: Cell<Option<AnyWindowHandle>>,
- 
      _task: Task<()>,
+     _policy_subscription: Subscription,
  }
-@@ -26,10 +54,37 @@ impl BlinkCursor {
-             visible: false,
-             paused: false,
+@@ -97,6 +128,9 @@ impl BlinkCursor {
              epoch: 0,
+             last_activity: None,
+             policy: cursor_blink(cx),
 +            presented: false,
 +            uniforms: Arc::new(ShaderUniforms::new()),
 +            window: Cell::new(None),
              _task: Task::ready(()),
+             _policy_subscription: cx.observe_global::<crate::Theme>(|this, cx| {
+                 let policy = cursor_blink(cx);
+@@ -113,11 +147,39 @@ impl BlinkCursor {
          }
      }
  
 +    // KOAN: #1786.
 +    /// A cursor whose blink is presented by the caret's shader, not drawn.
-+    pub(crate) fn presented() -> Self {
++    pub(crate) fn presented(cx: &mut Context<Self>) -> Self {
 +        Self {
 +            presented: true,
-+            ..Self::new()
++            ..Self::new(cx)
 +        }
 +    }
 +
@@ -85,64 +91,61 @@ index b41f2bb..0338d2b 100644
 +            .set(0, if self.visible() { 1.0 } else { 0.0 })
 +    }
 +
-     /// Start the blinking from a visible cursor.
-     ///
-     /// A single focus can start the cursor more than once: `InputState::focus`
-@@ -41,6 +96,10 @@ impl BlinkCursor {
-         self.visible = false;
-         let epoch = self.next_epoch();
-         self.blink(epoch, cx);
+     pub(crate) fn start(&mut self, cx: &mut Context<Self>) {
+         self.epoch = self.epoch.wrapping_add(1);
+         self.last_activity = Some(cx.background_executor().now());
+         self.paused = false;
+         self.set_visible(true, cx);
 +        // KOAN: the caret is painted once, shown; its blinks are presented (#1786).
 +        if self.presented {
 +            cx.notify();
 +        }
+         self.schedule(cx);
      }
  
-     /// Stop the blinking and clear the blink state, so the next [`Self::start`]
-@@ -50,6 +109,7 @@ impl BlinkCursor {
-         self.paused = false;
-         self.visible = false;
-         self._task = Task::ready(());
-+        self.publish(); // KOAN: #1786.
-         cx.notify();
-     }
- 
-@@ -66,11 +126,21 @@ impl BlinkCursor {
- 
-         if self.paused {
-             self.visible = true;
+@@ -148,10 +210,28 @@ impl BlinkCursor {
+     fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+         if self.visible != visible {
+             self.visible = visible;
 +            self.publish(); // KOAN: #1786.
-             return;
+             cx.notify();
          }
+     }
  
-         self.visible = !self.visible;
--        cx.notify();
-+        // KOAN: #1786.
-+        if self.presented {
++    // KOAN: (#1786) a blink, presented by the caret's shader where the
++    // cursor is `presented`, and otherwise drawn.
++    fn blink_to(&mut self, visible: bool, cx: &mut Context<Self>) {
++        if !self.presented {
++            self.set_visible(visible, cx);
++            return;
++        }
++        if self.visible != visible {
++            self.visible = visible;
 +            if self.publish()
 +                && let Some(window) = self.window.get()
 +            {
 +                let _ = cx.update_window(window, |_, window, _| window.request_present());
 +            }
-+        } else {
-+            cx.notify();
 +        }
++    }
++
+     fn blink_delay(&self, cx: &App) -> Option<Duration> {
+         let last_activity = self.last_activity?;
+         let interval = self.policy.interval()?;
+@@ -189,7 +269,7 @@ impl BlinkCursor {
  
-         // Schedule the next blink
-         let epoch = self.next_epoch();
-@@ -101,6 +171,7 @@ impl BlinkCursor {
- 
-         self.paused = true;
-         self.visible = true;
-+        self.publish(); // KOAN: #1786.
-         cx.notify();
- 
-         // Every pause replaces the pending timer, keeping repeated input visible.
+                 if this.blink_delay(cx).is_some() {
+                     this.paused = false;
+-                    this.set_visible(!this.visible, cx);
++                    this.blink_to(!this.visible, cx); // KOAN: #1786.
+                 }
+                 this.schedule(cx);
+             });
 diff --git a/src/input/base/element.rs b/src/input/base/element.rs
-index 20b2b6d..0f1255a 100644
+index 975bafe..d15f91a 100644
 --- a/src/input/base/element.rs
 +++ b/src/input/base/element.rs
-@@ -3223,6 +3223,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
+@@ -3553,6 +3553,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
          window: &mut Window,
          cx: &mut App,
      ) {
@@ -156,7 +159,7 @@ index 20b2b6d..0f1255a 100644
          let (focus_handle, show_cursor, disabled, selected_range, editor_style, editor_paddings) = {
              let state = self.state.read(cx);
              (
-@@ -3444,12 +3451,20 @@ impl<M: InputModeKind> Element for TextElement<M> {
+@@ -3774,12 +3781,20 @@ impl<M: InputModeKind> Element for TextElement<M> {
          }
  
          // Paint blinking cursors (shared blink state for all carets)
@@ -181,19 +184,19 @@ index 20b2b6d..0f1255a 100644
          }
  
 diff --git a/src/input/base/state.rs b/src/input/base/state.rs
-index 62831b2..da11f60 100644
+index 051acab..9884900 100644
 --- a/src/input/base/state.rs
 +++ b/src/input/base/state.rs
-@@ -905,7 +905,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -934,7 +934,7 @@ impl<M: InputModeKind> InputBaseState<M> {
      /// Build the engine. Each mode's own `new` sets its layout on top of this.
      fn new_in_mode(window: &mut Window, cx: &mut Context<Self>) -> Self {
          let focus_handle = cx.focus_handle().tab_stop(true);
--        let blink_cursor = cx.new(|_| BlinkCursor::new());
-+        let blink_cursor = cx.new(|_| BlinkCursor::presented()); // KOAN: #1786.
+-        let blink_cursor = cx.new(BlinkCursor::new);
++        let blink_cursor = cx.new(BlinkCursor::presented); // KOAN: #1786.
          let undo_manager = UndoManager::new();
  
          let _subscriptions = vec![
-@@ -3889,7 +3889,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -3973,7 +3973,7 @@ impl<M: InputModeKind> InputBaseState<M> {
      pub(crate) fn show_cursor(&self, window: &Window, cx: &App) -> bool {
          (self.focus_handle.is_focused(window) || M::is_context_menu_open(self, cx))
              && !self.disabled

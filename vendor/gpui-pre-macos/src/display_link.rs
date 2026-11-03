@@ -1,4 +1,8 @@
-//! Frame pacing for macOS windows, built on `CVDisplayLink`.
+//! Frame pacing for macOS windows.
+//!
+//! On macOS 14 and later a window is paced by a `CAMetalDisplayLink` on its
+//! layer ([`gpui_apple::display_link::MetalFrameSource`]). Earlier systems use
+//! the shared `CVDisplayLink` registry described below ([`WindowFrameSource`]).
 //!
 //! CVDisplayLink has no safe teardown: `CVDisplayLinkStop` merely flags the
 //! link's io thread to exit "soon" and returns immediately, and there is no
@@ -57,9 +61,11 @@ use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
 use gpui::{FrameRequestSource, PlatformFrameSignal};
+use gpui_apple::display_link::MetalFrameSource;
 use gpui_util::ResultExt;
 use scheduler::Instant;
 use std::{
+    cell::{Cell, RefCell},
     collections::{BTreeMap, btree_map},
     ffi::c_void,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -143,7 +149,8 @@ unsafe extern "C" fn display_link_output_callback(
         )
     });
     // KOAN: how far ahead of now the frame asked for is shown: shaders reckon
-    // their time at that moment (#1859).
+    // their time at that moment (#1859). Where frames come from a
+    // `CAMetalDisplayLink`, `metal_frame` in window.rs sets it instead.
     {
         // SAFETY: CoreVideo owns these timestamps for the lifetime of the callback.
         let output = unsafe { output_time.as_ref() };
@@ -305,6 +312,54 @@ fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
     }
 }
 
+/// A window's `CAMetalDisplayLink`, shared with GPUI's frame waker so that a
+/// wake reaches the current link without taking the window's lock.
+///
+/// The link pauses after any update in which GPUI neither drew, presented,
+/// nor asked for another frame, so an idle window acquires no drawables. GPUI
+/// decides when frames are needed (including presenting after high-rate
+/// input); this only stops the link between those decisions.
+#[derive(Default)]
+pub struct MetalFrames {
+    source: RefCell<Option<MetalFrameSource>>,
+    /// Whether GPUI asked for a frame since the current update began.
+    woken: Cell<bool>,
+}
+
+impl MetalFrames {
+    pub fn replace(&self, source: Option<MetalFrameSource>) {
+        *self.source.borrow_mut() = source;
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.source.borrow().is_some()
+    }
+
+    pub fn wake(&self) {
+        self.woken.set(true);
+        // A source being replaced starts unpaused, so skipping it is safe.
+        if let Ok(source) = self.source.try_borrow()
+            && let Some(source) = source.as_ref()
+        {
+            source.set_paused(false);
+        }
+    }
+
+    pub fn begin_frame(&self) {
+        self.woken.set(false);
+    }
+
+    /// Ends an update, pausing the link if GPUI neither used its drawable nor
+    /// asked for another frame while it ran. Returns whether it paused.
+    pub fn end_frame(&self, used_drawable: bool) -> bool {
+        let pause = !used_drawable && !self.woken.get();
+        if pause && let Some(source) = self.source.borrow().as_ref() {
+            source.set_paused(true);
+        }
+        pause
+    }
+}
+
 /// A per-window source of frame requests, paced by the display the window is
 /// on. The wrapped dispatch source coalesces vsync ticks from the display's
 /// io thread and invokes `callback(data)` on the main queue.
@@ -314,31 +369,22 @@ pub struct WindowFrameSource {
     signal: Arc<PlatformFrameSignal>,
 }
 
-/// A dispatch source that coalesces `merge_data` calls from any thread into
-/// one `callback(data)` on the main queue.
-pub fn main_queue_source(
-    data: *mut c_void,
-    callback: extern "C" fn(*mut c_void),
-) -> DispatchRetained<DispatchSource> {
-    unsafe {
-        let source = DispatchSource::new(
-            &raw const _dispatch_source_type_data_add as *mut _,
-            0,
-            0,
-            Some(DispatchQueue::main()),
-        );
-        source.set_context(data);
-        source.set_event_handler_f(callback);
-        // Resume before this source can ever be dropped: destroying a
-        // suspended dispatch source is undefined behavior (#50875).
-        source.resume();
-        source
-    }
-}
-
 impl WindowFrameSource {
     pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
-        let frame_requests = main_queue_source(data, callback);
+        let frame_requests = unsafe {
+            let frame_requests = DispatchSource::new(
+                &raw const _dispatch_source_type_data_add as *mut _,
+                0,
+                0,
+                Some(DispatchQueue::main()),
+            );
+            frame_requests.set_context(data);
+            frame_requests.set_event_handler_f(callback);
+            // Resume before this source can ever be dropped: destroying a
+            // suspended dispatch source is undefined behavior (#50875).
+            frame_requests.resume();
+            frame_requests
+        };
         Self {
             frame_requests,
             registration: None,
@@ -352,11 +398,6 @@ impl WindowFrameSource {
             subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
         self.registration = Some((display_id, subscriber_id));
         Ok(())
-    }
-
-    // KOAN: lets an idle window park its frames (window.rs `step`).
-    pub fn is_running(&self) -> bool {
-        self.registration.is_some()
     }
 
     pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
@@ -565,6 +606,56 @@ mod sys {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2::AnyThread;
+    use objc2_quartz_core::CAMetalDisplayLink;
+
+    #[test]
+    fn metal_frames_pause_only_when_gpui_neither_draws_nor_asks_again() {
+        let frames = MetalFrames::default();
+
+        frames.begin_frame();
+        assert!(
+            !frames.end_frame(true),
+            "a frame that drew keeps the link running"
+        );
+
+        frames.begin_frame();
+        frames.wake();
+        assert!(
+            !frames.end_frame(false),
+            "a wake during the update, like a throttled frame's retry, keeps it running"
+        );
+
+        frames.wake();
+        frames.begin_frame();
+        assert!(
+            frames.end_frame(false),
+            "a wake before the update was served by it"
+        );
+
+        frames.begin_frame();
+        assert!(frames.end_frame(false), "an idle update pauses the link");
+    }
+
+    #[test]
+    fn a_renderer_draws_normally_after_its_display_link_is_invalidated() {
+        if !MetalFrameSource::is_available() {
+            return;
+        }
+        let mut renderer =
+            crate::renderer::MetalRenderer::new(Default::default(), false, false).unwrap();
+        renderer.update_drawable_size(gpui::size(gpui::DevicePixels(64), gpui::DevicePixels(64)));
+        let layer = renderer.layer().expect("window renderer has a layer");
+        // The link is never added to a run loop: attaching it to the layer is
+        // the state under test.
+        let link = CAMetalDisplayLink::initWithMetalLayer(CAMetalDisplayLink::alloc(), layer);
+        renderer.set_display_link_attached(true);
+        renderer.draw(&gpui::Scene::default());
+
+        link.invalidate();
+        renderer.set_display_link_attached(false);
+        renderer.draw(&gpui::Scene::default());
+    }
 
     #[test]
     fn host_timestamp_preserves_request_age_at_different_clock_rates() {

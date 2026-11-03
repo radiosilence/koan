@@ -13,13 +13,13 @@ use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
     CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
     OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
-    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
     popup::PopupNotSupportedError,
 };
 use gpui_apple::{
     keychain,
-    thermal::{self, ThermalObserver},
+    process_info::{self, ProcessInfoObserver},
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -151,7 +151,6 @@ unsafe fn build_classes() {
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C-unwind" fn(_, Sel, *mut AnyObject),
             );
-
             decl.add_method(
                 sel!(onSystemWake:),
                 on_system_wake as extern "C-unwind" fn(_, Sel, *mut AnyObject),
@@ -176,7 +175,8 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    thermal_observer: Option<ThermalObserver>,
+    thermal_observer: Option<ProcessInfoObserver>,
+    power_mode_observer: Option<ProcessInfoObserver>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
@@ -185,14 +185,13 @@ pub(crate) struct MacPlatformState {
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
-    menu_actions: Vec<Box<dyn Action>>,
+    // KOAN: each menu's actions apart, replaced when it is set again
+    // (zed-industries/zed#66452).
+    menu_actions: MenuActions,
+    dock_menu_actions: MenuActions,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<Retained<NSMenu>>,
-    // KOAN: where the Dock menu's actions sit in `menu_actions`, which an
-    // item's tag indexes: a new Dock menu replaces them rather than adding
-    // to them, so a menu rebuilt on every track change does not grow it.
-    dock_actions: Option<(usize, usize)>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
@@ -252,13 +251,14 @@ impl MacPlatform {
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
-            menu_actions: Default::default(),
+            menu_actions: MenuActions::menu_bar(),
+            dock_menu_actions: MenuActions::dock(),
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
-            dock_actions: None,
             on_keyboard_layout_change: None,
             thermal_observer: None,
+            power_mode_observer: None,
             on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
@@ -275,7 +275,7 @@ impl MacPlatform {
         &self,
         menus: &Vec<Menu>,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenu> {
         unsafe {
@@ -311,7 +311,7 @@ impl MacPlatform {
         &self,
         menu_items: Vec<MenuItem>,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenu> {
         unsafe {
@@ -329,7 +329,7 @@ impl MacPlatform {
         &self,
         item: &MenuItem,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenuItem> {
         static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
@@ -433,9 +433,7 @@ impl MacPlatform {
                     }
                     item.setEnabled(!disabled);
 
-                    let tag = actions.len() as NSInteger;
-                    item.setTag(tag);
-                    actions.push(action.boxed_clone());
+                    item.setTag(actions.push(action.boxed_clone()));
                     item
                 }
                 MenuItem::Submenu(Menu {
@@ -775,7 +773,7 @@ impl Platform for MacPlatform {
             background_executor,
             renderer_context,
             self.1,
-        )))
+        )?))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -1064,7 +1062,7 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        let observer = ThermalObserver::new(&self.foreground_executor(), callback);
+        let observer = process_info::observe_thermal_state(&self.foreground_executor(), callback);
         self.0.lock().thermal_observer = Some(observer);
     }
 
@@ -1073,13 +1071,18 @@ impl Platform for MacPlatform {
         self.ensure_system_power_observers();
     }
 
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        let observer = process_info::observe_power_mode(&self.foreground_executor(), callback);
+        self.0.lock().power_mode_observer = Some(observer);
+    }
+
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_system_wake = Some(callback);
         self.ensure_system_power_observers();
     }
 
     fn thermal_state(&self) -> ThermalState {
-        thermal::thermal_state()
+        process_info::thermal_state()
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
@@ -1087,6 +1090,10 @@ impl Platform for MacPlatform {
             reason,
             NSActivityOptions::UserInitiated,
         )))
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        process_info::power_mode()
     }
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
@@ -1130,6 +1137,7 @@ impl Platform for MacPlatform {
         unsafe {
             let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
+            state.menu_actions = MenuActions::menu_bar();
             let actions = &mut state.menu_actions;
             let delegate: *mut AnyObject = msg_send![app, delegate];
             let menu = self.create_menu_bar(&menus, delegate, actions, keymap);
@@ -1146,20 +1154,11 @@ impl Platform for MacPlatform {
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
         unsafe {
             let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
-            let mut guard = self.0.lock();
-            let state = &mut *guard;
-            // KOAN: the last Dock menu's actions go, when nothing was added
-            // after them (the menu bar's would sit there).
-            if let Some((start, len)) = state.dock_actions.take()
-                && start + len == state.menu_actions.len()
-            {
-                state.menu_actions.truncate(start);
-            }
-            let start = state.menu_actions.len();
-            let actions = &mut state.menu_actions;
+            let mut state = self.0.lock();
+            state.dock_menu_actions = MenuActions::dock();
+            let actions = &mut state.dock_menu_actions;
             let delegate: *mut AnyObject = msg_send![app, delegate];
             state.dock_menu = Some(self.create_dock_menu(menu, delegate, actions, keymap));
-            state.dock_actions = Some((start, state.menu_actions.len() - start));
         }
     }
 
@@ -1334,7 +1333,6 @@ extern "C-unwind" fn did_finish_launching(this: &AnyObject, _: Sel, _: *mut AnyO
             name: ns_string("NSApplicationDidChangeScreenParametersNotification"),
             object: ptr::null_mut::<AnyObject>()
         ];
-
         let platform = get_mac_platform(this);
         let callback = {
             let mut state = platform.0.lock();
@@ -1514,6 +1512,56 @@ extern "C-unwind" fn open_urls(this: &AnyObject, _: Sel, _: *mut AnyObject, urls
     }
 }
 
+// KOAN: (zed-industries/zed#66452) the actions a menu's items run, found by
+// each item's tag. The menu bar's tags count up from zero and the Dock
+// menu's down from -1, so setting either menu replaces its own actions
+// without leaving the previous ones behind.
+struct MenuActions {
+    actions: Vec<Box<dyn Action>>,
+    dock: bool,
+}
+
+impl MenuActions {
+    fn menu_bar() -> Self {
+        Self {
+            actions: Vec::new(),
+            dock: false,
+        }
+    }
+
+    fn dock() -> Self {
+        Self {
+            actions: Vec::new(),
+            dock: true,
+        }
+    }
+
+    /// Keeps `action` and returns the tag of the item that runs it.
+    fn push(&mut self, action: Box<dyn Action>) -> NSInteger {
+        let index = self.actions.len() as NSInteger;
+        self.actions.push(action);
+        if self.dock { -index - 1 } else { index }
+    }
+
+    fn get(&self, tag: NSInteger) -> Option<&dyn Action> {
+        let index = if self.dock { -tag - 1 } else { tag };
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| self.actions.get(index))
+            .map(|action| action.as_ref())
+    }
+}
+
+impl MacPlatformState {
+    fn action_for_tag(&self, tag: NSInteger) -> Option<&dyn Action> {
+        if tag < 0 {
+            self.dock_menu_actions.get(tag)
+        } else {
+            self.menu_actions.get(tag)
+        }
+    }
+}
+
 extern "C-unwind" fn handle_menu_item(this: &AnyObject, _: Sel, item: *mut AnyObject) {
     unsafe {
         let platform = get_mac_platform(this);
@@ -1524,8 +1572,7 @@ extern "C-unwind" fn handle_menu_item(this: &AnyObject, _: Sel, item: *mut AnyOb
             } else {
                 msg_send![item, tag]
             };
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
+            if let Some(action) = lock.action_for_tag(tag) {
                 let action = action.boxed_clone();
                 drop(lock);
                 callback(&*action);
@@ -1546,8 +1593,7 @@ extern "C-unwind" fn validate_menu_item(this: &AnyObject, _: Sel, item: *mut Any
             } else {
                 msg_send![item, tag]
             };
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
+            if let Some(action) = lock.action_for_tag(tag) {
                 let action = action.boxed_clone();
                 drop(lock);
                 result = callback(action.as_ref());

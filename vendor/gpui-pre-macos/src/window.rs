@@ -1,13 +1,12 @@
 use crate::{
-    BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+    BoolExt, MacDisplay, MetalFrames, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
     TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    main_queue_source, ns_string, renderer,
+    ns_string, renderer,
 };
-#[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block2::RcBlock;
-use dispatch2::{DispatchQueue, DispatchRetained, DispatchSource};
+use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
     ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
@@ -26,9 +25,10 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::CGDirectDisplayID;
 use ctor::ctor;
 use futures::channel::oneshot;
+use gpui_apple::display_link::MetalFrameSource;
 use gpui_util::ResultExt;
 use objc2::{
-    AnyThread, MainThreadMarker, class, msg_send,
+    AnyThread, MainThreadMarker, Message, class, msg_send,
     rc::{Retained, autoreleasepool},
     runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, ProtocolObject, Sel},
     sel,
@@ -53,6 +53,7 @@ use objc2_foundation::{
     NSArray, NSInteger, NSNotFound, NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect,
     NSSize, NSString, NSUInteger, NSURL,
 };
+use objc2_uniform_type_identifiers::{UTType, UTTypeData, UTTypeFolder};
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -64,9 +65,9 @@ use std::{
     os::unix::ffi::OsStrExt,
     path::PathBuf,
     ptr::{self, NonNull},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::{
-        Arc, Once, Weak,
+        Arc, Once,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -637,6 +638,15 @@ unsafe fn apply_simple_fullscreen_plan(
     }
 }
 
+/// What paces a window's frames. The choice depends only on the OS version,
+/// so it is made once per window.
+enum FrameSource {
+    /// macOS 14+: a `CAMetalDisplayLink` that hands out each frame's drawable.
+    Metal(Rc<MetalFrames>),
+    /// Earlier systems: the shared `CVDisplayLink` registry, joined on first start.
+    DisplayLink(Option<WindowFrameSource>),
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -647,21 +657,7 @@ struct MacWindowState {
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
-    frame_source: Option<WindowFrameSource>,
-    // KOAN: an idle window stops its display link (`step`), and the frame
-    // waker starts it again, rather than waking every vsync to find nothing
-    // to draw. After herdr-app's patch for gpui-pre-macos 0.3.8.
-    wake_source: Option<DispatchRetained<DispatchSource>>,
-    /// A frame was asked for since the last `step`.
-    woken: bool,
-    /// `step`s in a row that no one asked for.
-    idle_frames: u32,
-    /// The display link was stopped for being idle, not for being hidden.
-    parked: bool,
-    /// KOAN: when input last arrived. GPUI keeps presenting for a second
-    /// after input so the display does not drop its refresh rate between
-    /// events, so the link stays up that long.
-    last_input: Option<std::time::Instant>,
+    frame_source: FrameSource,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
@@ -828,7 +824,9 @@ impl MacWindowState {
         }
     }
 
-    fn start_display_link(&mut self) {
+    /// `window_state` is the handle this state lives in; a Metal link holds it
+    /// weakly to deliver frames.
+    fn start_display_link(&mut self, window_state: &Rc<Mutex<MacWindowState>>) {
         self.stop_display_link();
         if !self
             .native_window()
@@ -837,38 +835,52 @@ impl MacWindowState {
         {
             return;
         }
-        let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
-        let Some(display_id) = display_id_for_screen(screen) else {
-            // AppKit can temporarily report no screen while displays are being reconfigured.
-            // KOAN: the window is visible, so the next wake tries again.
-            self.parked = true;
-            return;
-        };
-        let data = self.native_view.as_ptr() as *mut c_void;
-        self.frame_source
-            .get_or_insert_with(|| WindowFrameSource::new(data, step))
-            .start(display_id)
-            .log_err();
-        // KOAN: running again, by whoever started it.
-        self.parked = false;
-        self.idle_frames = 0;
-    }
-
-    // KOAN: the source `frame_waker` and `schedule_frame` signal.
-    fn wake_source(&mut self) -> DispatchRetained<DispatchSource> {
-        let data = self.native_view.as_ptr() as *mut c_void;
-        self.wake_source
-            .get_or_insert_with(|| main_queue_source(data, wake_frames))
-            .clone()
+        match &mut self.frame_source {
+            FrameSource::Metal(metal_frames) => {
+                let Some(layer) = self.renderer.layer() else {
+                    return;
+                };
+                let main_thread =
+                    crate::main_thread_marker().expect("macOS windows require the main thread");
+                let window_state = Rc::downgrade(window_state);
+                let source = MetalFrameSource::new(layer, main_thread, move |update| {
+                    if let Some(window_state) = window_state.upgrade() {
+                        metal_frame(&window_state, update);
+                    }
+                });
+                if let Some(source) = source {
+                    metal_frames.replace(Some(source));
+                    self.renderer.set_display_link_attached(true);
+                }
+            }
+            FrameSource::DisplayLink(frame_source) => {
+                let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
+                let Some(display_id) = display_id_for_screen(screen) else {
+                    // AppKit can temporarily report no screen while displays are being reconfigured.
+                    return;
+                };
+                let data = self.native_view.as_ptr() as *mut c_void;
+                frame_source
+                    .get_or_insert_with(|| WindowFrameSource::new(data, step))
+                    .start(display_id)
+                    .log_err();
+            }
+        }
     }
 
     fn stop_display_link(&mut self) {
-        if let Some(frame_source) = self.frame_source.as_mut() {
-            frame_source.stop();
+        match &mut self.frame_source {
+            FrameSource::Metal(metal_frames) => {
+                if metal_frames.is_attached() {
+                    // Detach the link rather than pause it, so that a synchronous
+                    // draw can use the layer's `nextDrawable`.
+                    metal_frames.replace(None);
+                    self.renderer.set_display_link_attached(false);
+                }
+            }
+            FrameSource::DisplayLink(Some(frame_source)) => frame_source.stop(),
+            FrameSource::DisplayLink(None) => {}
         }
-        // KOAN: stopped by its owner (occlusion, a native frame), so a wake
-        // must not start it; `step` marks its own stop as parked afterwards.
-        self.parked = false;
     }
 
     fn is_maximized(&self) -> bool {
@@ -961,9 +973,13 @@ impl MacWindowState {
     }
 }
 
-unsafe impl Send for MacWindowState {}
-
-pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>, MainThreadMarker);
+pub(crate) struct MacWindow(
+    Rc<Mutex<MacWindowState>>,
+    MainThreadMarker,
+    /// The Metal link's frame waker, kept outside the lock so waking never
+    /// waits on it. `None` when a `CVDisplayLink` paces frames.
+    Option<Rc<MetalFrames>>,
+);
 
 impl MacWindow {
     pub fn open(
@@ -989,8 +1005,9 @@ impl MacWindow {
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
         marker: MainThreadMarker,
-    ) -> Self {
+    ) -> Result<Self> {
         autoreleasepool(|_| unsafe {
+            let renderer = renderer::new_renderer(renderer_context, false, use_display_p3)?;
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             if allows_automatic_window_tabbing {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: Bool::YES];
@@ -1091,7 +1108,8 @@ impl MacWindow {
             let native_view: *mut AnyObject = msg_send![native_view, initWithFrame: content_bounds];
             assert!(!native_view.is_null());
 
-            let state = Arc::new(Mutex::new(MacWindowState {
+            let metal_frames = MetalFrameSource::is_available().then(Rc::<MetalFrames>::default);
+            let state = Rc::new(Mutex::new(MacWindowState {
                 handle,
                 foreground_executor,
                 background_executor,
@@ -1101,20 +1119,11 @@ impl MacWindow {
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
                 cursor_visible,
-                frame_source: None,
-                wake_source: None,
-                woken: false,
-                idle_frames: 0,
-                parked: false,
-                last_input: None,
-                renderer: renderer::new_renderer(
-                    renderer_context,
-                    native_window as *mut _,
-                    native_view as *mut _,
-                    bounds.size.map(|pixels| pixels.as_f32()),
-                    false,
-                    use_display_p3,
-                ),
+                frame_source: match &metal_frames {
+                    Some(metal_frames) => FrameSource::Metal(metal_frames.clone()),
+                    None => FrameSource::DisplayLink(None),
+                },
+                renderer,
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
@@ -1157,21 +1166,21 @@ impl MacWindow {
                 accesskit_adapter: None,
                 sheet_parent: None,
             }));
-            let mut window = Self(state, marker);
+            let mut window = Self(state, marker, metal_frames);
 
             (*native_window)
                 .class()
                 .instance_variable(WINDOW_STATE_IVAR)
                 .expect("GPUI window state ivar")
                 .load_ptr::<*mut c_void>(&*native_window)
-                .write(Arc::into_raw(window.0.clone()).cast_mut().cast());
+                .write(Rc::into_raw(window.0.clone()).cast_mut().cast());
             let _: () = msg_send![native_window, setDelegate: native_window];
             (*native_view)
                 .class()
                 .instance_variable(WINDOW_STATE_IVAR)
                 .expect("GPUI view state ivar")
                 .load_ptr::<*mut c_void>(&*native_view)
-                .write(Arc::into_raw(window.0.clone()).cast_mut().cast());
+                .write(Rc::into_raw(window.0.clone()).cast_mut().cast());
 
             if let Some(title) = titlebar
                 .as_ref()
@@ -1320,7 +1329,7 @@ impl MacWindow {
                 window_state.sheet_parent = sheet_parent;
             }
 
-            window
+            Ok(window)
         })
     }
 
@@ -1393,7 +1402,7 @@ impl Drop for MacWindow {
         let mut this = self.0.lock();
         // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
         // window's content view, and that content view keeps the `GPUIView` it
-        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // hosts alive. Together with the `Rc<Mutex<MacWindowState>>` parked in
         // both views' `windowState` ivar, that forms
         // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
         // a cycle the delegate/`frame_source` teardown below cannot break. Drop
@@ -1403,12 +1412,9 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
-        this.frame_source.take();
-        // KOAN: GPUI's frame waker holds the wake source past the window, and
-        // its handler reads the view, which is released after this: cancelled,
-        // a wake already queued never runs.
-        if let Some(source) = this.wake_source.take() {
-            source.cancel();
+        match &mut this.frame_source {
+            FrameSource::Metal(metal_frames) => metal_frames.replace(None),
+            FrameSource::DisplayLink(frame_source) => drop(frame_source.take()),
         }
         unsafe {
             let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
@@ -2038,19 +2044,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().request_frame_callback = Some(callback);
     }
 
-    // KOAN: GPUI calls the waker when the window first needs a frame, and
-    // `schedule_frame` when a frame left work for the next one. Either can
-    // run while the window state is locked, so they only signal; `wake_frames`
-    // runs on the main queue and restarts a parked display link.
-    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-        let source = self.0.as_ref().lock().wake_source();
-        Some(Rc::new(move || source.merge_data(1)))
-    }
-
-    fn schedule_frame(&self) {
-        self.0.as_ref().lock().wake_source().merge_data(1);
-    }
-
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
@@ -2153,6 +2146,23 @@ impl PlatformWindow for MacWindow {
     fn draw(&self, scene: &gpui::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
+    }
+
+    // GPUI calls this without waking the frame waker when a window only needs
+    // a present, so a paused Metal link must resume here too.
+    fn schedule_frame(&self) {
+        if let Some(metal_frames) = &self.2 {
+            metal_frames.wake();
+        }
+    }
+
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let metal_frames = Rc::downgrade(self.2.as_ref()?);
+        Some(Rc::new(move || {
+            if let Some(metal_frames) = metal_frames.upgrade() {
+                metal_frames.wake();
+            }
+        }))
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -2325,25 +2335,27 @@ impl PlatformWindow for MacWindow {
                 // recommendation for large item counts), and by file *type* rather than
                 // `iconForFile:`, which can synchronously hit LaunchServices, network
                 // mounts, or iCloud for every selected path and beachball drag startup.
-                // `iconForFileType:` is deprecated in favor of `iconForContentType:`,
-                // but the replacement requires macOS 11 and we target 10.15.
-                let file_type = if *is_directory {
-                    "public.folder".to_string()
-                } else {
-                    path.extension()
-                        .and_then(|extension| extension.to_str())
-                        .map(|extension| extension.to_string())
-                        .unwrap_or_else(|| "public.data".to_string())
-                };
+                let is_directory = *is_directory;
+                let extension = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(String::from);
                 let provider = RcBlock::new(move || {
                     let component = NSDraggingImageComponent::draggingImageComponentWithKey(
                         NSDraggingImageComponentIconKey,
                     );
                     let workspace = NSWorkspace::sharedWorkspace();
-                    let file_type = NSString::from_str(&file_type);
-                    // TODO: Replace with `iconForContentType` once Zed no longer supports MacOS 10.15
-                    #[expect(deprecated, reason = "Support for MacOS 10.15")]
-                    let icon = workspace.iconForFileType(&file_type);
+                    let content_type = if is_directory {
+                        UTTypeFolder.retain()
+                    } else {
+                        extension
+                            .as_ref()
+                            .and_then(|extension| {
+                                UTType::typeWithFilenameExtension(&NSString::from_str(extension))
+                            })
+                            .unwrap_or_else(|| UTTypeData.retain())
+                    };
+                    let icon = workspace.iconForContentType(&content_type);
                     component.setContents(Some(&icon));
                     // Component frames are relative to the item's dragging frame.
                     component.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.)));
@@ -2488,14 +2500,14 @@ unsafe fn is_gpui_window(window: *mut AnyObject) -> bool {
     }
 }
 
-unsafe fn get_window_state(object: &AnyObject) -> Arc<Mutex<MacWindowState>> {
+unsafe fn get_window_state(object: &AnyObject) -> Rc<Mutex<MacWindowState>> {
     unsafe {
         let raw = *object
             .class()
             .instance_variable(WINDOW_STATE_IVAR)
             .expect("GPUI window state ivar")
             .load::<*mut c_void>(object);
-        let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
+        let rc1 = Rc::from_raw(raw as *mut Mutex<MacWindowState>);
         let rc2 = rc1.clone();
         mem::forget(rc1);
         rc2
@@ -2509,7 +2521,7 @@ unsafe fn drop_window_state(object: &AnyObject) {
             .instance_variable(WINDOW_STATE_IVAR)
             .expect("GPUI window state ivar")
             .load::<*mut c_void>(object);
-        Arc::from_raw(raw as *mut Mutex<MacWindowState>);
+        Rc::from_raw(raw as *mut Mutex<MacWindowState>);
     }
 }
 
@@ -2691,8 +2703,6 @@ extern "C" fn handle_key_event(
 ) -> Bool {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    // KOAN: input keeps the display link up a while (`step`).
-    lock.last_input = Some(std::time::Instant::now());
 
     let window_height = lock.content_size().height;
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
@@ -2841,10 +2851,8 @@ extern "C" fn handle_key_event(
 
 extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut AnyObject) {
     let window_state = unsafe { get_window_state(this) };
-    let weak_window_state = Arc::downgrade(&window_state);
+    let weak_window_state = Rc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
-    // KOAN: input keeps the display link up a while (`step`).
-    lock.last_input = Some(std::time::Instant::now());
     let window_height = lock.content_size().height;
     let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
     match native_event_type {
@@ -3012,7 +3020,7 @@ fn visibility(state: &MacWindowState) -> WindowVisibility {
     }
 }
 
-fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+fn report_visibility(window_state: &Rc<Mutex<MacWindowState>>) {
     let state = window_state.lock();
     if state.last_visibility.is_none() {
         return;
@@ -3053,7 +3061,7 @@ extern "C" fn window_did_change_occlusion_state(this: &AnyObject, _: Sel, _: *mu
         .contains(NSWindowOcclusionState::Visible)
     {
         lock.move_traffic_light();
-        lock.start_display_link();
+        lock.start_display_link(&window_state);
     } else {
         lock.stop_display_link();
     }
@@ -3118,7 +3126,7 @@ extern "C" fn window_did_fail_to_exit_fullscreen(this: &AnyObject, _: Sel, _: *m
 
 extern "C" fn window_did_exit_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
     // SAFETY: This method is registered only on GPUI window classes, which initialize
-    // WINDOW_STATE_IVAR with an Arc<Mutex<MacWindowState>> during window creation.
+    // WINDOW_STATE_IVAR with an Rc<Mutex<MacWindowState>> during window creation.
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.is_exiting_fullscreen = false;
@@ -3153,7 +3161,7 @@ extern "C" fn window_did_move(this: &AnyObject, _: Sel, _: *mut AnyObject) {
 }
 
 // Update the window scale factor and drawable size, and call the resize callback if any.
-fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
+fn update_window_scale_factor(window_state: &Rc<Mutex<MacWindowState>>) {
     let mut lock = window_state.as_ref().lock();
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
@@ -3182,13 +3190,13 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
 extern "C" fn window_did_change_screen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    lock.start_display_link();
+    lock.start_display_link(&window_state);
     drop(lock);
     update_window_scale_factor(&window_state);
     report_display_change(&window_state);
 }
 
-fn report_display_change(window_state: &Arc<Mutex<MacWindowState>>) {
+fn report_display_change(window_state: &Rc<Mutex<MacWindowState>>) {
     let executor = window_state.lock().foreground_executor.clone();
     // AppKit can post screen changes while GPUI is updating a window, e.g.
     // from `setFrame:`, so deliver after that update completes.
@@ -3270,7 +3278,7 @@ extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *
                 let mut lock = window_state.lock();
                 lock.request_frame_callback = Some(callback);
                 lock.renderer.set_presents_with_transaction(false);
-                lock.start_display_link();
+                lock.start_display_link(&window_state);
             }
         } else {
             lock.activated_least_once = true;
@@ -3396,7 +3404,7 @@ extern "C" fn display_layer(this: &AnyObject, _: Sel, _: *mut AnyObject) {
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
         lock.renderer.set_presents_with_transaction(false);
-        lock.start_display_link();
+        lock.start_display_link(&window_state);
     }
 }
 
@@ -3406,60 +3414,58 @@ extern "C" fn step(view: *mut c_void) {
     let mut lock = window_state.lock();
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
-        let (signal_at, signal_source) = lock
-            .frame_source
-            .as_ref()
-            .and_then(WindowFrameSource::take_signal)
-            .map_or(
-                (None, FrameRequestSource::NativeCallback),
-                |(at, source)| (Some(at), source),
-            );
+        let signal = match &lock.frame_source {
+            FrameSource::DisplayLink(Some(frame_source)) => frame_source.take_signal(),
+            _ => None,
+        };
+        let (signal_at, signal_source) = signal.map_or(
+            (None, FrameRequestSource::NativeCallback),
+            |(at, source)| (Some(at), source),
+        );
         drop(lock);
         callback(RequestFrameOptions {
             signal_at,
             signal_source,
             ..Default::default()
         });
-        let mut lock = window_state.lock();
-        lock.request_frame_callback = Some(callback);
-        // KOAN: a few vsyncs with no one asking for a frame: nothing to draw.
-        // Every wake (a notify, input, an animation frame, a timer) restarts
-        // the link through the frame waker, so waiting longer only wakes for
-        // nothing.
-        let recent_input = lock
-            .last_input
-            .is_some_and(|at| at.elapsed() < INPUT_SUSTAIN);
-        if std::mem::take(&mut lock.woken) || recent_input {
-            lock.idle_frames = 0;
-        } else {
-            lock.idle_frames += 1;
-            if lock.idle_frames >= IDLE_FRAMES
-                && lock.frame_source.as_ref().is_some_and(|f| f.is_running())
-            {
-                lock.stop_display_link();
-                lock.parked = true;
-            }
-        }
+        window_state.lock().request_frame_callback = Some(callback);
     }
 }
 
-/// KOAN: how many frames no one asked for before the display link parks.
-const IDLE_FRAMES: u32 = 3;
-
-/// KOAN: how long after input the display link stays up, as long as GPUI
-/// keeps presenting after high-rate input (`InputRateTracker`).
-const INPUT_SUSTAIN: std::time::Duration = std::time::Duration::from_secs(1);
-
-// KOAN: the window needs frames again.
-extern "C" fn wake_frames(view: *mut c_void) {
-    let view = view as *mut AnyObject;
-    let window_state = unsafe { get_window_state(&*view) };
+fn metal_frame(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    update: &objc2_quartz_core::CAMetalDisplayLinkUpdate,
+) {
+    let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
     let mut lock = window_state.lock();
-    lock.woken = true;
-    lock.idle_frames = 0;
-    if lock.parked {
-        lock.start_display_link();
+    let FrameSource::Metal(metal_frames) = &lock.frame_source else {
+        return;
+    };
+    let metal_frames = metal_frames.clone();
+    let Some(mut callback) = lock.request_frame_callback.take() else {
+        return;
+    };
+    lock.renderer.set_frame_drawable(Some(update.drawable()));
+    drop(lock);
+    // KOAN: how far ahead of now this frame is shown: shaders reckon their
+    // time at that moment (#1859).
+    let lead = unsafe { update.targetPresentationTimestamp() }
+        - objc2_quartz_core::CACurrentMediaTime();
+    if let Ok(lead) = std::time::Duration::try_from_secs_f64(lead) {
+        gpui::set_present_lead(lead.min(std::time::Duration::from_millis(100)));
     }
+    metal_frames.begin_frame();
+    callback(RequestFrameOptions {
+        signal_at,
+        signal_source: FrameRequestSource::NativeCallback,
+        ..Default::default()
+    });
+    let mut lock = window_state.lock();
+    lock.request_frame_callback = Some(callback);
+    // A frame with nothing to draw leaves its drawable unused; releasing it
+    // lets the link hand it out again.
+    let used_drawable = lock.renderer.set_frame_drawable(None).is_none();
+    metal_frames.end_frame(used_drawable);
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &AnyObject, _: Sel) -> *mut AnyObject {
@@ -3864,7 +3870,7 @@ async fn synthetic_drag(
 /// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
 /// state and updates the window state according to the event passed.
 fn send_file_drop_event(
-    window_state: Arc<Mutex<MacWindowState>>,
+    window_state: Rc<Mutex<MacWindowState>>,
     file_drop_event: FileDropEvent,
 ) -> bool {
     let external_files_dragged = match file_drop_event {
