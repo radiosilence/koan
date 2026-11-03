@@ -111,6 +111,8 @@ Toolbar::new()
 
 `FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. A click anywhere on the field, a toolbar button's height, focuses it; in a narrow page column it gives up width down to 64 points before any toolbar button goes. The page owns the `InputState` and what typing does.
 
+`FilterButton::new(id, text, prompt)` is the same look standing for a search typed elsewhere: the glyph and the query (or the prompt in `muted`), the whole row a button. The sidebar's search field, which opens the search box over the window.
+
 With text in it the field shows a clear mark at its trailing edge, `muted` and `ink` under the pointer; a press on it empties the field and keeps the keyboard there, and Escape does the same, going on to whatever Escape means around the field once it is empty. Emptying is an `InputEvent::Change` like typing. `.fill()` makes it as wide as what holds it, as the sidebar's search is. The input's types are `koan_kit::app::input`.
 
 `SuggestionPanel` hangs under the nearest `relative` parent and paints over the window: `SuggestionHeading`s over groups of `SuggestionRow`s, each a sleeve (`art`) or a glyph (`icon`), a title and a line of `detail`, `lit` on `surface`. In a list things are picked from, `picked` puts the tick in the art's place and `figure` a length at the trailing edge.

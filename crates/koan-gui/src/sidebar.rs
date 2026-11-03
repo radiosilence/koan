@@ -128,14 +128,8 @@ impl Sidebar {
         sidebar
     }
 
-    /// The search field, over the library's search and art.
-    pub fn set_search(
-        &mut self,
-        search: Entity<crate::search::Search>,
-        covers: Entity<Covers>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// The search field, over the library's search.
+    pub fn set_search(&mut self, search: Entity<crate::search::Search>, cx: &mut Context<Self>) {
         let watch = cx.observe(&search, |this: &mut Self, search, cx| {
             let searching = !search.read(cx).query().is_empty();
             if searching != this.searching {
@@ -143,16 +137,9 @@ impl Sidebar {
                 cx.notify();
             }
         });
-        let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
+        let field = cx.new(|cx| crate::search::field::SearchField::new(search, cx));
         self.search = Some((field, watch));
         cx.notify();
-    }
-
-    /// Where the search field takes the keyboard, once the library is open.
-    pub fn search_focus(&self, cx: &App) -> Option<FocusHandle> {
-        self.search
-            .as_ref()
-            .map(|(field, _)| field.read(cx).focus_handle(cx))
     }
 
     /// Draws the playlists' sleeves from the library's art cache.

@@ -116,8 +116,8 @@ impl Shell {
                 let covers = lib.covers.clone();
                 let search = lib.search.clone();
                 this.sidebar.update(cx, |sidebar, cx| {
-                    sidebar.set_covers(covers.clone(), cx);
-                    sidebar.set_search(search, covers, window, cx);
+                    sidebar.set_covers(covers, cx);
+                    sidebar.set_search(search, cx);
                 });
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
@@ -266,14 +266,8 @@ impl Shell {
         let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
             return;
         };
-        // The sidebar's field opened the box by taking the keyboard: given
-        // it back, it would open the box again, so the page has it instead.
-        let field = self.sidebar.read(cx).search_focus(cx);
         let route = self.nav.read(cx).current();
-        self.before_search = window
-            .focused(cx)
-            .filter(|f| field.as_ref() != Some(f))
-            .map(|f| (f, route));
+        self.before_search = window.focused(cx).map(|f| (f, route));
         let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
             &bar,
