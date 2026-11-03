@@ -301,6 +301,7 @@ impl RenderOnce for Button {
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
                 let answer = kind.answer();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     if let Some(answer) = answer {
                         answers.start(answer, accent, cx);
