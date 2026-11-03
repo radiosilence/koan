@@ -269,6 +269,8 @@ A stuck call cannot be interrupted, only abandoned, so `open_threads` counts the
 
 The runtime puts `NowPlaying::output_wait` in the Playback slice once an open has run for `OUTPUT_WAIT_NOTE` (two seconds), waking the state thread for that moment, and the desktop, Mac and iOS apps show it with Retry and Cancel. On Linux the open still takes `suppress_stderr`'s lock, so an open on a stuck ALSA device holds a fallback to the default until it returns.
 
+Tearing a session down is a call into the audio system too. `stop_engine` stops the unit and the decoder on the player thread, as a pause does, then hands the unit and its rate watch to a `koan-output-drop` thread (`dispose`); the next open waits for that to finish before touching the device, since a rate switch under a unit still being disposed of is what crashed in #89. On iOS the rate watch is dropped on the player thread, because dropping it clears the single slot the next session's watch goes in. `reload_dsp` (on `ReloadDsp` and route changes) resolves the local device and reads its profile on a `koan-dsp-read` thread and applies the answer as `PlayerCommand::DspLoaded`, the latest ask winning. Starting, stopping and fading a unit still happen on the player thread.
+
 Tests run the player without its command loop, so `open_inline` (on under `cfg(test)`) opens on the player thread; the tests for this path turn it off and hand `OutputOpened` to the player themselves.
 
 ## Queue & playlist

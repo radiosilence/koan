@@ -171,6 +171,11 @@ pub struct Player {
     /// The ticket of the open the player wants, 0 for none: the open thread
     /// reads it before each call into the audio system.
     open_live: Arc<std::sync::atomic::AtomicU64>,
+    /// The last session's output being torn down, if it was torn down off
+    /// this thread.
+    teardown: Option<Arc<Teardown>>,
+    /// Bumped by each DSP reading asked for: an older one landing is dropped.
+    dsp_ticket: u64,
     /// Open the output on this thread instead: tests that drive the player
     /// without its command loop.
     open_inline: bool,
@@ -391,6 +396,49 @@ struct OpenFlight {
     outdated: bool,
 }
 
+/// A session's output torn down on a thread of its own (`stop_engine`), and
+/// whether that has finished. The next open waits for it before touching the
+/// device: a rate switch under a unit still being disposed of is what
+/// crashed in #89.
+#[derive(Default)]
+struct Teardown {
+    done: parking_lot::Mutex<bool>,
+    finished: parking_lot::Condvar,
+}
+
+impl Teardown {
+    fn finish(&self) {
+        *self.done.lock() = true;
+        self.finished.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut done = self.done.lock();
+        while !*done {
+            self.finished.wait(&mut done);
+        }
+    }
+}
+
+/// The output device's DSP, read again off the player thread: resolving the
+/// device is a call into the audio system.
+pub struct DspLoaded {
+    ticket: u64,
+    config: Arc<crate::config::Config>,
+    /// The device resolved, or `None` where none could be.
+    device: Option<String>,
+    setup: Option<Arc<crate::audio::dsp::Setup>>,
+}
+
+impl std::fmt::Debug for DspLoaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DspLoaded")
+            .field("ticket", &self.ticket)
+            .field("device", &self.device)
+            .finish()
+    }
+}
+
 /// What the open thread needs of the player.
 struct OpenContext {
     backend: Arc<dyn AudioBackend>,
@@ -404,6 +452,9 @@ struct OpenContext {
     live: Arc<std::sync::atomic::AtomicU64>,
     /// The player's DSP cache as the open began.
     dsp: Option<DspCache>,
+    /// The last session's output, still being torn down: waited for before
+    /// the device is touched.
+    after: Option<Arc<Teardown>>,
     #[cfg(test)]
     dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
 }
@@ -560,6 +611,8 @@ impl Player {
             open_ticket: 0,
             open_threads: Arc::default(),
             open_live: Arc::default(),
+            teardown: None,
+            dsp_ticket: 0,
             open_inline: cfg!(test),
             stream_mode: streaming::ProbeMode::Full,
             history: None,
@@ -644,6 +697,7 @@ impl Player {
             ticket,
             live: self.open_live.clone(),
             dsp: self.dsp.clone(),
+            after: self.teardown.clone(),
             #[cfg(test)]
             dsp_override: self.dsp_override.clone(),
         }
@@ -753,12 +807,78 @@ impl Player {
     /// loaded, responses included, since the files can change without the
     /// config doing so. A preset given to another device, from the Play on
     /// menu, changes nothing here and restarts nothing.
+    /// Read the output device's DSP again, and restart what plays if it
+    /// changed. A renderer is named by its link; a local device is resolved
+    /// off this thread, a call into the audio system, and the reading comes
+    /// back as `DspLoaded`. A player opening inline (tests) reads it here.
     fn reload_dsp(&mut self) {
-        let device = match &self.renderer {
-            Some(link) => Ok(link.device_name().to_string()),
-            None => self.resolve_device().map(|d| d.name),
+        let local = match &self.renderer {
+            Some(link) => {
+                let device = link.device_name().to_string();
+                self.apply_dsp(Some(device), None);
+                return;
+            }
+            None => self.open_inline,
         };
-        let Ok(device) = device else {
+        if local {
+            let device = self.resolve_device().map(|d| d.name).ok();
+            self.apply_dsp(device, None);
+            return;
+        }
+        self.dsp_ticket += 1;
+        let ticket = self.dsp_ticket;
+        let mut ctx = self.open_context(0);
+        // Read afresh: the cache is what is being checked.
+        ctx.dsp = None;
+        let wanted = self.output_device_name.clone();
+        let tx = self.commands.tx.clone();
+        let spawned = thread::Builder::new()
+            .name("koan-dsp-read".into())
+            .spawn(move || {
+                let config = crate::config::Config::cached();
+                let device = resolve_device_on(ctx.backend.as_ref(), wanted.as_deref())
+                    .ok()
+                    .map(|d| d.name);
+                let setup = device.as_deref().and_then(|d| ctx.dsp_for(d));
+                let _ = tx.send(PlayerCommand::DspLoaded(DspLoaded {
+                    ticket,
+                    config,
+                    device,
+                    setup,
+                }));
+            });
+        if let Err(e) = spawned {
+            log::warn!("dsp: not read again: {e}");
+        }
+    }
+
+    /// A DSP reading from `reload_dsp`'s thread: dropped if a newer one was
+    /// asked for since.
+    fn on_dsp_loaded(&mut self, loaded: DspLoaded) {
+        if loaded.ticket != self.dsp_ticket {
+            return;
+        }
+        let DspLoaded {
+            config,
+            device,
+            setup,
+            ..
+        } = loaded;
+        self.apply_dsp(device, Some((config, setup)));
+    }
+
+    /// Take the DSP read for `device` (here, when `read` is `None`) as the
+    /// one in use, restarting what plays if it changed.
+    #[allow(clippy::type_complexity)]
+    fn apply_dsp(
+        &mut self,
+        device: Option<String>,
+        read: Option<(
+            Arc<crate::config::Config>,
+            Option<Arc<crate::audio::dsp::Setup>>,
+        )>,
+    ) {
+        let Some(device) = device else {
             self.dsp = None;
             return;
         };
@@ -767,7 +887,17 @@ impl Player {
             .take()
             .filter(|c| c.device == device)
             .map(|c| c.setup);
-        let now = self.dsp_for(&device);
+        let now = match read {
+            Some((config, setup)) => {
+                self.dsp = Some(DspCache {
+                    config,
+                    device,
+                    setup: setup.clone(),
+                });
+                setup
+            }
+            None => self.dsp_for(&device),
+        };
         let changed = match was {
             Some(was) => was != now,
             None => now.is_some(),
@@ -2183,6 +2313,7 @@ impl Player {
             engine,
             mut decode_handle,
             stream,
+            _rate_watch: rate_watch,
             ..
         } = local;
 
@@ -2195,8 +2326,47 @@ impl Player {
         }
         decode_handle.stop();
         self.timeline.set_presentation(None);
-        drop(engine);
+        // Where the backend keeps one watch for the session playing (iOS),
+        // dropping it clears that slot: dropped here, before the next session
+        // makes its own on this thread.
+        let rate_watch = if self.backend.rate_watch_on_player() {
+            drop(rate_watch);
+            None
+        } else {
+            rate_watch
+        };
+        self.dispose(engine, rate_watch);
         self.answer_silence();
+    }
+
+    /// Dispose of a stopped session's output: the unit and the device's rate
+    /// watch, both calls into the audio system, on a thread of its own. The
+    /// next open waits for it to finish before touching the device. A player
+    /// opening inline (tests) disposes of it here.
+    fn dispose(
+        &mut self,
+        engine: Box<dyn AudioEngineHandle>,
+        rate_watch: Option<Box<dyn SampleRateWatch>>,
+    ) {
+        if self.open_inline {
+            drop(engine);
+            drop(rate_watch);
+            return;
+        }
+        let teardown = Arc::new(Teardown::default());
+        let done = teardown.clone();
+        let parts = (engine, rate_watch);
+        let spawned = thread::Builder::new()
+            .name("koan-output-drop".into())
+            .spawn(move || {
+                drop(parts);
+                done.finish();
+            });
+        // Without a thread it was disposed of as the closure dropped.
+        if spawned.is_err() {
+            teardown.finish();
+        }
+        self.teardown = Some(teardown);
     }
 
     /// Tell whoever waited for the pause where the playhead came to rest.
@@ -3110,6 +3280,7 @@ impl Player {
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
             PlayerCommand::ReloadDsp => self.reload_dsp(),
+            PlayerCommand::DspLoaded(loaded) => self.on_dsp_loaded(loaded),
             PlayerCommand::RouteChanged => {
                 crate::audio::follow_route();
                 self.drop_prepared();
@@ -3538,6 +3709,9 @@ fn open_output(
     key: &OpenKey,
     consumer: rtrb::Consumer<f32>,
 ) -> Result<OpenedOutput, PlayerError> {
+    if let Some(teardown) = &ctx.after {
+        teardown.wait();
+    }
     ctx.go_on()?;
     let device = resolve_device_on(ctx.backend.as_ref(), key.device.as_deref())?;
     ctx.go_on()?;
@@ -6871,10 +7045,10 @@ mod tests {
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
     }
 
-    /// Regression test for GitHub #89: AudioEngine must be dropped synchronously
-    /// in stop_engine() before the caller changes sample rates. If the engine is
-    /// dropped on a background thread, CoreAudio's internal buffer list can be
-    /// freed while AudioUnitUninitialize is still tearing it down → crash.
+    /// Regression test for GitHub #89: the engine must be gone before the next
+    /// rate change. A player opening inline drops it in stop_engine(); one
+    /// opening off its thread disposes of it on another, and the next open
+    /// waits for that (`a_session_torn_down_off_the_thread_is_finished_before_the_next_open`).
     #[test]
     fn stop_engine_drops_engine_synchronously() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -6925,6 +7099,120 @@ mod tests {
             dropped.load(Ordering::SeqCst),
             "AudioEngine must be dropped synchronously in stop_engine (GitHub #89)"
         );
+    }
+
+    /// An engine whose teardown waits for the test, as a unit's can wait on
+    /// the audio system.
+    struct SlowDrop {
+        gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl AudioEngineHandle for SlowDrop {
+        fn start(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            false
+        }
+        fn fade_out(&self) {}
+        fn fade_in(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_silent(&self) -> bool {
+            false
+        }
+    }
+    impl Drop for SlowDrop {
+        fn drop(&mut self) {
+            let (lock, cvar) = &*self.gate;
+            let _open = cvar
+                .wait_while(lock.lock().unwrap(), |open| !*open)
+                .unwrap();
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_session_torn_down_off_the_thread_is_finished_before_the_next_open() {
+        let backend = GatedBackend::new(&[]);
+        let gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)> = Default::default();
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.transport = Transport::Loaded(test_session(
+            QueueItemId::new(),
+            Box::new(SlowDrop {
+                gate: gate.clone(),
+                dropped: dropped.clone(),
+            }),
+        ));
+
+        quick("stop", || player.stop_engine());
+        assert!(!dropped.load(Ordering::SeqCst), "disposed of elsewhere");
+
+        let ctx = player.open_context(0);
+        let key = OpenKey {
+            device: None,
+            sample_rate: 8_000,
+            channels: 1,
+            bit_depth: Some(16),
+        };
+        let opener = std::thread::spawn(move || {
+            let (_producer, consumer) = rtrb::RingBuffer::new(16);
+            open_output(&ctx, &key, consumer).map(|_| ())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            backend.prepared.lock().unwrap().is_empty(),
+            "no rate is switched under a unit still being disposed of"
+        );
+        open_gate(&gate);
+        opener.join().unwrap().unwrap();
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(*backend.prepared.lock().unwrap(), ["Built-in"]);
+    }
+
+    #[test]
+    fn the_dsp_is_read_again_off_the_player_thread() {
+        let backend = GatedBackend::new(&["list"]);
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.output_device_name = Some("Busy DAC".into());
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
+
+        quick("reload", || {
+            player.process_command(PlayerCommand::ReloadDsp)
+        });
+        backend.held(1);
+        assert!(player.dsp.is_none(), "not read yet");
+        // A second ask while the first is stuck: only the newer answer counts.
+        player.process_command(PlayerCommand::ReloadDsp);
+        open_gate(&backend.gate);
+        let mut answers = 0;
+        while answers < 2 {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(cmd @ PlayerCommand::DspLoaded(_)) => {
+                    answers += 1;
+                    player.process_command(cmd);
+                }
+                Ok(_) => {}
+                Err(e) => panic!("no reading came back: {e}"),
+            }
+        }
+        let cache = player.dsp.as_ref().expect("read");
+        assert_eq!(cache.device, "Busy DAC");
+        assert!(cache.setup.is_some());
     }
 
     #[test]
@@ -7073,6 +7361,15 @@ mod tests {
             }
         }
 
+        fn wait_at_gate(&self) {
+            self.waiting.fetch_add(1, Ordering::AcqRel);
+            let (lock, cvar) = &*self.gate;
+            let _open = cvar
+                .wait_while(lock.lock().unwrap(), |open| !*open)
+                .unwrap();
+            self.waiting.fetch_sub(1, Ordering::AcqRel);
+        }
+
         /// Wait until `n` opens are held at the gate.
         fn held(&self, n: usize) {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -7114,6 +7411,10 @@ mod tests {
 
     impl AudioBackend for GatedBackend {
         fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            // "list" in `held` holds the device lookup itself.
+            if self.held.contains(&"list") {
+                self.wait_at_gate();
+            }
             Ok(vec![Self::device("Built-in"), Self::device("Busy DAC")])
         }
         fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
@@ -7130,12 +7431,7 @@ mod tests {
             device: &backend::DeviceInfo,
         ) -> Result<f64, BackendError> {
             if self.held.contains(&device.name.as_str()) {
-                self.waiting.fetch_add(1, Ordering::AcqRel);
-                let (lock, cvar) = &*self.gate;
-                let _open = cvar
-                    .wait_while(lock.lock().unwrap(), |open| !*open)
-                    .unwrap();
-                self.waiting.fetch_sub(1, Ordering::AcqRel);
+                self.wait_at_gate();
             }
             Ok(8_000.0)
         }
