@@ -312,6 +312,7 @@ pub struct PlayButton {
     id: ElementId,
     label: SharedString,
     loading: bool,
+    disabled: bool,
     on_click: Option<super::Handler<ClickEvent>>,
 }
 
@@ -322,12 +323,20 @@ impl PlayButton {
             id: id.into(),
             label: label.into(),
             loading: false,
+            disabled: false,
             on_click: None,
         }
     }
 
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+
+    /// Nothing to play: dimmed, as `ShuffleButton::disabled`, and not
+    /// clickable.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -346,6 +355,8 @@ impl RenderOnce for PlayButton {
         let accent = look.color(crate::theme::Tone::Accent);
         let hover = look.palette.hover.hsla();
         let loading = self.loading;
+        // Either way there is nothing to press.
+        let idle = loading || self.disabled;
         super::accessible(
             div().id(self.id),
             gpui_kit::Role::Button,
@@ -358,10 +369,9 @@ impl RenderOnce for PlayButton {
         .justify_center()
         .border(look.hairline)
         .border_color(accent)
-        .aria_disabled(loading)
-        .when(!loading, |d| {
-            d.cursor_pointer().active(move |s| s.bg(hover))
-        })
+        .aria_disabled(idle)
+        .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+        .when(!idle, |d| d.cursor_pointer().active(move |s| s.bg(hover)))
         .child(if loading {
             super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
         } else {
@@ -370,7 +380,7 @@ impl RenderOnce for PlayButton {
                 .color(look.text_color(crate::theme::Tone::Accent))
                 .into_any_element()
         })
-        .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
+        .when_some(self.on_click.filter(|_| !idle), |d, on_click| {
             super::answers_click(d, on_click.clone())
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })

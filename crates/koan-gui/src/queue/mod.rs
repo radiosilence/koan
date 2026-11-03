@@ -123,6 +123,8 @@ pub struct QueueView {
     /// move from.
     anchor: Option<RowRef>,
     cursor: Option<RowRef>,
+    /// Where the cursor's row was laid out, for the menu key.
+    spot: crate::components::CursorSpot,
     /// The row at the top of the list and its index then, kept as the list
     /// scrolls and as the view draws, so a queue sent whole can be shown from
     /// the same row.
@@ -219,6 +221,7 @@ impl QueueView {
             selected: HashSet::new(),
             anchor: None,
             cursor: None,
+            spot: Default::default(),
             top: None,
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
@@ -435,6 +438,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn select_range(&mut self, to: usize, cx: &App) {
@@ -450,6 +454,7 @@ impl QueueView {
             self.anchor = Some(self.row_ref(to, cx));
         }
         self.cursor = Some(self.row_ref(to, cx));
+        self.spot.moved();
     }
 
     fn toggle(&mut self, row: usize, cx: &App) {
@@ -464,6 +469,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
@@ -788,6 +794,7 @@ impl QueueView {
         row_frame
             .selected(selected)
             .cursor(cursor)
+            .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
                     .when_some(place, |frame, (ix, items)| frame.place(ix, items))
@@ -1802,7 +1809,7 @@ impl Render for QueueView {
                 .named("queue")
                 .into_any_element()
             }))
-            .koan_context_menu("queue-menu", window, cx, {
+            .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
                 move |menu, window, cx| row_menu(menu, &view, window, cx)
             })

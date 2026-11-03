@@ -111,6 +111,8 @@ pub struct PlaylistPage {
     focus: FocusHandle,
     /// The keyboard's place in the list, by row.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     _loading: Option<Task<()>>,
@@ -167,6 +169,7 @@ impl PlaylistPage {
             note: None,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             _loading: None,
             _subscriptions: subscriptions,
@@ -336,6 +339,10 @@ impl PlaylistPage {
     }
 
     fn play_from(&self, entry: Option<i64>, shuffled: bool, cx: &App) {
+        // Nothing to play: the engine would clear the queue for it.
+        if self.items.is_empty() {
+            return;
+        }
         let id = self.id;
         command(cx, "play playlist", move |e| {
             e.play_playlist(id, entry, shuffled)
@@ -359,6 +366,38 @@ impl PlaylistPage {
         });
     }
 
+    /// Offline, entries with no file here are not listed: a place among the
+    /// rows shown is not one among the playlist's entries, and a reorder of
+    /// the rows shown would send the rest to the end.
+    fn partial(&self) -> bool {
+        self.playlist
+            .as_ref()
+            .is_some_and(|p| p.track_count as usize > self.items.len())
+    }
+
+    /// Where `dragged` would land if let go over a row, which the insertion
+    /// line shows.
+    fn lands(&self, dragged: &PlayableDrag) -> Lands {
+        let id = self.id;
+        let own = dragged.origin.as_ref().is_some_and(|o| o.playlist == id);
+        if own && self.partial() {
+            return Lands::Nowhere(
+                "not reordered: some of this playlist's tracks are not on this device",
+            );
+        }
+        let itself = dragged
+            .sets
+            .iter()
+            .any(|s| matches!(s, koan_ffi::TrackSet::Playlist { id: p } if *p == id));
+        if itself {
+            return Lands::Nowhere("a playlist cannot be added to itself");
+        }
+        if !own && self.partial() {
+            return Lands::End;
+        }
+        Lands::Row
+    }
+
     /// Moves or adds what was dropped before row `dest`: rows of this
     /// playlist move, anything else is added there.
     fn dropped(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
@@ -368,6 +407,14 @@ impl PlaylistPage {
             return;
         }
         let id = self.id;
+        match self.lands(dragged) {
+            Lands::Nowhere(why) => {
+                crate::notice::show(why, crate::theme::Tone::Muted, cx);
+                return;
+            }
+            Lands::End | Lands::Row => {}
+        }
+        let partial = self.partial();
         match dragged.origin.as_ref().filter(|o| o.playlist == id) {
             Some(origin) => {
                 let moving: Vec<String> = origin.entries.iter().map(i64::to_string).collect();
@@ -386,7 +433,11 @@ impl PlaylistPage {
                 command(cx, "reorder playlist", move |e| e.reorder_playlist(id, ids));
             }
             None => {
-                let at = rows::position(&self.rows, dest, self.items.len()) as u32;
+                let at = if partial {
+                    self.playlist.as_ref().map_or(0, |p| p.track_count as usize)
+                } else {
+                    rows::position(&self.rows, dest, self.items.len())
+                } as u32;
                 let sets = dragged.sets.to_vec();
                 command(cx, "add to playlist", move |e| {
                     e.insert_into_playlist(id, sets, at)
@@ -718,9 +769,11 @@ impl PlaylistPage {
                 Mosaic::new(arts, side).into_any_element()
             })
             .lead(
-                PlayButton::new("playlist-play", "play").on_click(move |_, _, cx| {
-                    play.read(cx).play_from(None, false, cx);
-                }),
+                PlayButton::new("playlist-play", "play")
+                    .disabled(empty)
+                    .on_click(move |_, _, cx| {
+                        play.read(cx).play_from(None, false, cx);
+                    }),
             )
             .lead(
                 ShuffleButton::new("playlist-shuffle", self.name())
@@ -991,6 +1044,7 @@ impl PlaylistPage {
         let fillable = self.fillable();
         let drag = self.drag_of(row);
         let aim = move |this: &mut Self,
+                        lands: Lands,
                         position: Point<Pixels>,
                         bounds: Bounds<Pixels>,
                         cx: &mut Context<Self>| {
@@ -998,9 +1052,13 @@ impl PlaylistPage {
                 return;
             }
             let lower = position.y > bounds.center().y;
-            let at = rows::insertion_point(row, lower);
-            if this.drop_at != Some(at) {
-                this.drop_at = Some(at);
+            let at = match lands {
+                Lands::Row => Some(rows::insertion_point(row, lower)),
+                Lands::End => Some(count),
+                Lands::Nowhere(_) => None,
+            };
+            if this.drop_at != at {
+                this.drop_at = at;
                 cx.notify();
             }
         };
@@ -1008,6 +1066,7 @@ impl PlaylistPage {
         row_frame
             .selected(selected)
             .cursor(self.keyed && self.cursor.at == Some(row))
+            .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
                     .when_some(place, |frame, (ix, items)| frame.place(ix, items))
@@ -1026,20 +1085,21 @@ impl PlaylistPage {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(row);
-                this.cursor.anchor = Some(row);
+                this.cursor.click(row, event.modifiers().shift);
                 this.click(row, event, cx);
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
             .when(fillable, |d| {
                 d.on_drag_move::<PlayableDrag>(cx.listener(
                     move |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
-                        aim(this, e.event.position, e.bounds, cx)
+                        let lands = this.lands(e.drag(cx));
+                        aim(this, lands, e.event.position, e.bounds, cx)
                     },
                 ))
                 .on_drag_move::<PlaylistDrag>(cx.listener(
                     move |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                        aim(this, e.event.position, e.bounds, cx)
+                        let lands = this.lands(&e.drag(cx).as_library());
+                        aim(this, lands, e.event.position, e.bounds, cx)
                     },
                 ))
                 .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
@@ -1208,6 +1268,14 @@ impl Render for PlaylistPage {
                         }
                     },
                 ))
+                .on_drag_move::<PlaylistDrag>(cx.listener(
+                    |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
+                            this.drop_at = None;
+                            cx.notify();
+                        }
+                    },
+                ))
         })
         .size_full()
         .flex()
@@ -1218,7 +1286,7 @@ impl Render for PlaylistPage {
             }
         }))
         .child(Page::new(header).body(body))
-        .koan_context_menu("playlist-menu", window, cx, {
+        .koan_context_menu_at("playlist-menu", Some(self.spot.clone()), window, cx, {
             let view = view.clone();
             move |menu, window, cx| row_menu(menu, &view, window, cx)
         })
@@ -1231,12 +1299,17 @@ impl super::keys::KeyedList for PlaylistPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.rows.len()
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        let entries = self.rows[from].items().start..self.rows[to].items().end;
+        let (lo, hi) = (from.min(to), from.max(to));
+        let entries = self.rows[lo].items().start..self.rows[hi].items().end;
         self.selected = self.items[entries]
             .iter()
             .map(|i| i.queue_item_id.clone())
@@ -1328,4 +1401,13 @@ mod tests {
         assert_eq!((item.disc, item.track_number), (Some(2), Some(4)));
         assert_eq!(item.status, EntryStatus::Queued);
     }
+}
+
+/// Where a drag over a row lands: before or after that row, at the end of
+/// the playlist, or nowhere, with why.
+#[derive(Clone, Copy)]
+enum Lands {
+    Row,
+    End,
+    Nowhere(&'static str),
 }

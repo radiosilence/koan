@@ -174,6 +174,17 @@ impl Element for AnimatedLayer {
             .paint_layer(self.program, bounds, window, cx, |window, cx| {
                 child.paint(window, cx)
             });
+        // Its view drawn again once it settles, which paints it with no
+        // group: a cached view would otherwise go on replaying the group,
+        // and its texture, until something else drew it (#1878).
+        if let Some(wait) = self.animated.settled_in() {
+            let view = window.current_view();
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(wait).await;
+                cx.update(|cx| cx.notify(view));
+            })
+            .detach();
+        }
     }
 }
 

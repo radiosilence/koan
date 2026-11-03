@@ -8,6 +8,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -210,6 +211,17 @@ enum Entry {
     },
 }
 
+impl Entry {
+    /// The words a choosable row is known by.
+    fn label(&self) -> Option<&SharedString> {
+        match self {
+            Entry::Item(item) => Some(&item.label),
+            Entry::Submenu { label, .. } => Some(label),
+            _ => None,
+        }
+    }
+}
+
 /// How wide a note's lines run, in points before the text size scales them:
 /// the Mac's output picker's width.
 const NOTE_WIDTH: f32 = 340.;
@@ -307,12 +319,29 @@ impl Menu {
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
+        // The row highlighted, known by its words and which of the rows so
+        // worded it is, rather than its place: a row arriving above it moves
+        // it down.
+        let was = self.highlighted.and_then(|i| {
+            let label = self.entries.get(i).and_then(Entry::label)?.clone();
+            let nth = self.entries[..i]
+                .iter()
+                .filter(|e| e.label() == Some(&label))
+                .count();
+            Some((label, nth))
+        });
         self.entries = built.entries;
         self.min_width = built.min_width;
         self._submenu.clear();
-        self.highlighted = self
-            .highlighted
-            .filter(|&i| i < self.entries.len() && self.choosable(i));
+        self.highlighted = was.and_then(|(label, nth)| {
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.label() == Some(&label))
+                .nth(nth)
+                .map(|(i, _)| i)
+                .filter(|&i| self.choosable(i))
+        });
         cx.notify();
     }
 
@@ -715,6 +744,8 @@ impl Render for Menu {
                     .left_0()
                     .size_full(),
             )
+            // Tab stays in the open menu rather than reaching the page under it.
+            .focus_trap("menu-trap", &self.focus)
     }
 }
 
@@ -729,6 +760,20 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
     fn koan_context_menu(
         self,
         id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.koan_context_menu_at(id, None, window, cx, build)
+    }
+
+    /// `koan_context_menu`, which the menu key also opens, under the
+    /// element's keyboard cursor (`spot`) where one is laid out, and at the
+    /// pointer otherwise.
+    fn koan_context_menu_at(
+        self,
+        id: impl Into<ElementId>,
+        spot: Option<super::CursorSpot>,
         window: &mut Window,
         cx: &mut App,
         build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
@@ -780,24 +825,25 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 open(event.position, window, cx)
             })
-            // The menu key: under the keyboard's cursor as the next frame
-            // draws it (the list has revealed the cursor's item, and the key
-            // makes the keyboard the last input, which shows the ring), or
-            // at the pointer where no ring is drawn in that frame. The first
-            // callback runs before that frame draws, the second after it.
+            // The menu key: under the keyboard's cursor, where its ring is
+            // laid out in the frames after the key. Bounds from before it are
+            // not trusted: the list may have scrolled the row away since, or
+            // just revealed it. The first callback runs before the next frame
+            // draws, the second after. At the pointer when there is no cursor
+            // or no ring was drawn.
             .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
-                cx.default_global::<super::CursorAt>().0 = None;
+                let Some(spot) = spot.clone() else {
+                    return by_key(window.mouse_position(), window, cx);
+                };
+                spot.forget_bounds();
                 window.refresh();
                 let by_key = by_key.clone();
                 window.on_next_frame(move |window, _| {
                     window.refresh();
                     window.on_next_frame(move |window, cx| {
-                        let id = window.window_handle().window_id();
-                        let at = cx
-                            .try_global::<super::CursorAt>()
-                            .and_then(|c| c.0)
-                            .filter(|(drawn, _)| *drawn == id)
-                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        let at = spot
+                            .bounds()
+                            .map_or_else(|| window.mouse_position(), |b| b.bottom_left());
                         by_key(at, window, cx)
                     });
                 });
@@ -1049,7 +1095,8 @@ mod tests {
     }
 
     /// Refilled as renderers arrive, the menu keeps the row highlighted
-    /// while it is still there, and drops the highlight when it is gone.
+    /// while it is still there, wherever it moves, and drops the highlight
+    /// when it is gone.
     #[gpui_kit::test]
     fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1067,6 +1114,9 @@ mod tests {
                 });
                 assert_eq!(menu.highlighted, Some(1));
                 assert_eq!(menu.entries.len(), 4);
+                // A row arriving above it moves it down with its row.
+                menu.refill(cx, |menu, _| rows(menu, &["den", "mac", "tv", "amp"]));
+                assert_eq!(menu.highlighted, Some(2), "still on tv");
                 menu.refill(cx, |menu, _| rows(menu, &["mac"]));
                 assert_eq!(menu.highlighted, None);
             })

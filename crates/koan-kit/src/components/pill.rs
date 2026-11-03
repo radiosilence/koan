@@ -20,6 +20,7 @@ pub struct Pill {
     /// `Some` while picking: whether this one is picked.
     tick: Option<bool>,
     cursor: bool,
+    spot: Option<super::CursorSpot>,
 }
 
 impl Pill {
@@ -34,6 +35,7 @@ impl Pill {
             text: text.into(),
             tick: None,
             cursor: false,
+            spot: None,
         }
     }
 
@@ -48,6 +50,14 @@ impl Pill {
     /// the focus ring, once the keyboard was used last.
     pub fn cursor(mut self, cursor: bool) -> Self {
         self.cursor = cursor;
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -75,8 +85,8 @@ impl RenderOnce for Pill {
             None => KoanIcon::new(self.icon).color(p.muted.hsla()),
         }
         .role(TypeRole::Fine);
-        let ring =
-            (self.cursor && window.last_input_was_keyboard()).then(|| super::cursor_ring(&look));
+        let ring = (self.cursor && window.last_input_was_keyboard())
+            .then(|| super::cursor_ring(&look, self.spot.as_ref()));
         self.base
             .relative()
             .flex()

@@ -97,8 +97,9 @@ pub struct TileState {
     pub selecting: bool,
     pub selected: bool,
     pub starting: bool,
-    /// Under the grid's keyboard cursor while the grid holds the keyboard.
-    pub cursor: bool,
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// where its ring tells the grid it was laid out.
+    pub cursor: Option<crate::components::CursorSpot>,
     pub show_artist: bool,
     pub side: Pixels,
     pub sleeve: Sleeve,
@@ -122,7 +123,7 @@ impl TileState {
             && self.selecting == other.selecting
             && self.selected == other.selected
             && self.starting == other.starting
-            && self.cursor == other.cursor
+            && self.cursor.is_some() == other.cursor.is_some()
             && self.show_artist == other.show_artist
             && self.side == other.side
             && self.pick == other.pick
@@ -318,7 +319,8 @@ impl<V: TileHost> Render for TileView<V> {
                 hovered.is_some() || state.favourite,
             )
             .pick(state.selecting.then_some(state.selected))
-            .cursor(state.cursor)
+            .cursor(state.cursor.is_some())
+            .when_some(state.cursor.as_ref(), |art, spot| art.spot(spot))
             // The rainbow refracts through the sleeve the pointer is on.
             .sheen(
                 crate::theme::KoanTheme::prism_now()
