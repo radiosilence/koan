@@ -58,6 +58,7 @@ pub struct TileArt {
     playing: Option<AnyElement>,
     on_device: Option<f32>,
     heart: Option<(bool, bool)>,
+    id: ElementId,
     pick: Option<bool>,
     cursor: bool,
 }
@@ -84,9 +85,17 @@ impl TileArt {
             playing: None,
             on_device: None,
             heart: None,
+            id: ElementId::Name("tile-art".into()),
             pick: None,
             cursor: false,
         }
+    }
+
+    /// Which record's art this is, for its heart's answer: tiles drawn
+    /// side by side in one view each need their own.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// The codec, top right: at tile size a rate is unreadable, and the
@@ -249,15 +258,10 @@ impl RenderOnce for TileArt {
             );
         }
         if let (Some((favourite, hovered)), None) = (self.heart, self.pick) {
-            let glyph = if favourite {
-                KoanIcon::new(Icon::Favourited)
-                    .role(TypeRole::Meta)
-                    .color(look.accent.hsla())
-            } else {
-                KoanIcon::new(Icon::Favourite)
-                    .role(TypeRole::Meta)
-                    .color(pal.ink.hsla())
-            };
+            // A mark inside the tile, which takes the click itself and tells
+            // the heart from the sleeve by where it lands.
+            let glyph = super::Heart::new(super::child(&self.id, "heart"), favourite)
+                .rest(crate::theme::Tone::Ink);
             art = art.child(
                 div()
                     .absolute()

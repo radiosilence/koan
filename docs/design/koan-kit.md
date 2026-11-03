@@ -217,12 +217,14 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
 
+A change the control learns of rather than sees done (a favourite set by a shortcut or another device, music queued from a menu) answers through `follow(mark, answer, colour)` as the control draws: `mark` names the state, and a draw that finds it moved starts the answer. A control's first draw only notes the mark, so a row scrolled in shows its state still, and a change the control answered from its own handler a moment earlier is not answered twice. `announce` answers the first draw too, for something whose appearing is the news.
+
 | Control | Answer |
 |---|---|
 | `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
 | `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
-| `Heart` | six dots leaving a heart that fills; a ring closing in on one that empties |
-| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row) | a line drawn in under it |
+| `Heart`, the album tile's heart included, however the favourite changed | six dots leaving a heart that fills; a ring closing in on one that empties |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it |
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
 

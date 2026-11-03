@@ -154,6 +154,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
 struct State {
     animated: Animated,
     live: Option<Answer>,
+    started: Option<Instant>,
+    /// The mark `follow` was last given.
+    seen: Option<u64>,
     _end: Option<Task<()>>,
 }
 
@@ -180,9 +183,11 @@ impl Answerer {
             s.animated
                 .set_all(0, &[answer.code(), answer.duration().as_secs_f32()]);
             s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
-            s.animated.set_origin(Instant::now());
+            let now = Instant::now();
+            s.animated.set_origin(now);
             s.animated.run(true);
             s.live = Some(answer);
+            s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
                 this.update(cx, |s, cx| {
@@ -194,6 +199,59 @@ impl Answerer {
             }));
             cx.notify();
         });
+    }
+
+    /// Answers a change the control is told of rather than one done to it
+    /// (a favourite set from a shortcut, music arriving from a menu), as
+    /// the control draws: `mark` names the state, and a draw that finds it
+    /// moved starts `answer`. The first draw only notes it, so a control
+    /// scrolled in or drawn fresh shows its state still, and a change the
+    /// control answered from its own handler a moment ago is not answered
+    /// twice.
+    pub fn follow(
+        &self,
+        mark: u64,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.moved(mark, false, answer, color, window, cx);
+    }
+
+    /// As `follow`, for something whose appearing is the news (a notice):
+    /// its first draw answers too.
+    pub fn announce(
+        &self,
+        mark: u64,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.moved(mark, true, answer, color, window, cx);
+    }
+
+    fn moved(
+        &self,
+        mark: u64,
+        first: bool,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let s = self.0.read(cx);
+        let seen = s.seen;
+        if seen == Some(mark) {
+            return;
+        }
+        let answered = s.started.is_some_and(|at| at.elapsed() < answer.duration());
+        self.0.update(cx, |s, _| s.seen = Some(mark));
+        if (first || seen.is_some()) && !answered {
+            self.start(answer, color, cx);
+            window.request_animation_frame();
+        }
     }
 
     /// The answer being drawn, as a quad over the control and a little past

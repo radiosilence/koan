@@ -108,6 +108,9 @@ impl Sidebar {
                 // What became of music moved, or a command another device
                 // did not take.
                 cx.observe_global::<crate::notice::Notice>(|_, cx| cx.notify()),
+                // Music sent to the queue or a playlist from a page: its
+                // row answers.
+                cx.observe_global::<crate::library::actions::Arrivals>(|_, cx| cx.notify()),
                 cx.observe_global::<Imports>(|this, cx| {
                     let running = cx.global::<Imports>().running;
                     if running > 0 && this.importing == 0 {
@@ -391,6 +394,9 @@ impl Render for Sidebar {
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
+        let arrivals = cx
+            .default_global::<crate::library::actions::Arrivals>()
+            .clone();
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
@@ -403,6 +409,7 @@ impl Render for Sidebar {
             // queue's row are queued.
             .child(
                 row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
+                    .arrivals(arrivals.queue)
                     .drop_highlight::<ExternalPaths>(&p.look)
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .drop_highlight::<PlaylistDrag>(&p.look)
@@ -495,6 +502,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
+                        .arrivals(arrivals.to(playlist.id))
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))
@@ -656,8 +664,8 @@ impl Render for Sidebar {
             )
             .children(
                 cx.try_global::<crate::notice::Notice>()
-                    .and_then(|n| n.text.clone())
-                    .map(|(text, tone)| NavNote::new(text, tone)),
+                    .and_then(|n| n.text.clone().map(|text| (text, n.said)))
+                    .map(|((text, tone), said)| NavNote::new(text, tone).said("notice", said)),
             )
     }
 }
