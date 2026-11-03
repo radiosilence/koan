@@ -798,6 +798,7 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         | PlayerCommand::SetOutputDevice(_)
         | PlayerCommand::ClearOutputDevice
         | PlayerCommand::ReloadDsp
+        | PlayerCommand::DspLoaded(_)
         | PlayerCommand::RouteChanged
         | PlayerCommand::RestartOutput
         | PlayerCommand::UseRenderer(_)

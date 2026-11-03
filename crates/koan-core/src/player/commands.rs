@@ -20,6 +20,9 @@ pub enum PlayerCommand {
     /// of a device that would not open, or with the default already wanted,
     /// playback stops.
     CancelOutput,
+    /// The output device's DSP as read again off the player thread
+    /// (`Player::reload_dsp`). Dropped when a newer reading was asked for.
+    DspLoaded(super::DspLoaded),
     /// Set the cursor and start playback.
     Play(QueueItemId),
     /// Set the cursor and load `id` at `position_ms`, playing or paused.
