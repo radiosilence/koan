@@ -182,9 +182,10 @@ impl gpui_kit::Element for FieldElement {
         if caret_x < scroll.x {
             scroll.x = caret_x;
         }
-        scroll.x = scroll
-            .x
-            .clamp(px(0.0), (widest + self.colours.caret_width - width).max(px(0.0)));
+        scroll.x = scroll.x.clamp(
+            px(0.0),
+            (widest + self.colours.caret_width - width).max(px(0.0)),
+        );
         let height = bounds.size.height;
         let caret_top = line_height * row as f32;
         if caret_top + line_height - scroll.y > height {

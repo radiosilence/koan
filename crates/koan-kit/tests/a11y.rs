@@ -540,7 +540,10 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
         "a read-only field takes no value: {fixed}"
     );
     let (_, secret) = node(&tree, "password", "PasswordInput");
-    assert!(secret.get("value").is_none(), "a password is never read out");
+    assert!(
+        secret.get("value").is_none(),
+        "a password is never read out"
+    );
 
     // A screen reader sets the value: an edit of the person's.
     window
@@ -558,7 +561,10 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
         .expect("the window");
     cx.run_until_parked();
     let name_state = fields.read_with(cx, |f, _| f.name.clone());
-    assert_eq!(name_state.read_with(cx, |f, _| f.value().to_string()), "Liz");
+    assert_eq!(
+        name_state.read_with(cx, |f, _| f.value().to_string()),
+        "Liz"
+    );
 
     // The owner sets it: announced as it lands.
     window

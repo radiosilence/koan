@@ -253,7 +253,10 @@ fn editor(
             let mut run = gpui_kit::accesskit::Node::new(gpui_kit::Role::TextRun);
             run.set_value(value.clone());
             run.set_character_lengths(
-                value.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>(),
+                value
+                    .chars()
+                    .map(|c| c.len_utf8() as u8)
+                    .collect::<Vec<_>>(),
             );
             let id = builder.synthetic_node_id(0);
             builder.push_child(id, run);

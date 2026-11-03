@@ -193,6 +193,7 @@ pub struct StoryContent {
     long_field: Entity<InputState>,
     secret: Entity<InputState>,
     still: Entity<InputState>,
+    fixed: Entity<InputState>,
     area: Entity<InputState>,
     tooltip: Entity<Tooltip>,
     outputs: Entity<Menu>,
@@ -206,9 +207,24 @@ impl StoryContent {
         let field = cx.new(|cx| InputState::new(window, cx).default_value("Sunday morning"));
         let empty_field = cx.new(|cx| InputState::new(window, cx).placeholder("search"));
         let long_field = cx.new(|cx| {
-            InputState::new(window, cx).default_value(
-                "%album artist%/%date% - %album%/%disc%%tracknumber% %title% (%codec%, %bitrate%)",
-            )
+            InputState::new(window, cx)
+                .default_value(
+                    "%album artist%/%date% - %album%/%disc%%tracknumber% %title% (%codec%, %bitrate%)",
+                )
+                // A code field: its owner's highlighter, the `%field%`s in
+                // the accent.
+                .highlight(|text| {
+                    let marks: Vec<usize> = text.match_indices('%').map(|(i, _)| i).collect();
+                    marks
+                        .chunks_exact(2)
+                        .map(|pair| (pair[0]..pair[1] + 1, Tone::Accent))
+                        .collect()
+                })
+        });
+        let fixed = cx.new(|cx| {
+            InputState::new(window, cx)
+                .read_only(true)
+                .default_value("https://koan.blit.cc/invite/7Q4M")
         });
         let secret = cx.new(|cx| {
             InputState::new(window, cx)
@@ -241,6 +257,7 @@ impl StoryContent {
             long_field,
             secret,
             still,
+            fixed,
             area,
             tooltip: cx.new(|_| Tooltip::new("add to queue")),
             outputs: Menu::build(window, cx, |menu, _, _| {
@@ -704,11 +721,16 @@ impl StoryContent {
                     field(&self.field).into_any_element(),
                     SectionHeader::new("Empty, with its placeholder").into_any_element(),
                     field(&self.empty_field).into_any_element(),
-                    SectionHeader::new("Longer than the field: it scrolls to the caret")
-                        .into_any_element(),
+                    SectionHeader::new(
+                        "Longer than the field, its fields highlighted: it scrolls to the caret",
+                    )
+                    .into_any_element(),
                     field(&self.long_field).into_any_element(),
                     SectionHeader::new("A password").into_any_element(),
                     field(&self.secret).into_any_element(),
+                    SectionHeader::new("Read-only: selected and copied, never changed")
+                        .into_any_element(),
+                    field(&self.fixed).into_any_element(),
                     SectionHeader::new("Disabled").into_any_element(),
                     div()
                         .w(look.spaced(280.0))

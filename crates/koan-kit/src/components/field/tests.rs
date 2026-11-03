@@ -294,3 +294,131 @@ fn a_long_line_scrolls_to_the_caret(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(f.read_with(cx, |f, _| f.scroll.x), px(0.0));
 }
+
+/// A Japanese input method: kana composed from romaji, marked as it grows,
+/// then the kanji chosen committed in its place.
+#[gpui_kit::test]
+fn a_japanese_input_method_composes_kana_into_kanji(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let f = field(&host, cx);
+    cx.update(|window, cx| {
+        f.update(cx, |f, cx| {
+            f.replace_and_mark_text_in_range(None, "k", None, window, cx);
+            f.replace_and_mark_text_in_range(None, "か", None, window, cx);
+            f.replace_and_mark_text_in_range(None, "かん", Some(2..2), window, cx);
+        })
+    });
+    assert_eq!(value(&host, cx), "かん");
+    assert_eq!(f.read_with(cx, |f, _| f.marked.clone()), Some(0..6));
+    assert_eq!(
+        selected(&host, cx),
+        6..6,
+        "the input method's caret, in bytes"
+    );
+    let marked = cx.update(|window, cx| f.update(cx, |f, cx| f.marked_text_range(window, cx)));
+    assert_eq!(marked, Some(0..2), "and in UTF-16 to the input method");
+    cx.update(|window, cx| f.update(cx, |f, cx| f.replace_text_in_range(None, "漢", window, cx)));
+    assert_eq!(value(&host, cx), "漢");
+    assert_eq!(selected(&host, cx), 3..3);
+    cx.simulate_input("字");
+    assert_eq!(value(&host, cx), "漢字");
+}
+
+/// The caret moves, and Backspace deletes, a character as a reader sees
+/// one: an emoji family, a flag, a letter with its combining accent.
+#[gpui_kit::test]
+fn the_caret_steps_over_whole_characters(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let family = "👨\u{200d}👩\u{200d}👧";
+    let accented = "e\u{301}";
+    cx.simulate_input(&format!("a{family}🇯🇵{accented}"));
+    cx.dispatch_action(Backspace);
+    assert_eq!(value(&host, cx), format!("a{family}🇯🇵"));
+    cx.dispatch_action(MoveLeft);
+    let after = 1 + family.len();
+    assert_eq!(selected(&host, cx), after..after);
+    cx.dispatch_action(MoveLeft);
+    assert_eq!(selected(&host, cx), 1..1);
+    cx.dispatch_action(Delete);
+    assert_eq!(value(&host, cx), "a🇯🇵");
+}
+
+/// Words are Unicode's: an elided French article is part of its word, and
+/// Greek stops where its words do.
+#[gpui_kit::test]
+fn words_are_unicode_words(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    cx.simulate_input("l'été καλό");
+    cx.dispatch_action(MoveWordLeft);
+    let at = "l'été ".len();
+    assert_eq!(selected(&host, cx), at..at);
+    cx.dispatch_action(MoveWordLeft);
+    assert_eq!(selected(&host, cx), 0..0, "l'été is one word");
+    cx.dispatch_action(SelectWordRight);
+    assert_eq!(selected(&host, cx), 0.."l'été".len());
+}
+
+/// Hebrew, right to left, goes in, the arrows move through it by its
+/// letters, and it is selected and deleted whole.
+#[gpui_kit::test]
+fn right_to_left_text_edits_sanely(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    cx.simulate_input("שלום");
+    cx.run_until_parked();
+    assert_eq!(value(&host, cx), "שלום");
+    cx.dispatch_action(MoveLeft);
+    assert_eq!(selected(&host, cx), 6..6, "one letter, two bytes");
+    cx.dispatch_action(SelectAll);
+    assert_eq!(selected(&host, cx), 0..8);
+    cx.dispatch_action(Backspace);
+    assert_eq!(value(&host, cx), "");
+}
+
+/// Ten thousand characters typed one at a time, and a long paste, stay
+/// whole, the paste undoes alone, and the caret ends at the end.
+#[gpui_kit::test]
+fn long_text_types_and_pastes(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let f = field(&host, cx);
+    cx.update(|window, cx| {
+        f.update(cx, |f, cx| {
+            for i in 0..10_000u32 {
+                let c = char::from(b'a' + (i % 26) as u8).to_string();
+                f.replace_text_in_range(None, &c, window, cx);
+            }
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(value(&host, cx).len(), 10_000);
+    let pasted = "kōan ".repeat(20_000);
+    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(pasted.clone()));
+    cx.dispatch_action(Paste);
+    cx.run_until_parked();
+    let text = value(&host, cx);
+    assert_eq!(text.len(), 10_000 + pasted.len());
+    assert_eq!(selected(&host, cx), text.len()..text.len());
+    cx.dispatch_action(Undo);
+    assert_eq!(value(&host, cx).len(), 10_000, "the paste undoes alone");
+}
+
+/// The owner's highlighter colours the text as it stands, after typing
+/// and after the owner sets it.
+#[gpui_kit::test]
+fn a_highlighter_follows_the_text(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let f = field(&host, cx);
+    f.update(cx, |f, _| {
+        f.highlighter = Some(std::rc::Rc::new(|text: &str| {
+            text.find('%')
+                .map(|at| vec![(at..text.len(), crate::theme::Tone::Accent)])
+                .unwrap_or_default()
+        }))
+    });
+    cx.simulate_input("a/%b");
+    assert_eq!(
+        f.read_with(cx, |f, _| f.spans.clone()),
+        [(2..4, crate::theme::Tone::Accent)]
+    );
+    cx.update(|window, cx| f.update(cx, |f, cx| f.set_value("plain", window, cx)));
+    assert!(f.read_with(cx, |f, _| f.spans.is_empty()));
+}

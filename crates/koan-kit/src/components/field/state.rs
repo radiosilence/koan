@@ -79,6 +79,8 @@ pub(super) struct Line {
 }
 
 /// What `TextField` and `TextArea` edit.
+type Highlighter = std::rc::Rc<dyn Fn(&str) -> Vec<(Range<usize>, crate::theme::Tone)>>;
+
 pub struct FieldState {
     pub(super) focus: FocusHandle,
     pub(super) text: String,
@@ -89,8 +91,9 @@ pub struct FieldState {
     /// The owner set the text since the person last edited it: a screen
     /// reader is told of it, as typing it was not.
     pub(super) announce: bool,
-    /// Spans of the text the owner colours (a pattern's fields), as byte
-    /// ranges and tones.
+    /// The owner's highlighter, and the spans it gave for the text as it
+    /// stands, as byte ranges and tones.
+    pub(super) highlighter: Option<Highlighter>,
     pub(super) spans: Vec<(Range<usize>, crate::theme::Tone)>,
     /// Lines shown, for a multi-line field; 1 for a single line.
     pub(super) rows: usize,
@@ -145,6 +148,7 @@ impl FieldState {
             masked: false,
             read_only: false,
             announce: false,
+            highlighter: None,
             spans: Vec::new(),
             rows: 1,
             selected: 0..0,
@@ -174,6 +178,7 @@ impl FieldState {
     pub fn default_value(mut self, value: impl Into<SharedString>) -> Self {
         self.text = value.into().to_string();
         self.selected = self.text.len()..self.text.len();
+        self.rehighlight();
         self
     }
 
@@ -194,17 +199,22 @@ impl FieldState {
         cx.notify();
     }
 
-    /// Colours spans of the text, as byte ranges with their tones: a code
-    /// field's highlighting, which its owner works out from the text and
-    /// sets again on each `Change`. Spans past the text are ignored.
-    pub fn set_highlights(
-        &mut self,
-        spans: Vec<(Range<usize>, crate::theme::Tone)>,
-        cx: &mut Context<Self>,
-    ) {
-        if spans != self.spans {
-            self.spans = spans;
-            cx.notify();
+    /// Colours its text as `spans` says: byte ranges of the text with
+    /// their tones, worked out again whenever the text changes, however it
+    /// changes. A code field's syntax highlighting, which wraps the field
+    /// rather than forking it.
+    pub fn highlight(
+        mut self,
+        spans: impl Fn(&str) -> Vec<(Range<usize>, crate::theme::Tone)> + 'static,
+    ) -> Self {
+        self.highlighter = Some(std::rc::Rc::new(spans));
+        self.rehighlight();
+        self
+    }
+
+    fn rehighlight(&mut self) {
+        if let Some(spans) = &self.highlighter {
+            self.spans = spans(&self.text);
         }
     }
 
@@ -241,6 +251,7 @@ impl FieldState {
         self.reversed = false;
         self.marked = None;
         self.announce = true;
+        self.rehighlight();
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
@@ -670,6 +681,7 @@ impl FieldState {
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.announce = false;
+        self.rehighlight();
         self.blink_from_shown(cx);
         window.notify_text_input_changed(&self.focus);
         cx.emit(InputEvent::Change);
