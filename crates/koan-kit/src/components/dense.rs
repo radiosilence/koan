@@ -77,6 +77,7 @@ pub struct DenseTable {
     columns: Rc<[Column]>,
     header: Option<Vec<SharedString>>,
     rows: Vec<DenseRow>,
+    trailing: Option<Pixels>,
 }
 
 impl DenseTable {
@@ -85,6 +86,7 @@ impl DenseTable {
             columns: columns.into(),
             header: None,
             rows: Vec::new(),
+            trailing: None,
         }
     }
 
@@ -92,6 +94,14 @@ impl DenseTable {
     /// ("Hz", "dB") as often as words.
     pub fn header(mut self, titles: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.header = Some(titles.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Room at every row's end for a trailing cell `width` wide, the
+    /// header's and those without one included, so the columns line up down
+    /// the table whichever rows have one.
+    pub fn trailing_width(mut self, width: Pixels) -> Self {
+        self.trailing = Some(width);
         self
     }
 
@@ -128,7 +138,13 @@ fn cell(columns: &[Column], gap: Pixels, look: &Look, content: AnyElement) -> Di
         .child(content)
 }
 
-fn lay_out(columns: &[Column], row: DenseRow, gap: Pixels, look: &Look) -> Div {
+fn lay_out(
+    columns: &[Column],
+    row: DenseRow,
+    trailing: Option<Pixels>,
+    gap: Pixels,
+    look: &Look,
+) -> Div {
     let mut at = 0;
     let mut cells = Vec::with_capacity(row.cells.len());
     for (span, content) in row.cells {
@@ -144,7 +160,12 @@ fn lay_out(columns: &[Column], row: DenseRow, gap: Pixels, look: &Look) -> Div {
         .items_center()
         .gap(gap)
         .children(cells)
-        .children(row.trailing.map(|t| div().flex_none().child(t)))
+        .map(|d| match (trailing, row.trailing) {
+            (Some(width), t) => {
+                d.child(div().flex_none().w(width).flex().justify_end().children(t))
+            }
+            (None, t) => d.children(t.map(|t| div().flex_none().child(t))),
+        })
 }
 
 impl RenderOnce for DenseTable {
@@ -156,7 +177,7 @@ impl RenderOnce for DenseTable {
             let row = titles
                 .into_iter()
                 .fold(DenseRow::new(), |row, title| row.cell(title));
-            lay_out(&columns, row, gap, &look)
+            lay_out(&columns, row, self.trailing, gap, &look)
                 .text_role(TypeRole::Fine, &look)
                 .text_color(look.text_color(Tone::Muted))
         });
@@ -165,7 +186,7 @@ impl RenderOnce for DenseTable {
             .flex_col()
             .children(header)
             .children(self.rows.into_iter().map(|row| {
-                lay_out(&columns, row, gap, &look)
+                lay_out(&columns, row, self.trailing, gap, &look)
                     .py(look.spaced(2.0))
                     .text_role(TypeRole::Meta, &look)
                     .text_color(look.palette.ink.hsla())
