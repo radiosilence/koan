@@ -761,10 +761,10 @@ pub fn set_account_order(db: &Database, user: i64, ids: &[i64]) -> Result<(), Db
 /// last.
 pub fn push_order() {
     let cfg = Config::cached();
-    if !cfg.remote.enabled {
-        return;
-    }
-    let Some(client) = subsonic_client(&cfg) else {
+    // Signed out, a reorder is this device's alone: the account's order is
+    // adopted at the next sign-in rather than overwritten by it.
+    let Some(client) = cfg.remote.enabled.then(|| subsonic_client(&cfg)).flatten() else {
+        ORDER_UNSENT.store(false, Ordering::Relaxed);
         return;
     };
     ORDER_UNSENT.store(true, Ordering::Relaxed);
@@ -1653,8 +1653,13 @@ mod tests {
 
     /// A listing asked for before this device made or sent a reorder is
     /// older than that order, and is not adopted over it.
+    /// Held by the tests that read or move `ORDER_GENERATION`, which is the
+    /// process's: run side by side, one's bump lands in the other's sync.
+    static ORDER_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[test]
     fn a_listing_older_than_a_send_is_not_adopted() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
@@ -1700,6 +1705,7 @@ mod tests {
 
     #[test]
     fn a_sync_adopts_the_servers_playlist_order_around_local_ones() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
