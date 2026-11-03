@@ -200,15 +200,16 @@ macos-ffi:
     export MACOSX_DEPLOYMENT_TARGET=26.0
     profile=${KOAN_FFI_PROFILE:-release}
     case "$profile" in
-        release) cargo build --release -p koan-ffi ;;
-        debug) cargo build -p koan-ffi ;;
+        release) cargo rustc --release -p koan-ffi --crate-type staticlib ;;
+        debug) cargo rustc -p koan-ffi --crate-type staticlib ;;
         *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
     esac
     lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
-    # .dylib, and cargo leaves one next to the archive. The release DMG shipped
+    # .dylib, and an older build of the crate as a cdylib may have left one
+    # next to the archive. The release DMG shipped
     # an app that referenced
     # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
     # could not launch anywhere. A directory with one file in it cannot produce
@@ -717,7 +718,7 @@ ios-ffi platform="iphonesimulator":
     # that variable as a reason to rebuild: lowering it relinked objects built
     # for the old version, and the linker warned about every one of them.
     out=${CARGO_TARGET_DIR:-target}/ios-{{ios_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
     # From this build rather than the Mac's, so an iOS build needs no second
@@ -1224,7 +1225,7 @@ tv-ffi platform="appletvsimulator":
     # rustc must target the same version.
     export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
     out=${CARGO_TARGET_DIR:-target}/tv-{{tv_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/tv-link/{{platform}}" && mkdir -p "target/tv-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/tv-link/{{platform}}/"
     just ffi-bindings "target/tv-link/{{platform}}/libkoan_ffi.a"
