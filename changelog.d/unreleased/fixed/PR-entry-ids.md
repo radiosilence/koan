@@ -1,0 +1,1 @@
+- **Playlist edits after a removal.** A playlist entry's id is no longer given to the next track added once the entry is removed, so a move or a drop made against a view from before the removal is refused rather than landing on the new track. The library database moves to schema version 33; the upgrade keeps every entry's id and place.

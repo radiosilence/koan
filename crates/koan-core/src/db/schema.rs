@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 32;
+pub const SCHEMA_VERSION: i64 = 33;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -451,9 +451,11 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         -- A playlist may hold the same track twice, so a track id names neither
         -- a row nor a place. The entry id does: it survives a reorder, it is
         -- what a queue item remembers it came from, and it is how the two
-        -- copies of a song are told apart when one of them is playing.
+        -- copies of a song are told apart when one of them is playing. Never
+        -- given out twice (AUTOINCREMENT): an edit placed by the id of an
+        -- entry removed since must find it gone, not land on a newer one.
         CREATE TABLE IF NOT EXISTS playlist_tracks (
-            id          INTEGER PRIMARY KEY,
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
             playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
             position    INTEGER NOT NULL,
             track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -1149,7 +1151,42 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         conn.execute("DROP TABLE IF EXISTS link_push", [])?;
     }
 
+    // Playlist entry ids are never given out twice (33). Without
+    // AUTOINCREMENT, the id of the entry with the highest id went to the next
+    // one added once it was removed, and an edit placed by the old id landed
+    // on the new entry. Rebuilt with every id and position as they were.
+    if found < 33 {
+        never_reuse_entry_ids(conn)?;
+    }
+
     Ok(())
+}
+
+/// Rebuilds `playlist_tracks` with AUTOINCREMENT, keeping every row's id,
+/// playlist, position and track. Nothing for a table already made so.
+fn never_reuse_entry_ids(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'playlist_tracks'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.to_ascii_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "CREATE TABLE playlist_tracks_kept (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+             position    INTEGER NOT NULL,
+             track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+             UNIQUE (playlist_id, position)
+         );
+         INSERT INTO playlist_tracks_kept (id, playlist_id, position, track_id)
+             SELECT id, playlist_id, position, track_id FROM playlist_tracks;
+         DROP TABLE playlist_tracks;
+         ALTER TABLE playlist_tracks_kept RENAME TO playlist_tracks;
+         CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);",
+    )
 }
 
 /// Key the saved session by device. The one session kept before was whichever
@@ -2236,6 +2273,62 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    /// A database from before 33 keeps every playlist entry's id and place,
+    /// and from then on an id removed is not given out again.
+    #[test]
+    fn playlist_entry_ids_are_kept_and_never_reused() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        // The table as it was made before 33.
+        conn.execute_batch(
+            "DROP TABLE playlist_tracks;
+             CREATE TABLE playlist_tracks (
+                 id          INTEGER PRIMARY KEY,
+                 playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+                 position    INTEGER NOT NULL,
+                 track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                 UNIQUE (playlist_id, position)
+             );
+             CREATE INDEX idx_playlist_tracks_track ON playlist_tracks(track_id);",
+        )
+        .unwrap();
+        let track = crate::db::queries::upsert_track(
+            &conn,
+            &crate::db::queries::sample_meta("One", "Ayla", "Moss"),
+        )
+        .unwrap();
+        let playlist =
+            crate::db::queries::create_playlist(&conn, crate::db::queries::LOCAL_USER, "P", None)
+                .unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO playlist_tracks (id, playlist_id, position, track_id) VALUES
+                 (7, {playlist}, 0, {track}), (3, {playlist}, 1, {track}), (9, {playlist}, 2, {track});
+             PRAGMA user_version = 32;"
+        ))
+        .unwrap();
+        create_tables(&conn).unwrap();
+        let rows = |conn: &Connection| -> Vec<(i64, i64)> {
+            conn.prepare("SELECT id, position FROM playlist_tracks ORDER BY position")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows(&conn), [(7, 0), (3, 1), (9, 2)], "ids and places kept");
+
+        // The highest removed, then one added: a new id, not 9 again.
+        conn.execute("DELETE FROM playlist_tracks WHERE id = 9", [])
+            .unwrap();
+        let added = crate::db::queries::add_tracks(&conn, playlist, &[track]).unwrap();
+        assert_eq!(added.len(), 1);
+        assert!(
+            added[0] > 9,
+            "the removed id was given out again: {}",
+            added[0]
+        );
     }
 
     /// An upgrade that fails part way leaves the database as it was found:
