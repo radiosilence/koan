@@ -281,10 +281,21 @@ impl HistoryPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match self.lines.get(i).cloned() {
-            Some(Line::Day(day)) => div()
-                .px(crate::components::RowMetrics::page_margin(&p.look))
-                .child(SectionHeading::new(day.as_ref()))
-                .into_any_element(),
+            Some(Line::Day(day)) => {
+                let list = self.list.clone();
+                let heading = SectionHeading::new(day.as_ref());
+                // A reader moving through the plays goes through each day's
+                // heading too, so the heading carries the reveal on.
+                let heading = if p.a11y {
+                    heading.on_reveal(move |_, _| Reveal::Rows(list.clone(), i).run())
+                } else {
+                    heading
+                };
+                div()
+                    .px(crate::components::RowMetrics::page_margin(&p.look))
+                    .child(heading)
+                    .into_any_element()
+            }
             Some(Line::Play { ix, time }) => {
                 let entry = &self.entries[ix];
                 let track = entry.track.clone();
