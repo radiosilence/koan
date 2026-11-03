@@ -413,6 +413,8 @@ impl RenderOnce for MenuRow {
         let on_click = self.on_click;
         let chosen = self.rich && self.checked == Some(true);
         let picked = self.checked == Some(true);
+        // The chosen place's ground: a choice in force, not a setting's tick.
+        let grounded = picked && !self.toggle;
         let muted = look.palette.muted.hsla();
         let accent = look.color(Tone::Accent);
         let (label, detail, reach) = (self.label, self.detail, self.reach);
@@ -535,24 +537,26 @@ impl RenderOnce for MenuRow {
             )
             .text_color(color)
             .whitespace_nowrap()
-            // The choice on the accent, faint, in every menu of choices; the
-            // highlight on `surface` elsewhere.
-            // The arrow keys' highlight on the choice is the pointer's: the
-            // stronger tint. With more contrast asked for, a faint tint
-            // could vanish: the choice takes `surface`, opaque.
-            .when(picked && !self.disabled, |row| {
+            // The choice on the accent, faint, in every menu of choices, a
+            // disabled one too (an EQ preset edited), which only does not
+            // light; a setting's tick takes none. The arrow keys' highlight
+            // on the choice is the pointer's, the stronger tint. With more
+            // contrast asked for, a faint tint could vanish: the choice takes
+            // `surface`, opaque. The highlight on `surface` elsewhere.
+            .when(grounded, |row| {
                 let (rest, lit) = if look.contrast {
                     (surface, look.palette.hover.hsla())
                 } else {
                     (accent.opacity(PICKED), accent.opacity(PICKED * 1.5))
                 };
-                row.bg(if self.highlighted { lit } else { rest })
-                    .hover(move |row| row.bg(lit))
+                let live = !self.disabled;
+                row.bg(if self.highlighted && live { lit } else { rest })
+                    .when(live, |row| row.hover(move |row| row.bg(lit)))
             })
-            .when(!picked && self.highlighted && !self.disabled, |row| {
+            .when(!grounded && self.highlighted && !self.disabled, |row| {
                 row.bg(surface)
             })
-            .when(!picked && !self.disabled, |row| {
+            .when(!grounded && !self.disabled, |row| {
                 row.hover(move |row| row.bg(surface))
             })
             .children(self.icon.filter(|_| look.icons || rich).map(|icon| {
