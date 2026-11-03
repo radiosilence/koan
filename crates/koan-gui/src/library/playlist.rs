@@ -388,7 +388,7 @@ impl PlaylistPage {
         let itself = dragged
             .sets
             .iter()
-            .any(|s| matches!(s, koan_ffi::TrackSet::Playlist { id: p } if *p == id));
+            .any(|s| matches!(s, koan_runtime::TrackSet::Playlist { id: p } if *p == id));
         if itself {
             return Lands::Nowhere("a playlist cannot be added to itself");
         }

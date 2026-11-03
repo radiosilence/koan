@@ -1509,7 +1509,7 @@ mod tests {
 /// how it can be reached, and its name.
 type ControlledShown = (
     Option<String>,
-    Option<koan_ffi::DeviceReach>,
+    Option<koan_runtime::DeviceReach>,
     Option<String>,
 );
 
