@@ -111,6 +111,8 @@ pub struct PlaylistPage {
     focus: FocusHandle,
     /// The keyboard's place in the list, by row.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     _loading: Option<Task<()>>,
@@ -167,6 +169,7 @@ impl PlaylistPage {
             note: None,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             _loading: None,
             _subscriptions: subscriptions,
@@ -1063,6 +1066,7 @@ impl PlaylistPage {
         row_frame
             .selected(selected)
             .cursor(self.keyed && self.cursor.at == Some(row))
+            .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
                     .when_some(place, |frame, (ix, items)| frame.place(ix, items))
@@ -1081,8 +1085,7 @@ impl PlaylistPage {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(row);
-                this.cursor.anchor = Some(row);
+                this.cursor.click(row, event.modifiers().shift);
                 this.click(row, event, cx);
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -1283,7 +1286,7 @@ impl Render for PlaylistPage {
             }
         }))
         .child(Page::new(header).body(body))
-        .koan_context_menu("playlist-menu", window, cx, {
+        .koan_context_menu_at("playlist-menu", Some(self.spot.clone()), window, cx, {
             let view = view.clone();
             move |menu, window, cx| row_menu(menu, &view, window, cx)
         })
@@ -1296,12 +1299,17 @@ impl super::keys::KeyedList for PlaylistPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.rows.len()
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        let entries = self.rows[from].items().start..self.rows[to].items().end;
+        let (lo, hi) = (from.min(to), from.max(to));
+        let entries = self.rows[lo].items().start..self.rows[hi].items().end;
         self.selected = self.items[entries]
             .iter()
             .map(|i| i.queue_item_id.clone())

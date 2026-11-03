@@ -8,6 +8,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -715,6 +716,8 @@ impl Render for Menu {
                     .left_0()
                     .size_full(),
             )
+            // Tab stays in the open menu rather than reaching the page under it.
+            .focus_trap("menu-trap", &self.focus)
     }
 }
 
@@ -729,6 +732,20 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
     fn koan_context_menu(
         self,
         id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.koan_context_menu_at(id, None, window, cx, build)
+    }
+
+    /// `koan_context_menu`, which the menu key also opens, under the
+    /// element's keyboard cursor (`spot`) where one is laid out, and at the
+    /// pointer otherwise.
+    fn koan_context_menu_at(
+        self,
+        id: impl Into<ElementId>,
+        spot: Option<super::CursorSpot>,
         window: &mut Window,
         cx: &mut App,
         build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
@@ -780,24 +797,25 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 open(event.position, window, cx)
             })
-            // The menu key: under the keyboard's cursor as the next frame
-            // draws it (the list has revealed the cursor's item, and the key
-            // makes the keyboard the last input, which shows the ring), or
-            // at the pointer where no ring is drawn in that frame. The first
-            // callback runs before that frame draws, the second after it.
+            // The menu key: under the keyboard's cursor, where its ring is
+            // laid out in the frames after the key. Bounds from before it are
+            // not trusted: the list may have scrolled the row away since, or
+            // just revealed it. The first callback runs before the next frame
+            // draws, the second after. At the pointer when there is no cursor
+            // or no ring was drawn.
             .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
-                cx.default_global::<super::CursorAt>().0 = None;
+                let Some(spot) = spot.clone() else {
+                    return by_key(window.mouse_position(), window, cx);
+                };
+                spot.forget_bounds();
                 window.refresh();
                 let by_key = by_key.clone();
                 window.on_next_frame(move |window, _| {
                     window.refresh();
                     window.on_next_frame(move |window, cx| {
-                        let id = window.window_handle().window_id();
-                        let at = cx
-                            .try_global::<super::CursorAt>()
-                            .and_then(|c| c.0)
-                            .filter(|(drawn, _)| *drawn == id)
-                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        let at = spot
+                            .bounds()
+                            .map_or_else(|| window.mouse_position(), |b| b.bottom_left());
                         by_key(at, window, cx)
                     });
                 });

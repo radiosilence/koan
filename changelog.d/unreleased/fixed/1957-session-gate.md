@@ -1,0 +1,1 @@
+- **A cleared or half-restored session no longer loses the queue.** The terminal saves the whole session again when its saved row has gone, and \`savePlaybackState\` waits while an app is still restoring its session.
