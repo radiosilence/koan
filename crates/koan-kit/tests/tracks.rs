@@ -8,9 +8,8 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AppContext, Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled,
-    TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead,
-    spring_length,
+    Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled, TestAppContext, Track,
+    TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead, spring_length,
 };
 use koan_kit::components::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram};
 use koan_kit::theme;
