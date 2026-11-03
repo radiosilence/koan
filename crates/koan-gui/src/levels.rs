@@ -34,15 +34,11 @@ use koan_kit::components::{
 };
 use parking_lot::Mutex;
 
+use koan_core::audio::viz::{BarHeights, VizLevels};
+
 use crate::engine::engine;
 
 use crate::theme::Hsla;
-
-/// A band below this is room tone: it never sets a ceiling, and silence is
-/// measured against it, so a quiet passage stays flat.
-const QUIETEST: f32 = 0.12;
-/// Seconds a band takes to forget half of a loud passage.
-const FORGET: f32 = 4.0;
 
 #[derive(Default)]
 struct Registry {
@@ -57,11 +53,9 @@ struct Registry {
     /// that frame has already painted it into. Names the slot's window.
     gone: Option<futures::channel::mpsc::UnboundedSender<WindowId>>,
     next_id: u64,
-    /// How high each bar stands, 0 to 1, low band to high: each band
-    /// against its own recent range, so a record mastered quiet moves as
-    /// much as a loud one.
-    bands: [f32; 3],
-    ceiling: [f32; 3],
+    /// How high each bar stands, 0 to 1, low band to high: koan-core's
+    /// reading of the levels, which the Mac app shares.
+    bars: BarHeights,
     stamp: Option<Instant>,
     following: bool,
 }
@@ -214,7 +208,7 @@ pub fn bars(color: Hsla) -> AnyElement {
             let mut registry = levels.registry.lock();
             registry.next_id += 1;
             let bars = BarLevels::new();
-            bars.hold(registry.bands);
+            bars.hold(registry.bars.heights());
             SlotState {
                 id: registry.next_id,
                 registry: levels.registry.clone(),
@@ -250,7 +244,7 @@ pub fn paint(cx: &App) -> impl IntoElement + use<> {
     bars_overlay(move |window| {
         let here = window.window_handle();
         let registry = registry.lock();
-        let bands = registry.bands;
+        let bands = registry.bars.heights();
         for (place, color) in registry.slots.values().filter(|(p, _)| p.window == here) {
             place.paint(window, bands, *color);
         }
@@ -284,7 +278,11 @@ fn follow(levels: &Levels, cx: &mut App) {
             }
             // Shaders are presented by their own windows as the bands are
             // written; quads need a frame of their windows' roots.
-            if registry.take([heard.low, heard.mid, heard.high]) {
+            if registry.take(VizLevels {
+                low: heard.low,
+                mid: heard.mid,
+                high: heard.high,
+            }) {
                 let windows: Vec<WindowId> = registry
                     .slots
                     .values()
@@ -320,48 +318,32 @@ impl Registry {
 
     /// A frame from the analyser. Whether the bars moved; the shaders' bands
     /// are written as it is taken.
-    fn take(&mut self, heard: [f32; 3]) -> bool {
+    fn take(&mut self, heard: VizLevels) -> bool {
         let now = Instant::now();
         // Clamped: a machine that slept owes the bars nothing.
         let elapsed = self
             .stamp
             .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
         self.stamp = Some(now);
-        let hold = 0.5_f32.powf(elapsed / FORGET);
-        let mut next = self.bands;
-        for band in 0..3 {
-            self.ceiling[band] = heard[band].max((self.ceiling[band] * hold).max(QUIETEST));
-            next[band] = (heard[band] / self.ceiling[band]).min(1.0);
+        let Some(next) = self.bars.take(heard, now) else {
+            return false;
+        };
+        // Glided to over the gap between the last two frames, so it is
+        // reached about as the next arrives; the first frame lands.
+        let over = std::time::Duration::from_secs_f32(elapsed);
+        for (_, bars) in self.shaders.values() {
+            bars.glide(next, over);
         }
-        let moved = next != self.bands;
-        self.bands = next;
-        if moved {
-            // Glided to over the gap between the last two frames, so it is
-            // reached about as the next arrives; the first frame lands.
-            let over = std::time::Duration::from_secs_f32(elapsed);
-            for (_, bars) in self.shaders.values() {
-                bars.glide(next, over);
-            }
-        }
-        moved
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BarLevels, QUIETEST, Registry, WindowId};
+    use super::{BarLevels, Registry, VizLevels, WindowId};
 
-    #[test]
-    fn a_band_is_measured_against_its_own_recent_loudest() {
-        let mut registry = Registry::default();
-        registry.take([0.5, 0.2, 0.1]);
-        assert_eq!(registry.bands[0], 1.0);
-        assert_eq!(registry.bands[1], 1.0);
-        // Below room tone: measured against it, never normalised up.
-        assert!((registry.bands[2] - 0.1 / QUIETEST).abs() < 1e-6);
-        assert!(!registry.take([0.5, 0.2, 0.1]));
-        registry.take([0.25, 0.2, 0.1]);
-        assert!((registry.bands[0] - 0.5).abs() < 0.01);
+    fn heard(low: f32, mid: f32, high: f32) -> VizLevels {
+        VizLevels { low, mid, high }
     }
 
     #[test]
@@ -386,9 +368,9 @@ mod tests {
         registry
             .shaders
             .insert(1, (WindowId::from(1), levels.clone()));
-        assert!(registry.take([0.5, 0.2, 0.1]));
+        assert!(registry.take(heard(0.5, 0.2, 0.1)));
         assert_eq!(levels.target(0), 1.0);
-        registry.take([0.25, 0.2, 0.1]);
+        registry.take(heard(0.25, 0.2, 0.1));
         assert!((levels.target(0) - 0.5).abs() < 0.01);
     }
 }

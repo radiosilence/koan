@@ -629,6 +629,34 @@ impl Drop for KoanEngine {
     }
 }
 
+/// How high a playing indicator's bars stand, from the levels a `VizStream`
+/// delivers: koan-core's reading (`BarHeights`), each band against its own
+/// recent loudest, so every app draws the same bars.
+#[derive(uniffi::Object, Default)]
+pub struct BarHeights(parking_lot::Mutex<koan_core::audio::viz::BarHeights>);
+
+#[uniffi::export]
+impl BarHeights {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A frame as it arrives: the bars' heights, 0 to 1, low band to high,
+    /// or none when they did not move.
+    pub fn take(&self, levels: VizLevels) -> Option<Vec<f32>> {
+        let heard = koan_core::audio::viz::VizLevels {
+            low: levels.low,
+            mid: levels.mid,
+            high: levels.high,
+        };
+        self.0
+            .lock()
+            .take(heard, std::time::Instant::now())
+            .map(|heights| heights.to_vec())
+    }
+}
+
 /// One client's subscription to the levels of whatever it is showing as
 /// playing: this device's analyser, or, while another device is controlled,
 /// that device's levels over the link (`koan_core::remote::levels`).
