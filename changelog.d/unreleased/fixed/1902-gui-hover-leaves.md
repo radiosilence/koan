@@ -1,0 +1,1 @@
+- **Hover leaves as everywhere else** on the desktop app's transport controls, pickers and the EQ sheet's choice rows. Their highlight came on and went off at once; it now fades out after the pointer leaves, as every other control's does.
