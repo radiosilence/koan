@@ -18,7 +18,7 @@ On Linux, each release carries an AppImage and a `.deb`. See [The desktop app](g
 
 Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the computer's own library](guide/sharing-your-mac.md) with your phone. On a Mac it needs macOS 26 or later. It shares its config and library with the terminal UI.
 
-The SwiftUI Mac app is deprecated. It ships once more as `Koan-legacy.dmg`; the desktop app's first launch on a Mac it ran on takes its place, as described in [The desktop app](guide/desktop.md#taking-over-from-the-mac-app).
+The SwiftUI Mac app is no longer released. The desktop app's first launch on a Mac it ran on takes its place, as described in [The desktop app](guide/desktop.md#taking-over-from-the-mac-app).
 
 ## The iOS app
 

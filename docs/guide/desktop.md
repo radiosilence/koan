@@ -4,7 +4,7 @@ kōan's desktop app runs on macOS and Linux. It is drawn with GPUI and links the
 
 ## Installing
 
-Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is the main download, `Koan.dmg`, and installs as `kōan desktop.app`, beside the SwiftUI app rather than over it.
+Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is `Koan.dmg`, and installs as `kōan desktop.app`.
 
 ## Beside the other apps
 
@@ -12,9 +12,9 @@ The desktop app is this computer to the server and the network: named after it (
 
 ## Taking over from the Mac app
 
-The SwiftUI Mac app is deprecated from 0.70. The desktop app's first launch on a configuration the Mac app used takes the Mac app's place: the phones, the TV and the server go on seeing one Mac, with its play history, its TV pairings and its saved queue. If only the desktop app ever ran there, it keeps the device it already was, and its own queue.
+The SwiftUI Mac app is no longer released from 0.70. The desktop app's first launch on a configuration the Mac app used takes the Mac app's place: the phones, the TV and the server go on seeing one Mac, with its play history, its TV pairings and its saved queue. If only the desktop app ever ran there, it keeps the device it already was, and its own queue.
 
-Quit the Mac app before that first launch, so the two do not run as the same device. From then on the Mac app, opened on that configuration, is a device of its own named `studio (legacy)`, with a session of its own, so both can run and you can tell which is which.
+Quit the Mac app before that first launch, so the two do not run as the same device. A Mac app still installed and opened on that configuration afterwards is a device of its own named `studio (legacy)`, with a session of its own, so it cannot take the desktop app's place.
 
 ## Files from outside
 

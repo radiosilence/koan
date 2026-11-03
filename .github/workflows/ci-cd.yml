@@ -1068,23 +1068,9 @@ jobs:
         with:
           name: koan-macos-arm64
           path: koan-macos-arm64.tar.gz
-      # Build, bundle and package in one invocation, so `macos-build` runs
-      # once; then check the kōan.app the disk image was made from.
-      - name: Package the app
-        run: |
-          just macos-dmg
-          just macos-verify arm64
-      - name: Sign the DMG
-        run: codesign --force --timestamp --sign "$KOAN_SIGN_IDENTITY" apps/macos/.build/pkg/Koan.dmg
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: koan-macos-app
-          path: apps/macos/.build/pkg/Koan.dmg
 
-  # The desktop app's packages: a signed .app in a DMG, and for each Linux
-  # architecture an AppImage and a .deb. Built when a release is, and attached
-  # to it; a failure here leaves the release without them rather than holding
-  # it back, while the app is new.
+  # The desktop app's packages: a signed .app in a DMG, the release's Mac
+  # app, and for each Linux architecture an AppImage and a .deb.
   gui-release:
     name: Release (GUI, ${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -1314,8 +1300,7 @@ jobs:
           pattern: koan-*
       # The desktop app's DMG, signed with the Developer ID, as Koan.dmg from
       # the moment the release exists; gui-attach replaces it with the
-      # stapled one. The SwiftUI app's is the notary job's, as
-      # Koan-legacy.dmg, and never Koan.dmg.
+      # stapled one.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gui-koan-macos-arm64
@@ -1363,7 +1348,7 @@ jobs:
             brew install --cask radiosilence/koan/koan-app # the desktop app
             ```
 
-            macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac. Quit the old kōan app before opening the new one: its first launch takes the old app's place, its history, TV pairings and queue included. The SwiftUI app is deprecated and ships this once more as `Koan-legacy.dmg`.
+            macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac; the SwiftUI Mac app is no longer released. Quit the old kōan app before opening the new one: its first launch takes the old app's place, its history, TV pairings and queue included. An old kōan app still installed shows as "(legacy)" if opened afterwards.
 
             Linux: the `.deb` and AppImage below. Android: install `koan-android-arm64.apk` below.
 
@@ -1528,7 +1513,15 @@ jobs:
 
             app "kōan desktop.app"
 
-            zap trash: "~/.config/koan"
+            uninstall quit: "cc.blit.koan.desktop"
+
+            # The library and its config are shared with the terminal UI.
+            zap trash: [
+              "~/.config/koan",
+              "~/Library/Application Support/koan",
+              "~/Library/Caches/koan",
+              "~/Library/Preferences/cc.blit.koan.desktop.plist",
+            ]
           end
           CASK
           git config user.name "github-actions[bot]"
@@ -1538,10 +1531,9 @@ jobs:
           git commit -m "Update koan-app to v${VERSION}: the desktop app"
           git push
 
-  # Apple's notary, apart from the release: everything else is out by the
-  # time this starts, and its queue can take hours. It waits on Apple, staples
-  # the SwiftUI app's DMG and attaches it as Koan-legacy.dmg; the desktop
-  # app's, the main download, and the cask are gui-attach's. Failing or timing out fails this job alone; re-running it
+  # Apple's notary for the command-line binaries, apart from the release:
+  # everything else is out by the time this starts, and its queue can take
+  # hours. The desktop app's DMG and the cask are gui-attach's. Failing or timing out fails this job alone; re-running it
   # waits on the submissions already made (`scripts/notarise.sh`) rather than
   # submitting again.
   notarise:
@@ -1579,26 +1571,5 @@ jobs:
           zip="$RUNNER_TEMP/koan-$VERSION-macos-$hash.zip"
           ditto -c -k --norsrc --noextattr payload "$zip"
           scripts/notarise.sh "$zip"
-      - name: Notarise and staple the DMG
-        run: |
-          set -euo pipefail
-          hash=$(shasum -a 256 artifacts/koan-macos-app/Koan.dmg | cut -c1-12)
-          dmg="$RUNNER_TEMP/Koan-$VERSION-$hash.dmg"
-          cp artifacts/koan-macos-app/Koan.dmg "$dmg"
-          scripts/notarise.sh "$dmg"
-          xcrun stapler staple "$dmg"
-          xcrun stapler validate "$dmg"
-          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
-          mkdir stapled
-          cp "$dmg" stapled/Koan-legacy.dmg
-      - name: Attach the legacy DMG
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::RELEASE_TOKEN is not set; the legacy DMG cannot be attached"
-            exit 1
-          fi
-          gh release upload "v$VERSION" stapled/Koan-legacy.dmg --clobber
       - if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"

@@ -37,7 +37,7 @@ brew install --cask radiosilence/koan/koan-app
 You may have to update brew's trust settings to trust the tap.
 Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release. On Linux, each release carries an AppImage and a `.deb`. See [the desktop app](docs/guide/desktop.md).
 
-The SwiftUI Mac app is deprecated and ships once more as `Koan-legacy.dmg`.
+The SwiftUI Mac app is no longer released; the desktop app takes its place.
 
 CLI/TUI:
 
