@@ -93,7 +93,9 @@ impl Glide {
         }
         let offset = match previous {
             Some(previous) if previous.1 == rate && rate > 0.0 => {
-                let offset = at(previous) - at(next);
+                // Where the fill stands: the old anchor's reckoning and what
+                // is left of a correction still easing out.
+                let offset = at(previous) + self.0.at(1, now) - at(next);
                 if offset.abs() <= rate * DRIFT {
                     offset
                 } else {
@@ -687,6 +689,31 @@ mod tests {
         assert!(glide.known());
         glide.set_unknown();
         assert!(!glide.known());
+    }
+
+    /// An anchor arriving while an earlier correction is still easing out
+    /// takes what is left of it into the new one: the fill does not step.
+    #[test]
+    fn a_new_anchor_keeps_a_correction_in_flight() {
+        let glide = Glide::new();
+        let shown = |glide: &Glide, at: Instant| glide.0.at(0, at) + glide.0.at(1, at);
+        let rate = 0.05;
+        let since = Animated::now();
+        glide.set(0.25, rate, since);
+        // A report a little behind the reckoning: eased into.
+        glide.set(0.25 - 0.01, rate, since);
+        assert!(glide.0.moving());
+        // The same line reported again from a later moment, before the
+        // correction has eased out.
+        let at = Animated::now() + Duration::from_millis(50);
+        let before = shown(&glide, at);
+        let later = since + Duration::from_millis(20);
+        glide.set(0.25 - 0.01 + rate * 0.02, rate, later);
+        let after = shown(&glide, at);
+        assert!(
+            (after - before).abs() < 1e-4,
+            "the fill stepped from {before} to {after}"
+        );
     }
 
     struct Owner {

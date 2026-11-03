@@ -426,3 +426,18 @@ fn a_plain_write_over_a_slot_colour_lets_it_go() {
     assert_eq!(values[6], 0.25);
     assert_eq!(values[4], 0.0, "the slot no longer draws over the floats");
 }
+
+/// A clock run for a length stops by itself (#1741): past it, the quad is
+/// neither running nor asking for presents.
+#[test]
+fn a_clock_run_for_a_length_stops() {
+    let animated = Animated::new();
+    animated.run_for(Duration::from_millis(20));
+    assert!(animated.is_running());
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(!animated.is_running(), "the clock ran on past its length");
+    animated.run(true);
+    assert!(animated.is_running(), "run(true) runs it again");
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(animated.is_running(), "an open-ended run does not lapse");
+}
