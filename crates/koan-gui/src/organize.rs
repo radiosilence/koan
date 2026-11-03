@@ -524,7 +524,7 @@ impl Render for OrganizeSheet {
 
         ask::wide_panel(look)
             .child(ask::head_data(
-                format!("Organise {}", self.title),
+                format!("{} {}", crate::theme::label("organise"), self.title),
                 vec![cancel.into_any_element(), go.into_any_element()],
                 look,
             ))
