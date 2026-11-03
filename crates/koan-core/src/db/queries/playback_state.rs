@@ -216,7 +216,7 @@ pub fn has_saved_queue(conn: &Connection, device: &str) -> rusqlite::Result<bool
 
 /// Gives `to` the saved session `from` kept, where `to` has none of its
 /// own: the queue, where it was up to and the play mode. What `to` has is
-/// left alone. The desktop app's handover (`link::hand_over`).
+/// left alone. The desktop app's handover (`link::Handover`).
 pub fn adopt_session(conn: &Connection, from: &str, to: &str) -> rusqlite::Result<()> {
     super::atomically(conn, || {
         conn.execute(

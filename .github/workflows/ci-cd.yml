@@ -1093,6 +1093,7 @@ jobs:
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
     # Best effort while the GUI app is new: a package that fails to build is
     # left off the release, and neither the run nor anything after it fails.
+    # Without its DMG the release's Koan.dmg stays the SwiftUI app's.
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -1352,13 +1353,18 @@ jobs:
             brew install --cask radiosilence/koan/koan-app # the desktop app
             ```
 
-            macOS: `Koan.dmg` below is the desktop app. `Koan-legacy.dmg` is the SwiftUI Mac app, deprecated: it ships with this release for the last time. Its first launch on a Mac the SwiftUI app ran on takes that app's place on your account, history and pairings included, and the SwiftUI app then shows as "(legacy)".
+            macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac. Quit the old kōan app before opening the new one: its first launch takes the old app's place, its history, TV pairings and queue included. The SwiftUI app is deprecated and ships this once more as `Koan-legacy.dmg`.
 
             Linux: the `.deb` and AppImage below. Android: install `koan-android-arm64.apk` below.
 
             ---
+          # The SwiftUI app's DMG goes up as Koan.dmg, so the release always
+          # has a Mac download; gui-attach replaces it with the desktop app's
+          # once that is notarised, and the notary job adds the SwiftUI one as
+          # Koan-legacy.dmg.
           files: |
             artifacts/**/*.tar.gz
+            artifacts/**/*.dmg
             artifacts/koan-android-arm64.apk
 
   update-homebrew:

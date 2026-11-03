@@ -960,8 +960,22 @@ impl KoanEngine {
     pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
         offload::offload(|| {
             init_logging();
-            let (identity, handover) =
-                koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+            // Whether the macOS app kept a session here: what says it ran,
+            // where a device id alone could be the command line's.
+            let db_path = koan_core::config::db_path();
+            let db = db_path
+                .exists()
+                .then(|| koan_core::db::connection::Database::open(&db_path).ok())
+                .flatten();
+            let mac_app_ran = db.as_ref().is_some_and(|db| {
+                koan_core::db::queries::has_saved_queue(
+                    &db.conn,
+                    koan_core::remote::link::LinkIdentity::APP_FILES,
+                )
+                .unwrap_or(false)
+            });
+            let (identity, handover) = koan_core::remote::link::LinkIdentity::desktop(mac_app_ran)
+                .map_err(|e| {
                     // Each says what to do about it: the words every front
                     // end shows.
                     let message = if e.kind() == std::io::ErrorKind::WouldBlock {
@@ -978,13 +992,14 @@ impl KoanEngine {
                     };
                     KoanError::Refused { message }
                 })?;
-            // The session the desktop app kept as a device of its own, where
-            // the machine's app has none: a machine that only ran the desktop
-            // app picks up where it left off.
-            let db_path = koan_core::config::db_path();
-            if handover.now && db_path.exists() {
-                let db = koan_core::db::connection::Database::open(&db_path);
-                if let Ok(db) = db
+            let engine = Self::build(None, identity.clone())?;
+            // Written only now the engine is open, so a launch that fails
+            // leaves the macOS app as it was.
+            if let Some(handover) = handover {
+                // The session the desktop app kept as a device of its own,
+                // where the machine's app has none.
+                if handover.adopt_session
+                    && let Some(db) = &db
                     && let Err(e) = koan_core::db::queries::adopt_session(
                         &db.conn,
                         koan_core::remote::link::LinkIdentity::DESKTOP_FILES,
@@ -993,8 +1008,9 @@ impl KoanEngine {
                 {
                     log::warn!("handover: the desktop app's session: {e}");
                 }
+                handover.finish();
             }
-            Self::build(None, identity)
+            Ok(engine)
         })
         .await
     }
