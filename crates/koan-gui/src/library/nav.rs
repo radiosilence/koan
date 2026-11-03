@@ -61,9 +61,15 @@ pub struct Nav {
 impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
-        // A track's details belong to the page they were opened on.
-        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+        // A track's details belong to the page they were opened on, and a
+        // pick to the record it was made for: a move anywhere else drops it.
+        let watch = cx.observe(&navigator, |nav: &mut Self, navigator, cx| {
             nav.info = None;
+            if let Some((album, _)) = nav.pick
+                && navigator.read(cx).current() != Page::Album(album)
+            {
+                nav.pick = None;
+            }
             cx.notify()
         });
         Self {

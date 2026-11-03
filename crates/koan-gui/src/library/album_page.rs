@@ -120,6 +120,12 @@ impl AlbumPage {
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
+            // A track picked for this record while it is already showing.
+            cx.observe(&lib.nav, |this, _, cx| {
+                if !this.tracks.is_empty() {
+                    this.take_pick(cx);
+                }
+            }),
             cx.subscribe(&lib.covers, |this, _, gone: &super::covers::Evicted, cx| {
                 let tracks: std::collections::HashSet<i64> = gone.tracks.iter().copied().collect();
                 this.selection
@@ -197,10 +203,14 @@ impl AlbumPage {
                         this.gone = None;
                         this.take_pick(cx);
                     }
-                    Ok(_) => this.gone = Some(false),
+                    Ok(_) => {
+                        this.gone = Some(false);
+                        this.drop_pick(cx);
+                    }
                     Err(e) => {
                         log::warn!("album {id}: {e}");
                         this.gone = Some(true);
+                        this.drop_pick(cx);
                     }
                 }
                 cx.notify();
@@ -212,6 +222,14 @@ impl AlbumPage {
     /// A track picked for this record in the search box: the cursor and the
     /// selection on it, as a click on its row puts them, and scrolled into
     /// view.
+    /// The record did not load: a track picked for it has nowhere to be.
+    fn drop_pick(&mut self, cx: &mut Context<Self>) {
+        let album = self.album_id;
+        if self.lib.nav.read(cx).pick.is_some_and(|(a, _)| a == album) {
+            self.lib.nav.update(cx, |nav, _| nav.pick = None);
+        }
+    }
+
     fn take_pick(&mut self, cx: &mut Context<Self>) {
         let Some((album, track)) = self.lib.nav.read(cx).pick else {
             return;

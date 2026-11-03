@@ -343,9 +343,12 @@ impl SearchBar {
                         _ => return,
                     },
                 };
+                // The pick is announced whether or not the page moves: a
+                // record already showing takes it at once.
                 self.lib.nav.update(cx, |nav, cx| {
                     nav.pick = pick;
                     nav.open(page, cx);
+                    cx.notify();
                 });
             }
             // Return chooses; a pick is played only by a verb that says so.
