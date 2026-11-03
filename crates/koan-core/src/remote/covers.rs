@@ -522,7 +522,9 @@ fn pass() -> bool {
     set_progress(None);
     // Held to the cache limit with the downloads, the playback window kept.
     crate::remote::queue::cache_limit_changed();
-    matches!(halted, Some(Halt::NotNow)) && !crate::quiet::awake()
+    // Decided by why it halted, not by sampling quiet now: the app may have
+    // woken again while the pass wound down, and the re-run would be lost.
+    matches!(halted, Some(Halt::NotNow))
 }
 
 /// How many chunks in a row may fail before the pass gives up on
@@ -533,8 +535,9 @@ const BULK_FAILURES: usize = 3;
 /// and says it has none of, and returns the ids it does not hold ready, or
 /// did not answer. Stops between frames as soon as the pass may not go on
 /// (stopped, quiet, constrained, full), dropping the rest of that answer
-/// unread. A chunk that fails is asked once more, then left to the one by
-/// one fetch; after `BULK_FAILURES` in a row, so is everything left.
+/// unread. A chunk whose stream is cut is asked once more for what it did
+/// not reach, one the server cannot answer or refuses is not, and what is
+/// left goes to the one by one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
     client: &SubsonicClient,
     cfg: &Config,
@@ -587,13 +590,25 @@ fn in_bulk(
                 }
             });
             match answered {
+                // Every id answered is the chunk done, however the stream
+                // ended after its last frame.
                 Ok(()) => {
                     failed = None;
                     break;
                 }
+                Err(_) if unanswered.is_empty() => {
+                    failed = None;
+                    break;
+                }
+                // A server that cannot answer now, or refuses, is not asked
+                // again at once: that is a stream cut's remedy.
+                Err(e @ (SubsonicError::Unavailable(_) | SubsonicError::Api { .. })) => {
+                    failed = Some(e);
+                    break;
+                }
                 Err(e) => failed = Some(e),
             }
-            if halted.is_some() || unanswered.is_empty() {
+            if halted.is_some() {
                 break;
             }
         }
@@ -613,7 +628,7 @@ fn in_bulk(
             None => failures = 0,
             Some(e) => {
                 failures += 1;
-                log::info!("cover preload: a koanCovers chunk failed twice ({e})");
+                log::info!("cover preload: a koanCovers chunk failed ({e})");
                 if failures >= BULK_FAILURES {
                     log::info!("cover preload: koanCovers keeps failing; fetching one by one");
                     rest.extend(chunks.flatten().cloned());
@@ -680,6 +695,8 @@ mod tests {
 
     use super::*;
 
+    /// Frames read back as written: an unknown kind reads as not held, and
+    /// the end of the stream as nothing more.
     #[test]
     fn bulk_frames_read_back_as_written() {
         let mut stream = frame("al-1", BulkCover::Cover(b"jpeg"));

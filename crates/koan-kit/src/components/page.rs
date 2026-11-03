@@ -358,6 +358,7 @@ impl RenderOnce for PlayButton {
         .justify_center()
         .border(look.hairline)
         .border_color(accent)
+        .aria_disabled(loading)
         .when(!loading, |d| {
             d.cursor_pointer().active(move |s| s.bg(hover))
         })
@@ -428,6 +429,7 @@ impl RenderOnce for ShuffleButton {
             Some(help.clone()),
         )
         .group(group.clone())
+        .aria_disabled(disabled)
         .size(crate::theme::HIT)
         .flex_none()
         .flex()

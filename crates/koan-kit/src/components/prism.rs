@@ -1517,6 +1517,7 @@ impl RenderOnce for PrismFill {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     /// A burst thrown again inside `MIN_BEAT_GAP` is dropped: holding Next
     /// through a shuffled queue sweeps at most three times a second. Bursts

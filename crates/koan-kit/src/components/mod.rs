@@ -578,7 +578,6 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
     }
 }
 
-/// Answers a screen reader's click as a pointer's would, with `handler`.
 /// A row's or a tile's parts as a screen reader says them: the non-empty
 /// ones, in order, between commas. What `TableRow::spoken` takes.
 pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
@@ -628,6 +627,7 @@ pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
     }
 }
 
+/// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
     handler: Handler<gpui_kit::ClickEvent>,
