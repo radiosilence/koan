@@ -2675,6 +2675,52 @@ impl KoanEngine {
         .await
     }
 
+    /// Move the entries named to just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, those a caller does
+    /// not list included: offline, where only the entries with a file here
+    /// are shown, a move among them leaves the rest where they are. The moved
+    /// entries keep the order they had.
+    pub async fn move_playlist_entries(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+        before: Option<i64>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                Ok(queries::move_entries(
+                    &db.conn,
+                    playlist_id,
+                    &entry_ids,
+                    before,
+                )?)
+            })
+        })
+        .await
+    }
+
+    /// Add the tracks `sources` name just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, as
+    /// `move_playlist_entries` places them. Returns how many landed.
+    pub async fn insert_into_playlist_before(
+        self: Arc<Self>,
+        playlist_id: i64,
+        sources: Vec<TrackSet>,
+        before: Option<i64>,
+    ) -> Result<u32, KoanError> {
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                let track_ids = self.resolve_sources(db, &sources)?;
+                let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)?;
+                if !added.is_empty() {
+                    queries::move_entries(&db.conn, playlist_id, &added, before)?;
+                }
+                Ok(added.len() as u32)
+            })
+        })
+        .await
+    }
+
     /// Take entries out. Returns how many went.
     pub async fn remove_from_playlist(
         self: Arc<Self>,
@@ -7583,7 +7629,8 @@ impl From<rusqlite::Error> for KoanError {
 /// person can be told about, not a database failure.
 fn playlist_write_err(e: koan_core::db::connection::DbError) -> KoanError {
     match e {
-        koan_core::db::connection::DbError::MissingTracks(_) => KoanError::NotFound {
+        koan_core::db::connection::DbError::MissingTracks(_)
+        | koan_core::db::connection::DbError::MissingEntry(_) => KoanError::NotFound {
             message: e.to_string(),
         },
         e => db_err(e),
