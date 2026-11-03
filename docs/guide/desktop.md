@@ -32,15 +32,15 @@ The app shows what is playing in the system's controls, cover included, and take
 
 ## The Dock
 
-On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a spindle at the circle's centre, so it is told apart from the Mac app in the Dock and the app switcher.
+On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a spindle at the circle's centre, so it is told apart from the old SwiftUI Mac app in the Dock and the app switcher.
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The same shortcuts on both, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
-If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
+If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app, or the old Mac app, already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
@@ -124,7 +124,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 ## Settings
 
-⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. Its tabs are Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 

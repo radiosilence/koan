@@ -66,7 +66,7 @@ koan dsp import "Harman 780.zip" --device "Topping E30"
 ### From AutoEQ
 
 AutoEQ's corrections can be found by headphone name instead of downloaded by
-hand. In the Mac, iOS and Android apps, **Find in AutoEQ…** under EQ and convolution
+hand. In the desktop, iOS and Android apps, **Find in AutoEQ…** under EQ and convolution
 searches as you type, or, before anything is typed, lists the makers and
 under each its models, for a headphone whose name does not come to mind;
 choosing a result installs it and plays the output in use through it. A maker
@@ -449,7 +449,7 @@ deleted there, after a config file that did not load or was edited by hand,
 is taken from the server again rather than deleted everywhere. The server
 keeps a copy of a deleted EQ, its files included, for thirty days after it
 records the deletion. An EQ elsewhere that played a deleted one reports it
-missing. Manage EQ in the Mac, iOS and Android apps lists deleted EQs under
+missing. Manage EQ in the desktop, iOS and Android apps lists deleted EQs under
 **Recently deleted**, with the days each has left, and **Restore** brings
 one back on every device as a new edit. The section is there whenever the
 server offers it (`koanDspDeleted`: older servers and Navidrome do not),

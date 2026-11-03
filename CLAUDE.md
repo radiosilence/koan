@@ -2,7 +2,7 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Eight crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: the kōan GUI app (GPUI) on macOS and Linux, the only Mac app released from 0.70; SwiftUI on iOS and tvOS; Compose on Android. Eight crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
@@ -15,7 +15,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
-Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
+Plus **apps/macos** — the SwiftUI sources (SwiftPM, Swift 6, macOS 26+) the iOS and tvOS apps build from. Links koan-ffi. Its macOS app still builds for development but is no longer released; on a configuration the GUI app has taken over it runs as `LinkIdentity::native_app`'s `(legacy)` device.
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 

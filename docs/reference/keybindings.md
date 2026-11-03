@@ -1,6 +1,6 @@
 # Keybindings
 
-The keys of the terminal UI, page by page, and of the macOS app. The hint bar along the foot of the TUI shows the keys for the page in view, and `?` lists them all.
+The keys of the terminal UI, page by page, and of the desktop app. The hint bar along the foot of the TUI shows the keys for the page in view, and `?` lists them all.
 
 ## Every page
 
@@ -362,9 +362,9 @@ Tracks are grouped by album with headers showing album artist, year, album title
 
 ---
 
-## macOS app
+## Desktop app
 
-Two kinds of shortcut. Anything with ⌘ is a menu command and shows in the menu bar; the single-key ones follow the TUI and are listed under Help ▸ Keyboard Shortcuts (`?`).
+The desktop app (macOS and Linux) has two kinds of shortcut. Anything with ⌘ is a menu command and shows in the menu bar; the single-key ones follow the TUI and are listed under Help ▸ Keyboard Shortcuts (`?`).
 
 Single keys never fire while a text field has focus, so typing an `f` into the search box types an f. `Esc` gets you back out of a field.
 
@@ -408,9 +408,9 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 
 Keys the TUI spends on its own panels — the visualizer, the help overlay — have no counterpart: there is no visualizer here.
 
-## Desktop app
+### On Linux, and the shortcuts sheet
 
-The desktop app (macOS and Linux) takes the macOS app's keys, both tables, from one list that also builds its menus and its shortcuts sheet (`?` or `⌘/`). On Linux `Ctrl` stands where the Mac has `⌘`, and there is no menu bar, so the sheet is where the commands are listed. `⌫` deletes the selection outside a text field and is a single key there, as `space` is.
+Both tables come from one list that also builds the menus and the shortcuts sheet (`?` or `⌘/`). On Linux `Ctrl` stands where the Mac has `⌘`, and there is no menu bar, so the sheet is where the commands are listed. `⌫` deletes the selection outside a text field and is a single key there, as `space` is.
 
 Moving around without the pointer:
 

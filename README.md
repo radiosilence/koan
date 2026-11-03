@@ -2,17 +2,17 @@
 
 # kōan
 
-A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a Compose app on Android, a terminal UI on macOS (Apple silicon) and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
+A music player and server for your own library, local or on any OpenSubsonic server: a desktop app on macOS and Linux, SwiftUI apps on iOS and Apple TV, a Compose app on Android, a terminal UI on macOS (Apple silicon) and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
-The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a server, and an Apple TV app on TestFlight. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
+The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly, SwiftUI apps for iOS and Apple TV, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
 
 I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so you never have to remember to download your whole queue first. The best of every world, why not?
 
 My philosophy is that you should lead with your opinions, but let people customise and tweak them to match theirs.
 
-Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its own. You can use the macOS app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the way down and get the non-standard (sorry) features such as remote control. I think a shared standard like OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting to compete with how well the professional streaming platforms integrate.
+Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its own. You can use the desktop app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the way down and get the non-standard (sorry) features such as remote control. I think a shared standard like OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting to compete with how well the professional streaming platforms integrate.
 
 One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone, which is laggy. With kōan's remote features, the device you send it to plays its own copy.
 
@@ -89,7 +89,7 @@ koan                                        # launch the TUI
 
 `space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit.
 
-The macOS app needs none of this: **Settings → Library** adds folders, **Settings → Server** signs in to a kōan, Navidrome or Subsonic server.
+The desktop app needs none of this: **Settings → Library** adds folders, **Settings → Server** signs in to a kōan, Navidrome or Subsonic server.
 
 To run a server, play from Navidrome, or move off it, see the [documentation](https://koan.rocks/docs/).
 
@@ -190,9 +190,9 @@ At [koan.rocks/docs](https://koan.rocks/docs/), rendered from [`docs/`](docs). S
 File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback -> DAC
 ```
 
-Six crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), `koan-gui` (the kōan GUI app in GPUI, on macOS and Linux, in progress) and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Eight crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-runtime` (`KoanEngine`, the facade every app drives), `koan-ffi` (its uniffi bindings for the iOS, tvOS and Android apps), `koan-gui` (the desktop app, in GPUI, on macOS and Linux), `koan-kit` (the desktop app's design system) and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; it asks iOS for each track's sample rate, so a USB DAC that supports the rate is switched to it and there is no resampling in koan or iOS; on any other route iOS resamples, and the format badge shows the rate the hardware runs at. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive. The Android app ([`apps/android`](apps/android)) is Compose over the same core, loading `koan-ffi` through uniffi's Kotlin bindings.
+The desktop app links the engine in-process through `koan-runtime` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app ([`apps/macos`](apps/macos), whose SwiftUI sources also built the Mac app released before 0.70) links it through `koan-ffi`; it asks iOS for each track's sample rate, so a USB DAC that supports the rate is switched to it and there is no resampling in koan or iOS; on any other route iOS resamples, and the format badge shows the rate the hardware runs at. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive. The Android app ([`apps/android`](apps/android)) is Compose over the same core, loading `koan-ffi` through uniffi's Kotlin bindings.
 
 ## Dev
 
@@ -200,8 +200,8 @@ The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through 
 just check       # test + clippy + actionlint
 just fmt         # cargo fmt
 just cli         # cargo run -p koan-cli -- <args>
-just macos-run   # build and launch the macOS app
-just macos-dmg   # package the macOS app for release
+just gui-run     # build and launch the desktop app
+just gui-bundle  # package the desktop app: .app and DMG on macOS, AppImage and .deb on Linux
 just ios-run     # build and launch the iOS app on a simulator
 just ios-phone   # install on the iPhone plugged in, signed with your personal team
 just tv-run      # build and launch the Apple TV app on a simulator
