@@ -560,6 +560,12 @@ mod tests {
             lines.active = 12;
             cx.notify();
         });
+        // The frames the app's display would draw: the test's context draws
+        // none for an animation frame asked for.
+        for _ in 0..4 {
+            cx.run_until_parked();
+            view.update(cx, |_, cx| cx.notify());
+        }
         cx.run_until_parked();
         let panel = cx.debug_bounds("panel").expect("drawn").center().y;
         let sung = cx.debug_bounds("synced-line-12").expect("drawn").center().y;
