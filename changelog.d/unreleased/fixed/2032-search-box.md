@@ -1,0 +1,1 @@
+- **The search box lists five of each kind and stays inside its panel.** Records and artists show as full rows with their art under the tracks, the list scrolls between the query and the keys, "All results…" ends it, and choosing a result goes to it without playing; a track opens its record with the track selected.

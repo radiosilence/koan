@@ -32,6 +32,9 @@ pub struct CommandBar {
     keys: Vec<(SharedString, SharedString)>,
     /// What the body says with nothing found.
     empty: Option<SharedString>,
+    /// A row after every section, under no heading ("All results…"); lit as
+    /// the row after the last section's last.
+    last: Option<SuggestionRow>,
     on_dismiss: Option<super::Handler<()>>,
 }
 
@@ -48,8 +51,16 @@ impl CommandBar {
             lit: None,
             keys: Vec::new(),
             empty: None,
+            last: None,
             on_dismiss: None,
         }
+    }
+
+    /// The row after every section, under no heading: what goes further
+    /// than the list does ("All results…"). Shown only with results.
+    pub fn last(mut self, row: SuggestionRow) -> Self {
+        self.last = Some(row);
+        self
     }
 
     /// A group of results; one with none is left out.
@@ -106,10 +117,20 @@ impl RenderOnce for CommandBar {
                 row_ix += 1;
             }
         }
+        if let Some(row) = self.last.filter(|_| found) {
+            if self.lit == Some(row_ix) {
+                reveal = Some(items.len());
+            }
+            items.push(row.lit(self.lit == Some(row_ix)).into_any_element());
+        }
         let body = if found {
+            // Takes what the panel has left after the query and the keys, and
+            // scrolls within it: the rows never draw past the panel, over
+            // the keys or the page behind.
             div()
                 .flex_1()
                 .min_h_0()
+                .overflow_hidden()
                 .pb(look.space(Space::Xs))
                 .child(
                     // The results, a list box for a screen reader.
@@ -133,7 +154,10 @@ impl RenderOnce for CommandBar {
                 }))
                 .into_any_element()
         };
+        // Opaque, so nothing of the list shows through it.
         let foot = div()
+            .flex_none()
+            .bg(p.bg.hsla())
             .flex()
             .flex_wrap()
             .items_center()
@@ -169,7 +193,11 @@ impl RenderOnce for CommandBar {
                     Some(label("search")),
                 )
                 .w(look.spaced(Self::WIDTH))
-                .max_h(relative(0.7))
+                // What the window has below the panel's top, less a margin:
+                // in a small window the list scrolls between the query and
+                // the keys rather than running past them.
+                .max_h(height * (1.0 - Self::TOP) - look.space(Space::Xl))
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .bg(p.bg.hsla())
@@ -182,6 +210,7 @@ impl RenderOnce for CommandBar {
                         gpui::Role::ComboBox,
                         Some(label("search")),
                     )
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(look.space(Space::M))
