@@ -86,11 +86,16 @@ class RecordWash internal constructor() {
     /**
      * Breathing: three incommensurate periods, so the drift never arrives back
      * where it started and never reads as a loop. From wherever it stands.
+     * `pace` is the Appearance setting's drift as a multiple of the normal
+     * speed (none holds still) and `degrees` how far the turn swings.
      */
-    internal suspend fun breathe() = coroutineScope {
-        launch { swing(scale, 1f, FAR / NEAR, SCALE_MS) }
-        launch { swing(turn, -TURN, TURN, TURN_MS) }
-        launch { swing(travel, -1f, 1f, TRAVEL_MS) }
+    internal suspend fun breathe(pace: Float, degrees: Float) {
+        if (pace <= 0f) return settle()
+        coroutineScope {
+            launch { swing(scale, 1f, FAR / NEAR, (SCALE_MS / pace).roundToInt()) }
+            launch { swing(turn, -degrees, degrees, (TURN_MS / pace).roundToInt()) }
+            launch { swing(travel, -1f, 1f, (TRAVEL_MS / pace).roundToInt()) }
+        }
     }
 
     /** Coming to rest from wherever the drift had reached, rather than stopping dead. */
@@ -118,7 +123,6 @@ class RecordWash internal constructor() {
         const val FAR = 1.58f
         const val REACH = 0.12f
         const val RISE = 0.10f
-        const val TURN = 3f
         const val SCALE_MS = 13_000
         const val TURN_MS = 19_000
         const val TRAVEL_MS = 23_000
@@ -145,6 +149,8 @@ fun ProvideRecordWash(
     recordColours: Boolean,
     graphics: Graphics = Graphics.Full,
     tint: Int = 100,
+    drift: Int = 100,
+    turn: Int = 3,
     content: @Composable () -> Unit,
 ) {
     val wash = remember { RecordWash() }
@@ -171,7 +177,9 @@ fun ProvideRecordWash(
     val animations = remember(visible) { ValueAnimator.areAnimatorsEnabled() }
     val powerSaving = remember(visible) { context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true }
     val drifts = shown && WashRules.drifts(playing, visible, animations, powerSaving, graphics)
-    LaunchedEffect(drifts) { if (drifts) wash.breathe() else wash.settle() }
+    LaunchedEffect(drifts, drift, turn) {
+        if (drifts) wash.breathe(drift / 100f, turn.toFloat()) else wash.settle()
+    }
 
     CompositionLocalProvider(LocalRecordWash provides wash, content = content)
 }
