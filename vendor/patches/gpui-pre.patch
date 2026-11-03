@@ -449,7 +449,7 @@ index 0000000..df9fef2
 +    GENERATION.load(Ordering::Relaxed)
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..2c5b9ec 100644
+index 11f0b72..781d942 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -499,6 +499,28 @@ index 11f0b72..2c5b9ec 100644
          if let Some(value) = self.aria.numeric_value {
              node.set_numeric_value(value);
          }
+@@ -3830,6 +3856,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
+                         window,
+                         cx,
+                     ) {
++                        // KOAN: as for a hover, the element's own view draws
++                        // again, in case it is cached.
++                        cx.notify(current_view);
+                         long_press_tooltip_active.set(true);
+                         window.prevent_default();
+                         cx.stop_propagation();
+@@ -3956,6 +3985,11 @@ fn handle_tooltip_mouse_move(
+                             window,
+                             cx,
+                         );
++                        // KOAN: a refresh replays a cached view's last
++                        // prepaint, made before the tooltip was active, so
++                        // the tooltip of an element in one never showed. Its
++                        // own view draws again and asks for it.
++                        cx.notify(current_view);
+                     })
+                     .ok();
+                 }
 diff --git a/src/gpui.rs b/src/gpui.rs
 index 2328e95..f00ef65 100644
 --- a/src/gpui.rs

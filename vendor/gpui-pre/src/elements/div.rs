@@ -3856,6 +3856,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
                         window,
                         cx,
                     ) {
+                        // KOAN: as for a hover, the element's own view draws
+                        // again, in case it is cached.
+                        cx.notify(current_view);
                         long_press_tooltip_active.set(true);
                         window.prevent_default();
                         cx.stop_propagation();
@@ -3982,6 +3985,11 @@ fn handle_tooltip_mouse_move(
                             window,
                             cx,
                         );
+                        // KOAN: a refresh replays a cached view's last
+                        // prepaint, made before the tooltip was active, so
+                        // the tooltip of an element in one never showed. Its
+                        // own view draws again and asks for it.
+                        cx.notify(current_view);
                     })
                     .ok();
                 }
