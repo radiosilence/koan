@@ -17,7 +17,7 @@ use crate::theme::{Icon, KoanStyled, Look, Space};
 
 type Run = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type Build = Rc<dyn Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu>;
-/// A button at a rich row's end, made each time the menu draws.
+/// A control drawn in a menu, made each time the menu draws.
 type Trailing = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// An entry of a menu, built as `PopupMenuItem` is.
@@ -33,7 +33,6 @@ pub struct MenuEntry {
     detail: Option<(SharedString, bool)>,
     rich: bool,
     reach: Option<Icon>,
-    trailing: Vec<Trailing>,
     keys: Option<SharedString>,
     run: Option<Run>,
     stays_open: bool,
@@ -54,7 +53,6 @@ impl MenuEntry {
             detail: None,
             rich: false,
             reach: None,
-            trailing: Vec::new(),
             keys: None,
             run: None,
             stays_open: false,
@@ -64,8 +62,9 @@ impl MenuEntry {
 
     /// A quiet glyph at the row's end that acts on what the row names
     /// without choosing it ("move here", "forget this device"), with `help`
-    /// as its tooltip. Every row of the menu keeps the same slots, so the
-    /// actions line up.
+    /// as its tooltip. Every row of the menu keeps the same columns, glyphs
+    /// with glyphs and words with words, so the actions line up; → reaches
+    /// them from the keyboard.
     pub fn action(
         mut self,
         icon: Icon,
@@ -180,15 +179,6 @@ impl MenuEntry {
         self
     }
 
-    /// A button at the row's end.
-    pub fn trailing(
-        mut self,
-        make: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-    ) -> Self {
-        self.trailing.push(Rc::new(make));
-        self
-    }
-
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
         self
@@ -240,6 +230,9 @@ const NOTE_WIDTH: f32 = 340.;
 pub struct Menu {
     entries: Vec<Entry>,
     highlighted: Option<usize>,
+    /// The highlighted row's action the keyboard moved onto with →, which
+    /// Return runs in place of the row.
+    acting: Option<usize>,
     focus: FocusHandle,
     /// Where it was drawn last, for the menu it opened from to tell a press
     /// in it from one outside them both.
@@ -279,6 +272,7 @@ impl Menu {
             let menu = Menu {
                 entries: Vec::new(),
                 highlighted: None,
+                acting: None,
                 focus: cx.focus_handle(),
                 bounds: Rc::default(),
                 ancestors: Vec::new(),
@@ -326,6 +320,7 @@ impl Menu {
         let empty = Menu {
             entries: Vec::new(),
             highlighted: None,
+            acting: None,
             focus: self.focus.clone(),
             bounds: self.bounds.clone(),
             ancestors: self.ancestors.clone(),
@@ -464,6 +459,7 @@ impl Menu {
             return;
         }
         self.highlighted = index;
+        self.acting = None;
         // Another row under the pointer or the keys closes an open submenu.
         for (i, entry) in self.entries.iter_mut().enumerate() {
             if let Entry::Submenu { open, .. } = entry
@@ -554,8 +550,50 @@ impl Menu {
         }
     }
 
+    /// How many actions the row at `index` has.
+    fn actions_of(&self, index: Option<usize>) -> usize {
+        match index.map(|i| &self.entries[i]) {
+            Some(Entry::Item(item)) if !item.disabled => item.actions.len(),
+            _ => 0,
+        }
+    }
+
+    /// Runs action `k` of row `index`, as its click does.
+    fn act(&mut self, index: usize, k: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Entry::Item(item) = &self.entries[index] else {
+            return;
+        };
+        let Some((.., run)) = item.actions.get(k) else {
+            return;
+        };
+        run.clone()(&ClickEvent::default(), window, cx);
+        // An action that opened a sheet or a question has taken the
+        // keyboard: the menu makes way.
+        if !self.focus.contains_focused(window, cx) {
+            cx.emit(DismissEvent);
+        }
+    }
+
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let actions = self.actions_of(self.highlighted);
         match event.keystroke.key.as_str() {
+            // Along the row onto its actions, and back to the row.
+            "right" if actions > 0 => {
+                let next = self.acting.map_or(0, |k| (k + 1).min(actions - 1));
+                if self.acting != Some(next) {
+                    self.acting = Some(next);
+                    cx.notify();
+                }
+            }
+            "left" if self.acting.is_some() => {
+                self.acting = self.acting.and_then(|k| k.checked_sub(1));
+                cx.notify();
+            }
+            "enter" | "space" if self.acting.is_some() => {
+                if let (Some(index), Some(k)) = (self.highlighted, self.acting) {
+                    self.act(index, k, window, cx);
+                }
+            }
             "down" => {
                 let next = self.step(1);
                 self.highlight(next, cx);
@@ -589,28 +627,41 @@ impl Render for Menu {
         let look = Look::of(window, cx);
         let menu = cx.entity();
         let mut panel = MenuPanel::new().min_width(self.min_width).fixed(self.fixed);
-        // Every row keeps as many slots as the fullest needs; the last is
-        // wide when any row's last action is words, and a choice's tick then
-        // counts as that slot's.
-        let filled = |item: &MenuEntry| item.trailing.len() + item.actions.len();
-        let last_wide = self.entries.iter().any(|entry| match entry {
-            Entry::Item(item) => matches!(
-                item.actions.last(),
-                Some((super::panel::ActionFace::Text(_), ..))
-            ),
-            _ => false,
-        });
-        let slots = self
-            .entries
-            .iter()
-            .map(|entry| match entry {
-                Entry::Item(item) => {
-                    filled(item) + usize::from(last_wide && item.checked == Some(true))
-                }
-                _ => 0,
+        // Every row keeps the menu's columns of actions, glyphs with glyphs
+        // and words with words, each words column as wide as its widest
+        // words; where there are words, a choice's tick stands in them.
+        use super::panel::{ActionColumns, ActionFace, Slot};
+        let kind = |face: &ActionFace| match face {
+            ActionFace::Glyph(_) => Slot::Glyph,
+            ActionFace::Text(_) => Slot::Words,
+        };
+        let items = || {
+            self.entries.iter().filter_map(|entry| match entry {
+                Entry::Item(item) => Some(item),
+                _ => None,
             })
-            .max()
-            .unwrap_or(0);
+        };
+        let mut rows: Vec<Vec<Slot>> = items()
+            .map(|item| item.actions.iter().map(|(face, ..)| kind(face)).collect())
+            .collect();
+        if rows.iter().flatten().any(|k| *k == Slot::Words) {
+            for (row, item) in rows.iter_mut().zip(items()) {
+                if item.checked == Some(true) {
+                    row.push(Slot::Words);
+                }
+            }
+        }
+        let words: Vec<SharedString> = items()
+            .flat_map(|item| item.actions.iter())
+            .filter_map(|(face, ..)| match face {
+                ActionFace::Text(text) => Some(text.clone()),
+                ActionFace::Glyph(_) => None,
+            })
+            .collect();
+        let columns = Rc::new(ActionColumns::of(
+            &rows,
+            super::panel::MenuAction::words_width(&words, window, cx),
+        ));
         for (index, entry) in self.entries.iter().enumerate() {
             let highlighted = self.highlighted == Some(index);
             let hovered = {
@@ -673,8 +724,8 @@ impl Render for Menu {
                         row = row.reach(reach);
                     }
                     row = row.rich(item.rich);
-                    for make in &item.trailing {
-                        row = row.trailing(make(window, cx));
+                    if highlighted {
+                        row = row.keyed_action(self.acting);
                     }
                     for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
                         let (run, menu) = (run.clone(), menu.clone());
@@ -698,7 +749,7 @@ impl Render for Menu {
                             }
                         };
                     }
-                    row = row.slots(slots, last_wide);
+                    row = row.columns(columns.clone());
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }
