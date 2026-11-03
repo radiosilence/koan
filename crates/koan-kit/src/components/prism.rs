@@ -1,6 +1,6 @@
 //! Prism: the hidden rainbow appearance drawn on the GPU. A layer over the
-//! wash that flows with the music, a pulse at the window's edges on the
-//! beat, a mirror ball, confetti, a rainbow sweep between records, a sheen
+//! wash that flows with the music, the beat's glow at the window's edges,
+//! a mirror ball, confetti, a rainbow sweep between records, a sheen
 //! over what the pointer is on, and rainbow programs for the playing bars
 //! and the seek bar's fill (`PlayingBars::prism`, `Slider::prism`).
 //!
@@ -150,61 +150,6 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 fn wash_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [low, middle, high, beat] = bands(u, time);
     u[16..20].copy_from_slice(&[low, middle, high, beat.max(0.0)]);
-}
-
-/// A glow in from the window's edges, widening and brightening on each beat,
-/// the palette running round it.
-static PRISM_PULSE: ShaderProgram = ShaderProgram {
-    name: "koan-prism-pulse",
-    msl: concat!(
-        prism_msl!(),
-        r#"
-float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    float pulse = u[16];
-    float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * u[17]);
-    // Under a level at five and a half widths in: most of the window.
-    if (d > width * 5.6) {
-        return float4(0.0);
-    }
-    float glow = exp(-d / max(width, 1.0));
-    if (glow < 0.004) {
-        return float4(0.0);
-    }
-    float along = (position.x + position.y) / (size.x + size.y);
-    float3 colour = koan_prism(along * 2.0 - time * 0.08, u[4]);
-    return float4(colour, glow * (0.10 + 0.55 * pulse) * u[6]);
-}
-"#
-    ),
-    wgsl: concat!(
-        prism_wgsl!(),
-        r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    let pulse = u[4].x;
-    let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * u[4].y);
-    if (d > width * 5.6) {
-        return vec4<f32>(0.0);
-    }
-    let glow = exp(-d / max(width, 1.0));
-    if (glow < 0.004) {
-        return vec4<f32>(0.0);
-    }
-    let along = (position.x + position.y) / (size.x + size.y);
-    let colour = koan_prism(along * 2.0 - time * 0.08, u[1].x);
-    return vec4<f32>(colour, glow * (0.10 + 0.55 * pulse) * u[1].z);
-}
-"#
-    ),
-    prepare: Some(pulse_prepare),
-};
-
-/// The beat and the low band, for every pixel of the pulse (16, 17).
-fn pulse_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
-    let [low, _, _, beat] = bands(u, time);
-    u[16] = beat.max(0.0).powf(0.8);
-    u[17] = low;
 }
 
 /// A mirror ball: a sphere of facets, silver tinted through the palette,
@@ -583,10 +528,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     // outside a spot goes on to the next before any colour is worked out.
     float lift = 0.22 + 0.25 * beat + 0.15 * u[2];
     float swell = 1.0 + 0.6 * beat;
-    // Only the spots reaching this pixel's seventh of the window's height,
+    // Only the spots reaching this pixel's sixth of the window's height,
     // as a mask of them (`disco_prepare`).
-    const int masks[7] = { 3, 5, 7, 9, 13, 14, 15 };
-    int band = clamp(int(position.y * 7.0 / size.y), 0, 6);
+    const int masks[6] = { 3, 5, 7, 9, 13, 14 };
+    int band = clamp(int(position.y * 6.0 / size.y), 0, 5);
     uint mask = as_type<uint>(u[masks[band]]);
     while (mask != 0u) {
         int i = ctz(mask);
@@ -607,8 +552,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     for (int i = 0; i < 4; i++) {
         float fi = float(i);
         float2 foot = float2(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        float angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
-        float2 dir = float2(cos(angle), -sin(angle));
+        const int beams[4] = { 8, 11, 12, 15 };
+        float2 dir = float2(as_type<half2>(u[beams[i]]));
         float2 rel = position - foot;
         float along = dot(rel, dir);
         if (along > 0.0) {
@@ -665,8 +610,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     var alpha = 0.0;
     let lift = 0.22 + 0.25 * beat + 0.15 * b[0].z;
     let swell = 1.0 + 0.6 * beat;
-    var masks = array<u32, 7>(3u, 5u, 7u, 9u, 13u, 14u, 15u);
-    let band = u32(clamp(i32(position.y * 7.0 / size.y), 0, 6));
+    var masks = array<u32, 6>(3u, 5u, 7u, 9u, 13u, 14u);
+    let band = u32(clamp(i32(position.y * 6.0 / size.y), 0, 5));
     let m = masks[band];
     var mask = bitcast<u32>(b[m / 4u][m % 4u]);
     while (mask != 0u) {
@@ -693,8 +638,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     for (var i = 0u; i < 4u; i++) {
         let fi = f32(i);
         let foot = vec2<f32>(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        let angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
-        let dir = vec2<f32>(cos(angle), -sin(angle));
+        var beams = array<u32, 4>(8u, 11u, 12u, 15u);
+        let k = beams[i];
+        let dir = unpack2x16float(bitcast<u32>(b[k / 4u][k % 4u]));
         let rel = position - foot;
         let along = dot(rel, dir);
         if (along > 0.0) {
@@ -757,8 +703,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// from the window's size (`Prism::window`, points in 13 and 14): the beat,
 /// the middle and high bands (0 to 2), the 32 spots' centres in device
 /// pixels (16 to 79), where the tracks the program no longer reads were,
-/// and for each seventh of the window's height, top down, a mask of the
-/// spots reaching it (3, 5, 7, 9, 13, 14, 15), so a pixel tests those alone.
+/// for each sixth of the window's height, top down, a mask of the spots
+/// reaching it (3, 5, 7, 9, 13, 14), so a pixel tests those alone, and the
+/// beams' directions as pairs of half floats (8, 11, 12, 15).
 fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [_, middle, high, beat] = bands(u, time);
     let s = u[10];
@@ -770,8 +717,8 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     u[1] = middle;
     u[2] = high;
     let swell = 1.0 + 0.6 * u[0];
-    let band = size.1 / 7.0;
-    let mut masks = [0u32; 7];
+    let band = size.1 / 6.0;
+    let mut masks = [0u32; 6];
     for i in 0..32 {
         let fi = i as f32;
         let h1 = (fi * 0.618_034 + 0.31).fract();
@@ -783,8 +730,8 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
         u[17 + 2 * i] = at.1;
         let radius = s * (10.0 + 14.0 * h1) * swell;
         if band > 0.0 && at.0 + radius > 0.0 && at.0 - radius < size.0 {
-            let top = ((at.1 - radius) / band).floor().clamp(0.0, 6.0) as usize;
-            let foot = ((at.1 + radius) / band).floor().clamp(0.0, 6.0) as usize;
+            let top = ((at.1 - radius) / band).floor().clamp(0.0, 5.0) as usize;
+            let foot = ((at.1 + radius) / band).floor().clamp(0.0, 5.0) as usize;
             if at.1 + radius > 0.0 && at.1 - radius < size.1 {
                 for mask in &mut masks[top..=foot] {
                     *mask |= 1 << i;
@@ -792,8 +739,13 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
             }
         }
     }
-    for (slot, mask) in [3, 5, 7, 9, 13, 14, 15].into_iter().zip(masks) {
+    for (slot, mask) in [3, 5, 7, 9, 13, 14].into_iter().zip(masks) {
         u[slot] = f32::from_bits(mask);
+    }
+    for (i, slot) in [8, 11, 12, 15].into_iter().enumerate() {
+        let fi = i as f32;
+        let angle = 1.5708 + (time * (0.5 + 0.13 * fi) + fi * 1.7).sin() * 0.55;
+        u[slot] = pack_halves(angle.cos(), -angle.sin());
     }
 }
 
@@ -978,7 +930,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// The party over the page: six lasers criss-crossing from the window's top
 /// corners, brighter with the high band; pyro shooting up from its foot on
 /// each beat, taller with the low band (brat's in lime); glossy hearts
-/// floating up through it, swaying. A `Prism` program; nothing flashes.
+/// floating up through it, swaying; and the beat's glow in from the window's
+/// edges, widening and brightening on each beat, the palette running round
+/// it. A `Prism` program; nothing flashes.
 static PARTY: ShaderProgram = ShaderProgram {
     name: "koan-prism-party",
     msl: concat!(
@@ -1083,6 +1037,15 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             float3 c = mix(koan_prism(h.z + time * 0.05, u[4]), float3(1.0, 0.6, 0.8), 0.3);
             koan_party_blend(colour, alpha, mix(c, float3(1.0), shine * 0.8), body * 0.8);
         }
+    }
+    // The beat's glow in from the window's edges, the palette running round
+    // it: under a level past five and a half widths in.
+    float edge = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
+    float width = s * (10.0 + 30.0 * u[19] + 8.0 * low);
+    if (edge < width * 5.6) {
+        float along = (position.x + position.y) / (size.x + size.y);
+        float glow = exp(-edge / max(width, 1.0)) * (0.10 + 0.55 * u[19]);
+        koan_party_blend(colour, alpha, koan_prism(along * 2.0 - time * 0.08, u[4]), glow);
     }
     return float4(colour, clamp(alpha * u[6], 0.0, 0.9));
 }
@@ -1193,6 +1156,16 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             }
         }
     }
+    let edge = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
+    let width = s * (10.0 + 30.0 * b[4].w + 8.0 * low);
+    if (edge < width * 5.6) {
+        let along = (position.x + position.y) / (size.x + size.y);
+        let glow = exp(-edge / max(width, 1.0)) * (0.10 + 0.55 * b[4].w);
+        if (glow > 0.0) {
+            colour = mix(colour, koan_prism(along * 2.0 - time * 0.08, b[1].x), glow / max(alpha + glow, 1e-4));
+            alpha = max(alpha, glow);
+        }
+    }
     return vec4<f32>(colour, clamp(alpha * b[1].z, 0.0, 0.9));
 }
 "#
@@ -1221,7 +1194,8 @@ const HEARTS: [[f32; 3]; 14] = [
 
 /// What every pixel of the party shares, worked out once a present from
 /// the window's size (`Prism::window`, points in 13 and 14): the low and
-/// high bands and the beat (16 to 18), the lasers' directions (20 to 31),
+/// high bands, the beat as the party and as the edges' glow read it (16 to
+/// 19), the lasers' directions (20 to 31),
 /// each flame's height as a share of the tallest (32 to 36), each heart's
 /// centre in device pixels (38 to 65) and size (66 to 79), and for each
 /// seventh of the window's height, top down, a mask of the hearts reaching
@@ -1234,6 +1208,7 @@ fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     u[16] = low;
     u[17] = high;
     u[18] = beat_party;
+    u[19] = beat.max(0.0).powf(0.8);
     for i in 0..6 {
         let fi = i as f32;
         let side = if i < 3 { 1.0 } else { -1.0 };
@@ -1445,14 +1420,10 @@ impl Prism {
         AnimatedQuad::new(&DISCO, &self.animated).decorative()
     }
 
-    /// The party over the page: lasers, pyro on the beat, floating hearts.
+    /// The party over the page: lasers, pyro on the beat, floating hearts,
+    /// and the beat's glow at the window's edges.
     pub fn party(&self) -> AnimatedQuad {
         AnimatedQuad::new(&PARTY, &self.animated).decorative()
-    }
-
-    /// The beat's glow at the window's edges, over the page.
-    pub fn pulse(&self) -> AnimatedQuad {
-        AnimatedQuad::new(&PRISM_PULSE, &self.animated).decorative()
     }
 
     /// The mirror ball, as large as it is laid out.

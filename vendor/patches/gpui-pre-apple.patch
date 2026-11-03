@@ -1,5 +1,5 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..96bb313 100644
+index 862e62a..f4090e2 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
 @@ -126,6 +126,26 @@ pub struct MetalRenderer {
@@ -76,7 +76,7 @@ index 862e62a..96bb313 100644
      ) -> Result<metal::CommandBuffer> {
          let mut writer = InstanceBufferWriter::new(
              &self.device,
-@@ -589,6 +633,7 @@ impl MetalRenderer {
+@@ -589,11 +633,13 @@ impl MetalRenderer {
              &mut writer,
              texture,
              viewport_size,
@@ -84,7 +84,14 @@ index 862e62a..96bb313 100644
          )?;
  
          let instance_buffer_pool = self.instance_buffer_pool.clone();
-@@ -627,7 +672,7 @@ impl MetalRenderer {
+         let instance_buffer = Cell::new(Some(writer.finish()));
+-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
++        let block = RcBlock::new(move |buffer: ptr::NonNull<AnyObject>| {
++            note_gpu_time(buffer); // KOAN: #2034.
+             if let Some(instance_buffer) = instance_buffer.take() {
+                 instance_buffer_pool.lock().release(instance_buffer);
+             }
+@@ -627,7 +673,7 @@ impl MetalRenderer {
              .next_drawable()
              .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
  
@@ -93,7 +100,7 @@ index 862e62a..96bb313 100644
  
          // Commit and wait for completion without presenting
          command_buffer.commit();
-@@ -655,6 +700,7 @@ impl MetalRenderer {
+@@ -655,6 +701,7 @@ impl MetalRenderer {
          objc2::rc::autoreleasepool(|_| {
              // Update path intermediate textures for this size
              self.update_path_intermediate_textures(size);
@@ -101,7 +108,7 @@ index 862e62a..96bb313 100644
  
              // Create an offscreen texture as render target
              let texture_descriptor = metal::TextureDescriptor::new();
-@@ -674,7 +720,7 @@ impl MetalRenderer {
+@@ -674,7 +721,7 @@ impl MetalRenderer {
              });
              let target_texture = self.device.new_texture(&texture_descriptor);
  
@@ -110,7 +117,7 @@ index 862e62a..96bb313 100644
  
              // Managed textures require an explicit blit synchronize before the CPU
              // can read back the rendered data. Without this, get_bytes returns
-@@ -693,6 +739,53 @@ impl MetalRenderer {
+@@ -693,6 +740,53 @@ impl MetalRenderer {
          })
      }
  
@@ -164,7 +171,7 @@ index 862e62a..96bb313 100644
      /// Renders a scene to a reused offscreen texture without reading pixels
      /// back or blocking on GPU completion.
      ///
-@@ -728,7 +821,7 @@ impl MetalRenderer {
+@@ -728,7 +822,7 @@ impl MetalRenderer {
                  .clone()
                  .expect("just ensured the render target exists");
  
@@ -173,7 +180,7 @@ index 862e62a..96bb313 100644
  
              // Commit without waiting, mirroring presentation to a real window where
              // the CPU doesn't block on the GPU.
-@@ -744,10 +837,11 @@ impl MetalRenderer {
+@@ -744,10 +838,11 @@ impl MetalRenderer {
          writer: &mut InstanceBufferWriter,
          texture: &metal::TextureRef,
          viewport_size: Size<DevicePixels>,
@@ -186,7 +193,7 @@ index 862e62a..96bb313 100644
  
          let mut command_encoder = new_command_encoder_for_texture(
              command_buffer,
-@@ -813,6 +907,21 @@ impl MetalRenderer {
+@@ -813,6 +908,21 @@ impl MetalRenderer {
                          viewport_size,
                          command_encoder,
                      ),
@@ -208,7 +215,7 @@ index 862e62a..96bb313 100644
                  PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                      &scene.surfaces[range.clone()],
                      range.start,
-@@ -911,6 +1020,12 @@ impl MetalRenderer {
+@@ -911,6 +1021,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
@@ -221,7 +228,7 @@ index 862e62a..96bb313 100644
          command_encoder.set_vertex_buffer(
              ShadowInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -941,6 +1056,361 @@ impl MetalRenderer {
+@@ -941,6 +1057,362 @@ impl MetalRenderer {
          );
      }
  
@@ -399,7 +406,8 @@ index 862e62a..96bb313 100644
 +
 +        let instance_buffer_pool = self.instance_buffer_pool.clone();
 +        let instance_buffer = Cell::new(Some(writer.finish()));
-+        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
++        let block = RcBlock::new(move |buffer: ptr::NonNull<AnyObject>| {
++            note_gpu_time(buffer); // KOAN: #2034.
 +            if let Some(instance_buffer) = instance_buffer.take() {
 +                instance_buffer_pool.lock().release(instance_buffer);
 +            }
@@ -583,7 +591,7 @@ index 862e62a..96bb313 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -953,6 +1423,12 @@ impl MetalRenderer {
+@@ -953,6 +1425,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
@@ -596,7 +604,7 @@ index 862e62a..96bb313 100644
          command_encoder.set_vertex_buffer(
              QuadInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1066,6 +1542,12 @@ impl MetalRenderer {
+@@ -1066,6 +1544,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
@@ -609,7 +617,7 @@ index 862e62a..96bb313 100644
          command_encoder.set_vertex_buffer(
              UnderlineInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1116,6 +1598,12 @@ impl MetalRenderer {
+@@ -1116,6 +1600,12 @@ impl MetalRenderer {
              DevicePixels(texture.height() as i32),
          );
          command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
@@ -622,7 +630,7 @@ index 862e62a..96bb313 100644
          command_encoder.set_vertex_buffer(
              SpriteInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1486,8 +1974,285 @@ struct InstanceBindings {
+@@ -1486,8 +1976,285 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
@@ -795,8 +803,8 @@ index 862e62a..96bb313 100644
 +        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
 +    }
 +    return koan_bezier_curve(y1, y2, s);
- }
- 
++}
++
 +float koan_spring(float x0, float v0, float k, float c, float t) {
 +    float w = sqrt(max(k, 1e-3));
 +    float z = c / (2.0 * w);
@@ -863,8 +871,8 @@ index 862e62a..96bb313 100644
 +        tile.xy + tile.zw - 0.5
 +    );
 +    return image.sample(linear, at / extent);
-+}
-+
+ }
+ 
 +struct KoanShaderVarying {
 +    float4 position [[position]];
 +    float2 local;
@@ -908,7 +916,7 @@ index 862e62a..96bb313 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2264,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2266,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -939,7 +947,7 @@ index 862e62a..96bb313 100644
      })
  }
  
-@@ -1799,4 +2588,661 @@ mod tests {
+@@ -1799,4 +2590,679 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
@@ -1349,6 +1357,24 @@ index 862e62a..96bb313 100644
 +}
 +
 +// KOAN: layer groups (#1859, #1878).
++// KOAN: (#2034) a finished command buffer's time on the GPU, for
++// `gpui::take_gpu_times`, while a measurement keeps them.
++fn note_gpu_time(buffer: ptr::NonNull<AnyObject>) {
++    if !gpui::gpu_timing_on() {
++        return;
++    }
++    // SAFETY: the completed handler is handed the command buffer, an
++    // MTLCommandBuffer, which answers both selectors.
++    let (start, end): (f64, f64) = unsafe {
++        let buffer = buffer.as_ref();
++        (
++            objc2::msg_send![buffer, GPUStartTime],
++            objc2::msg_send![buffer, GPUEndTime],
++        )
++    };
++    gpui::record_gpu_time(end - start);
++}
++
 +#[cfg(test)]
 +mod layer_group_tests {
 +    use gpui::{

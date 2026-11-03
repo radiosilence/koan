@@ -26,7 +26,6 @@ enum Layers {
     Wash,
     Disco,
     Party,
-    Pulse,
     Ball,
     All,
 }
@@ -45,7 +44,6 @@ impl Render for Window_ {
             Layers::Wash => vec![p.wash().size_full().into_any_element()],
             Layers::Disco => vec![p.disco().size_full().into_any_element()],
             Layers::Party => vec![p.party().size_full().into_any_element()],
-            Layers::Pulse => vec![p.pulse().size_full().into_any_element()],
             Layers::Ball => vec![
                 div()
                     .absolute()
@@ -61,7 +59,6 @@ impl Render for Window_ {
                 div().size_full().bg(rgb(0x202020)).into_any_element(),
                 p.disco().size_full().into_any_element(),
                 p.party().size_full().into_any_element(),
-                p.pulse().size_full().into_any_element(),
                 div()
                     .absolute()
                     .top(px(52.0))
@@ -105,7 +102,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         Layers::Wash,
         Layers::Disco,
         Layers::Party,
-        Layers::Pulse,
         Layers::Ball,
         Layers::All,
     ];
