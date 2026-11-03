@@ -52,6 +52,9 @@ final class OrganizeModel {
     private(set) var previewing = false
     private(set) var running = false
     private(set) var error: String?
+    /// The error is a run's, and stays above the plan previewed after it
+    /// until the person changes something.
+    private var errorFromRun = false
 
     /// The selection, read once when the sheet opens. Patterns are generated
     /// against it — no database, no filesystem — which is what makes typing
@@ -189,6 +192,7 @@ final class OrganizeModel {
     /// Only the disk pass inside `refreshPreview` is deferred.
     private func schedulePreview() {
         guard subject != nil, selection != nil, !configuring else { return }
+        errorFromRun = false
         refreshPreview()
     }
 
@@ -216,7 +220,7 @@ final class OrganizeModel {
             let fast = await selection.generate(pattern: pattern, baseDir: base)
             guard requested == generation else { return }
             plan = fast
-            error = nil
+            if !errorFromRun { error = nil }
 
             let checked = await selection.check(
                 pattern: pattern, baseDir: base, moveAncillary: ancillary
@@ -281,7 +285,9 @@ final class OrganizeModel {
                 previewing = false
                 self.plan = nil
                 error = String(describing: failure)
-                // Read again, so the plan shown is the one a second press runs.
+                errorFromRun = true
+                // Read again, so the plan shown is the one a second press runs;
+                // the message stays above it until the person changes something.
                 resolveSelection(trackIds: subject.trackIds)
             }
         }

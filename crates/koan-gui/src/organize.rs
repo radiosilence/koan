@@ -199,10 +199,11 @@ impl OrganizeSheet {
         }));
     }
 
-    /// Reads the selection again after a move that left some files behind:
-    /// the ones that moved are at new paths, which the next preview must
-    /// start from. The result stays on screen meanwhile; previews wait for
-    /// the new selection.
+    /// Reads the selection again after a move that left some files behind,
+    /// or one refused: the ones that moved are at new paths, which the next
+    /// preview must start from, and a library that changed under the plan
+    /// gives a new one. Previews again once it lands, the line saying what
+    /// happened kept above the new plan.
     fn reread(&mut self, cx: &mut Context<Self>) {
         self.selection = None;
         let read = engine(cx).organize_selection(Some(self.track_ids.clone()));
@@ -210,7 +211,12 @@ impl OrganizeSheet {
             let selection = read.await;
             this.update(cx, |this, cx| {
                 match selection {
-                    Ok(selection) => this.selection = Some(selection),
+                    Ok(selection) => {
+                        this.selection = Some(selection);
+                        let said = this.error.take();
+                        this.preview(cx);
+                        this.error = said;
+                    }
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
                 cx.notify();

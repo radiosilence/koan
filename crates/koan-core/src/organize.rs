@@ -230,6 +230,31 @@ enum Selection<'a> {
     Paths(&'a [PathBuf]),
 }
 
+/// What a resolved selection was read for, kept so it can be read again.
+enum Asked {
+    All,
+    TrackIds(Vec<i64>),
+    Paths(Vec<PathBuf>),
+}
+
+impl Asked {
+    fn of(selection: &Selection<'_>) -> Self {
+        match selection {
+            Selection::All => Self::All,
+            Selection::TrackIds(ids) => Self::TrackIds(ids.to_vec()),
+            Selection::Paths(paths) => Self::Paths(paths.to_vec()),
+        }
+    }
+
+    fn selection(&self) -> Selection<'_> {
+        match self {
+            Self::All => Selection::All,
+            Self::TrackIds(ids) => Selection::TrackIds(ids),
+            Self::Paths(paths) => Selection::Paths(paths),
+        }
+    }
+}
+
 /// Album fields a track inherits: both come from the album row, not the track row.
 #[derive(Default, Clone)]
 struct AlbumFacts {
@@ -238,6 +263,7 @@ struct AlbumFacts {
 }
 
 /// A source file with the metadata its destination will be built from.
+#[derive(PartialEq)]
 struct ResolvedTrack {
     source: PathBuf,
     track_id: Option<i64>,
@@ -245,6 +271,7 @@ struct ResolvedTrack {
 }
 
 /// Metadata provider backed by a HashMap, for evaluating format strings against track data.
+#[derive(PartialEq)]
 struct TrackMetadata {
     fields: HashMap<String, String>,
 }
@@ -685,9 +712,9 @@ fn resolve_from_paths(
 /// once here and formats many times against the result.
 pub struct ResolvedSelection {
     tracks: Vec<ResolvedTrack>,
-    /// The library's version when it was read: `execute_resolved` refuses
-    /// once the library has moved past it.
-    library_version: u64,
+    /// What it was read for: `execute_resolved` reads it again just before
+    /// moving anything, and refuses unless the tracks read are the same.
+    asked: Asked,
 }
 
 impl ResolvedSelection {
@@ -721,9 +748,7 @@ fn resolve_selection(
     db: &Database,
     selection: Selection<'_>,
 ) -> Result<ResolvedSelection, OrganizeError> {
-    // Read before the rows, so a change landing while they are read counts
-    // as after the selection.
-    let library_version = queries::library_version();
+    let asked = Asked::of(&selection);
     let albums = load_album_facts(&db.conn)?;
     let tracks = match selection {
         Selection::All => resolve_from_rows(queries::all_tracks(&db.conn)?, &albums),
@@ -738,10 +763,7 @@ fn resolve_selection(
         }
         Selection::Paths(paths) => resolve_from_paths(db, paths, &albums)?,
     };
-    Ok(ResolvedSelection {
-        tracks,
-        library_version,
-    })
+    Ok(ResolvedSelection { tracks, asked })
 }
 
 /// Turn a pattern into destinations. **Touches no files at all.**
@@ -808,14 +830,16 @@ fn run(
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
     let result = plan(db, selection, pattern, base_dir, true)?;
-    carry_out(db, result, base_dir)
+    carry_out(db, result, base_dir, &|| Ok(()))
 }
 
 /// Carry out exactly the plan previewed from `selection`: generated from the
 /// tracks it read, with `move_ancillary` as the preview had it, never from a
 /// fresh read of the library. Refused with `LibraryChanged`, nothing moved,
-/// when the library has changed since the selection was read, since the
-/// files and their tags may no longer be what was previewed.
+/// unless the library still holds those tracks as they were read: the same
+/// rows, from the same files, with the same fields the pattern reads. Read
+/// again just before the first move, so a write from any process (the Mac
+/// app, the terminal UI, `koan scan`) or a scan still under way is caught.
 pub fn execute_resolved(
     db: &Database,
     selection: &ResolvedSelection,
@@ -823,21 +847,28 @@ pub fn execute_resolved(
     base_dir: Option<&Path>,
     move_ancillary: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
-    if queries::library_version() != selection.library_version {
-        return Err(OrganizeError::LibraryChanged);
-    }
     let base = resolve_base_dir(base_dir)?;
     let mut result = generate(selection, pattern, &base);
     check_against_disk(&mut result, move_ancillary);
-    carry_out(db, result, &base)
+    let unchanged = || {
+        let again = resolve_selection(db, selection.asked.selection())?;
+        if again.tracks == selection.tracks {
+            Ok(())
+        } else {
+            Err(OrganizeError::LibraryChanged)
+        }
+    };
+    carry_out(db, result, &base, &unchanged)
 }
 
 /// Move the files a checked plan names, and report the plan with each move's
-/// outcome.
+/// outcome. `still` is asked once, after every check and before the first
+/// move: an error there moves nothing.
 fn carry_out(
     db: &Database,
     mut result: OrganizeResult,
     base_dir: &Path,
+    still: &dyn Fn() -> Result<(), OrganizeError>,
 ) -> Result<OrganizeResult, OrganizeError> {
     let pending: Vec<FileMove> = result
         .entries
@@ -849,6 +880,7 @@ fn carry_out(
     }
 
     check_free_space(&pending, base_dir)?;
+    still()?;
 
     let batch_id = batch_id();
     let floors = cleanup_floors(Some(base_dir));
@@ -1814,7 +1846,13 @@ mod tests {
         let out = lib.path().join("out");
 
         let selection = resolve(&db, Some(&[id])).unwrap();
-        queries::library_written();
+        // Another process retitles it: no counter here moves.
+        db.conn
+            .execute(
+                "UPDATE tracks SET title = 'Other' WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
         assert!(matches!(
             execute_resolved(&db, &selection, "%title%", Some(&out), true),
             Err(OrganizeError::LibraryChanged)
@@ -1822,6 +1860,8 @@ mod tests {
         assert!(src.exists(), "nothing moved");
 
         let selection = resolve(&db, Some(&[id])).unwrap();
+        // Written again as it was: the plan stands.
+        queries::library_written();
         let done = execute_resolved(&db, &selection, "%title%", Some(&out), false).unwrap();
         assert_eq!(
             done.entries
