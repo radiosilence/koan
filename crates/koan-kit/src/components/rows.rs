@@ -32,6 +32,7 @@ pub struct NavRow {
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
+    spot: Option<super::CursorSpot>,
     on_click: Option<Handler<ClickEvent>>,
     accepts: Vec<Accept>,
     arrivals: Option<u64>,
@@ -66,6 +67,7 @@ impl NavRow {
             trailing: None,
             selected: false,
             cursor: false,
+            spot: None,
             on_click: None,
             accepts: Vec::new(),
             arrivals: None,
@@ -93,6 +95,14 @@ impl NavRow {
                 handler(dropped, window, cx)
             })
         }));
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -252,7 +262,7 @@ impl RenderOnce for NavRow {
             })
             .children(
                 (self.cursor && window.last_input_was_keyboard())
-                    .then(|| super::cursor_ring(&look)),
+                    .then(|| super::cursor_ring(&look, self.spot.as_ref())),
             )
     }
 }
