@@ -125,14 +125,15 @@ pub struct CentreRows {
 /// equally among the gaps, so the grid's first and last columns stand on the
 /// page's margin, in line with its header and rows, and a column is added
 /// only once another tile fits at the least gap, or dropped once one no
-/// longer does. One tile alone is centred.
+/// longer does. One tile alone stands on the left margin too, the spare
+/// width beside it, so the first column is level with the header at every
+/// width.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileColumns {
     pub columns: usize,
     pub side: Pixels,
     pub gap: Pixels,
-    /// Each side's margin: the page's, or with one tile its half of the
-    /// spare width too.
+    /// Each side's margin: the page's.
     pub inset: Pixels,
 }
 
@@ -162,7 +163,7 @@ impl TileColumns {
             } else {
                 0.0
             }),
-            inset: px(margin + if columns > 1 { 0.0 } else { spare / 2.0 }),
+            inset: px(margin),
         }
     }
 }
@@ -314,8 +315,7 @@ pub struct TileGrid {
     pub gap: Pixels,
     /// The margin asked for: above the first row and below the last.
     pub margin: Pixels,
-    /// Either side of a row: the margin asked for, or with one tile its half
-    /// of the spare width too.
+    /// Either side of a row: the margin asked for.
     pub inset: Pixels,
     /// A row's height, its spacing below included.
     pub row: Pixels,

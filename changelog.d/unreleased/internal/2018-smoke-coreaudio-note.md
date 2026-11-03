@@ -1,0 +1,1 @@
+- **The smoke run says why its playing phase can be short.** The first seek can wait on the audio daemon opening the output.

@@ -1,0 +1,1 @@
+- **Covers from a slow server.** A server that takes a few seconds for every cover, such as a small board resizing each one, keeps fetching several at once rather than one at a time.

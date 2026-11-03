@@ -142,6 +142,7 @@ impl DevicesPane {
                     let (signed, declined) = (device.clone(), device.clone());
                     let who = username.clone();
                     let sheet = Sheet::new(format!("Sign in {device}?"))
+                        .about(typed.clone())
                         .message(format!(
                             "{origin}\n\nIt will be signed in as {username} on {host_name}. Allow only a device you are setting up yourself: anyone can give a device any name."
                         ))

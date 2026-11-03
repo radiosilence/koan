@@ -29,10 +29,14 @@ use koan_runtime::KoanEngine;
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
 
-/// Where bare keys are live: inside the window, outside any text field, and
-/// not while a question or a menu holds the keyboard, where space would
-/// otherwise play behind it.
-const BARE_CONTEXT: &str = "koan && !Input && !Ask && !KoanMenu";
+/// Where the menus' shortcuts are live: inside the window, and not while a
+/// sheet or question over it holds the keyboard (`sheet::MODAL`), so none
+/// acts behind a confirmation.
+const MENU_CONTEXT: &str = "koan && !Modal";
+
+/// Where bare keys are live: as the menus' shortcuts, and outside any text
+/// field or menu, where space would otherwise play behind it.
+const BARE_CONTEXT: &str = "koan && !Input && !Modal && !KoanMenu";
 
 /// What the shell's text fields call their context (gpui-base's `Input`).
 #[cfg(test)]
@@ -432,20 +436,24 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     let os = cx.platform_info().os;
     let mac = os == OperatingSystem::Mac;
     let window = Rc::new(KeyBindingContextPredicate::parse(CONTEXT).expect("a valid context"));
+    let menus = Rc::new(KeyBindingContextPredicate::parse(MENU_CONTEXT).expect("a valid context"));
     let bare = Rc::new(KeyBindingContextPredicate::parse(BARE_CONTEXT).expect("a valid context"));
     let mut bindings = Vec::new();
     // The menu tables first: the macOS menu shows an action's first binding.
-    for shortcut in MENU.iter().chain(
+    // The application's (quit, hide, settings) stay live over a sheet; the
+    // rest wait until it is gone.
+    for (shortcut, when) in MENU.iter().map(|s| (s, &menus)).chain(
         APPLICATION
             .iter()
-            .filter(|s| mac || !s.keys[0].starts_with("cmd-")),
+            .filter(|s| mac || !s.keys[0].starts_with("cmd-"))
+            .map(|s| (s, &window)),
     ) {
         for key in shortcut.keys {
             push(
                 &mut bindings,
                 key,
                 (shortcut.action)(),
-                Some(window.clone()),
+                Some(when.clone()),
                 cx,
             );
         }
@@ -466,7 +474,7 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     // Tab stays inside a question or menu over the window (`step_focus`);
     // F6, which leaves for another region, is not bound there.
     let regions = Rc::new(
-        KeyBindingContextPredicate::parse("koan && !Ask && !KoanMenu").expect("a valid context"),
+        KeyBindingContextPredicate::parse("koan && !Modal && !KoanMenu").expect("a valid context"),
     );
     for (key, action, when) in [
         ("tab", FocusNext.boxed_clone(), &window),
@@ -479,7 +487,7 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     // Not under a menu or a question opened over the list: their keys are
     // their own, as the bare table's are.
     let lists = Rc::new(
-        KeyBindingContextPredicate::parse("List && !Input && !Ask && !KoanMenu")
+        KeyBindingContextPredicate::parse("List && !Input && !Modal && !KoanMenu")
             .expect("a valid context"),
     );
     for shortcut in LISTS {
@@ -675,6 +683,37 @@ mod tests {
             winner(bindings(), "backspace", &browsing),
             "koan_bare::Delete"
         );
+    }
+
+    koan_kit::app::actions!(modal, [ModalBack, ModalQuit]);
+
+    /// Over a sheet or a question, neither a menu's shortcut nor a bare key
+    /// reaches the page behind; the application's own still quit.
+    #[test]
+    fn nothing_acts_behind_a_sheet() {
+        let bindings = || {
+            vec![
+                KeyBinding::new("cmd-[", ModalBack, Some(MENU_CONTEXT)),
+                KeyBinding::new("cmd-q", ModalQuit, Some(CONTEXT)),
+                KeyBinding::new("backspace", bare::Delete, Some(BARE_CONTEXT)),
+            ]
+        };
+        let page = ["Root", CONTEXT];
+        assert_eq!(winner(bindings(), "cmd-[", &page), "modal::ModalBack");
+        assert_eq!(winner(bindings(), "backspace", &page), "koan_bare::Delete");
+        for over in [
+            ["Root", CONTEXT, koan_kit::components::sheet::MODAL, "Ask"],
+            [
+                "Root",
+                CONTEXT,
+                koan_kit::components::sheet::MODAL,
+                "Shortcuts",
+            ],
+        ] {
+            assert_eq!(winner(bindings(), "cmd-[", &over), "");
+            assert_eq!(winner(bindings(), "backspace", &over), "");
+            assert_eq!(winner(bindings(), "cmd-q", &over), "modal::ModalQuit");
+        }
     }
 
     #[test]
