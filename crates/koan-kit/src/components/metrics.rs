@@ -122,15 +122,17 @@ pub struct CentreRows {
 ///
 /// The tiles keep one size whatever the width. A window being resized moves
 /// the tiles apart rather than growing them: the spare width is shared out
-/// equally among the gaps and the two side margins, so the grid's edge stays
-/// near the page's margin, and a column is added only once another tile fits
-/// at the least gap, or dropped once one no longer does.
+/// equally among the gaps, so the grid's first and last columns stand on the
+/// page's margin, in line with its header and rows, and a column is added
+/// only once another tile fits at the least gap, or dropped once one no
+/// longer does. One tile alone is centred.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileColumns {
     pub columns: usize,
     pub side: Pixels,
     pub gap: Pixels,
-    /// Each side's margin: the page's, and its share of the spare width.
+    /// Each side's margin: the page's, or with one tile its half of the
+    /// spare width too.
     pub inset: Pixels,
 }
 
@@ -150,17 +152,17 @@ impl TileColumns {
         let side = Self::SIDE.min(usable.floor());
         let spare =
             (usable - side * columns as f32 - Self::MIN_GAP * (columns as f32 - 1.0)).max(0.0);
-        // The gaps between columns and the two margins share the spare width.
-        let share = spare / (columns as f32 + 1.0);
+        // The gaps between columns share the spare width; the margins stay
+        // the page's.
         Self {
             columns,
             side: px(side),
             gap: px(if columns > 1 {
-                Self::MIN_GAP + share
+                Self::MIN_GAP + spare / (columns as f32 - 1.0)
             } else {
                 0.0
             }),
-            inset: px(margin + if columns > 1 { share } else { spare / 2.0 }),
+            inset: px(margin + if columns > 1 { 0.0 } else { spare / 2.0 }),
         }
     }
 }
@@ -312,8 +314,8 @@ pub struct TileGrid {
     pub gap: Pixels,
     /// The margin asked for: above the first row and below the last.
     pub margin: Pixels,
-    /// Either side of a row: the margin asked for and a share of the spare
-    /// width.
+    /// Either side of a row: the margin asked for, or with one tile its half
+    /// of the spare width too.
     pub inset: Pixels,
     /// A row's height, its spacing below included.
     pub row: Pixels,

@@ -510,10 +510,12 @@ impl AlbumGrid {
         let revision = self.selection.revision();
         let entity = cx.entity();
         let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
-            entity.update(cx, |this, cx| {
-                this.selection.end();
-                cx.notify();
-            })
+            entity
+                .update(cx, |this, cx| {
+                    this.selection.end();
+                    cx.notify();
+                })
+                .ok();
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
@@ -1057,17 +1059,19 @@ impl super::keys::KeyedList for AlbumGrid {
     }
 
     fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
-        let entity = cx.entity();
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
             actions::keyed_target(
                 &self.selection,
                 Playable::Album(self.records[ix].id),
                 None,
                 Some(std::rc::Rc::new(move |cx: &mut App| {
-                    entity.update(cx, |this, cx| {
-                        this.selection.end();
-                        cx.notify();
-                    })
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
                 })),
             )
         });

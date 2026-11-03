@@ -478,7 +478,7 @@ impl Render for DevicesPane {
             &look,
         ));
 
-        sections.push(background(&settings, &model, entity.clone(), &look, cx));
+        sections.push(background(&settings, &model, &look, cx));
 
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
@@ -720,7 +720,6 @@ impl Render for DevicesPane {
 fn background(
     settings: &koan_ffi::Settings,
     model: &Entity<crate::settings::model::SettingsModel>,
-    pane: Entity<impl Render>,
     look: &Look,
     cx: &App,
 ) -> AnyElement {
@@ -737,13 +736,17 @@ fn background(
             Toggle::new("keep-running", label, settings.devices_keep_running)
                 .on_change(move |on, _, cx| {
                     let on = *on;
-                    model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_keep_running = on));
-                    residency::apply(on, cx);
+                    // Applied once it is in the file: a write that fails
+                    // leaves kōan as the file says.
+                    model.update(cx, |m, cx| {
+                        m.edit(cx, move |s| s.devices_keep_running = on);
+                        m.when_written(cx, move |_, cx| residency::apply(on, cx));
+                    });
                 })
                 .into_any_element(),
         );
     }
-    let login = residency::login();
+    let login = residency::login(cx);
     if login != Login::Unavailable {
         rows.push(
             Toggle::new(
@@ -751,11 +754,7 @@ fn background(
                 "Open at login",
                 matches!(login, Login::On | Login::NeedsApproval),
             )
-            .on_change(move |on, _, cx| {
-                residency::set_login(*on, cx);
-                // What the system now says shows at once.
-                pane.update(cx, |_, cx| cx.notify());
-            })
+            .on_change(move |on, _, cx| residency::set_login(*on, cx))
             .into_any_element(),
         );
     }

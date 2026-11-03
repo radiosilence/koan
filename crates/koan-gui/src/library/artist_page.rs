@@ -1057,7 +1057,7 @@ impl super::keys::KeyedList for ArtistPage {
     }
 
     fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
-        let entity = cx.entity();
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
             let item = self.order()[ix];
             let album = match (item, &self.record) {
@@ -1073,10 +1073,12 @@ impl super::keys::KeyedList for ArtistPage {
                 item,
                 album,
                 Some(std::rc::Rc::new(move |cx: &mut App| {
-                    entity.update(cx, |this, cx| {
-                        this.selection.end();
-                        cx.notify();
-                    })
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
                 })),
             )
         });
