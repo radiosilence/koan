@@ -41,6 +41,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(Engine(engine.clone()));
     // Reads the engine's appearance and the mirror's playback.
     crate::rainbow::install(cx);
+    crate::tv_wake::install(cx);
     Covers::install(cx);
     crate::levels::install(cx);
     crate::platform::dock::follow(engine, cx);

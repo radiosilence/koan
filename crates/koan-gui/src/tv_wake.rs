@@ -6,8 +6,9 @@
 //! hangs up about half a minute after asking, so the code is asked for only
 //! once it is on screen.
 //!
-//! Offered from the TV's row in Play on ("set up waking…"); "stop waking"
-//! there undoes it.
+//! Offered from the TV's row in Play on ("set up waking…"), and once after
+//! a TV is signed in from here (Settings → Devices), as soon as it links,
+//! as the Mac's `SignedInHere` does; "stop waking" in Play on undoes it.
 
 use koan_kit::app::*;
 
@@ -16,6 +17,93 @@ use crate::components::{Button, ButtonKind, FieldState, InputEvent, Spinner, Tex
 use crate::engine::{engine, reported};
 use crate::paint::Paint;
 use crate::theme::{Space, Tone, TypeRole};
+
+/// How long after a sign-in from here the TV's linking is still taken as
+/// part of setting it up: later, it is no longer what the person is doing.
+const OFFER_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// A device just signed in from here: if it is an Apple TV, waking is offered
+/// once it links. Known by the id it links with, or by its name from a
+/// server that does not say the id, since two televisions are often called
+/// the same.
+struct SignedInHere {
+    id: Option<String>,
+    name: String,
+    at: std::time::Instant,
+}
+
+impl Global for SignedInHere {}
+
+/// Settings approved a device's sign-in.
+pub fn signed_in(id: Option<String>, name: String, cx: &mut App) {
+    cx.set_global(SignedInHere {
+        id,
+        name,
+        at: std::time::Instant::now(),
+    });
+}
+
+/// Watches the devices for a TV signed in from here arriving, and offers
+/// waking it once.
+pub fn install(cx: &mut App) {
+    let devices = cx.global::<crate::mirror::Mirror>().devices.clone();
+    cx.observe(&devices, |devices, cx| {
+        let Some(signed) = cx.try_global::<SignedInHere>() else {
+            return;
+        };
+        if signed.at.elapsed() > OFFER_WINDOW {
+            cx.remove_global::<SignedInHere>();
+            return;
+        }
+        let arrived = devices.read(cx).0.devices.iter().find(|d| {
+            d.tv_pairable
+                && !d.tv_paired
+                && d.awake
+                && match &signed.id {
+                    Some(id) => d.id == *id,
+                    None => d.name == signed.name,
+                }
+        });
+        let Some(tv) = arrived.map(|d| (d.id.clone(), d.name.clone())) else {
+            return;
+        };
+        cx.remove_global::<SignedInHere>();
+        offer(tv.0, tv.1, cx);
+    })
+    .detach();
+}
+
+/// "Wake the TV from here?", in the main window: set up opens the pairing.
+fn offer(id: String, name: String, cx: &mut App) {
+    let Some(main) = crate::app::main_window(cx) else {
+        return;
+    };
+    main.update(cx, |_, window, cx| {
+        ask::confirm(
+            ask::Confirm {
+                title: format!("wake {name} from here?").into(),
+                verb: "set up".into(),
+                destructive: false,
+                lines: vec![
+                    format!(
+                        "Choosing {name} from any of your devices on its network can turn the TV on and open kōan. {name} shows a code to type here, once."
+                    )
+                    .into(),
+                ],
+                note: None,
+            },
+            window,
+            cx,
+            move |cx| {
+                let (id, name) = (id.clone(), name.clone());
+                if let Some(main) = crate::app::main_window(cx) {
+                    main.update(cx, |_, window, cx| open(id, name, window, cx)).ok();
+                }
+            },
+        );
+    })
+    .ok();
+}
 
 /// Opens the sheet for the TV `id`, called `name`.
 pub fn open(id: String, name: String, window: &mut Window, cx: &mut App) {

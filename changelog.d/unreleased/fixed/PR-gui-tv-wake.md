@@ -1,1 +1,1 @@
-- **Waking an Apple TV from the kōan GUI app.** Choosing a TV that nothing can wake yet opens the pairing that lets it be turned on, rather than doing nothing, and Play on says why when choosing or forgetting a device fails.
+- **Waking an Apple TV from the kōan GUI app.** Choosing a TV that nothing can wake yet opens the pairing that lets it be turned on, rather than doing nothing; a TV signed in from Settings is offered waking as soon as it links, as on the Mac; and Play on says why when choosing or forgetting a device fails.
