@@ -599,12 +599,16 @@ pub fn reorder_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<
 }
 
 /// `order` with the entries `moving` names lifted out and put back, in the
-/// order they had, just before `before`: at the end when `before` is `None`
-/// or is not in `order`, and before the first entry after it that stays
-/// when it is itself moving. Every other entry keeps its place, so a caller
+/// order they had, just before `before`: at the end when `before` is `None`,
+/// and before the first entry after it that stays when it is itself moving.
+/// `None` when `before` names no entry of `order`. Every other entry keeps its place, so a caller
 /// that lists only some of the entries (offline, those with a file here)
 /// moves them among the rest without disturbing what it does not show.
-pub fn spliced(order: &[i64], moving: &[i64], before: Option<i64>) -> Vec<i64> {
+pub fn spliced(order: &[i64], moving: &[i64], before: Option<i64>) -> Option<Vec<i64>> {
+    let from = match before {
+        Some(b) => Some(order.iter().position(|e| *e == b)?),
+        None => None,
+    };
     let lifted: HashSet<i64> = moving.iter().copied().collect();
     let moved: Vec<i64> = order
         .iter()
@@ -616,17 +620,18 @@ pub fn spliced(order: &[i64], moving: &[i64], before: Option<i64>) -> Vec<i64> {
         .copied()
         .filter(|e| !lifted.contains(e))
         .collect();
-    let at = before
-        .and_then(|b| order.iter().position(|e| *e == b))
+    let at = from
         .and_then(|from| order[from..].iter().find(|e| !lifted.contains(e)))
         .and_then(|anchor| kept.iter().position(|e| e == anchor))
         .unwrap_or(kept.len());
     kept.splice(at..at, moved);
-    kept
+    Some(kept)
 }
 
 /// Moves the entries `moving` names to just before the entry `before` (the
 /// end when `None`), among all of the playlist's entries: see `spliced`.
+/// `MissingEntry` when `before` is no longer in the playlist, and the
+/// caller's transaction, an add before it included, rolls back.
 pub fn move_entries(
     conn: &Connection,
     id: i64,
@@ -638,7 +643,9 @@ pub fn move_entries(
             .into_iter()
             .map(|e| e.id)
             .collect();
-        reorder_entries(conn, id, &spliced(&order, moving, before))
+        let order = spliced(&order, moving, before)
+            .ok_or_else(|| DbError::MissingEntry(before.unwrap_or_default()))?;
+        reorder_entries(conn, id, &order)
     })
 }
 
@@ -978,12 +985,12 @@ mod splice_tests {
     #[test]
     fn moved_entries_land_before_the_anchor_in_their_order() {
         let order = [1, 2, 3, 4, 5];
-        assert_eq!(spliced(&order, &[4, 2], Some(1)), [2, 4, 1, 3, 5]);
-        assert_eq!(spliced(&order, &[1], None), [2, 3, 4, 5, 1]);
+        assert_eq!(spliced(&order, &[4, 2], Some(1)).unwrap(), [2, 4, 1, 3, 5]);
+        assert_eq!(spliced(&order, &[1], None).unwrap(), [2, 3, 4, 5, 1]);
         assert_eq!(
             spliced(&order, &[1], Some(99)),
-            [2, 3, 4, 5, 1],
-            "an unknown anchor is the end"
+            None,
+            "an anchor gone is no place"
         );
     }
 
@@ -991,15 +998,24 @@ mod splice_tests {
     /// before 3: the hidden entries keep their places.
     #[test]
     fn hidden_entries_keep_their_places() {
-        assert_eq!(spliced(&[1, 2, 3, 4, 5], &[5], Some(3)), [1, 2, 5, 3, 4]);
+        assert_eq!(
+            spliced(&[1, 2, 3, 4, 5], &[5], Some(3)).unwrap(),
+            [1, 2, 5, 3, 4]
+        );
     }
 
     /// An anchor that is itself moving means the first entry after it that
     /// stays.
     #[test]
     fn an_anchor_among_the_moved_is_the_next_that_stays() {
-        assert_eq!(spliced(&[1, 2, 3, 4], &[2, 3], Some(2)), [1, 2, 3, 4]);
-        assert_eq!(spliced(&[1, 2, 3, 4], &[3, 4], Some(3)), [1, 2, 3, 4]);
+        assert_eq!(
+            spliced(&[1, 2, 3, 4], &[2, 3], Some(2)).unwrap(),
+            [1, 2, 3, 4]
+        );
+        assert_eq!(
+            spliced(&[1, 2, 3, 4], &[3, 4], Some(3)).unwrap(),
+            [1, 2, 3, 4]
+        );
     }
 }
 
@@ -1018,6 +1034,39 @@ mod tests {
 
     fn track(conn: &Connection, title: &str, album: &str) -> i64 {
         upsert_track(conn, &sample_meta(title, "Artist", album)).unwrap()
+    }
+
+    /// Placing before an entry another device has removed writes nothing,
+    /// and an add in the same transaction goes back with it.
+    #[test]
+    fn a_place_that_is_gone_rolls_the_edit_back() {
+        let conn = test_conn();
+        let id = create_playlist(&conn, LOCAL_USER, "P", None).unwrap();
+        let (a, b, c) = (
+            track(&conn, "a", "x"),
+            track(&conn, "b", "x"),
+            track(&conn, "c", "x"),
+        );
+        let first = add_tracks(&conn, id, &[a, b]).unwrap();
+        let order = || -> Vec<i64> {
+            playlist_entries(&conn, id)
+                .unwrap()
+                .iter()
+                .map(|e| e.id)
+                .collect()
+        };
+        let gone = first[1];
+        remove_entries(&conn, id, &[gone]).unwrap();
+        assert!(matches!(
+            move_entries(&conn, id, &[first[0]], Some(gone)),
+            Err(DbError::MissingEntry(e)) if e == gone
+        ));
+        let inserted: Result<(), DbError> = crate::db::queries::atomically(&conn, || {
+            let added = add_tracks(&conn, id, &[c])?;
+            move_entries(&conn, id, &added, Some(gone))
+        });
+        assert!(inserted.is_err());
+        assert_eq!(order(), [first[0]], "the add went back with the place");
     }
 
     /// Edits are their own transaction, and nest inside a caller's: rolling

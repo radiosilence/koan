@@ -7596,7 +7596,8 @@ impl From<rusqlite::Error> for KoanError {
 /// person can be told about, not a database failure.
 fn playlist_write_err(e: koan_core::db::connection::DbError) -> KoanError {
     match e {
-        koan_core::db::connection::DbError::MissingTracks(_) => KoanError::NotFound {
+        koan_core::db::connection::DbError::MissingTracks(_)
+        | koan_core::db::connection::DbError::MissingEntry(_) => KoanError::NotFound {
             message: e.to_string(),
         },
         e => db_err(e),
