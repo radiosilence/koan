@@ -66,7 +66,9 @@ impl Playhead {
 #[derive(Default)]
 pub struct Queue {
     /// The rows as last sent whole, each with its status as it was then.
-    pub base: Vec<QueueItem>,
+    /// Shared, so a regroup hands it to the background executor without
+    /// copying fifty thousand rows on the main thread.
+    pub base: Arc<Vec<QueueItem>>,
     /// `base` with the latest patch applied: what a row reads now.
     pub items: Vec<QueueItem>,
     pub version: u64,
@@ -104,7 +106,7 @@ impl Queue {
         let track_rows = track_rows(&rows, &items);
         Self {
             items: items.clone(),
-            base: items,
+            base: Arc::new(items),
             version,
             whole: 0,
             at,
