@@ -70,14 +70,14 @@ pub struct HistoryPage {
     list: RowListState,
     /// Picked plays, by entry id.
     selected: HashSet<i64>,
-    /// Where a shift-click extends from: an index into `entries`.
-    anchor: Option<usize>,
     /// What the list's context menu acts on, for the library's verbs.
     menu: Option<actions::MenuTarget>,
     /// The plays the last right-click acts on.
     menu_plays: Vec<i64>,
     /// The keyboard's place among the plays.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     focus: FocusHandle,
@@ -108,10 +108,10 @@ impl HistoryPage {
             loaded: false,
             list: RowListState::new(),
             selected: HashSet::new(),
-            anchor: None,
             menu: None,
             menu_plays: Vec::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             focus: cx.focus_handle().tab_stop(true),
             search,
@@ -145,7 +145,10 @@ impl HistoryPage {
             this.update(cx, |this, cx| {
                 let present: HashSet<i64> = entries.iter().map(|e| e.id).collect();
                 this.selected.retain(|id| present.contains(id));
-                this.anchor = this.anchor.filter(|a| *a < entries.len());
+                let ids = |entries: &[PlayHistoryEntry]| -> Vec<i64> {
+                    entries.iter().map(|e| e.id).collect()
+                };
+                this.cursor.relocate(&ids(&this.entries), &ids(&entries));
                 let top = this.list.top();
                 this.entries = entries;
                 this.lines = lines;
@@ -324,7 +327,7 @@ impl HistoryPage {
                     drag,
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
-                    cursor: self.keyed && self.cursor.at == Some(ix),
+                    cursor: (self.keyed && self.cursor.at == Some(ix)).then(|| self.spot.clone()),
                     place: Some((ix, self.entries.len())),
                     reveal: p.a11y.then(|| Reveal::Rows(self.list.clone(), i)),
                 };
@@ -348,13 +351,17 @@ impl super::keys::KeyedList for HistoryPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.entries.len()
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        self.selected = self.entries[from..=to].iter().map(|e| e.id).collect();
-        self.anchor = Some(from);
+        let (lo, hi) = (from.min(to), from.max(to));
+        self.selected = self.entries[lo..=hi].iter().map(|e| e.id).collect();
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
@@ -433,6 +440,10 @@ impl actions::Menus for HistoryPage {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for HistoryPage {
@@ -452,15 +463,15 @@ impl TrackList for HistoryPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
-                // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
                 let id = self.entries[index].id;
                 let m = event.modifiers();
+                // Where a ⇧-click extends from, before the click moves it.
+                let from = self.cursor.anchor.unwrap_or(index);
+                // The keyboard carries on from the row clicked.
+                self.cursor.click(index, m.shift);
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
                     actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 } else if m.shift {
-                    let from = self.anchor.unwrap_or(index);
                     self.selected = self.entries[from.min(index)..=from.max(index)]
                         .iter()
                         .map(|e| e.id)
@@ -469,10 +480,8 @@ impl TrackList for HistoryPage {
                     if !self.selected.remove(&id) {
                         self.selected.insert(id);
                     }
-                    self.anchor = Some(index);
                 } else {
                     self.selected = HashSet::from([id]);
-                    self.anchor = Some(index);
                 }
                 cx.notify();
             }
@@ -608,9 +617,13 @@ impl Render for HistoryPage {
             }
         }))
         .child(PageFrame::new(header).body(body))
-        .koan_context_menu("history-menu", window, cx, move |menu, window, cx| {
-            row_menu(menu, &view, window, cx)
-        })
+        .koan_context_menu_at(
+            "history-menu",
+            Some(self.spot.clone()),
+            window,
+            cx,
+            move |menu, window, cx| row_menu(menu, &view, window, cx),
+        )
     }
 }
 

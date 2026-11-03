@@ -102,8 +102,9 @@ pub struct RowState {
     /// A glyph before the figures, with what it means under the pointer: a
     /// play another client scrobbled in, in the history.
     pub note: Option<(crate::theme::Icon, &'static str)>,
-    /// Under the list's keyboard cursor.
-    pub cursor: bool,
+    /// Under the list's keyboard cursor: where its ring tells the list it
+    /// was laid out.
+    pub cursor: Option<crate::components::CursorSpot>,
     /// Its place in the list, of how many, for a screen reader.
     pub place: Option<(usize, usize)>,
     /// Where it sits in a list that draws only what is on screen, to scroll
@@ -255,7 +256,8 @@ pub fn track_row<V: TrackList>(
             row.on_reveal(move |_, _| reveal.run())
         })
         .selected(state.selected)
-        .cursor(state.cursor)
+        .cursor(state.cursor.is_some())
+        .when_some(state.cursor.as_ref(), |row, spot| row.spot(spot))
         .lead_exact(state.lead_width, lead)
         .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))
         .title(

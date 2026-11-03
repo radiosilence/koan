@@ -662,6 +662,14 @@ pub fn reconcile_playlists(
 /// server's order, as an edit from another device would.
 static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
 
+/// A server being left: the reorder not yet sent is dropped with the
+/// playlists it names, so the next account's order is adopted, not
+/// overwritten.
+pub(crate) fn forget_unsent_order() {
+    let _lane = ORDER_LANE.lock();
+    ORDER_UNSENT.store(false, Ordering::Relaxed);
+}
+
 /// Held while a reorder is written, while a sync adopts the server's order,
 /// and while a send reads the order and settles, never across a request: a
 /// reorder waits only for the database, never for the network.
@@ -785,10 +793,10 @@ pub fn set_account_order(db: &Database, user: i64, ids: &[i64]) -> Result<(), Db
 /// last.
 pub fn push_order() {
     let cfg = Config::cached();
-    if !cfg.remote.enabled {
-        return;
-    }
-    let Some(client) = subsonic_client(&cfg) else {
+    // Signed out, a reorder is this device's alone: the account's order is
+    // adopted at the next sign-in rather than overwritten by it.
+    let Some(client) = cfg.remote.enabled.then(|| subsonic_client(&cfg)).flatten() else {
+        ORDER_UNSENT.store(false, Ordering::Relaxed);
         return;
     };
     ORDER_UNSENT.store(true, Ordering::Relaxed);
@@ -1750,6 +1758,42 @@ mod tests {
             .map(|p| p.id)
             .collect();
         assert_eq!(order, [p2, p1], "the order on its way stands");
+    }
+
+    /// A reorder left unsent when a server is left is not sent to the next
+    /// account: its order is adopted.
+    #[test]
+    fn an_order_unsent_when_leaving_is_not_sent_to_the_next_account() {
+        let _order = ORDER_TESTS.lock();
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        forget_unsent_order();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(
+            order,
+            [id("p1"), id("p2")],
+            "the account's order is adopted"
+        );
+        assert!(!ORDER_UNSENT.load(Ordering::Relaxed));
     }
 
     /// A listing asked for before this device made or sent a reorder is

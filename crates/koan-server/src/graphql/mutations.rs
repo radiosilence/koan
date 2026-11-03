@@ -716,6 +716,11 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let device = session(ctx)?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        // An app restoring its session would have it replaced by the queue
+        // it has not finished putting back.
+        if !state.may_save_session() {
+            return Err("the saved session is still being restored; nothing was saved".into());
+        }
 
         let (items, cursor) = state.snapshot_playlist();
         let position_ms = state.position_ms();
