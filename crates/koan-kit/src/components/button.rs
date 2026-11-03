@@ -209,7 +209,7 @@ impl RenderOnce for Button {
         // Text colour fades on the CPU, for the kinds whose text changes;
         // fills are the GPU's (`transition`).
         let hover = if kind == ButtonKind::Text {
-            fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx)
+            fade(child(&self.id, "hover"), hovered, window, cx)
         } else {
             0.0
         };
@@ -217,7 +217,6 @@ impl RenderOnce for Button {
             fade(
                 child(&self.id, "press"),
                 pressed || self.selected,
-                Motion::FAST,
                 window,
                 cx,
             )
@@ -294,24 +293,16 @@ impl RenderOnce for Button {
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );
                 button = button.child(fill(look.palette.hover.hsla(), &press));
             }
             ButtonKind::Toolbar => {
-                let hover = transition(
-                    child(&self.id, "hover-fill"),
-                    hovered,
-                    Motion::FAST,
-                    window,
-                    cx,
-                );
+                let hover = transition(child(&self.id, "hover-fill"), hovered, window, cx);
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );

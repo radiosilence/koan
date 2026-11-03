@@ -54,7 +54,7 @@ impl RenderOnce for Segmented {
         for (index, option) in self.options.into_iter().enumerate() {
             let key =
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
-            let chosen = fade(key, index == selected, Motion::FAST, window, cx);
+            let chosen = fade(key, index == selected, window, cx);
             let mut option = accessible(
                 div().id(index),
                 gpui_kit::Role::RadioButton,

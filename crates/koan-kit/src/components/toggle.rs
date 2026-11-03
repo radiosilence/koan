@@ -52,13 +52,7 @@ impl RenderOnce for Toggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let on = fade(
-            child(&self.id, "on"),
-            self.checked,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        let on = fade(child(&self.id, "on"), self.checked, window, cx);
         let accent = look.accent.hsla();
         let mut row = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
             .aria_disabled(self.disabled)
@@ -158,13 +152,7 @@ impl RenderOnce for IconToggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let on = fade(
-            child(&self.id, "on"),
-            self.checked,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        let on = fade(child(&self.id, "on"), self.checked, window, cx);
         let color = super::mix(look.palette.muted.hsla(), look.palette.ink.hsla(), on);
         let label = self.label.clone();
         let mut toggle = switch(div().id(self.id.clone()), self.label.clone(), self.checked)

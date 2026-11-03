@@ -233,6 +233,10 @@ impl Motion {
     pub const FAST: Duration = Duration::from_millis(80);
     /// A marker moving between places, such as a segment's underline.
     pub const NORMAL: Duration = Duration::from_millis(120);
+    /// A state going off: a hover's highlight lingering as the pointer
+    /// leaves, a toggle or a selection let go. Barely seen, so leaving is
+    /// not a hard cut; a state coming on shows at once.
+    pub const LEAVE: Duration = Duration::from_millis(130);
     /// The accent arriving with a record.
     pub const SETTLE: Duration = Duration::from_millis(250);
     /// A sleeve arriving where its record's colour stood, as the Mac's grid

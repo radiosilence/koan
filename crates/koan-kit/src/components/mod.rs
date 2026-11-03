@@ -234,13 +234,8 @@ impl Fade {
 /// How far a state has moved toward `on`, kept under `key`. The first frame
 /// a control is drawn it stands where it is, with nothing to animate; frames
 /// are asked for only while a change is under way.
-pub(crate) fn fade(
-    key: ElementId,
-    on: bool,
-    duration: Duration,
-    window: &mut Window,
-    cx: &mut App,
-) -> f32 {
+pub(crate) fn fade(key: ElementId, on: bool, window: &mut Window, cx: &mut App) -> f32 {
+    let duration = Motion::LEAVE;
     let now = Instant::now();
     let reduce = cx.reduce_motion();
     let state = window.use_keyed_state(key, cx, |_, _| Fade {
@@ -253,7 +248,9 @@ pub(crate) fn fade(
         if fade.on != on {
             fade.from = fade.at(now);
             fade.on = on;
-            fade.started = (!reduce).then_some(now);
+            // Arriving is at once, leaving lingers: a hover lights a
+            // control as the pointer reaches it and fades once it has gone.
+            fade.started = (!reduce && !on).then_some(now);
         }
         let value = fade.at(now);
         let moving = fade
@@ -320,10 +317,10 @@ pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
     .into()
 }
 
-/// A fill or an outline faded in and out with a control's state by the GPU:
-/// the ramp is handed over when the state changes and eased at each present,
-/// running for the motion's length and then stopping by itself. Instant with
-/// Reduce Motion. Uniforms: 0 from, 1 to, 2 the start in seconds of shader
+/// A fill or an outline following a control's state on the GPU: lit at once
+/// as the state comes on (the pointer arrives), and faded out over the
+/// motion's length as it goes off, the ramp eased at each present and
+/// stopping by itself. Instant both ways with Reduce Motion. Uniforms: 0 from, 1 to, 2 the start in seconds of shader
 /// time, 3 the length in seconds, 4..8 the colour, 8 the outline's width in
 /// device pixels (0 for a fill); `prepare` writes the amount (9).
 static TRANSITION: ShaderProgram = ShaderProgram {
@@ -362,13 +359,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
 
 /// A state's transition between off and on, kept under `key`: what draws it
 /// on the GPU. The first frame a control is drawn it stands where it is.
-pub(crate) fn transition(
-    key: ElementId,
-    on: bool,
-    duration: Duration,
-    window: &mut Window,
-    cx: &mut App,
-) -> Animated {
+pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut App) -> Animated {
+    let duration = Motion::LEAVE;
     let now = Instant::now();
     let reduce = cx.reduce_motion();
     let state = window.use_keyed_state(key, cx, |_, _| {
@@ -390,12 +382,15 @@ pub(crate) fn transition(
         if fade.on != on {
             fade.from = fade.at(now);
             fade.on = on;
-            fade.started = (!reduce).then_some(now);
+            // Arriving is at once, leaving lingers: a hover lights a
+            // control as the pointer reaches it and fades once it has gone.
+            let eased = !reduce && !on;
+            fade.started = eased.then_some(now);
             let start = now.duration_since(*origin).as_secs_f32();
-            let length = if reduce { 0.0 } else { duration.as_secs_f32() };
+            let length = if eased { duration.as_secs_f32() } else { 0.0 };
             animated.set_origin(*origin);
             animated.set_all(0, &[fade.from, if on { 1.0 } else { 0.0 }, start, length]);
-            if !reduce {
+            if eased {
                 animated.run_for(duration);
             }
         }

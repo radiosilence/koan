@@ -106,13 +106,7 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let on = fade(
-            child(&self.id, "selected"),
-            self.selected,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        let on = fade(child(&self.id, "selected"), self.selected, window, cx);
         let color = super::mix(
             look.palette.muted.hsla(),
             look.text_color(crate::theme::Tone::Accent),
@@ -372,13 +366,7 @@ impl RenderOnce for FigureCell {
 impl RenderOnce for ListRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let selected = transition(
-            child(&self.id, "selected"),
-            self.selected,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        let selected = transition(child(&self.id, "selected"), self.selected, window, cx);
         let lead = if self.playing {
             look.text_color(crate::theme::Tone::Accent)
         } else {
