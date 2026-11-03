@@ -230,9 +230,18 @@ impl WindowRoot {
             self.follow(playback, true, cx);
             // Coming out: confetti and a sticker in the middle of the window.
             if self.rainbow && !was && self.active && KoanTheme::motion_allowed(cx) {
-                self.throw_confetti(None, cx);
+                // One start on the window's flash gate for the two, which
+                // land together: thrown one after the other, the second would
+                // fall inside the gap and be dropped.
                 let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
-                self.sticker.fire(middle, self.scale, painted == Some(true));
+                self.confetti.fire_with(
+                    middle,
+                    &self.sticker,
+                    middle,
+                    self.scale,
+                    painted == Some(true),
+                );
+                self.flying(CONFETTI, cx);
                 self.flying(STICKER, cx);
             }
             self.feed_prism(cx);
