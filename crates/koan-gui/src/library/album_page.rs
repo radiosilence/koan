@@ -225,7 +225,7 @@ impl AlbumPage {
         };
         self.cursor.click(index, false);
         self.selection.only(Playable::Track(track));
-        self.reveal(index, cx);
+        super::keys::KeyedList::reveal(self, index, cx);
         self.take_focus = true;
     }
 
