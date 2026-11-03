@@ -326,8 +326,9 @@ impl RenderOnce for NavNote {
 
 /// A list row: no rule between rows; `hover` at 30 % behind it under the
 /// pointer, `selection` when selected with its text in `on_selection`, and
-/// the playing row's title and number in the accent. The caller lays out the row's parts with `ListRow::title`,
-/// `ListRow::detail` and `ListRow::number` or its own children.
+/// the playing row's title and number in the accent. The caller lays out the
+/// row's parts with `ListRow::title`, `ListRow::detail` and `ListRow::number`
+/// or its own children.
 #[derive(IntoElement)]
 pub struct ListRow {
     id: ElementId,

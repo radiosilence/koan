@@ -51,8 +51,7 @@ impl Paint {
 
     /// The paint a list row draws with: as it is, or picked, with every
     /// colour text and marks take (`ink`, `strong`, `muted`, the accent,
-    /// `bad`) as
-    /// `on_selection`, as the Mac's selected rows are drawn.
+    /// `bad`) as `on_selection`, as the Mac's selected rows are drawn.
     pub fn picked(&self, selected: bool) -> Paint {
         if !selected {
             return *self;

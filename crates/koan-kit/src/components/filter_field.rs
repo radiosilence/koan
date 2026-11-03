@@ -45,9 +45,6 @@ impl RenderOnce for FilterField {
             .id("filter-field")
             .flex()
             .items_center()
-            // The toolbar's height to click, glyph and margins included,
-            // not the text's line alone.
-            .min_h(super::ToolbarMetrics::FIELD_HIT)
             .cursor_text()
             .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
             .map(|d| {
@@ -56,7 +53,10 @@ impl RenderOnce for FilterField {
                 } else {
                     // Its measure, given up before the toolbar's buttons
                     // when the page column is narrow.
+                    // In the toolbar, a button's height to click, glyph and
+                    // margins included, not the text's line alone.
                     d.w(super::ToolbarMetrics::FIELD * look.scale.size)
+                        .min_h(super::ToolbarMetrics::FIELD_HIT)
                         .flex_shrink()
                         .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }
