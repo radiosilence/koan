@@ -200,7 +200,13 @@ impl Render for LibraryStage {
             // Each page replays its last frame unless it notified, so the
             // overlay above it never redraws a 5,000-record grid.
             .children(page.map(|page| page.cached(StyleRefinement::default().size_full())))
-            .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
+            // Above the page and the playing bars painted over it.
+            .when_some(self.info.as_ref(), |d, (_, info)| {
+                d.child(crate::components::sheet::layered(
+                    crate::components::sheet::Layer::Panel,
+                    info.clone(),
+                ))
+            })
     }
 }
 

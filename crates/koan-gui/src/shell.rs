@@ -11,12 +11,10 @@ use koan_kit::app::*;
 use koan_kit::raw::base::InteractiveElementExt as _;
 // the bounds a cached view keeps between frames.
 use koan_kit::raw::StyleRefinement;
-// overlays placed against another element.
-use koan_kit::raw::deferred;
 // the platform window and its options.
 use koan_kit::raw::{Decorations, WindowControlArea};
 
-use crate::components::sheet as ask;
+use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
@@ -757,24 +755,19 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
+            .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
+            .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
             .children(
-                ask::presented(window, cx)
-                    .map(|s| deferred(div().absolute().inset_0().child(s)).with_priority(2)),
+                self.shortcuts
+                    .as_ref()
+                    .map(|(sheet, _)| ask::layered(Layer::Sheet, sheet.clone())),
             )
             .children(
-                ask::overlay(window, cx)
-                    .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
+                self.picker
+                    .as_ref()
+                    .map(|(picker, _)| ask::layered(Layer::Sheet, picker.clone())),
             )
-            .children(
-                crate::artwork::overlay(window, cx)
-                    .map(|v| deferred(div().absolute().inset_0().child(v)).with_priority(2)),
-            )
-            .children(self.shortcuts.as_ref().map(|(sheet, _)| {
-                deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
-            }))
-            .children(self.picker.as_ref().map(|(picker, _)| {
-                deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
-            }))
     }
 }
 

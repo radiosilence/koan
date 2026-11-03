@@ -211,6 +211,26 @@ pub fn close(cx: &mut App) {
     });
 }
 
+/// Where an overlay stands among the window's layers, lowest first. Every
+/// layer is drawn after the window's content and the playing bars painted
+/// over it, so nothing on a page shows through a panel or a sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layer {
+    /// A panel over a page: a track's details.
+    Panel = 1,
+    /// A sheet over the window: organise, the picker, the shortcuts, the
+    /// artwork viewer.
+    Sheet = 2,
+    /// A question asked over everything, sheets included.
+    Question = 3,
+}
+
+/// `element` drawn on `layer`, covering its parent: the parent lays it out,
+/// and it is painted once the window's content is.
+pub fn layered(layer: Layer, element: impl IntoElement) -> impl IntoElement {
+    deferred(div().absolute().inset_0().child(element)).with_priority(layer as usize)
+}
+
 /// The sheet presented, placed over the window, for the shell to draw under
 /// `overlay`.
 pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
