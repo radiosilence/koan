@@ -289,9 +289,9 @@ fn footprint() -> String {
 }
 
 fn fling(cx: &mut App) {
-    /// A fling's step, points per 16 ms: fast enough to cross 5,000 records
-    /// in seconds, or `KOAN_GUI_FLING_STEP` for a faster flick. The fling
-    /// covers the same distance whatever the step.
+    // A fling's step, points per 16 ms: fast enough to cross 5,000 records
+    // in seconds, or `KOAN_GUI_FLING_STEP` for a faster flick. The fling
+    // covers the same distance whatever the step.
     let step: f32 = std::env::var("KOAN_GUI_FLING_STEP")
         .ok()
         .and_then(|s| s.parse().ok())
