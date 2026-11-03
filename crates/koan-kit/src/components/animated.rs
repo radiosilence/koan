@@ -40,10 +40,31 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::*;
 use parking_lot::Mutex;
 
-pub use gpui::{
-    SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS, ShaderProgram, Track, TrackCurve,
-    TrackRepeat as Repeat,
+pub use super::program::ShaderProgram;
+pub use super::track::{
+    SHADER_PLAIN, SHADER_TRACKS, TRACK_FLOATS, Track, TrackCurve, TrackRepeat as Repeat,
 };
+pub use gpui::SHADER_UNIFORMS;
+
+/// Track `k` of `uniforms`, as last written.
+fn track_of(uniforms: &ShaderUniforms, k: usize) -> Track {
+    let base = SHADER_PLAIN + k * TRACK_FLOATS;
+    let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| uniforms.get(base + i));
+    Track::decode(&floats)
+}
+
+/// Writes track `k` of `uniforms`, inside the caller's publish.
+fn put_track(uniforms: &ShaderUniforms, k: usize, track: Track) {
+    let base = SHADER_PLAIN + k * TRACK_FLOATS;
+    for (i, value) in track.encode().into_iter().enumerate() {
+        uniforms.set(base + i, value);
+    }
+}
+
+/// Seconds of shader time at `at`.
+fn time_at(uniforms: &ShaderUniforms, at: Instant) -> f32 {
+    uniforms.time_at(at) as f32
+}
 
 /// How a track moves between its ends (#1859).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,16 +142,53 @@ impl Animated {
     /// publish, so the shift is made once and seen whole.
     fn rebase(&self) {
         let now = Instant::now();
-        let shift = self.0.uniforms.time_at(now);
+        let uniforms = &self.0.uniforms;
+        let shift = time_at(uniforms, now);
         if shift < 3600.0 {
             return;
         }
-        self.0.uniforms.set_origin(now);
+        uniforms.set_origin(now);
         for k in 0..SHADER_TRACKS {
-            let mut track = self.0.uniforms.track(k);
+            let mut track = track_of(uniforms, k);
             track.start -= shift;
-            self.0.uniforms.set_track(k, anchored(track, 0.0));
+            put_track(uniforms, k, anchored(track, 0.0));
         }
+    }
+
+    /// Tells the uniforms until when to present, from the tracks' ends and
+    /// whether the clock runs: at every refresh while either moves, and
+    /// once after.
+    fn refresh_liveness(&self) {
+        let uniforms = &self.0.uniforms;
+        let now = Self::now();
+        let t = time_at(uniforms, now);
+        let mut repeats = false;
+        let mut last: Option<f32> = None;
+        for k in 0..SHADER_TRACKS {
+            let track = track_of(uniforms, k);
+            if track.length <= 0.0 {
+                continue;
+            }
+            match track.end() {
+                Some(end) => last = Some(last.map_or(end, |l: f32| l.max(end))),
+                None => repeats = true,
+            }
+        }
+        let running =
+            self.0.running.load(Ordering::Relaxed) && !self.0.still.load(Ordering::Relaxed);
+        let run_until = *self.0.until.lock();
+        if repeats || (running && run_until.is_none()) {
+            uniforms.present_continuously();
+            return;
+        }
+        let tracks_until = last
+            .filter(|end| *end > t)
+            .map(|end| now + Duration::from_secs_f32(end - t));
+        let run_until = run_until.filter(|_| running);
+        uniforms.present_until(match (tracks_until, run_until) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        });
     }
 
     /// Uniform `index`; a change is presented at the next refresh.
@@ -143,33 +201,38 @@ impl Animated {
     /// The clock tracks are reckoned in: when a frame made now reaches the
     /// screen. What a retarget samples a moving value at.
     pub fn now() -> Instant {
-        gpui::present_now()
+        super::slot::present_now()
     }
 
     /// Where track `k` stands at `at`, as the program draws it.
     pub fn at(&self, k: usize, at: Instant) -> f32 {
         let uniforms = &self.0.uniforms;
-        uniforms.read(|| uniforms.track(k).at(uniforms.time_at(at)))
+        uniforms.read(|| track_of(uniforms, k).at(time_at(uniforms, at)))
     }
 
     /// Whether a track is moving now.
     pub fn moving(&self) -> bool {
-        self.0.uniforms.tracks_moving(Self::now())
+        let uniforms = &self.0.uniforms;
+        let t = time_at(uniforms, Self::now());
+        (0..SHADER_TRACKS).any(|k| {
+            let track = track_of(uniforms, k);
+            track.length > 0.0 && track.end().is_none_or(|end| end > t)
+        })
     }
 
     /// How long until every track stands still: `None` while one repeats.
     pub fn settled_in(&self) -> Option<Duration> {
-        let t = self.0.uniforms.time_at(Self::now());
+        let t = time_at(&self.0.uniforms, Self::now());
         let mut last = 0.0_f32;
         for k in 0..SHADER_TRACKS {
-            last = last.max(self.0.uniforms.track(k).end()? - t);
+            last = last.max(track_of(&self.0.uniforms, k).end()? - t);
         }
         Some(Duration::from_secs_f32(last.max(0.0)))
     }
 
     /// Track `k` as it was last written.
     pub fn track(&self, k: usize) -> Track {
-        self.0.uniforms.track(k)
+        track_of(&self.0.uniforms, k)
     }
 
     /// Track `k` standing at `value`.
@@ -178,6 +241,7 @@ impl Animated {
             self.rebase();
             self.put(k, Track::hold(value));
         });
+        self.refresh_liveness();
         self.wake();
     }
 
@@ -190,6 +254,7 @@ impl Animated {
         self.0
             .uniforms
             .publish(|| self.to_unpublished(k, to, length, ease));
+        self.refresh_liveness();
         self.wake();
     }
 
@@ -197,8 +262,8 @@ impl Animated {
         // Before any time is read, so the new track is in the new base.
         self.rebase();
         let now = Self::now();
-        let current = self.0.uniforms.track(k);
-        let t = self.0.uniforms.time_at(now);
+        let current = track_of(&self.0.uniforms, k);
+        let t = time_at(&self.0.uniforms, now);
         let from = current.at(t);
         let (curve, length) = match ease {
             Ease::Spring { stiffness, damping } => {
@@ -210,7 +275,7 @@ impl Animated {
                         damping,
                         velocity,
                     },
-                    gpui::spring_length(from - to, velocity, stiffness, damping),
+                    super::track::spring_length(from - to, velocity, stiffness, damping),
                 )
             }
             ease => (curve(ease), length.as_secs_f32()),
@@ -245,6 +310,7 @@ impl Animated {
         self.0
             .uniforms
             .publish(|| self.segment_unpublished(k, from, to, start, length, ease, repeat));
+        self.refresh_liveness();
         self.wake();
     }
 
@@ -267,7 +333,7 @@ impl Animated {
                     damping,
                     velocity: 0.0,
                 },
-                gpui::spring_length(from - to, 0.0, stiffness, damping),
+                super::track::spring_length(from - to, 0.0, stiffness, damping),
             ),
             ease => (curve(ease), length.as_secs_f32()),
         };
@@ -291,7 +357,7 @@ impl Animated {
             Track {
                 from,
                 to,
-                start: self.0.uniforms.time_at(start),
+                start: time_at(&self.0.uniforms, start),
                 length,
                 curve,
                 repeat,
@@ -310,7 +376,7 @@ impl Animated {
         };
         // The caller wakes the window once its publish has closed, so the
         // refresh never meets the block still being written.
-        self.0.uniforms.set_track(k, track);
+        put_track(&self.0.uniforms, k, track);
     }
 
     /// `color` into the four uniforms from `index`, as red, green, blue and
@@ -352,11 +418,9 @@ impl Animated {
     /// Whether the clock runs: presented every refresh while it does, for a
     /// drawing that moves with `time`.
     pub fn run(&self, running: bool) {
-        self.0.uniforms.set_live_until(None);
         *self.0.until.lock() = None;
         if self.0.running.swap(running, Ordering::Relaxed) != running {
-            self.0.uniforms.set_continuous(running);
-            self.0.uniforms.set_live(running);
+            self.refresh_liveness();
             self.wake();
         }
     }
@@ -364,12 +428,9 @@ impl Animated {
     /// Runs the clock for `length` from now and then stops by itself, with
     /// nothing to stop it: a transition.
     pub fn run_for(&self, length: Duration) {
-        let until = Instant::now() + length;
-        self.0.uniforms.set_live_until(Some(until));
-        *self.0.until.lock() = Some(until);
+        *self.0.until.lock() = Some(Instant::now() + length);
         self.0.running.store(true, Ordering::Relaxed);
-        self.0.uniforms.set_continuous(true);
-        self.0.uniforms.set_live(true);
+        self.refresh_liveness();
         self.wake();
     }
 
@@ -382,9 +443,8 @@ impl Animated {
         if until.is_some_and(|until| Instant::now() >= until) {
             *until = None;
             self.0.running.store(false, Ordering::Relaxed);
-            self.0.uniforms.set_live_until(None);
-            self.0.uniforms.set_continuous(false);
-            self.0.uniforms.set_live(false);
+            drop(until);
+            self.refresh_liveness();
             return false;
         }
         true
@@ -410,9 +470,10 @@ impl Animated {
             // a repeat at its start.
             if still {
                 for k in 0..SHADER_TRACKS {
-                    let track = self.0.uniforms.track(k);
+                    let track = track_of(&self.0.uniforms, k);
                     if track.length > 0.0 {
-                        self.0.uniforms.set_track(
+                        put_track(
+                            &self.0.uniforms,
                             k,
                             Track::hold(match track.repeat {
                                 Repeat::Once => track.to,
@@ -423,9 +484,8 @@ impl Animated {
                 }
             }
         });
-        let running = self.is_running() && !still;
-        self.0.uniforms.set_continuous(running);
-        self.0.uniforms.set_live(running);
+        self.is_running();
+        self.refresh_liveness();
     }
 
     /// Paints what `paint` paints into a texture of its own, composed over
@@ -438,7 +498,7 @@ impl Animated {
         cx: &mut App,
         paint: impl FnOnce(&mut Window, &mut App),
     ) {
-        window.paint_layer_group(bounds, program, self.0.uniforms.clone(), cx, paint);
+        window.paint_layer_group(bounds, program.gpui(), self.0.uniforms.clone(), cx, paint);
     }
 
     /// Paints the quad over `bounds`, drawn by `program`, sampling `image`.
@@ -450,6 +510,7 @@ impl Animated {
         window: &mut Window,
     ) {
         let uniforms = self.0.uniforms.clone();
+        let program = program.gpui();
         match image {
             Some(image) => {
                 window

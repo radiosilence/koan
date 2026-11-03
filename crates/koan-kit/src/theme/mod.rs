@@ -21,8 +21,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use gpui::{
-    App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
-    Subscription, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Track,
+    TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};
@@ -128,6 +128,7 @@ pub fn init(cx: &mut App) {
         .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())
         .expect("Geist Mono is bundled and loads");
     cx.set_global(KoanTheme::default());
+    crate::components::install_color_slots();
     let feed = cx.new(|_| AccentFeed::new());
     cx.set_global(AccentHandle(feed));
     read_system_settings(cx);
@@ -537,7 +538,7 @@ pub struct AccentFeed {
     /// so the hue turns rather than passing through grey and no frame is
     /// drawn for it. `None` when every slot was taken; the accent then lands
     /// with each record.
-    slots: Option<[[ColorSlot; 2]; 2]>,
+    slots: Option<[[crate::components::ColorSlot; 2]; 2]>,
     /// The contrast the slots were last aimed for, and the target as held
     /// for it, dark then light: what every `Look` reads, worked out once per
     /// aim rather than looked up per call.
@@ -548,7 +549,7 @@ pub struct AccentFeed {
 impl AccentFeed {
     fn new() -> Self {
         let target = Accent::MINT;
-        let claim = || ColorSlot::claim(target.dark.rgba());
+        let claim = || crate::components::ColorSlot::claim(target.dark.rgba());
         let slots = (|| Some([[claim()?, claim()?], [claim()?, claim()?]]))();
         let feed = Self {
             target,
@@ -562,7 +563,7 @@ impl AccentFeed {
 
     /// Whether the accent is still turning to its target.
     fn turning(&self) -> bool {
-        let now = gpui::present_now();
+        let now = crate::components::present_now();
         self.slots
             .iter()
             .flatten()
