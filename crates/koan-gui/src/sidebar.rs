@@ -148,6 +148,13 @@ impl Sidebar {
         cx.notify();
     }
 
+    /// Where the search field takes the keyboard, once the library is open.
+    pub fn search_focus(&self, cx: &App) -> Option<FocusHandle> {
+        self.search
+            .as_ref()
+            .map(|(field, _)| field.read(cx).focus_handle(cx))
+    }
+
     /// ⌘K and `/`: the keyboard to the search field.
     pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((field, _)) = &self.search {
