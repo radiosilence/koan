@@ -86,9 +86,7 @@ fn koan_prism_hash(p: vec2<f32>) -> f32 {
 // beat landed, in seconds of shader time, 10 device pixels to a point.
 
 /// Over the wash: a slow kaleidoscope of plasma through the palette, rings
-/// rippling out on the low band and a beat, brighter with the high band. The
-/// beat brightens it by 0.06, which with the disco's flash (0.10) holds the
-/// window's change on a beat to a sixth.
+/// rippling out on the low band and a beat, brighter with the high band.
 static PRISM_WASH: ShaderProgram = ShaderProgram {
     name: "koan-prism-wash",
     msl: concat!(
@@ -532,8 +530,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
 /// Over the page: the mirror ball's spots wheeling across the window,
 /// stage beams sweeping up from its foot, stars twinkling, glitter falling,
-/// and a flash on the beat that, with the wash's, holds the window's change
-/// in light to a sixth. Uniforms
+/// and a flash on the beat. Uniforms
 /// as every `Prism` program's, and 11, 12 where the ball hangs: points in
 /// from the right and down from the top.
 static DISCO: ShaderProgram = ShaderProgram {
@@ -607,9 +604,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
         koan_disco_blend(colour, alpha, mix(float3(1.0), koan_prism(hc + time * 0.2, u[4]), 0.4), glint * 0.8);
     }
-    // The beat's flash over the whole window. With the wash's brightening
-    // on the same beat (0.06) the window's light changes by a sixth at
-    // most; beats come at most three a second (`Prism::hear`).
+    // The beat's flash over the whole window. Beats come at most three a
+    // second (`Prism::hear`), WCAG's limit for flashing.
     koan_disco_blend(colour, alpha, koan_prism(time * 0.3, u[4]) * 0.5 + 0.5, beat * 0.10);
     return float4(colour, clamp(alpha * u[6], 0.0, 0.85));
 }
