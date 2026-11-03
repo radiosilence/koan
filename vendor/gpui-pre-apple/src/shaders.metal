@@ -1392,6 +1392,6 @@ float3 koan_oklab_to_srgb(float3 lab) {
       -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
       -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
   linear_rgb = clamp(linear_rgb, 0.0, 1.0);
-  return select(1.055 * pow(linear_rgb, 1.0 / 2.4) - 0.055, 12.92 * linear_rgb,
+  return select(1.055 * pow(linear_rgb, float3(1.0 / 2.4)) - 0.055, 12.92 * linear_rgb,
                 linear_rgb <= 0.0031308);
 }

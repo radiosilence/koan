@@ -1163,7 +1163,7 @@ index 862e62a..91388e4 100644
 +    }
  }
 diff --git a/src/shaders.metal b/src/shaders.metal
-index 2b52bb9..35a5083 100644
+index 2b52bb9..3845dbc 100644
 --- a/src/shaders.metal
 +++ b/src/shaders.metal
 @@ -4,6 +4,8 @@
@@ -1369,6 +1369,6 @@ index 2b52bb9..35a5083 100644
 +      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
 +      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
 +  linear_rgb = clamp(linear_rgb, 0.0, 1.0);
-+  return select(1.055 * pow(linear_rgb, 1.0 / 2.4) - 0.055, 12.92 * linear_rgb,
++  return select(1.055 * pow(linear_rgb, float3(1.0 / 2.4)) - 0.055, 12.92 * linear_rgb,
 +                linear_rgb <= 0.0031308);
 +}
