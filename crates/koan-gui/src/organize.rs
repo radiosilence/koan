@@ -503,7 +503,10 @@ impl Render for OrganizeSheet {
 
         let mut names: Vec<String> = self.patterns.iter().map(|p| p.name.clone()).collect();
         names.push("typed here".into());
-        let chosen = Some(self.chosen.unwrap_or(names.len() - 1));
+        // A named pattern edited is no longer that pattern: the picker says
+        // it is typed here, and names it again if the text comes back.
+        let named = self.chosen.filter(|_| !self.modified(cx));
+        let chosen = Some(named.unwrap_or(names.len() - 1));
         let picker = Picker::keeps_case("organize-pattern", names, chosen)
             .disabled(running)
             .on_change(cx.listener(|this, index: &usize, window, cx| {
