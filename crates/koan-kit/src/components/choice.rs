@@ -6,8 +6,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{MenuPanel, MenuRow};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};

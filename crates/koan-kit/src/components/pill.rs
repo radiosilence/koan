@@ -7,8 +7,8 @@
 //! Listeners attach to it as to a `div` (click, drag, menus); what a click
 //! does is the owner's.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole};
 

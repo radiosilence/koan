@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 
 use std::sync::Arc;
 

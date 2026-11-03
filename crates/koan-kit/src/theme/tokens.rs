@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use gpui_kit::{FontWeight, Hsla, Pixels, Rgba, px, rgb};
+use gpui::{FontWeight, Hsla, Pixels, Rgba, px, rgb};
 
 /// A colour token as 0xRRGGBB, for arithmetic that needs the raw value (the
 /// accent's contrast, the wash's ground).

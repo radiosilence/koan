@@ -2,8 +2,8 @@
 //! do with them. One bar for every page, so the verbs read the same wherever
 //! something can be picked; each verb ends the mode.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind, Handler, RowMetrics};
 use crate::theme::{KoanStyled, Look, Space, TypeRole};

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Animated, Arrival, Placeholder, arriving};
 use crate::theme::{Look, Motion};

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
-use gpui_kit::{Hsla, Rgba};
+use gpui::{Hsla, Rgba};
 use parking_lot::Mutex;
 
 use super::tokens::Palette;
@@ -506,7 +506,7 @@ mod tests {
     /// through the hues between, never through grey.
     #[test]
     fn slots_mix_the_accent_in_oklab() {
-        use gpui_kit::{ColorSlot, Track, TrackCurve, TrackRepeat};
+        use gpui::{ColorSlot, Track, TrackCurve, TrackRepeat};
         let mint = Accent::MINT.dark;
         let blue = Accent::of(Some([0.1, 0.2, 0.9])).dark;
         let slot = ColorSlot::claim(mint.rgba()).expect("a free slot");

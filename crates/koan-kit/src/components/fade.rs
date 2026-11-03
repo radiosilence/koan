@@ -13,7 +13,7 @@
 //! holds, in a column as wide as the column, so the element lays out exactly
 //! as it would unwrapped.
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::layer::{AnimatedLayer, standing};
 use super::{Animated, Ease, Repeat, SHADED};

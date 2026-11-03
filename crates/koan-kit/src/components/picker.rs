@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     Anchor, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
@@ -104,7 +104,7 @@ impl RenderOnce for Picker {
         // a click opens it as the pointer's does.
         let mut picker = accessible(
             div().id(self.id.clone()),
-            gpui_kit::Role::ComboBox,
+            gpui::Role::ComboBox,
             self.name.clone(),
         )
         .aria_disabled(self.disabled)
@@ -132,7 +132,7 @@ impl RenderOnce for Picker {
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
-            let opens: Handler<gpui_kit::ClickEvent> = {
+            let opens: Handler<gpui::ClickEvent> = {
                 let toggle = open.clone();
                 std::sync::Arc::new(move |_, _, cx| {
                     toggle.update(cx, |open, cx| {

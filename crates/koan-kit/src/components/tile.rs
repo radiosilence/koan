@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::Placeholder;
 #[cfg(test)]
@@ -251,7 +251,7 @@ impl RenderOnce for TileArt {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(gpui_kit::black().opacity(Self::DIM))
+                    .bg(gpui::black().opacity(Self::DIM))
                     .child(match mark {
                         TileMark::Starting => div()
                             .text_role(TypeRole::TitleSmall, &look)
@@ -341,14 +341,14 @@ impl RenderOnce for TileArt {
             let tick = if picked {
                 KoanIcon::new(Icon::Picked).fill(look.accent.hsla())
             } else {
-                KoanIcon::new(Icon::Unpicked).fill(gpui_kit::black().opacity(0.25))
+                KoanIcon::new(Icon::Unpicked).fill(gpui::black().opacity(0.25))
             };
             art = art.child(
                 div()
                     .absolute()
                     .top(px(Self::HEART_INSET))
                     .left(px(Self::HEART_INSET))
-                    .child(tick.points(Self::TICK / 1.2).color(gpui_kit::white())),
+                    .child(tick.points(Self::TICK / 1.2).color(gpui::white())),
             );
         }
         if self.cursor && window.last_input_was_keyboard() {

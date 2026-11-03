@@ -16,7 +16,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Glide, SHADED, ShaderProgram};
 use crate::theme::{Look, TypeRole};

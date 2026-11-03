@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 

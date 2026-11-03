@@ -1,13 +1,13 @@
 use gpui_kit::component::input::{Input, InputState};
 
+use gpui::prelude::FluentBuilder;
+use gpui::{
+    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
+};
 /// What a `TextField` edits and what it reports: the page owns the state,
 /// made with `cx.new(|cx| InputState::new(window, cx))`, and subscribes to
 /// its `InputEvent`s.
 pub use gpui_kit::component::input::{InputEvent, InputState as FieldState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
-    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
-};
 
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
@@ -65,7 +65,7 @@ impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let line = look.line_height(self.role);
-        let id = gpui_kit::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
+        let id = gpui::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
         let answers = super::Answerer::of(&id, window, cx);
         let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
         let was = window.use_keyed_state(super::child(&id, "focused"), cx, |_, _| focused);

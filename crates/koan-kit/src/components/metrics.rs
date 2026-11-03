@@ -3,7 +3,7 @@
 //! and the margins the spacing scale, as on the Mac. Read from the window's
 //! `Look`, so nothing passes them by hand.
 
-use gpui_kit::{Pixels, Window, font, px};
+use gpui::{Pixels, Window, font, px};
 
 use crate::theme::{Look, Scale, Space, TypeRole};
 
@@ -288,7 +288,7 @@ impl RowMetrics {
 
     /// The window's least size: the sidebar beside a page wide enough for a
     /// track row's columns.
-    pub const WINDOW_MIN: gpui_kit::Size<Pixels> = gpui_kit::Size {
+    pub const WINDOW_MIN: gpui::Size<Pixels> = gpui::Size {
         width: px(220. + 640.),
         height: px(420.),
     };

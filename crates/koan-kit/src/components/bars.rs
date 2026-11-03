@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Animated, BarMetrics, SHADED};
 

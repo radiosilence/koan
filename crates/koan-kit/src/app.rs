@@ -11,8 +11,8 @@
 //! components and tokens, or through `raw` with a reason. Sleeves decoded
 //! for the components to draw are in `image`.
 
-pub use gpui_kit::prelude::*;
-pub use gpui_kit::{
+pub use gpui::prelude::*;
+pub use gpui::{
     Action, AnyElement, AnyEntity, AnyView, AnyWeakEntity, AnyWindowHandle, App, AppContext,
     AsyncApp, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, Div, DragMoveEvent,
     ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
@@ -28,23 +28,32 @@ pub use gpui_kit::{
 /// as the shortcuts sheet and the tests read it, and how a trackpad's
 /// scroll is phased.
 pub mod platform {
-    pub use gpui_kit::{
+    pub use gpui::{
         KeyBindingContextPredicate, Keymap, Menu, MenuItem, OperatingSystem, OsAction,
-        SystemMenuType, TouchPhase, application, init,
+        SystemMenuType, TouchPhase,
     };
+    pub use gpui_platform::application;
+
+    /// What every app and test calls once before anything else. The text
+    /// input, the window's root, the scrollbar and the filter panels are
+    /// still gpui-kit's (#2021), so its components are initialised here;
+    /// with them gone, this is empty.
+    pub fn init(cx: &mut super::App) {
+        gpui_kit::init(cx);
+    }
 }
 
 /// A sleeve as the renderer holds it: decoded off the main thread by the
 /// app's cover caches and handed to `Cover`, `TileSleeve` and the wash; its
 /// average colour, worked out from its pixels; the renderer's id for it.
 pub mod image {
-    pub use gpui_kit::{Image, ImageFormat, ImageId, RenderImage, Rgba};
+    pub use gpui::{Image, ImageFormat, ImageId, RenderImage, Rgba};
 }
 
 /// What a test of a page or the app drives it with.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    pub use gpui_kit::{TestAppContext, VisualTestContext, test};
+    pub use gpui::{TestAppContext, VisualTestContext, test};
 }
 
 /// What a page tells a screen reader where no component says it for the
@@ -52,8 +61,8 @@ pub mod test {
 /// tile's role and the action it answers, a region announced as it changes.
 /// Set beside the element's id with `role`, `aria_label` and `aria_live`.
 pub mod a11y {
-    pub use gpui_kit::accesskit::Live;
-    pub use gpui_kit::{AccessibleAction, Role};
+    pub use gpui::accesskit::Live;
+    pub use gpui::{AccessibleAction, Role};
 }
 
 /// The text input koan-kit's fields draw (`TextField`, `FilterField`): a

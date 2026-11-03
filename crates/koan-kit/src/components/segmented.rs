@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -56,7 +56,7 @@ impl RenderOnce for Segmented {
         let count = self.options.len();
         let accent = look.accent.hsla();
         let name = self.name.clone().or_else(|| super::spoken_id(&self.id));
-        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, name)
+        let mut row = accessible(div().id(self.id.clone()), gpui::Role::RadioGroup, name)
             .relative()
             .flex()
             .items_center()
@@ -91,7 +91,7 @@ impl RenderOnce for Segmented {
             );
             let mut option = accessible(
                 div().id(index),
-                gpui_kit::Role::RadioButton,
+                gpui::Role::RadioButton,
                 Some(option.clone()),
             )
             .aria_toggled(toggled(index == selected))
@@ -108,7 +108,7 @@ impl RenderOnce for Segmented {
             .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-                let choose: Handler<gpui_kit::ClickEvent> = {
+                let choose: Handler<gpui::ClickEvent> = {
                     let on_change = on_change.clone();
                     Arc::new(move |_, window, cx| on_change(&index, window, cx))
                 };
