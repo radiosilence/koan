@@ -1349,15 +1349,16 @@ jobs:
 
             ```bash
             brew install radiosilence/koan/koan            # the CLI and TUI
-            brew install --cask radiosilence/koan/koan-app # the macOS app
+            brew install --cask radiosilence/koan/koan-app # the desktop app
             ```
 
-            Android: install `koan-android-arm64.apk` below.
+            macOS: `Koan.dmg` below is the desktop app. `Koan-legacy.dmg` is the SwiftUI Mac app, deprecated: it ships with this release for the last time. Its first launch on a Mac the SwiftUI app ran on takes that app's place on your account, history and pairings included, and the SwiftUI app then shows as "(legacy)".
+
+            Linux: the `.deb` and AppImage below. Android: install `koan-android-arm64.apk` below.
 
             ---
           files: |
             artifacts/**/*.tar.gz
-            artifacts/**/*.dmg
             artifacts/koan-android-arm64.apk
 
   update-homebrew:
@@ -1490,13 +1491,45 @@ jobs:
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
           mkdir -p stapled
-          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
-          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
+          # The main macOS download, under the name links and the cask use.
+          cp "$dmg" stapled/Koan.dmg
+          gh release upload "v$VERSION" stapled/Koan.dmg --clobber
+      - name: Update the Homebrew cask
+        run: |
+          set -euo pipefail
+          DMG_SHA=$(shasum -a 256 stapled/Koan.dmg | awk '{print $1}')
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/radiosilence/homebrew-koan.git" "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          mkdir -p Casks
+          # Named koan-app so `brew install koan` stays the command-line player.
+          cat > Casks/koan-app.rb <<CASK
+          cask "koan-app" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA}"
+
+            url "https://github.com/radiosilence/koan/releases/download/v#{version}/Koan.dmg"
+            name "koan"
+            desc "Bit-perfect music player"
+            homepage "https://github.com/radiosilence/koan"
+
+            depends_on macos: :tahoe
+
+            app "kōan desktop.app"
+
+            zap trash: "~/.config/koan"
+          end
+          CASK
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Update koan-app to v${VERSION}: the desktop app"
+          git push
 
   # Apple's notary, apart from the release: everything else is out by the
   # time this starts, and its queue can take hours. It waits on Apple, staples
-  # the DMG and replaces the release's copy with it, then moves the Homebrew
-  # cask to it. Failing or timing out fails this job alone; re-running it
+  # the SwiftUI app's DMG and attaches it as Koan-legacy.dmg; the desktop
+  # app's, the main download, and the cask are gui-attach's. Failing or timing out fails this job alone; re-running it
   # waits on the submissions already made (`scripts/notarise.sh`) rather than
   # submitting again.
   notarise:
@@ -1545,52 +1578,15 @@ jobs:
           xcrun stapler validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           mkdir stapled
-          cp "$dmg" stapled/Koan.dmg
-      - name: Replace the release's DMG
+          cp "$dmg" stapled/Koan-legacy.dmg
+      - name: Attach the legacy DMG
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::RELEASE_TOKEN is not set; the release's DMG cannot be replaced"
+            echo "::error::RELEASE_TOKEN is not set; the legacy DMG cannot be attached"
             exit 1
           fi
-          gh release upload "v$VERSION" stapled/Koan.dmg --clobber
-      - name: Update the Homebrew cask
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GITHUB_TOKEN" ]; then
-            echo "::error::RELEASE_TOKEN is not set; the Homebrew cask cannot be updated"
-            exit 1
-          fi
-          DMG_SHA=$(shasum -a 256 stapled/Koan.dmg | awk '{print $1}')
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" "$RUNNER_TEMP/tap"
-          cd "$RUNNER_TEMP/tap"
-          mkdir -p Casks
-          # Named koan-app so `brew install koan` stays the command-line player.
-          cat > Casks/koan-app.rb <<CASK
-          cask "koan-app" do
-            version "${VERSION}"
-            sha256 "${DMG_SHA}"
-
-            url "https://github.com/radiosilence/koan/releases/download/v#{version}/Koan.dmg"
-            name "koan"
-            desc "Bit-perfect music player"
-            homepage "https://github.com/radiosilence/koan"
-
-            depends_on macos: :tahoe
-
-            app "kōan.app"
-
-            zap trash: "~/.config/koan"
-          end
-          CASK
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet && exit 0
-          git commit -m "Update koan-app to v${VERSION}"
-          git push
+          gh release upload "v$VERSION" stapled/Koan-legacy.dmg --clobber
       - if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"

@@ -28,16 +28,16 @@ I did use AI-assisted coding for this project. I've been building fairly high-qu
 
 To look around first, sign in to [demo.koan.rocks](https://demo.koan.rocks) as `demo`, password `demo`, from a browser or any of the apps. It resets every day at midnight UTC.
 
-macOS App:
+Desktop app (macOS and Linux):
 
 ```bash
 brew install --cask radiosilence/koan/koan-app
 ```
 
 You may have to update brew's trust settings to trust the tap.
-Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release.
+Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release. On Linux, each release carries an AppImage and a `.deb`. See [the desktop app](docs/guide/desktop.md).
 
-Desktop app (macOS and Linux, in development): a DMG, an AppImage and a `.deb` with each release. See [the desktop app](docs/guide/desktop.md).
+The SwiftUI Mac app is deprecated and ships once more as `Koan-legacy.dmg`.
 
 CLI/TUI:
 

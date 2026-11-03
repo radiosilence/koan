@@ -67,8 +67,8 @@
         application.</p>
       <p>The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas
         that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a
-        Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a
-        server, and an Apple TV app on TestFlight. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
+        Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly,
+        iOS and Apple TV apps, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
         were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.</p>
 
     </section>
@@ -118,7 +118,7 @@
           href="https://demo.koan.rocks">Try the demo</a>
         <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink"
           href="#install">Other ways to install</a>
-        <span class="text-sm text-muted">macOS, iOS and tvOS 26+ apps · Android APK · macOS and Linux terminal UI · server · MIT</span>
+        <span class="text-sm text-muted">desktop app for macOS and Linux · iOS and tvOS 26+ apps · Android APK · terminal UI · server · MIT</span>
       </p>
 
     </section>
@@ -190,7 +190,7 @@
           it is no use to anyone later. Signing in another of your own phones works the same way: every account's page
           opens with a <strong>Link a device</strong> code to scan. <a
             href="/docs/authentication/#invites">Invites</a></li>
-        <li><strong>One Rust core, linked right in.</strong> The SwiftUI apps on macOS and iOS call the audio engine
+        <li><strong>One Rust core, linked right in.</strong> The desktop app and the iOS app call the audio engine
           in-process. No Electron, and no daemon or port sitting between the interface and the sound. <a
             href="#pieces">The pieces</a></li>
       </ul>
@@ -219,8 +219,9 @@
       <p>Every part of kōan is the same Rust core with a different front on it. The apps link the core in-process, so
         nothing between the interface and the audio engine is a network hop.</p>
       <ul>
-        <li><strong>macOS app.</strong> SwiftUI, for the machine you actually sit and listen at. Plays local folders, a
-          server, or both merged into one library.</li>
+        <li><strong>Desktop app.</strong> For the machine you actually sit and listen at, on macOS and Linux. Plays
+          local folders, a server, or both merged into one library. The SwiftUI Mac app it replaces ships once more as
+          <code>Koan-legacy.dmg</code>.</li>
         <li><strong>iOS app.</strong> The same SwiftUI app in a phone's shell. A phone doesn't have a music folder, so
           it plays from a server and keeps what it's played in a local cache. The Apple TV app is the same again,
           built around the remote.</li>

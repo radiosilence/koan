@@ -385,7 +385,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 
 The workspace's `vendor/` holds patched copies of GPUI (`[patch.crates-io]` in the root `Cargo.toml`): its macOS and Linux backends, so an idle window stops waking at every display refresh (#1609), its core and renderers, for shader quads whose uniforms are read at present (#1641), and gpui-kit's gpui-base, whose text caret is such a quad so its blink redraws nothing (#1786); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
 
-`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
+`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it the machine's app: the app's files, id and session in the config directory, under the app's lock (`link::APP_LOCK`). Its first launch on a configuration hands the device over (`link::hand_over`, marked by `TAKEN_OVER`), and the SwiftUI Mac app then runs as `LinkIdentity::native_app`'s `(legacy)` device beside it. The terminal UI stays a device of its own. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 
 ### apps/macos (`apps/macos/Sources/`)
 
