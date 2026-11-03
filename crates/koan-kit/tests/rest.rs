@@ -13,8 +13,11 @@ struct Page;
 
 impl Render for Page {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Below an empty strip: the test window's pointer starts at its
+        // origin, and a control under it would be lit, not at rest.
         div()
             .size_full()
+            .pt(px(40.))
             .flex()
             .flex_col()
             .child(div().flex().children(
@@ -45,7 +48,7 @@ fn controls_at_rest_draw_no_shader(cx: &mut TestAppContext) {
     assert_eq!(shaders(cx), 0, "controls nobody touches drew shader quads");
 
     // Under the pointer a button lights, which is a shader quad.
-    cx.simulate_mouse_move(point(px(10.), px(10.)), None, Modifiers::default());
+    cx.simulate_mouse_move(point(px(10.), px(50.)), None, Modifiers::default());
     cx.run_until_parked();
     assert!(shaders(cx) > 0, "the button under the pointer drew no fill");
 }
