@@ -60,6 +60,11 @@ impl RenderOnce for Slide {
             let travel = f32::from(self.width) * window.scale_factor();
             let slide = sliding(child(&self.id, "open"), self.shown, travel, window, cx);
             self.state.0.set(if slide.laid_out { 1.0 } else { 0.0 });
+            // Gone: one more frame, for the owner to let the panel go, as
+            // it reads the state before this sets it.
+            if !slide.laid_out && !self.shown && self.content.is_some() {
+                window.request_animation_frame();
+            }
             let leaving = slide.laid_out && !self.shown;
             return div()
                 .relative()

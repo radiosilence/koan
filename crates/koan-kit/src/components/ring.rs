@@ -71,7 +71,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let side = min(size.x, size.y);
     let stroke = side * 0.125;
     let d = position - size * 0.5;
@@ -120,8 +120,7 @@ impl ProgressRing {
     /// the glide, so a glide is drawn in one colour: one per colour, and
     /// never one a slider also draws.
     pub fn glide(mut self, glide: &Glide) -> Self {
-        let value = glide.value();
-        self.progress = (value >= 0.0).then_some(value);
+        self.progress = glide.known().then(|| glide.value());
         self.glide = Some(glide.clone());
         self
     }
@@ -248,5 +247,18 @@ mod tests {
         assert_eq!(drawn(Some(0.5), Duration::ZERO, 100), (0, 50));
         assert_eq!(drawn(Some(0.0), Duration::ZERO, 100).1, 2);
         assert_eq!(drawn(None, Duration::from_millis(500), 100), (50, 70));
+    }
+
+    /// Drawn without shaders, a transfer of unknown size turns; one known
+    /// fills to its share.
+    #[test]
+    fn an_unknown_size_turns_rather_than_standing_empty() {
+        let glide = Glide::new();
+        glide.set_unknown();
+        let ring = ProgressRing::new(Some(0.3), Hsla::default()).glide(&glide);
+        assert_eq!(ring.progress, None);
+        glide.set(0.4, 0.0, std::time::Instant::now());
+        let ring = ProgressRing::new(None, Hsla::default()).glide(&glide);
+        assert!(ring.progress.is_some_and(|p| (p - 0.4).abs() < 1e-3));
     }
 }

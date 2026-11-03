@@ -40,6 +40,7 @@ mod level;
 mod link_text;
 mod list_keys;
 mod lists;
+mod lyrics;
 mod menu;
 mod metrics;
 mod page;
@@ -118,7 +119,7 @@ pub use form::{
     form_text,
 };
 pub use heart::Heart;
-pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
@@ -127,6 +128,7 @@ pub use lists::{
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
     uniform_list, width_probe,
 };
+pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
@@ -498,6 +500,24 @@ pub(crate) fn hover_fill(
     (state, fill(color, &lit))
 }
 
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
+}
+
 /// A row a click acts on, lit under the pointer as controls are (`surface`,
 /// leaving over `Motion::LEAVE`): its content goes in as children, over the
 /// fill.
@@ -514,7 +534,7 @@ pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> S
 /// A fill under a control, in `color`, faded with `transition`.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if !SHADED {
-        let amount = transition.at(0, Animated::now());
+        let amount = plain_amount(transition);
         return div()
             .absolute()
             .size_full()
@@ -528,6 +548,12 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         .absolute()
         .size_full()
         .into_any_element()
+}
+
+/// How lit a fill is where the renderer draws no shaders: no fade, since
+/// nothing draws the frames between, so the state as it is headed.
+fn plain_amount(transition: &Animated) -> f32 {
+    transition.track(0).to
 }
 
 /// A control as a screen reader meets it: its role and its name. The tree
@@ -602,4 +628,22 @@ pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
         handler(&gpui_kit::ClickEvent::default(), window, cx)
     })
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// Without shaders nothing draws a fade's frames, so a fill shows the
+    /// state it is headed to: lit as the pointer arrives, gone as it leaves.
+    #[test]
+    fn a_plain_fill_reads_where_its_state_is_headed() {
+        let lit = Animated::new();
+        lit.hold(0, 1.0);
+        assert_eq!(plain_amount(&lit), 1.0, "lit at once");
+        lit.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
+        assert!(lit.at(0, Animated::now()) > 0.5, "the GPU's fade has begun");
+        assert_eq!(plain_amount(&lit), 0.0, "gone at once without it");
+    }
 }

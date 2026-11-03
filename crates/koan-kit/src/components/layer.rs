@@ -193,9 +193,16 @@ pub(crate) fn sliding(
             } else if shown {
                 s.laid_out = true;
                 s._gone = None;
+                // From where it stands: shown again part-way out, it turns
+                // back rather than leaping to the far edge first.
+                let from = if s.animated.moving() {
+                    s.animated.at(1, now)
+                } else {
+                    travel
+                };
                 s.animated.segment(
                     1,
-                    travel,
+                    from,
                     0.0,
                     now,
                     Motion::SETTLE,
@@ -203,9 +210,10 @@ pub(crate) fn sliding(
                     Repeat::Once,
                 );
             } else {
+                let from = s.animated.at(1, now);
                 s.animated.segment(
                     1,
-                    0.0,
+                    from,
                     travel,
                     now,
                     Motion::SETTLE,
