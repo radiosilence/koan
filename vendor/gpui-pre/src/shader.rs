@@ -128,7 +128,7 @@ impl Track {
         }
     }
 
-    fn encode(&self) -> [f32; TRACK_FLOATS] {
+    pub(crate) fn encode(&self) -> [f32; TRACK_FLOATS] {
         let repeat = match self.repeat {
             TrackRepeat::Once => 0.0,
             TrackRepeat::Loop => 1.0,
@@ -155,7 +155,7 @@ impl Track {
         ]
     }
 
-    fn decode(f: &[f32]) -> Self {
+    pub(crate) fn decode(f: &[f32]) -> Self {
         let code = f[4] as u32;
         let repeat = match code / 4 {
             1 => TrackRepeat::Loop,

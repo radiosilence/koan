@@ -6,8 +6,7 @@ use gpui_kit::{
 };
 
 use super::{
-    Handler, accessible, answers_click, child, fade, fill, focus, mix, pointer, ring, track,
-    transition,
+    Handler, accessible, answers_click, child, fade, fill, focus, pointer, ring, track, transition,
 };
 use crate::theme::{
     DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TOOLBAR_BUTTON, Tone, TypeRole,
@@ -208,33 +207,26 @@ impl RenderOnce for Button {
             (p.hovered && !self.disabled, p.pressed && !self.disabled)
         };
         let handle = focus(&self.id, window, cx);
-        // Text colour fades on the CPU, for the kinds whose text changes;
-        // fills are the GPU's (`transition`).
-        let hover = if kind == ButtonKind::Text {
-            fade(child(&self.id, "hover"), hovered, window, cx)
-        } else {
-            0.0
-        };
-        let press = if kind == ButtonKind::Link {
-            fade(
-                child(&self.id, "press"),
-                pressed || self.selected,
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
-
         let tone = if self.destructive {
             Tone::Bad
         } else {
             self.tone.unwrap_or_else(|| kind.tone())
         };
         let rest = look.text_color(tone);
+        let ink = look.palette.ink.hsla();
+        // Text colour fades through a colour slot, for the kinds whose text
+        // changes; fills are shader quads (`transition`). Both move on the
+        // GPU.
         let color = match kind {
-            ButtonKind::Text => mix(rest, look.palette.ink.hsla(), hover),
-            ButtonKind::Link => mix(rest, look.palette.ink.hsla(), press),
+            ButtonKind::Text => fade(child(&self.id, "hover"), hovered, rest, ink, window, cx),
+            ButtonKind::Link => fade(
+                child(&self.id, "press"),
+                pressed || self.selected,
+                rest,
+                ink,
+                window,
+                cx,
+            ),
             _ => rest,
         };
         let outline = match kind {

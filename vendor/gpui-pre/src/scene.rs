@@ -59,6 +59,10 @@ pub struct Scene {
     // re-present composes them rather than drawing the whole scene; `None`
     // where the shaders cannot be drawn apart from the rest (#1641).
     pub shader_layers: Option<Box<ShaderLayers>>,
+    // KOAN: the colour slots this scene draws with, so a window presents
+    // while one of them moves and a renderer redraws the layers holding it
+    // (#1859).
+    pub color_slots: crate::ColorSlotSet,
 }
 
 /// A scene split where its shaders are drawn (#1641).
@@ -90,6 +94,38 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         self.shaders.clear(); // KOAN: shader quads (#1641).
+        self.color_slots.clear(); // KOAN: #1859.
+    }
+
+    // KOAN: whether a colour slot this scene draws with moves at `at`
+    // (#1859).
+    pub fn color_slots_moving(&self, at: std::time::Instant) -> bool {
+        self.color_slots.moving(at)
+    }
+
+    // KOAN: the colour slots the primitives name (#1859).
+    fn collect_color_slots(&self) -> crate::ColorSlotSet {
+        let mut set = crate::ColorSlotSet::default();
+        for quad in &self.quads {
+            set.note(&quad.border_color);
+            set.note(&quad.background.solid);
+            for stop in &quad.background.colors {
+                set.note(&stop.color);
+            }
+        }
+        for shadow in &self.shadows {
+            set.note(&shadow.color);
+        }
+        for underline in &self.underlines {
+            set.note(&underline.color);
+        }
+        for sprite in &self.monochrome_sprites {
+            set.note(&sprite.color);
+        }
+        for sprite in &self.subpixel_sprites {
+            set.note(&sprite.color);
+        }
+        set
     }
 
     // KOAN: whether a shader on screen asks for the window to present every
@@ -216,6 +252,7 @@ impl Scene {
         // KOAN: (#1641).
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
         self.shader_layers = self.plan_shader_layers().map(Box::new);
     }
 
@@ -367,6 +404,9 @@ impl Scene {
             let mut path = path.clone();
             path.id = PathId(paths.len());
             paths.push(path);
+        }
+        for layer in &mut layers {
+            layer.color_slots = layer.collect_color_slots(); // KOAN: #1859.
         }
         Some(ShaderLayers { layers, groups })
     }

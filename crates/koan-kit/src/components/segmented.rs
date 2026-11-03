@@ -5,7 +5,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
+use super::{Handler, accessible, answers_click, fade, focus, ring, toggled};
 use crate::theme::{KoanStyled, Look, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
@@ -54,7 +54,23 @@ impl RenderOnce for Segmented {
         for (index, option) in self.options.into_iter().enumerate() {
             let key =
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
-            let chosen = fade(key, index == selected, window, cx);
+            let chosen = index == selected;
+            let edge = fade(
+                ElementId::NamedChild(Arc::new(key.clone()), "edge".into()),
+                chosen,
+                accent.opacity(0.0),
+                accent,
+                window,
+                cx,
+            );
+            let ink = fade(
+                key,
+                chosen,
+                look.palette.muted.hsla(),
+                look.palette.ink.hsla(),
+                window,
+                cx,
+            );
             let mut option = accessible(
                 div().id(index),
                 gpui_kit::Role::RadioButton,
@@ -65,13 +81,9 @@ impl RenderOnce for Segmented {
             .aria_size_of_set(count)
             .pb(px(5.0))
             .border_b(look.hairline)
-            .border_color(accent.opacity(chosen))
+            .border_color(edge)
             .text_role(TypeRole::Control, &look)
-            .text_color(mix(
-                look.palette.muted.hsla(),
-                look.palette.ink.hsla(),
-                chosen,
-            ))
+            .text_color(ink)
             .whitespace_nowrap()
             .child(option);
             if let Some(on_change) = self.on_change.clone() {

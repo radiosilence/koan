@@ -382,6 +382,7 @@ struct WgpuResources {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
+    color_slots_buffer: wgpu::Buffer, // KOAN: #1859.
     instance_data: InstanceData,
     path_intermediate_texture: Option<wgpu::Texture>,
     path_intermediate_view: Option<wgpu::TextureView>,
@@ -404,6 +405,7 @@ struct WgpuResources {
 #[derive(Default)]
 struct KoanLayers {
     generation: u64,
+    slot_generation: u64, // KOAN: #1859.
     size: (u32, u32),
     layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
 }
@@ -731,6 +733,17 @@ impl WgpuRendererCore {
                             min_binding_size: NonZeroU64::new(
                                 std::mem::size_of::<GammaParams>() as u64
                             ),
+                        },
+                        count: None,
+                    },
+                    // KOAN: colour slots (#1859).
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(gpui::COLOR_SLOTS_BYTES as u64),
                         },
                         count: None,
                     },
@@ -1472,6 +1485,13 @@ impl WgpuRendererCore {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // KOAN: colour slots (#1859).
+        let color_slots_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("koan_color_slots"),
+            size: gpui::COLOR_SLOTS_BYTES as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let (
             instance_data,
             instance_data_capacity,
@@ -1531,6 +1551,11 @@ impl WgpuRendererCore {
                         size: NonZeroU64::new(gamma_size),
                     }),
                 },
+                // KOAN: colour slots (#1859).
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: color_slots_buffer.as_entire_binding(),
+                },
             ],
         });
         let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1552,6 +1577,11 @@ impl WgpuRendererCore {
                         offset: gamma_offset,
                         size: NonZeroU64::new(gamma_size),
                     }),
+                },
+                // KOAN: colour slots (#1859).
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: color_slots_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1601,6 +1631,7 @@ impl WgpuRendererCore {
                 globals_buffer,
                 globals_bind_group,
                 path_globals_bind_group,
+                color_slots_buffer, // KOAN: #1859.
                 instance_data,
                 path_intermediate_texture: None,
                 path_intermediate_view: None,
@@ -1725,6 +1756,7 @@ impl WgpuRendererCore {
             self.gamma_offset,
             bytemuck::bytes_of(&gamma_params),
         );
+        self.write_color_slots(); // KOAN: #1859.
 
         self.record_frame(scene, target_view, clear_color)
             .inspect_err(|_| {
@@ -2109,6 +2141,23 @@ impl WgpuRendererCore {
     // KOAN: shader quads (#1641). Composes the scene's layers and shaders
     // into `target`, drawing the layers first if this scene's are not drawn
     // yet, with the shaders' uniforms as they are now.
+    // KOAN: the colour slots as they stand when the frame is presented
+    // (#1859).
+    fn write_color_slots(&self) {
+        thread_local! {
+            static TABLE: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        TABLE.with(|table| {
+            let mut table = table.borrow_mut();
+            gpui::color_slots_frame(gpui::present_now(), &mut table);
+            self.resources.queue.write_buffer(
+                &self.resources.color_slots_buffer,
+                0,
+                bytemuck::cast_slice(&table),
+            );
+        });
+    }
+
     fn compose_frame(
         &mut self,
         scene: &Scene,
@@ -2119,7 +2168,19 @@ impl WgpuRendererCore {
         let plan = scene.shader_layers.as_deref().context("no shader layers")?;
         let extent = (size.width.0 as u32, size.height.0 as u32);
         let held = &self.resources.shader_layers;
-        if held.generation != scene.generation || held.size != extent || held.layers.is_empty() {
+        // KOAN: a layer drawing with a colour slot that moves, or was
+        // written since the layers were drawn, is drawn again (#1859).
+        let slot_generation = gpui::color_slots_generation();
+        let slots_moved = plan.layers.iter().any(|layer| {
+            !layer.color_slots.is_empty()
+                && (held.slot_generation != slot_generation
+                    || layer.color_slots_moving(gpui::present_now()))
+        });
+        if slots_moved
+            || held.generation != scene.generation
+            || held.size != extent
+            || held.layers.is_empty()
+        {
             let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
                 if self.resources.shader_layers.size == extent {
                     std::mem::take(&mut self.resources.shader_layers.layers)
@@ -2167,6 +2228,7 @@ impl WgpuRendererCore {
             }
             self.resources_mut().shader_layers = KoanLayers {
                 generation: scene.generation,
+                slot_generation,
                 size: extent,
                 layers: drawn,
             };

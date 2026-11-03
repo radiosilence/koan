@@ -51,8 +51,23 @@ impl RenderOnce for Toggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let on = fade(child(&self.id, "on"), self.checked, window, cx);
         let accent = look.accent.hsla();
+        let edge = fade(
+            child(&self.id, "edge"),
+            self.checked,
+            look.palette.muted.hsla(),
+            accent,
+            window,
+            cx,
+        );
+        let ground = fade(
+            child(&self.id, "on"),
+            self.checked,
+            accent.opacity(0.0),
+            accent,
+            window,
+            cx,
+        );
         let mut row = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
             .aria_disabled(self.disabled)
             .relative()
@@ -74,7 +89,7 @@ impl RenderOnce for Toggle {
                     .flex_none()
                     .size(px(BOX))
                     .border(look.hairline)
-                    .border_color(super::mix(look.palette.muted.hsla(), accent, on))
+                    .border_color(edge)
                     .child(
                         div()
                             .absolute()
@@ -82,7 +97,7 @@ impl RenderOnce for Toggle {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(accent.opacity(on))
+                            .bg(ground)
                             .when(self.checked, |cell| {
                                 cell.child(
                                     KoanIcon::new(Icon::Check)
@@ -151,8 +166,22 @@ impl RenderOnce for IconToggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let on = fade(child(&self.id, "on"), self.checked, window, cx);
-        let color = super::mix(look.palette.muted.hsla(), look.palette.ink.hsla(), on);
+        let color = fade(
+            child(&self.id, "on"),
+            self.checked,
+            look.palette.muted.hsla(),
+            look.palette.ink.hsla(),
+            window,
+            cx,
+        );
+        let underline = fade(
+            child(&self.id, "underline"),
+            self.checked,
+            look.accent.hsla().opacity(0.0),
+            look.accent.hsla(),
+            window,
+            cx,
+        );
         let label = self.label.clone();
         let mut toggle = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
             .aria_disabled(self.disabled)
@@ -167,7 +196,7 @@ impl RenderOnce for IconToggle {
                 div()
                     .pb(px(5.0))
                     .border_b(look.hairline)
-                    .border_color(look.accent.hsla().opacity(on))
+                    .border_color(underline)
                     .child(
                         KoanIcon::new(self.icon)
                             .role(TypeRole::Control)

@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod arrive;
 mod availability;
 mod badge;
 mod banner;
@@ -69,14 +70,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, MouseButton, Rgba, SharedString, StatefulInteractiveElement, Styled, TrackCurve,
+    Window, div, px,
 };
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
     ShaderProgram, Track,
 };
+pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
@@ -211,60 +214,63 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
     ElementId::NamedChild(Arc::new(id.clone()), SharedString::new_static(name))
 }
 
-/// A state moving between off (0) and on (1) over a motion token, from
-/// wherever it stood. Instant with Reduce Motion.
-struct Fade {
+/// A colour moving between its off and on colours on the GPU, through a
+/// colour slot (#1859): the control draws once with the slot's colour, and
+/// the presents that follow move it with no frame drawn.
+struct ColorFade {
     on: bool,
-    from: f32,
-    started: Option<Instant>,
-    duration: Duration,
+    colors: (Rgba, Rgba),
+    /// `None` when every slot was taken: the colour then changes at once.
+    slot: Option<ColorSlot>,
 }
 
-impl Fade {
-    fn at(&self, now: Instant) -> f32 {
-        let target = if self.on { 1.0 } else { 0.0 };
-        let Some(started) = self.started else {
-            return target;
-        };
-        let t = now.duration_since(started).as_secs_f32() / self.duration.as_secs_f32();
-        if t >= 1.0 {
-            return target;
-        }
-        self.from + (target - self.from) * Motion::quick_out(t)
-    }
-}
-
-/// How far a state has moved toward `on`, kept under `key`. The first frame
-/// a control is drawn it stands where it is, with nothing to animate; frames
-/// are asked for only while a change is under way.
-pub(crate) fn fade(key: ElementId, on: bool, window: &mut Window, cx: &mut App) -> f32 {
-    let duration = Motion::LEAVE;
-    let now = Instant::now();
+/// The colour a control's text, glyph or edge draws in, `on_color` when `on`
+/// and `off_color` otherwise, kept under `key`. Arriving is at once and
+/// leaving lingers: a hover lights a control as the pointer reaches it and
+/// fades over `Motion::LEAVE` once it has gone. Instant with Reduce Motion.
+/// The slot is freed with the control.
+pub(crate) fn fade(
+    key: ElementId,
+    on: bool,
+    off_color: Hsla,
+    on_color: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> Hsla {
+    let colors = (Rgba::from(off_color), Rgba::from(on_color));
+    let target = |on: bool, colors: (Rgba, Rgba)| if on { colors.1 } else { colors.0 };
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| Fade {
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade {
         on,
-        from: 0.0,
-        started: None,
-        duration,
+        colors,
+        slot: ColorSlot::claim(target(on, colors)),
     });
-    let (value, moving) = state.update(cx, |fade, _| {
-        if fade.on != on {
-            fade.from = fade.at(now);
-            fade.on = on;
-            // Arriving is at once, leaving lingers: a hover lights a
-            // control as the pointer reaches it and fades once it has gone.
-            fade.started = (!reduce && !on).then_some(now);
+    state.update(cx, |fade, _| {
+        let to = target(on, colors);
+        if let Some(slot) = &fade.slot {
+            if fade.on != on && !on && !reduce {
+                slot.to(
+                    to,
+                    Track {
+                        from: 0.0,
+                        to: 1.0,
+                        start: 0.0,
+                        length: Motion::LEAVE.as_secs_f32(),
+                        curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                        repeat: Repeat::Once,
+                    },
+                );
+            } else if fade.on != on || fade.colors != colors {
+                slot.hold(to);
+            }
         }
-        let value = fade.at(now);
-        let moving = fade
-            .started
-            .is_some_and(|started| now.duration_since(started) < fade.duration);
-        (value, moving)
-    });
-    if moving {
-        window.request_animation_frame();
-    }
-    value
+        fade.on = on;
+        fade.colors = colors;
+        match &fade.slot {
+            Some(slot) => slot.hsla(1.0),
+            None => to.into(),
+        }
+    })
 }
 
 /// The keyboard's focus ring, 2 points of accent standing 4 outside the
@@ -305,19 +311,6 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
-}
-
-/// Two colours mixed, `t` of the way from `a` to `b`.
-pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
-    let (a, b) = (gpui_kit::Rgba::from(a), gpui_kit::Rgba::from(b));
-    let at = |x: f32, y: f32| x + (y - x) * t;
-    gpui_kit::Rgba {
-        r: at(a.r, b.r),
-        g: at(a.g, b.g),
-        b: at(a.b, b.b),
-        a: at(a.a, b.a),
-    }
-    .into()
 }
 
 /// A fill or an outline following a control's state on the GPU: lit at once

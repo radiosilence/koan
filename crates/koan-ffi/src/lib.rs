@@ -5511,8 +5511,8 @@ impl KoanEngine {
     ///
     /// The playhead is the one thing no writer can announce, because it moves
     /// on its own. It is published as an anchor instead: see `state::Anchor`.
-    /// Publish the transfers' figures whenever the store takes a reading — a
-    /// few times a second while something downloads, never otherwise.
+    /// Publish the transfers' figures whenever the store takes a reading:
+    /// about fifteen times a second while something downloads, never otherwise.
     ///
     /// Its own thread on the store's own signal. Readings are rung there and
     /// not on the engine's, so a transfer in progress wakes this and nothing

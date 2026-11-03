@@ -7,11 +7,8 @@
 //! drawn and nothing read on a timer. A transfer that ends drops its glide,
 //! which stops it.
 //!
-//! The downloads page's bars read the byte counts directly (`progress`): one
-//! reading of every running transfer per frame, shared by every bar drawn in
-//! it, and only by a frame that draws one.
+//! The downloads page's bars take the same glides (`bar`).
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -20,40 +17,7 @@ use koan_ffi::{EntryStatus, Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
 
 use crate::components::{Availability, Glide, RingGlide};
-use crate::engine::engine;
 use crate::mirror::Mirror;
-
-/// Readings younger than this are the same frame's: shorter than a frame at
-/// 144 Hz, longer than one frame's drawing.
-const FRAME: Duration = Duration::from_millis(4);
-
-struct Readings {
-    at: Instant,
-    progress: HashMap<i64, Option<f32>>,
-}
-
-thread_local! {
-    static READINGS: RefCell<Option<Readings>> = const { RefCell::new(None) };
-}
-
-/// The progress of `track`'s transfer as of this frame.
-pub fn progress(track: i64, cx: &App) -> Option<f32> {
-    READINGS.with(|cell| {
-        let mut cell = cell.borrow_mut();
-        let now = Instant::now();
-        if cell.as_ref().is_none_or(|r| now - r.at > FRAME) {
-            *cell = Some(Readings {
-                at: now,
-                progress: engine(cx)
-                    .transfer_readings()
-                    .into_iter()
-                    .map(|f| (f.track_id, f.progress.map(|p| p as f32)))
-                    .collect(),
-            });
-        }
-        cell.as_ref()?.progress.get(&track).copied().flatten()
-    })
-}
 
 /// Each transfer's glides, by track.
 pub struct Transfers {
@@ -71,6 +35,8 @@ struct Entry {
     rings: Vec<(u32, Glide)>,
     /// The seek bar's, styled by the slider.
     reach: Glide,
+    /// The downloads page's bar, styled by the bar.
+    bar: Glide,
     /// The last report, for a glide made after it.
     last: Option<Report>,
     /// The engine has reported this transfer: once it stops reporting it,
@@ -83,13 +49,17 @@ impl Entry {
         Self {
             rings: Vec::new(),
             reach: Glide::new(),
+            bar: Glide::new(),
             last: None,
             reported: false,
         }
     }
 
     fn glides(&self) -> impl Iterator<Item = &Glide> {
-        self.rings.iter().map(|(_, g)| g).chain([&self.reach])
+        self.rings
+            .iter()
+            .map(|(_, g)| g)
+            .chain([&self.reach, &self.bar])
     }
 }
 
@@ -168,6 +138,21 @@ pub fn reach(track: i64, cx: &App) -> Option<Glide> {
         .and_then(|last| last.share)
         .is_some_and(|share| share < 1.0);
     (transfers.running.contains(&track) && partial).then(|| entry.reach.clone())
+}
+
+/// The downloads page bar's glide for `track`'s transfer, made now if the
+/// engine has not reported it yet.
+pub fn bar(track: i64, cx: &mut App) -> Glide {
+    let Some(handle) = cx.try_global::<TransfersHandle>().cloned() else {
+        return Glide::new();
+    };
+    handle.0.update(cx, |transfers, _| {
+        let entry = transfers.glides.entry(track).or_insert_with(Entry::new);
+        if let Some(last) = entry.last {
+            last.apply(&entry.bar);
+        }
+        entry.bar.clone()
+    })
 }
 
 /// The entity to observe for transfers starting and ending.
