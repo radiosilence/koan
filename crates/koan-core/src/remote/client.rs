@@ -2325,6 +2325,44 @@ mod tests {
     /// them: run in parallel, one would starve the other.
     static COVER_SLOT_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+    /// A background fetch waits while a page's cover is in flight, then
+    /// takes a slot under the same limit; background fetches do not wait
+    /// for each other, and a page's fetch never waits for them.
+    #[test]
+    fn background_cover_fetches_share_the_limit_and_give_way() {
+        let _slots = COVER_SLOT_TESTS.lock();
+        let page = CoverSlots::take().unwrap();
+        let (sent, taken) = crossbeam_channel::bounded(1);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let slot = CoverSlots::take_background();
+                sent.send(()).unwrap();
+                drop(slot);
+            });
+            assert!(
+                taken.recv_timeout(Duration::from_millis(50)).is_err(),
+                "waits while a page's cover is in flight"
+            );
+            drop(page);
+            taken.recv_timeout(Duration::from_secs(2)).unwrap();
+        });
+        // Background slots together stay under the limit, and a page's fetch
+        // takes the room that is left without waiting for them to finish.
+        let background: Vec<_> = (0..COVER_FETCHES - 1)
+            .map(|_| CoverSlots::take_background())
+            .collect();
+        let page = CoverSlots::take().expect("a page's fetch takes the last slot");
+        assert!(matches!(CoverSlots::take(), Err(SubsonicError::Busy)));
+        drop(page);
+        drop(background);
+        let flight = COVERS_IN_FLIGHT.lock();
+        assert_eq!(
+            (flight.all, flight.background),
+            (0, 0),
+            "every slot given back"
+        );
+    }
+
     #[test]
     fn cover_fetches_are_bounded() {
         use std::sync::atomic::{AtomicUsize, Ordering};
