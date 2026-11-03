@@ -595,6 +595,94 @@ mod tests {
 
     use super::*;
 
+    /// What the preload costs against a real server: its first albums'
+    /// covers one at a time, then six at a time, then through `koanCovers`
+    /// where the server offers it. The server and sign-in come from the
+    /// environment (`KOAN_MEASURE_URL`, `KOAN_MEASURE_USER`,
+    /// `KOAN_MEASURE_PASS`), never a file; run it with `--ignored
+    /// --nocapture` in release.
+    #[test]
+    #[ignore]
+    fn measure_against_a_server() {
+        let var = |name| std::env::var(name).expect(name);
+        let client = SubsonicClient::new(
+            &var("KOAN_MEASURE_URL"),
+            &var("KOAN_MEASURE_USER"),
+            &var("KOAN_MEASURE_PASS"),
+        );
+        let albums: usize = std::env::var("KOAN_MEASURE_ALBUMS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(600);
+        let mut ids = Vec::new();
+        while ids.len() < albums {
+            let page = client
+                .get_album_list("alphabeticalByName", 500, ids.len() as u32)
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            ids.extend(page.into_iter().map(|a| a.id));
+        }
+        ids.truncate(albums);
+        let rate = |n: usize, took: std::time::Duration| n as f64 / took.as_secs_f64();
+        let first = &ids[..ids.len() / 6];
+        let started = std::time::Instant::now();
+        let mut bytes = 0;
+        for id in first {
+            bytes += client
+                .get_cover_art_background(id, Some(PRELOAD_SIZE))
+                .unwrap()
+                .len();
+        }
+        let took = started.elapsed();
+        println!(
+            "measure: one at a time: {} in {took:.2?} ({:.1} a second, {} KB each)",
+            first.len(),
+            rate(first.len(), took),
+            bytes / first.len().max(1) / 1024
+        );
+        let rest = &ids[ids.len() / 6..];
+        let started = std::time::Instant::now();
+        let next = Mutex::new(rest.iter());
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS {
+                scope.spawn(|| {
+                    while let Some(id) = next.lock().next() {
+                        client
+                            .get_cover_art_background(id, Some(PRELOAD_SIZE))
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        let took = started.elapsed();
+        println!(
+            "measure: {WORKERS} at a time: {} in {took:.2?} ({:.1} a second)",
+            rest.len(),
+            rate(rest.len(), took)
+        );
+        let started = std::time::Instant::now();
+        let mut covers = 0;
+        for chunk in ids.chunks(BULK_MAX) {
+            let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |_, cover| {
+                if matches!(cover, BulkCover::Cover(_)) {
+                    covers += 1;
+                }
+            });
+            if let Err(e) = answered {
+                println!("measure: koanCovers not answered: {e}");
+                return;
+            }
+        }
+        let took = started.elapsed();
+        println!(
+            "measure: koanCovers: {covers} of {} held, in {took:.2?} ({:.1} a second)",
+            ids.len(),
+            rate(covers, took)
+        );
+    }
+
     /// Frames read back as written, in order; a kind this client does not
     /// know reads as not held, and the stream's end as `None`.
     #[test]
