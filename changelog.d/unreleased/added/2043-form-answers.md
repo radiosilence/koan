@@ -1,0 +1,1 @@
+- **Form controls answer too.** A toggle's tick draws itself in and erases; copying turns the copy glyph into a tick and back; a segmented control's mark comes in from the side the last choice stood on; a stepper's value rolls the way it was stepped; a cleared filter's text fades out leftward. Each stands still under Reduce Motion.

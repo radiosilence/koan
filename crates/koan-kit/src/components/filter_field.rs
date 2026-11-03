@@ -4,14 +4,69 @@
 //! `ink` under the pointer, empties it and keeps the keyboard there; Escape
 //! does the same, and with the field empty goes on to whatever Escape means
 //! around it. The caller owns the `InputState` and listens to it: emptying
-//! the field is a change like any other.
+//! the field is a change like any other. What was cleared fades out
+//! leftward for a moment, a layer the GPU moves, so the clear is seen.
 
 use crate::components::field::{Escape, FieldState as InputState};
 use gpui::prelude::*;
 use gpui::*;
 
-use super::TextField;
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
+use super::{Animated, AnimatedLayer, Ease, Repeat, TextField};
+use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Tone, TypeRole};
+
+/// The text a clear took, fading out, and the timer that lets it go.
+#[derive(Default)]
+struct Cleared {
+    animated: Animated,
+    ghost: Option<SharedString>,
+    _end: Option<Task<()>>,
+}
+
+/// Empties the field, leaving what it held to fade out leftward over
+/// `Motion::SETTLE`: nothing under Reduce Motion.
+fn clear(
+    input: &Entity<InputState>,
+    cleared: &Entity<Cleared>,
+    view: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let text: SharedString = input.read(cx).value().to_string().into();
+    input.update(cx, |input, cx| input.clean(window, cx));
+    if text.is_empty() || !KoanTheme::motion_allowed(cx) {
+        return;
+    }
+    let travel = -12.0 * window.scale_factor();
+    cleared.update(cx, |c, cx| {
+        let at = Animated::now();
+        super::layer::standing(&c.animated);
+        c.animated.segment(
+            0,
+            1.0,
+            0.0,
+            at,
+            Motion::SETTLE,
+            Ease::QuickOut,
+            Repeat::Once,
+        );
+        c.animated.segment(
+            1,
+            0.0,
+            travel,
+            at,
+            Motion::SETTLE,
+            Ease::QuickOut,
+            Repeat::Once,
+        );
+        c.ghost = Some(text);
+        c._end = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Motion::SETTLE).await;
+            this.update(cx, |c, _| c.ghost = None).ok();
+            cx.update(|cx| cx.notify(view));
+        }));
+    });
+    cx.notify(view);
+}
 
 #[derive(IntoElement)]
 pub struct FilterField {
@@ -48,7 +103,17 @@ impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let empty = self.input.read(cx).value().is_empty();
-        let (escape, clear, focus) = (self.input.clone(), self.input.clone(), self.input.clone());
+        let (escape, clearing, focus) =
+            (self.input.clone(), self.input.clone(), self.input.clone());
+        let cleared = window.use_keyed_state(
+            ElementId::from(("filter-cleared", self.input.entity_id().as_u64())),
+            cx,
+            |_, _| Cleared::default(),
+        );
+        let view = window.current_view();
+        let ghost = cleared.read(cx).ghost.clone();
+        let fading = cleared.read(cx).animated.clone();
+        let (on_escape, on_mark) = (cleared.clone(), cleared.clone());
         let hover = look.palette.ink.hsla();
         div()
             .id("filter-field")
@@ -82,7 +147,7 @@ impl RenderOnce for FilterField {
                 if escape.read(cx).value().is_empty() {
                     cx.propagate();
                 } else {
-                    escape.update(cx, |input, cx| input.clean(window, cx));
+                    clear(&escape, &on_escape, view, window, cx);
                 }
             })
             .child(
@@ -94,9 +159,26 @@ impl RenderOnce for FilterField {
             // flex row otherwise sizes to the input's content, nothing.
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_w_0()
-                    .child(TextField::new(&self.input).label(self.label).bare()),
+                    .child(TextField::new(&self.input).label(self.label).bare())
+                    .children(ghost.map(|ghost| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .child(AnimatedLayer::new(
+                                &fading,
+                                div()
+                                    .whitespace_nowrap()
+                                    .text_role(TypeRole::Control, &look)
+                                    .text_color(look.palette.ink.hsla())
+                                    .child(ghost),
+                            ))
+                    })),
             )
             .when(!empty, |d| {
                 d.child(
@@ -121,10 +203,8 @@ impl RenderOnce for FilterField {
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             cx.stop_propagation();
                             window.prevent_default();
-                            clear.update(cx, |input, cx| {
-                                input.clean(window, cx);
-                                input.focus(window, cx);
-                            });
+                            clear(&clearing, &on_mark, view, window, cx);
+                            clearing.update(cx, |input, cx| input.focus(window, cx));
                         }),
                 )
             })

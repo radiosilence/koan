@@ -1,0 +1,1 @@
+- **The terminal UI builds again.** Its remote control leaves the new output commands to the device they belong to.
