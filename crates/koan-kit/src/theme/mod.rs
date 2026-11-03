@@ -638,6 +638,16 @@ impl AccentFeed {
         feed
     }
 
+    /// Whether the accent is still turning to its target.
+    fn turning(&self) -> bool {
+        let now = gpui_kit::present_now();
+        self.slots
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|slot| slot.moving(now))
+    }
+
     /// Sends the slots to the target as it is drawn with `contrast`: as the
     /// wash dissolves to the record (`Motion::DISSOLVE`, in-out) when `ease`,
     /// at once otherwise.
@@ -682,10 +692,11 @@ fn held(shade: Shade, dark: bool, contrast: bool) -> Shade {
 }
 
 /// The accent a window draws, through the feed's slots where it has them.
-/// A change of contrast lands the slots on the held shade at once.
+/// A change of contrast lands the slots on the held shade at once, as does
+/// motion stopping (Reduce Motion, Low Power Mode) mid-turn.
 fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
     let feed = cx.global::<AccentHandle>().0.read(cx);
-    if feed.contrast.get() != contrast {
+    if feed.contrast.get() != contrast || (!KoanTheme::motion_allowed(cx) && feed.turning()) {
         feed.aim(contrast, false);
     }
     let mut shade = feed.held.get()[usize::from(!dark)];
