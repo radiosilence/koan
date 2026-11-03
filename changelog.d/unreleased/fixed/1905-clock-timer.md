@@ -1,0 +1,1 @@
+- **Playing no longer crashes the desktop app.** The seek bar's clock waited on a timer that needs a runtime the app does not run.
