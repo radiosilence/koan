@@ -292,9 +292,13 @@ impl Render for StagePicker {
                                         this.update(cx, |p, cx| p.close(cx)).ok();
                                     },
                                 ))
-                                .children(
-                                    made.map(|m| div().flex().child(Badge::new(m).accent(matched))),
-                                )
+                                .children(made.map(|m| {
+                                    div().flex().child(
+                                        Badge::new(m)
+                                            .accent(matched)
+                                            .key(("eq-made", g * 1000 + i)),
+                                    )
+                                }))
                                 .into_any_element()
                         })
                         .collect();

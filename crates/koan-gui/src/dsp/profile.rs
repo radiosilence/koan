@@ -1365,9 +1365,11 @@ impl ProfileBody {
                             .text_color(look.palette.ink.hsla())
                             .child(layer.profile.clone()),
                     )
-                    .children(
-                        role.map(|r| Badge::new(role_label(r)).accent(r == DspRole::Correction)),
-                    )
+                    .children(role.map(|r| {
+                        Badge::new(role_label(r))
+                            .accent(r == DspRole::Correction)
+                            .key(("layer-role", i))
+                    }))
                     .child(menu(
                         ("layer-options", i),
                         label("Options"),
