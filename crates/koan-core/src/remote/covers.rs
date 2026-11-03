@@ -643,25 +643,42 @@ mod tests {
             bytes / first.len().max(1) / 1024
         );
         let rest = &ids[ids.len() / 6..];
-        let started = std::time::Instant::now();
-        let next = Mutex::new(rest.iter());
-        std::thread::scope(|scope| {
-            for _ in 0..WORKERS {
-                scope.spawn(|| {
-                    while let Some(id) = next.lock().next() {
-                        client
-                            .get_cover_art_background(id, Some(PRELOAD_SIZE))
-                            .unwrap();
-                    }
-                });
-            }
-        });
-        let took = started.elapsed();
-        println!(
-            "measure: {WORKERS} at a time: {} in {took:.2?} ({:.1} a second)",
-            rest.len(),
-            rate(rest.len(), took)
-        );
+        for own in [false, true] {
+            let started = std::time::Instant::now();
+            let next = Mutex::new(rest.iter());
+            let in_flight = std::sync::atomic::AtomicUsize::new(0);
+            let most = std::sync::atomic::AtomicUsize::new(0);
+            std::thread::scope(|scope| {
+                for _ in 0..WORKERS {
+                    scope.spawn(|| {
+                        let mine = own.then(|| {
+                            SubsonicClient::new(
+                                &var("KOAN_MEASURE_URL"),
+                                &var("KOAN_MEASURE_USER"),
+                                &var("KOAN_MEASURE_PASS"),
+                            )
+                        });
+                        let client = mine.as_ref().unwrap_or(&client);
+                        while let Some(id) = next.lock().next() {
+                            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                            most.fetch_max(now, Ordering::SeqCst);
+                            client
+                                .get_cover_art_background(id, Some(PRELOAD_SIZE))
+                                .unwrap();
+                            in_flight.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    });
+                }
+            });
+            let took = started.elapsed();
+            println!(
+                "measure: {WORKERS} at a time{}: {} in {took:.2?} ({:.1} a second, at most {} asked at once)",
+                if own { ", a client each" } else { "" },
+                rest.len(),
+                rate(rest.len(), took),
+                most.load(Ordering::SeqCst)
+            );
+        }
         let started = std::time::Instant::now();
         let mut covers = 0;
         for chunk in ids.chunks(BULK_MAX) {
