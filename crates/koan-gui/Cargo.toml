@@ -64,7 +64,7 @@ koan-kit = { path = "../koan-kit", features = ["test-support"] }
 criterion = "0.8"
 # Switches on GPUI's bench and test support, which the benches reach as
 # `gpui::`.
-gpui_pre = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["bench-support"] }
 # The large test library's tags (examples/gen_library.rs).
 lofty = "0.25"
