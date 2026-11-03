@@ -158,7 +158,9 @@ impl Track {
     }
 
     pub(crate) fn decode(f: &[f32]) -> Self {
-        let code = f[4] as u32;
+        // KOAN: 16 and above flags a colour slot mixed in OKLab, as the
+        // shaders read it (`code % 16`) (#1859).
+        let code = f[4] as u32 % 16;
         let repeat = match code / 4 {
             1 => TrackRepeat::Loop,
             2 => TrackRepeat::Alternate,
@@ -457,10 +459,68 @@ pub struct ShaderUniforms {
     /// one; 0 for a plain colour. Resolved as each present is made, so a
     /// slot's colour moves in the program with no frame drawn.
     colors: [AtomicU16; SHADER_PLAIN],
+    /// How many of `colors` name a slot: none, as for most shaders, and a
+    /// write or a present does no colour work at all.
+    colored: AtomicU32,
     /// Whether a slot the uniforms name was moving at the last present: the
     /// present after it stops lands it.
     colors_moved: AtomicBool,
+    /// A sequence lock over the values and the origin: odd while a write is
+    /// being made, so a reader on another thread (the presenter) takes the
+    /// block as one publish, never half a track or a track in one base and
+    /// the origin in another.
+    sequence: AtomicU64,
+    /// Held by the thread writing, reentrantly, so writers from several
+    /// threads publish one after another and a write made of reads and
+    /// writes (a rebase, a retarget) is one publish.
+    writer: parking_lot::ReentrantMutex<std::cell::Cell<u32>>,
+    /// The thread publishing, by `thread_number`; 0 for none. A read on that
+    /// thread is inside its own publish and reads as it stands, with no lock.
+    owner: AtomicU64,
+    /// The block as the last present took it: what a present shows again
+    /// when a writer holds the block, so the present path never waits.
+    /// Touched only by presents.
+    presented: parking_lot::Mutex<Option<Taken>>,
+    /// The last present showed `presented` in place of a block a writer
+    /// held: live until a present reads it whole, so the frames keep coming
+    /// whatever the writer wakes.
+    stale: AtomicBool,
 }
+
+/// The block as one publish left it: the origin, every value, and the slot
+/// each colour names.
+type Taken = (i64, [f32; SHADER_UNIFORMS], [u16; SHADER_PLAIN]);
+
+// KOAN: a number for each thread, from 1, for `ShaderUniforms::owner`.
+fn thread_number() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    thread_local! {
+        static NUMBER: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    NUMBER.with(|n| *n)
+}
+
+// KOAN: closes a publish however `write` ends, unwinding included: the depth
+// restored, and the outermost publish's sequence made even again.
+struct Published<'a> {
+    uniforms: &'a ShaderUniforms,
+    held: parking_lot::ReentrantMutexGuard<'a, std::cell::Cell<u32>>,
+    depth: u32,
+}
+
+impl Drop for Published<'_> {
+    fn drop(&mut self) {
+        self.held.set(self.depth);
+        if self.depth == 0 {
+            self.uniforms.owner.store(0, Ordering::Relaxed);
+            self.uniforms.sequence.fetch_add(1, Ordering::Release);
+        }
+    }
+}
+
+/// How many times a reader looks again at a publish in progress before it
+/// waits for the writer instead.
+const READ_SPINS: u32 = 64;
 
 // KOAN: written out, since an array of eighty has no derived default
 // (#1859).
@@ -477,7 +537,13 @@ impl Default for ShaderUniforms {
             moving_until: AtomicU64::new(0),
             track_landing: AtomicBool::new(false),
             colors: std::array::from_fn(|_| AtomicU16::new(0)),
+            colored: AtomicU32::new(0),
             colors_moved: AtomicBool::new(false),
+            sequence: AtomicU64::new(0),
+            writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
+            owner: AtomicU64::new(0),
+            presented: parking_lot::Mutex::new(None),
+            stale: AtomicBool::new(false),
         }
     }
 }
@@ -487,13 +553,90 @@ impl ShaderUniforms {
         Self::default()
     }
 
+    /// Runs `write` as one publish: what it writes is seen by a reader all
+    /// at once, and no other thread writes in between. Reentrant: a write
+    /// inside it joins it.
+    pub fn publish<R>(&self, write: impl FnOnce() -> R) -> R {
+        let held = self.writer.lock();
+        let depth = held.get();
+        if depth == 0 {
+            // Odd before any value is stored: the fence keeps the stores
+            // that follow from being seen ahead of it (as crossbeam's
+            // sequence lock does).
+            self.sequence.fetch_add(1, Ordering::Acquire);
+            std::sync::atomic::fence(Ordering::Release);
+            self.owner.store(thread_number(), Ordering::Relaxed);
+        }
+        held.set(depth + 1);
+        let _published = Published {
+            uniforms: self,
+            held,
+            depth,
+        };
+        write()
+    }
+
+    /// Runs `read` until it saw one whole publish: what a reader on another
+    /// thread calls to take several values together. Within a `publish` on
+    /// this thread it reads as it stands.
+    pub fn read<R>(&self, read: impl Fn() -> R) -> R {
+        if self.owner.load(Ordering::Relaxed) == thread_number() {
+            return read();
+        }
+        for _ in 0..READ_SPINS {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let result = read();
+            std::sync::atomic::fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Acquire) == before {
+                return result;
+            }
+        }
+        // A writer descheduled mid-publish: wait for it rather than spin.
+        // Writers hold the lock for the whole publish, so what is read under
+        // it is whole.
+        let _held = self.writer.lock();
+        read()
+    }
+
+    /// `read`, for a present, which never waits: `None` when a writer still
+    /// holds the block after the spins.
+    fn try_read<R>(&self, read: impl Fn() -> R) -> Option<R> {
+        if self.owner.load(Ordering::Relaxed) == thread_number() {
+            return Some(read());
+        }
+        for _ in 0..READ_SPINS {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let result = read();
+            std::sync::atomic::fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Acquire) == before {
+                return Some(result);
+            }
+        }
+        let _held = self.writer.try_lock()?;
+        Some(read())
+    }
+
     /// Whether the value changed. A colour slot whose four floats `index`
     /// falls in is let go: the value written stands as written.
     pub fn set(&self, index: usize, value: f32) -> bool {
+        self.publish(|| self.set_unpublished(index, value))
+    }
+
+    fn set_unpublished(&self, index: usize, value: f32) -> bool {
         // KOAN: #1859.
         let mut moved = false;
-        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
-            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
+        if self.colored.load(Ordering::Relaxed) != 0 {
+            for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
+                moved |= self.put_color(colour, 0);
+            }
         }
         if moved {
             self.changed.store(true, Ordering::Relaxed);
@@ -517,6 +660,10 @@ impl ShaderUniforms {
     /// The moment `time` counts from in the program: where an anchor was
     /// taken, so the program reckons from it.
     pub fn set_origin(&self, origin: Instant) -> bool {
+        self.publish(|| self.set_origin_unpublished(origin))
+    }
+
+    fn set_origin_unpublished(&self, origin: Instant) -> bool {
         let nanos = since_epoch(origin);
         let changed = self.origin.swap(nanos, Ordering::Relaxed) != nanos;
         if changed {
@@ -527,6 +674,10 @@ impl ShaderUniforms {
 
     /// Seconds from the origin to `now`, as the program reads `time`.
     pub fn time_at(&self, now: Instant) -> f32 {
+        self.read(|| self.time_at_unpublished(now))
+    }
+
+    fn time_at_unpublished(&self, now: Instant) -> f32 {
         ((since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9) as f32
     }
 
@@ -542,6 +693,8 @@ impl ShaderUniforms {
             || self.track_landing.load(Ordering::Relaxed)
             || self.colors_moving(present_now())
             || self.colors_moved.load(Ordering::Relaxed)
+            // KOAN: shown stale while a writer held the block (#1859).
+            || self.stale.load(Ordering::Relaxed)
     }
 
     /// Whether a deadline was set and has passed.
@@ -572,7 +725,9 @@ impl ShaderUniforms {
     /// Whether this refresh should present: changed since the last time
     /// this was asked, or live and continuous.
     pub fn take_present(&self) -> bool {
-        let changed = self.changed.swap(false, Ordering::Relaxed);
+        // KOAN: the last present was stale: present again (#1859).
+        let changed = self.changed.swap(false, Ordering::Relaxed)
+            || self.stale.load(Ordering::Relaxed);
         let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
         // KOAN: a track moves with time; the present after its end lands it
         // (#1859).
@@ -592,6 +747,10 @@ impl ShaderUniforms {
 
     /// Every value, as a renderer copies them into a frame.
     pub fn snapshot(&self) -> [f32; SHADER_UNIFORMS] {
+        self.read(|| self.snapshot_unpublished())
+    }
+
+    fn snapshot_unpublished(&self) -> [f32; SHADER_UNIFORMS] {
         std::array::from_fn(|i| self.get(i))
     }
 
@@ -599,13 +758,17 @@ impl ShaderUniforms {
     /// Puts `track` in slot `k`: the program draws it from the next present
     /// on, and the window presents while it moves.
     pub fn set_track(&self, k: usize, track: Track) {
+        self.publish(|| self.set_track_unpublished(k, track))
+    }
+
+    fn set_track_unpublished(&self, k: usize, track: Track) {
         let base = SHADER_PLAIN + k * TRACK_FLOATS;
         for (i, value) in track.encode().into_iter().enumerate() {
-            self.set(base + i, value);
+            self.set_unpublished(base + i, value);
         }
         let origin = self.origin.load(Ordering::Relaxed);
         let until = (0..SHADER_TRACKS)
-            .map(|k| self.track(k))
+            .map(|k| self.track_unpublished(k))
             .filter(|t| t.length > 0.0)
             .map(|t| match t.end() {
                 None => u64::MAX,
@@ -619,6 +782,10 @@ impl ShaderUniforms {
 
     /// The track in slot `k`.
     pub fn track(&self, k: usize) -> Track {
+        self.read(|| self.track_unpublished(k))
+    }
+
+    fn track_unpublished(&self, k: usize) -> Track {
         let base = SHADER_PLAIN + k * TRACK_FLOATS;
         let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
         Track::decode(&floats)
@@ -629,6 +796,10 @@ impl ShaderUniforms {
     /// slot as each present is made, its alpha scaling the slot's. Whether
     /// anything changed.
     pub fn set_color(&self, index: usize, color: Hsla) -> bool {
+        self.publish(|| self.set_color_unpublished(index, color))
+    }
+
+    fn set_color_unpublished(&self, index: usize, color: Hsla) -> bool {
         let slot = crate::color_slot_of(&color).map_or(0, |slot| slot as u16 + 1);
         let rgba = if slot == 0 {
             crate::Rgba::from(color)
@@ -645,13 +816,13 @@ impl ShaderUniforms {
         let mut changed = false;
         for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
             if other != index {
-                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
+                changed |= self.put_color(other, 0);
             }
         }
         for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
             changed |= self.write(index + i, value);
         }
-        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
+        changed |= self.put_color(index, slot);
         if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
@@ -659,7 +830,26 @@ impl ShaderUniforms {
     }
 
     /// Whether a colour slot the uniforms draw is moving at `at`.
+    /// Names `slot` (plus one; 0 for none) at plain uniform `index`, keeping
+    /// `colored`'s count. Whether it changed.
+    fn put_color(&self, index: usize, slot: u16) -> bool {
+        let old = self.colors[index].swap(slot, Ordering::Relaxed);
+        match (old != 0, slot != 0) {
+            (false, true) => {
+                self.colored.fetch_add(1, Ordering::Relaxed);
+            }
+            (true, false) => {
+                self.colored.fetch_sub(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        old != slot
+    }
+
     fn colors_moving(&self, at: Instant) -> bool {
+        if self.colored.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
         self.colors.iter().any(|slot| {
             let slot = slot.load(Ordering::Relaxed);
             slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
@@ -669,15 +859,61 @@ impl ShaderUniforms {
     /// Every value as the program reads it at `now`: a colour naming a slot
     /// replaced by the colour the slot shows then.
     pub fn snapshot_at(&self, now: Instant) -> [f32; SHADER_UNIFORMS] {
-        let mut values = self.snapshot();
-        for (index, slot) in self.colors.iter().enumerate() {
-            let slot = slot.load(Ordering::Relaxed);
+        self.taken_at(now).1
+    }
+
+    fn take_unpublished(&self) -> Taken {
+        let colored = self.colored.load(Ordering::Relaxed) != 0;
+        (
+            self.origin.load(Ordering::Relaxed),
+            self.snapshot_unpublished(),
+            std::array::from_fn(|i| {
+                if colored {
+                    self.colors[i].load(Ordering::Relaxed)
+                } else {
+                    0
+                }
+            }),
+        )
+    }
+
+    /// The origin and every value, taken as one publish, with each colour
+    /// naming a slot replaced by the colour the slot shows at `now`.
+    fn taken_at(&self, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
+        Self::resolved(self.read(|| self.take_unpublished()), now)
+    }
+
+    /// `taken_at`, for a present, which never waits on a writer: with the
+    /// block held, the last present's copy, and the next refresh presents
+    /// again for what the writer wrote.
+    fn presented_at(&self, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
+        let mut presented = self.presented.lock();
+        let taken = match self.try_read(|| self.take_unpublished()) {
+            Some(taken) => {
+                self.stale.store(false, Ordering::Relaxed);
+                taken
+            }
+            None => {
+                self.stale.store(true, Ordering::Relaxed);
+                match *presented {
+                    Some(taken) => taken,
+                    // Never presented: nothing to show in its place.
+                    None => self.read(|| self.take_unpublished()),
+                }
+            }
+        };
+        *presented = Some(taken);
+        Self::resolved(taken, now)
+    }
+
+    fn resolved((origin, mut values, colors): Taken, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
+        for (index, slot) in colors.into_iter().enumerate() {
             if slot != 0 {
                 let rgba = crate::color_slot_rgba_at(slot as usize - 1, values[index + 3], now);
                 values[index..index + 4].copy_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
             }
         }
-        values
+        (origin, values)
     }
 
     // KOAN: (#1741) `time` grows from the origin for as long as a quad is
@@ -691,8 +927,10 @@ impl ShaderUniforms {
     /// alone sees it fall back by an hour once an hour.
     pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
         const BASE: f64 = 3600.0;
-        let mut values = self.snapshot_at(now);
-        let t = (since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9;
+        // KOAN: the origin and the tracks from one publish, never waiting
+        // on a writer (#1859).
+        let (origin, mut values) = self.presented_at(now);
+        let t = (since_epoch(now) - origin) as f64 / 1e9;
         let base = (t / BASE).floor() * BASE;
         if base == 0.0 {
             return (t as f32, values);

@@ -1170,7 +1170,7 @@ impl Focusable for Transport {
 }
 
 /// How long the slider stands on a seek's target waiting for the engine.
-const LANDING: Duration = Duration::from_secs(1);
+pub(crate) const LANDING: Duration = Duration::from_secs(1);
 /// How near the engine's playhead must come to a seek's target to be its
 /// answer.
 const NEAR_MS: u64 = 250;
@@ -1205,9 +1205,24 @@ fn shown_position(
 /// the engine reports a playhead there, the seek slider stands on it, so a
 /// seek lands at once with no frame at the old place.
 #[derive(Default)]
-pub struct Landing(Option<Playhead>);
+pub(crate) struct Landing(Option<Playhead>);
 
 impl Global for Landing {}
+
+/// The latest seek's target while it is on its way: until the engine reports
+/// a playhead there, or `LANDING` has gone by without it (a seek it did not
+/// take). What places something by the playhead (the slider, the lyrics)
+/// reads this first, so a reading from before the seek is never shown.
+pub fn landing(cx: &App) -> Option<Playhead> {
+    let target = cx.try_global::<Landing>().and_then(|l| l.0)?;
+    let mirror = cx.global::<Mirror>();
+    let current = *mirror.playhead.read(cx);
+    let duration = mirror.playback.read(cx).0.duration_ms;
+    let now = Instant::now();
+    let arrived = current.at >= target.at
+        && current.at(now, duration).abs_diff(target.at(now, duration)) < NEAR_MS;
+    (!arrived && target.at.elapsed() < LANDING).then_some(target)
+}
 
 /// Called as a seek to `target_ms` is sent.
 pub fn land(target_ms: u64, cx: &mut App) {
@@ -1298,17 +1313,12 @@ impl Seek {
     /// arriving while a later one is on its way, is passed over.
     fn shown(&self, cx: &App) -> (Playhead, bool) {
         let current = *self.playhead.read(cx);
-        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
+        if cx.try_global::<Landing>().and_then(|l| l.0).is_none() {
             return (current, false);
-        };
-        let now = Instant::now();
-        let duration = self.duration_ms(cx);
-        let arrived = current.at >= target.at
-            && current.at(now, duration).abs_diff(target.at(now, duration)) < NEAR_MS;
-        if arrived || target.at.elapsed() >= LANDING {
-            (current, true)
-        } else {
-            (target, false)
+        }
+        match landing(cx) {
+            Some(target) => (target, false),
+            None => (current, true),
         }
     }
 

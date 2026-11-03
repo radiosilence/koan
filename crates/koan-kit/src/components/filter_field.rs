@@ -6,9 +6,9 @@
 //! around it. The caller owns the `InputState` and listens to it: emptying
 //! the field is a change like any other.
 
+use crate::components::field::{Escape, FieldState as InputState};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::{Escape, InputState};
 
 use super::TextField;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
@@ -17,6 +17,7 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 pub struct FilterField {
     input: Entity<InputState>,
     fill: bool,
+    label: SharedString,
 }
 
 impl FilterField {
@@ -24,7 +25,15 @@ impl FilterField {
         Self {
             input: input.clone(),
             fill: false,
+            label: crate::theme::label("filter"),
         }
+    }
+
+    /// What a screen reader calls the field, in the app's words: "filter"
+    /// unless the page says what it filters.
+    pub fn label(mut self, label: &str) -> Self {
+        self.label = crate::theme::label(label);
+        self
     }
 
     /// As wide as what holds it, as the sidebar's search field is, rather
@@ -43,6 +52,11 @@ impl RenderOnce for FilterField {
         let hover = look.palette.ink.hsla();
         div()
             .id("filter-field")
+            .map(|d| {
+                #[cfg(test)]
+                let d = d.debug_selector(|| "filter".into());
+                d
+            })
             .flex()
             .items_center()
             .cursor_text()
@@ -82,7 +96,7 @@ impl RenderOnce for FilterField {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(TextField::new(&self.input).bare()),
+                    .child(TextField::new(&self.input).label(self.label).bare()),
             )
             .when(!empty, |d| {
                 d.child(
@@ -211,11 +225,7 @@ mod tests {
                     .principal(div().id("drag").size_full())
                     .trailing(
                         ToolbarGroup::new()
-                            .child(
-                                div()
-                                    .debug_selector(|| "filter".into())
-                                    .child(FilterField::new(&self.input)),
-                            )
+                            .child(FilterField::new(&self.input))
                             .spacer()
                             .child(
                                 div()
@@ -318,8 +328,8 @@ mod tests {
         cx.update(|_, cx| {
             cx.subscribe(
                 &input,
-                move |_, e: &gpui_kit::component::input::InputEvent, _| {
-                    if matches!(e, gpui_kit::component::input::InputEvent::Change) {
+                move |_, e: &crate::components::field::InputEvent, _| {
+                    if matches!(e, crate::components::field::InputEvent::Change) {
                         counted.set(counted.get() + 1);
                     }
                 },

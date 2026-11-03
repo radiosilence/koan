@@ -6,9 +6,9 @@
 
 use std::rc::Rc;
 
+use crate::components::field::{FieldState as InputState, InputEvent};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::{InputEvent, InputState};
 
 use super::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};

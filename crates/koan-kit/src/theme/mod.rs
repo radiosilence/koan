@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use gpui::{
     App, AppContext, ColorSlot, Context, Entity, Global, Pixels, SharedString, Styled,
-    Subscription, Task, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
+    Subscription, Track, TrackRepeat, Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};
@@ -140,6 +140,7 @@ pub fn init(cx: &mut App) {
         watch_desktop_settings(cx);
     }
     sync_components(is_dark(cx.window_appearance()), cx);
+    crate::components::field::bind(cx);
 }
 
 /// Keeps a window drawn in its appearance: redrawn when the system's
@@ -365,10 +366,11 @@ pub fn pin_appearance(dark: Option<bool>, window: &mut Window, cx: &mut App) {
     window.refresh();
 }
 
-/// gpui-component's theme, in the tokens: the text field is its `Input`, and
-/// reads its text colours, caret, selection, type and corners from this one
-/// global. It follows the window most recently told to (the system's
-/// appearance, or a pinned window's), since it cannot differ per window.
+/// gpui-component's theme, in the tokens: the toolbar's popover panels
+/// (`opens_panel`) are its `Popover`, and read their colours, type and
+/// corners from this one global. It follows the window most recently told
+/// to (the system's appearance, or a pinned window's), since it cannot
+/// differ per window. koan-kit's own fields read the look directly.
 fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
@@ -379,7 +381,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     let current = Theme::global(cx);
     if current.colors.background == palette.bg.hsla()
         && current.colors.foreground == palette.ink.hsla()
-        && current.colors.caret == accent
+        && current.colors.ring == accent
         && current.font_size == px(size)
         && current.font_family.as_ref() == FONT_FAMILY
     {
@@ -397,10 +399,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     theme.colors.muted_foreground = palette.muted.hsla();
     theme.colors.background = palette.bg.hsla();
     theme.colors.border = palette.muted.hsla();
-    theme.colors.input = palette.muted.hsla();
     theme.colors.ring = accent;
-    theme.colors.caret = accent;
-    theme.colors.selection = accent.opacity(0.3);
 }
 
 /// The kōan scrollbar, for gpui-base's `Scrollbar`, which every scrolling
@@ -474,18 +473,22 @@ impl KoanTheme {
             }
             feed.target = accent;
             feed.aim(contrast, ease);
-            // What reads the accent on the CPU (a shader's uniforms, a path)
-            // reads it again once it has landed; the slots move the rest.
-            if ease && feed.slots.is_some() {
-                feed._landing = Some(cx.spawn(async move |feed, cx| {
-                    cx.background_executor().timer(Motion::DISSOLVE).await;
-                    feed.update(cx, |_, cx| cx.notify()).ok();
-                }));
-            } else {
-                feed._landing = None;
+            // Everything drawn in the accent names its slots (fills, text,
+            // paths, a caret, shader uniforms) and a fade reads a slot as it
+            // starts, so a turn redraws no view: the rainbow's every step
+            // included. Only without slots does a view draw the colour
+            // itself, and need drawing again.
+            if feed.slots.is_none() {
                 cx.notify();
             }
         });
+        // A window at rest presents nothing by itself: one present each, and
+        // a window drawing with the slots keeps presenting while they move.
+        for window in cx.windows() {
+            window
+                .update(cx, |_, window, _| window.request_present())
+                .ok();
+        }
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
@@ -619,7 +622,6 @@ pub struct AccentFeed {
     /// aim rather than looked up per call.
     contrast: std::cell::Cell<bool>,
     held: std::cell::Cell<[Shade; 2]>,
-    _landing: Option<Task<()>>,
 }
 
 impl AccentFeed {
@@ -632,10 +634,19 @@ impl AccentFeed {
             slots,
             contrast: std::cell::Cell::new(false),
             held: std::cell::Cell::new([target.shade(true), target.shade(false)]),
-            _landing: None,
         };
         feed.aim(false, false);
         feed
+    }
+
+    /// Whether the accent is still turning to its target.
+    fn turning(&self) -> bool {
+        let now = gpui_kit::present_now();
+        self.slots
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|slot| slot.moving(now))
     }
 
     /// Sends the slots to the target as it is drawn with `contrast`: as the
@@ -682,10 +693,11 @@ fn held(shade: Shade, dark: bool, contrast: bool) -> Shade {
 }
 
 /// The accent a window draws, through the feed's slots where it has them.
-/// A change of contrast lands the slots on the held shade at once.
+/// A change of contrast lands the slots on the held shade at once, as does
+/// motion stopping (Reduce Motion, Low Power Mode) mid-turn.
 fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
     let feed = cx.global::<AccentHandle>().0.read(cx);
-    if feed.contrast.get() != contrast {
+    if feed.contrast.get() != contrast || (!KoanTheme::motion_allowed(cx) && feed.turning()) {
         feed.aim(contrast, false);
     }
     let mut shade = feed.held.get()[usize::from(!dark)];
@@ -700,9 +712,10 @@ struct AccentHandle(Entity<AccentFeed>);
 
 impl Global for AccentHandle {}
 
-/// Redraws a view whenever the accent moves. A cached view that draws the
-/// accent holds the subscription for as long as it lives; an uncached one
-/// redraws with its parent and needs none.
+/// Redraws a view when the accent changes in a way the colour slots cannot
+/// carry: where no slots could be claimed, each record's accent. A cached
+/// view that draws the accent holds the subscription for as long as it
+/// lives; an uncached one redraws with its parent and needs none.
 pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
     let feed = cx.global::<AccentHandle>().0.clone();
     cx.observe(&feed, |_, _, cx| cx.notify())
@@ -784,6 +797,14 @@ impl Look {
             Tone::Bad => p.bad.hsla(),
             Tone::Accent => self.accent.hsla(),
         }
+    }
+
+    /// Selected text's ground: the accent at 30 %, at 45 % with more
+    /// contrast asked for.
+    pub fn text_selection(&self) -> Hsla {
+        self.accent
+            .hsla()
+            .opacity(if self.contrast { 0.45 } else { 0.3 })
     }
 
     /// A tone for text: the accent stays off text it cannot reach 4.5:1 as,

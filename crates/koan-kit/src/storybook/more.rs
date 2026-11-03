@@ -1,9 +1,9 @@
 //! The storybook's pages for containers and moving parts: collections,
 //! tables and lists, panels and sheets, motion and drag.
 
+use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::input::InputState;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
@@ -644,6 +644,22 @@ impl StoryContent {
                     frame(340.0)
                         .relative()
                         .overflow_hidden()
+                        // The stage is the prism's window: its size, as laid
+                        // out, is what the spots and hearts are placed in.
+                        .child({
+                            let prism = prism.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    prism.window(
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    )
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
                         .child(overlay(prism.wash().size_full().into_any_element()))
                         .child(overlay(prism.disco().size_full().into_any_element()))
                         .child(overlay(prism.party().size_full().into_any_element()))

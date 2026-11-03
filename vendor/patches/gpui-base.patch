@@ -139,7 +139,7 @@ index b41f2bb..0338d2b 100644
  
          // Every pause replaces the pending timer, keeping repeated input visible.
 diff --git a/src/input/base/element.rs b/src/input/base/element.rs
-index 20b2b6d..0f1255a 100644
+index 20b2b6d..7864c39 100644
 --- a/src/input/base/element.rs
 +++ b/src/input/base/element.rs
 @@ -3223,6 +3223,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
@@ -156,18 +156,15 @@ index 20b2b6d..0f1255a 100644
          let (focus_handle, show_cursor, disabled, selected_range, editor_style, editor_paddings) = {
              let state = self.state.read(cx);
              (
-@@ -3444,12 +3451,20 @@ impl<M: InputModeKind> Element for TextElement<M> {
+@@ -3444,12 +3451,17 @@ impl<M: InputModeKind> Element for TextElement<M> {
          }
  
          // Paint blinking cursors (shared blink state for all carets)
 +        // KOAN: drawn by the caret's shader, which reads whether it shows as
 +        // each frame is presented, so a blink draws no frame (#1786).
          if focused && show_cursor {
-+            let caret = editor_style.caret.to_rgb();
-+            caret_uniforms.set(4, caret.r);
-+            caret_uniforms.set(5, caret.g);
-+            caret_uniforms.set(6, caret.b);
-+            caret_uniforms.set(7, caret.a);
++            // KOAN: a caret in a colour slot follows it as it moves (#1859).
++            caret_uniforms.set_color(4, editor_style.caret);
              for cursor_info in prepaint.cursor_infos_with_scroll() {
 -                window.paint_quad(fill(
 +                window.paint_shader(

@@ -4996,12 +4996,7 @@ impl Window {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         path.content_mask = content_mask;
-        let mut color: Background = color.into();
-        // KOAN: paths are rasterised without the slot table, so a colour
-        // naming a slot is drawn as it stands now (#1859).
-        if crate::color_slot_of(&color.solid).is_some() {
-            color.solid = crate::Rgba::from(color.solid).into();
-        }
+        let color: Background = color.into();
         path.color = color.opacity(opacity);
         self.next_frame
             .scene

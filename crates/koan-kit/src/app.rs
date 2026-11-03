@@ -34,9 +34,9 @@ pub mod platform {
     };
     pub use gpui_platform::application;
 
-    /// What every app and test calls once before anything else. The text
-    /// input, the window's root, the scrollbar and the filter panels are
-    /// still gpui-kit's (#2021), so its components are initialised here;
+    /// What every app and test calls once before anything else. The
+    /// window's root, the scrollbar and the filter panels are still
+    /// gpui-kit's (#2021), so its components are initialised here;
     /// with them gone, this is empty.
     pub fn init(cx: &mut super::App) {
         gpui_kit::init(cx);
@@ -69,5 +69,7 @@ pub mod a11y {
 /// page owns its state and listens to its events, and a field that leads a
 /// list takes the arrows and Escape from it.
 pub mod input {
-    pub use gpui_kit::component::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
+    pub use crate::components::field::{
+        Escape, FieldState as InputState, InputEvent, MoveDown, MoveUp,
+    };
 }
