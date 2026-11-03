@@ -1,0 +1,1 @@
+- **Clippy and the koan-kit tests pass again.** The prism's tests use the standard test attribute, and an EQ sheet row names its handler type.
