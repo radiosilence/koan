@@ -1176,6 +1176,10 @@ pub struct Burst {
     animated: Animated,
     program: &'static ShaderProgram,
     length: Duration,
+    /// When it was last thrown: a burst starts at most three times a second
+    /// (`MIN_BEAT_GAP`), however fast the records change or the hearts are
+    /// pressed, as the beat's flashes do.
+    fired: std::sync::Arc<parking_lot::Mutex<Option<std::time::Instant>>>,
 }
 
 impl Burst {
@@ -1184,6 +1188,7 @@ impl Burst {
             animated: spent(),
             program: &CONFETTI,
             length: Duration::from_millis(1800),
+            fired: Default::default(),
         }
     }
 
@@ -1194,6 +1199,7 @@ impl Burst {
             animated: spent(),
             program: &STICKER,
             length: Duration::from_millis(2600),
+            fired: Default::default(),
         }
     }
 
@@ -1202,13 +1208,24 @@ impl Burst {
             animated: spent(),
             program: &SWEEP,
             length: Duration::from_millis(1300),
+            fired: Default::default(),
         }
     }
 
     /// Throws it from `at`, in the window's coordinates, scaled `scale`
     /// device pixels to a point. Nothing is thrown under Reduce Motion: the
-    /// quad is decorative, so its clock does not start.
+    /// quad is decorative, so its clock does not start. A throw within
+    /// `MIN_BEAT_GAP` of the last is dropped, so bursts, like the beat's
+    /// flashes, start at most three times a second.
     pub fn fire(&self, at: Point<Pixels>, scale: f32, brat: bool) {
+        let now = std::time::Instant::now();
+        {
+            let mut fired = self.fired.lock();
+            if fired.is_some_and(|last| now.duration_since(last) < MIN_BEAT_GAP) {
+                return;
+            }
+            *fired = Some(now);
+        }
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos() % 997);
@@ -1342,5 +1359,27 @@ impl RenderOnce for PrismFill {
         AnimatedQuad::new(&GRADIENT, &animated)
             .decorative()
             .size_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A burst thrown again inside `MIN_BEAT_GAP` is dropped: holding Next
+    /// through a shuffled queue sweeps at most three times a second.
+    #[test]
+    fn a_burst_starts_at_most_three_times_a_second() {
+        let sweep = Burst::sweep();
+        let at = Point::new(px(10.), px(10.));
+        sweep.fire(at, 2.0, false);
+        let first = sweep.animated.track(0);
+        std::thread::sleep(Duration::from_millis(20));
+        sweep.clone().fire(at, 2.0, false);
+        assert_eq!(
+            sweep.animated.track(0),
+            first,
+            "a throw inside the gap is dropped"
+        );
     }
 }
