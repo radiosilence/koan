@@ -403,6 +403,12 @@ impl CursorSpot {
         self.0.bounds.get()
     }
 
+    /// Where the cursor was laid out is no longer trusted, its moves left
+    /// alone: the next layout says again.
+    pub(crate) fn forget_bounds(&self) {
+        self.0.bounds.set(None);
+    }
+
     pub(crate) fn moves(&self) -> u64 {
         self.0.moves.get()
     }

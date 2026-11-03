@@ -796,19 +796,17 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 open(event.position, window, cx)
             })
-            // The menu key: under the keyboard's cursor where its ring was
-            // laid out since the cursor last moved. Where it was not (the
-            // pointer was used last, so no ring was drawn, or the list has
-            // just revealed the cursor's item), after the next frame has
-            // drawn it: the first callback runs before that frame draws, the
-            // second after. At the pointer when there is no cursor.
+            // The menu key: under the keyboard's cursor, where its ring is
+            // laid out in the frames after the key. Bounds from before it are
+            // not trusted: the list may have scrolled the row away since, or
+            // just revealed it. The first callback runs before the next frame
+            // draws, the second after. At the pointer when there is no cursor
+            // or no ring was drawn.
             .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
                 let Some(spot) = spot.clone() else {
                     return by_key(window.mouse_position(), window, cx);
                 };
-                if let Some(at) = spot.bounds() {
-                    return by_key(at.bottom_left(), window, cx);
-                }
+                spot.forget_bounds();
                 window.refresh();
                 let by_key = by_key.clone();
                 window.on_next_frame(move |window, _| {

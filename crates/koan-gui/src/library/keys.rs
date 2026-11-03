@@ -136,9 +136,13 @@ pub fn keyed<V: KeyedList, E: InteractiveElement>(element: E, cx: &mut Context<V
         // Before the context menu, on the same element, opens over it.
         .capture_action(cx.listener(|this: &mut V, _: &keys::ShowMenu, _, cx| {
             let at = this.cursor().at.filter(|at| *at < this.len());
-            // On screen, so the menu opens over it.
+            // On screen, so the menu opens over it: a list scrolls to it,
+            // and a page whose scroll follows the spot follows it.
             if let Some(at) = at {
                 this.reveal(at, cx);
+                if let Some(spot) = this.spot() {
+                    spot.moved();
+                }
                 cx.notify();
             }
             this.menu_at(at, cx);
