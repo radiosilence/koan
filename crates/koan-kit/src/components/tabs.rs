@@ -48,6 +48,7 @@ impl Default for TabStrip {
 impl RenderOnce for TabStrip {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let prism = crate::theme::KoanTheme::prism_gradient(cx);
         div()
             .flex()
             .justify_center()
@@ -56,6 +57,8 @@ impl RenderOnce for TabStrip {
             .pb(look.space(Space::Xs))
             .children(self.tabs.into_iter().map(|(id, icon, title, chosen, run)| {
                 let color = look.text_color(if chosen { Tone::Accent } else { Tone::Muted });
+                let prism = chosen.then_some(prism).flatten();
+                let rule = super::child(&id, "prism");
                 div()
                     .id(id)
                     .flex()
@@ -72,14 +75,28 @@ impl RenderOnce for TabStrip {
                     })
                     .child(
                         div()
+                            .relative()
                             .pb(px(5.0))
                             .border_b(look.hairline)
-                            .border_color(look.accent.hsla().opacity(if chosen {
-                                1.0
-                            } else {
-                                0.0
-                            }))
-                            .child(title),
+                            .border_color(
+                                look.accent.hsla().opacity(if chosen && prism.is_none() {
+                                    1.0
+                                } else {
+                                    0.0
+                                }),
+                            )
+                            .child(title)
+                            // While the rainbow is drawn, the chosen tab's
+                            // rule is the palette, a little heavier.
+                            .children(prism.map(|brat| {
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .h(px(2.0))
+                                    .child(super::PrismFill::new(rule, brat))
+                            })),
                     )
                     .on_click(move |e, window, cx| run(e, window, cx))
             }))

@@ -845,7 +845,7 @@ impl Render for Transport {
                     // credited artist to the artist.
                     .children(entry.map(|e| {
                         let album = e.album_id.map(crate::navigator::Route::Album);
-                        links::names(
+                        let names = links::names(
                             vec![
                                 links::link(
                                     "np-title".into(),
@@ -859,7 +859,24 @@ impl Render for Transport {
                             TypeRole::Meta,
                             p.strong,
                             &p,
-                        )
+                        );
+                        // The rainbow's shimmer through the playing title,
+                        // over it while the rainbow is drawn; the title
+                        // otherwise stands as it is.
+                        match crate::rainbow::Painted::palette(cx) {
+                            Some(brat) => div()
+                                .relative()
+                                .min_w_0()
+                                .child(names)
+                                .child(
+                                    crate::components::Sheen::new("np-title-sheen")
+                                        .brat(brat)
+                                        .strength(0.35)
+                                        .glitch(true),
+                                )
+                                .into_any_element(),
+                            None => names.into_any_element(),
+                        }
                     }))
                     .children(entry.map(|e| {
                         let mut detail = links::credit(
@@ -1327,6 +1344,7 @@ impl Render for Seek {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .prism(crate::rainbow::Painted::palette(cx).is_some())
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
