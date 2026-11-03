@@ -11172,6 +11172,7 @@ mod tests {
         }
     }
 
+    /// `koanCovers` answers the covers it has made, in the order asked.
     #[tokio::test]
     async fn test_bulk_covers_answer_what_is_made() {
         use koan_core::remote::covers::{BulkCover, read_frame};
