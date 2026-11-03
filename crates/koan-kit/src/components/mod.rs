@@ -67,7 +67,6 @@ mod viewer;
 mod window;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use gpui_kit::{
     AnyElement, App, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
