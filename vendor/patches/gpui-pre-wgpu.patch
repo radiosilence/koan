@@ -15,7 +15,7 @@ index b4940fb..85ad0d5 100644
  version = "1.0.86"
  
 diff --git a/src/shaders.wgsl b/src/shaders.wgsl
-index 9be210b..d32ddbb 100644
+index 9be210b..d5b367f 100644
 --- a/src/shaders.wgsl
 +++ b/src/shaders.wgsl
 @@ -93,6 +93,10 @@ struct GammaParams {
@@ -70,7 +70,7 @@ index 9be210b..d32ddbb 100644
      out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
      return out;
  }
-@@ -1360,3 +1367,111 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
+@@ -1360,3 +1367,112 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
  
      return ycbcr_to_RGB * y_cb_cr;
  }
@@ -168,6 +168,7 @@ index 9be210b..d32ddbb 100644
 +    return color;
 +}
 +
++// KOAN: OKLab to sRGB, for colour slots mixed in OKLab (#1859).
 +fn koan_oklab_to_srgb(lab: vec3<f32>) -> vec3<f32> {
 +    var l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
 +    var m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;

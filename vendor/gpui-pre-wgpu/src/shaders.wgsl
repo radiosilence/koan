@@ -1461,6 +1461,7 @@ fn koan_rgba(hsla: Hsla) -> vec4<f32> {
     return color;
 }
 
+// KOAN: OKLab to sRGB, for colour slots mixed in OKLab (#1859).
 fn koan_oklab_to_srgb(lab: vec3<f32>) -> vec3<f32> {
     var l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
     var m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
