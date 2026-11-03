@@ -130,10 +130,7 @@ pub fn start(
         let saved = saved.await;
         // Opened at login and kept running: the menu bar only, as the Mac
         // app starts then. Otherwise someone opened kōan and wants it.
-        let keep = settings
-            .settings()
-            .await
-            .is_ok_and(|s| s.devices_keep_running);
+        let keep = settings.settings().await.devices_keep_running;
         let background = keep && crate::platform::residency::launched_at_login();
         cx.update(|cx| open(saved, !background, cx));
     })
@@ -268,7 +265,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
         cx.new(|cx| WindowRoot::new(shell, window, cx))
     });
     match opened {
-        Ok(handle) => cx.global_mut::<MainWindow>().handle = Some(handle.into()),
+        Ok((handle, _)) => cx.global_mut::<MainWindow>().handle = Some(handle),
         Err(e) => {
             log::error!("the window did not open: {e}");
             cx.quit();

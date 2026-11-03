@@ -51,10 +51,7 @@ pub fn init(engine: &std::sync::Arc<koan_ffi::KoanEngine>, cx: &mut App) {
     set(false, cx);
     let engine = engine.clone();
     cx.spawn(async move |cx| {
-        let keep = engine
-            .settings()
-            .await
-            .is_ok_and(|s| s.devices_keep_running);
+        let keep = engine.settings().await.devices_keep_running;
         cx.update(|cx| set(keep, cx));
     })
     .detach();
