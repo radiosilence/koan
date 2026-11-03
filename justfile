@@ -166,23 +166,8 @@ macos-icon:
 # icon with a spindle at the circle's centre, so it is told apart from the Mac
 # app), and AppIcon-launch.png, the same icon on the macOS icon grid, which a
 # build outside a bundle sets at launch.
-gui-icon:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v rsvg-convert >/dev/null || { echo "gui-icon needs rsvg-convert (librsvg: brew install librsvg)" >&2; exit 1; }
-    dir=crates/koan-gui/packaging
-    set="$dir/AppIcon.iconset"
-    rm -rf "$set" && mkdir -p "$set"
-    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
-                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
-        px="${spec%% *}"; name="${spec##* }"
-        rsvg-convert -w "$px" -h "$px" "$dir/AppIcon.svg" -o "$set/$name.png"
-    done
-    iconutil -c icns "$set" -o "$dir/AppIcon.icns"
-    rm -rf "$set"
-    rsvg-convert -w 1024 -h 1024 "$dir/AppIcon-launch.svg" -o "$dir/AppIcon-launch.png"
-    echo "built $dir/AppIcon.icns and $dir/AppIcon-launch.png"
+gui-icon *args:
+    python3 scripts/gui-icon.py {{args}}
 
 # Build the FFI static library and regenerate the Swift bindings.
 #
