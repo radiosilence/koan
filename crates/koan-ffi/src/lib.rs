@@ -629,6 +629,48 @@ impl Drop for KoanEngine {
     }
 }
 
+/// The playhead at each whole second of playback, from the engine
+/// (`KoanEngine::clock_stream`): what a time shown on screen moves on, with no
+/// timer of the client's own.
+#[derive(uniffi::Object)]
+pub struct ClockStream {
+    state: Weak<state::EngineState>,
+    moves: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+}
+
+#[uniffi::export]
+impl ClockStream {
+    /// The playhead, in milliseconds, at its next whole second while it
+    /// plays, or as soon as it is anchored afresh (a seek, a pause, the next
+    /// track). Waits through a pause. `None` once the engine is gone.
+    pub async fn next(&self) -> Option<u64> {
+        let mut moves = self.moves.lock().await;
+        moves.borrow_and_update();
+        let anchor = self.state.upgrade()?.anchor();
+        match anchor {
+            Some(anchor) if anchor.playing => {
+                let now = std::time::Instant::now();
+                let wait = 1000 - anchor.reckoning(now) % 1000;
+                tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_millis(wait)) => {
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                    moved = moves.changed() => {
+                        moved.ok()?;
+                        let anchor = self.state.upgrade()?.anchor()?;
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                }
+            }
+            _ => {
+                moves.changed().await.ok()?;
+                let anchor = self.state.upgrade()?.anchor()?;
+                Some(anchor.reckoning(std::time::Instant::now()))
+            }
+        }
+    }
+}
+
 /// How high a playing indicator's bars stand, from the levels a `VizStream`
 /// delivers: koan-core's reading (`BarHeights`), each band against its own
 /// recent loudest, so every app draws the same bars.
@@ -1390,6 +1432,16 @@ impl KoanEngine {
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
         VizStream::new(&self.viz)
+    }
+
+    /// The playhead's whole seconds as it plays, for a client that shows the
+    /// time: the engine wakes it at each, and while paused or with no
+    /// subscriber nothing runs.
+    pub fn clock_stream(&self) -> Arc<ClockStream> {
+        Arc::new(ClockStream {
+            state: Arc::downgrade(&self.out),
+            moves: tokio::sync::Mutex::new(self.out.anchor_moves()),
+        })
     }
 
     /// Follow the spectrum as keyframes, for a client that draws the bars
