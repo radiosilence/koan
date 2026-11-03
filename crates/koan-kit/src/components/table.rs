@@ -355,6 +355,15 @@ impl RenderOnce for TableRow {
             .py(RowMetrics::padding(&look))
             .gap(RowMetrics::column_gap(&look))
             .when(self.selected, |d| d.bg(p.selection.hsla()))
+            // With more contrast, a picked row is outlined as well as filled:
+            // a fill alone can sit close to the ground.
+            .children((self.selected && look.contrast).then(|| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .border(look.hairline)
+                    .border_color(p.strong.hsla())
+            }))
             .children(self.leading.into_iter().map(cell))
             .child(
                 div()

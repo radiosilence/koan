@@ -10,8 +10,8 @@ use super::{
     transition,
 };
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space,
-    TOOLBAR_BUTTON, Tone, TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TOOLBAR_BUTTON, Tone,
+    TypeRole, label,
 };
 
 /// A button's weight and shape. The rules for which a screen uses are the
@@ -70,7 +70,9 @@ impl ButtonKind {
         let glyph = px(crate::theme::icons::side(look.points(self.role())));
         let (vertical, _) = self.padding();
         let outline = match self {
-            ButtonKind::Prominent | ButtonKind::Bordered | ButtonKind::IconOutlined => HAIRLINE,
+            ButtonKind::Prominent | ButtonKind::Bordered | ButtonKind::IconOutlined => {
+                look.hairline
+            }
             _ => px(0.0),
         };
         glyph + look.spaced(vertical) * 2.0 + outline * 2.0
@@ -274,7 +276,7 @@ impl RenderOnce for Button {
             _ => button,
         };
         if let Some(outline) = outline {
-            button = button.border(HAIRLINE).border_color(outline);
+            button = button.border(look.hairline).border_color(outline);
         }
         if self.disabled {
             button = button.opacity(DISABLED_OPACITY);

@@ -30,9 +30,7 @@ use koan_kit::raw::{Hsla, TextAlign, point, px, size};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
-use crate::theme::{
-    FONT_FAMILY, HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent,
-};
+use crate::theme::{FONT_FAMILY, KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent};
 
 /// How a curve is drawn, the same in its stage's block and on the graph.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -909,7 +907,7 @@ impl Graph {
 /// A key's line: the stroke as drawn, short.
 fn swatch(stroke: Stroke, thin: bool, look: &Look) -> impl IntoElement {
     let color = stroke.color(look);
-    let height = if thin { HAIRLINE } else { px(2.0) };
+    let height = if thin { look.hairline } else { px(2.0) };
     if stroke.dash.is_empty() {
         return div().w(px(14.0)).h(height).bg(color).into_any_element();
     }
@@ -973,7 +971,10 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
     for hz in HZ_TICKS {
         let x = plot.origin.x + px(x_of(hz, w));
         window.paint_quad(fill(
-            Bounds::new(point(x, plot.origin.y), size(HAIRLINE, plot.size.height)),
+            Bounds::new(
+                point(x, plot.origin.y),
+                size(look.hairline, plot.size.height),
+            ),
             rule.opacity(0.5),
         ));
         label_at(
@@ -991,7 +992,10 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
     while db <= hi + 1e-9 {
         let y = plot.origin.y + px(y_of(db, h, f.domain));
         window.paint_quad(fill(
-            Bounds::new(point(plot.origin.x, y), size(plot.size.width, HAIRLINE)),
+            Bounds::new(
+                point(plot.origin.x, y),
+                size(plot.size.width, look.hairline),
+            ),
             rule.opacity(0.5),
         ));
         label_at(
@@ -1009,7 +1013,10 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
         // No change, and the level the curves sit at.
         let zero = plot.origin.y + px(y_of(0.0, h, f.domain));
         window.paint_quad(fill(
-            Bounds::new(point(plot.origin.x, zero), size(plot.size.width, HAIRLINE)),
+            Bounds::new(
+                point(plot.origin.x, zero),
+                size(plot.size.width, look.hairline),
+            ),
             rule,
         ));
         if f.level.abs() >= 0.05 {

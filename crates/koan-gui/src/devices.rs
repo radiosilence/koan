@@ -14,7 +14,7 @@ use koan_ffi::{DeviceInfo, DeviceReach, PlayState};
 use koan_kit::app::*;
 
 use crate::components::{Menu, MenuEntry};
-use crate::engine::{command, engine};
+use crate::engine::{engine, reported};
 use crate::mirror::Mirror;
 use crate::notice;
 use crate::theme::{Icon, Tone};
@@ -148,7 +148,11 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             Some(owner) => format!("shared by {owner} · {}", detail(device, view.now)),
             None => detail(device, view.now),
         };
+        // An Apple TV asleep that nothing wakes yet is chosen to set its
+        // waking up: the pairing is what makes it reachable.
+        let pair_first = unreachable && device.tv_pairable && !device.tv_paired;
         let id = device.id.clone();
+        let name = device.name.clone();
         let mut entry = MenuEntry::data(device.name.clone())
             .icon(platform_icon(&device.platform))
             .reach(if device.nearby {
@@ -159,9 +163,19 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             .rich(detail)
             .warns(unreachable || warning)
             .checked(selected)
-            .disabled(unreachable && !selected)
-            .stays_open()
-            .on_click(move |_, _, cx| control(Some(id.clone()), cx));
+            .disabled(unreachable && !selected && !pair_first)
+            .on_click(move |_, window, cx| {
+                if pair_first {
+                    crate::tv_wake::open(id.clone(), name.clone(), window, cx);
+                } else {
+                    control(Some(id.clone()), cx);
+                }
+            });
+        // Choosing a device keeps the menu up to show it waking; the pairing
+        // sheet needs the menu out of its way.
+        if !pair_first {
+            entry = entry.stays_open();
+        }
         // Secondary actions first, so "move here" takes the last slot on
         // every row it is on.
         // An Apple TV can be paired to be turned on from here, once, for
@@ -197,7 +211,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
                 "forget this device until it is heard from again",
                 move |_, _, cx| {
                     let id = id.clone();
-                    command(cx, "forget device", move |e| e.forget_device(id));
+                    reported(cx, "forget device", move |e| e.forget_device(id));
                 },
             );
         }
@@ -225,7 +239,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
 }
 
 fn control(id: Option<String>, cx: &mut App) {
-    command(cx, "control device", move |e| e.control_device(id));
+    reported(cx, "control device", move |e| e.control_device(id));
 }
 
 /// Moves the music, then says what became of it where the device's state
@@ -345,7 +359,7 @@ fn detail(device: &DeviceInfo, now: i64) -> String {
             );
         }
         if device.tv_pairable {
-            return format!("asleep{seen}. Its waking is set up from the Mac or iPhone app.");
+            return format!("asleep{seen}. Choosing it sets it up to be turned on from here.");
         }
         // A computer drops out when kōan is quit or it is off, and nothing
         // reaches it until someone opens kōan there.
