@@ -233,21 +233,13 @@ impl ShelfPage {
         self.shelf = ShelfKind::Search {
             query: results.query.clone(),
         };
-        // The search box's deeper answer, while it is open, cut to what this
-        // page previews: it shows the same whichever asked last.
-        let mut summary = results.summary.clone();
-        if results.deep {
-            use koan_core::shelves::{PREVIEW_ALBUMS, PREVIEW_ARTISTS, PREVIEW_TRACKS};
-            summary.artists.truncate(PREVIEW_ARTISTS as usize);
-            summary.albums.truncate(PREVIEW_ALBUMS as usize);
-            summary.tracks.truncate(PREVIEW_TRACKS as usize);
-        }
+        let summary = results.summary.clone();
         self.records = summary
             .albums
             .iter()
             .map(|a| (a.id, Rc::new(TileRecord::of(a))))
             .collect();
-        self.summary = Some(Rc::new(summary));
+        self.summary = Some(summary);
         self.adopted = Some(results);
     }
 

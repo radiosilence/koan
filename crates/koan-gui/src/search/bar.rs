@@ -15,10 +15,9 @@
 //! | Escape | clear the ticks, then empty the query, then close |
 //!
 //! Ticked rows are listed first, whatever the query, so a pick built over
-//! several queries stays in view. The answers go deeper while the box is
-//! open (`Search::set_deep`), and the keys act on rows only once they answer
-//! the query as typed, so a fast Return never acts on the last query's
-//! answer.
+//! several queries stays in view. The keys act on rows only once they
+//! answer the query as typed, so a fast Return never acts on the last
+//! query's answer.
 //!
 //! The field and the results are views of their own (`QueryField`,
 //! `Found`), drawn cached, as a library page's filter field is: a keystroke
@@ -269,14 +268,11 @@ impl Found {
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
-            // Closed: the search goes back to the sidebar's depth, and the
-            // sleeves asked for are let go.
+            // Closed: the sleeves asked for are let go.
             cx.on_release(move |this, cx| {
-                this.search.update(cx, |s, cx| s.set_deep(false, cx));
                 this.lib.covers.update(cx, |c, cx| c.release(owner, cx));
             }),
         ];
-        search.update(cx, |s, cx| s.set_deep(true, cx));
         let mut found = Self {
             lib,
             search,

@@ -1825,8 +1825,9 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let listing = koan_core::browse::tracks(&filter.into(), search.as_deref(), sort.into());
-            let total = listing.count(&db.conn).map_err(db_err)?;
-            let rows = listing.page(&db.conn, limit, offset).map_err(db_err)?;
+            let (rows, total) = listing
+                .page_counted(&db.conn, limit, offset)
+                .map_err(db_err)?;
             Ok(TrackListing {
                 tracks: self.decorate(&db, rows),
                 total,
@@ -8486,40 +8487,62 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
 }
 
 /// A shelf's summary, `sizes` deep: what `shelf_summary` and
-/// `shelf_summary_sized` share.
+/// `shelf_summary_sized` share. The three kinds are read at once, each on a
+/// pooled connection of its own, so the answer takes as long as the slowest
+/// of them rather than all three.
 async fn shelf_summary_of(
     engine: Arc<KoanEngine>,
     shelf: ShelfKind,
     sizes: koan_core::shelves::Sizes,
 ) -> Result<ShelfSummary, KoanError> {
     use koan_core::shelves::{self, Shelf};
-    offload::offload(move || {
-        let db = engine.db()?;
-        let shelf = match &shelf {
+    fn of(kind: &ShelfKind) -> Shelf<'_> {
+        match kind {
             ShelfKind::Favourites => Shelf::Favourites,
             ShelfKind::Recent => Shelf::Recent,
             ShelfKind::Search { query } => Shelf::Search(query),
             ShelfKind::Downloaded => Shelf::Downloaded,
-        };
-        let s = shelves::summary_of(
-            &db.conn,
-            shelf,
-            queries::LOCAL_USER,
-            shelves::now(),
-            offline(),
-            sizes,
-        )
-        .map_err(db_err)?;
-        Ok(ShelfSummary {
-            artists: s.artists.preview.into_iter().map(Artist::from).collect(),
-            artist_total: s.artists.total,
-            albums: decorate_albums(&db, s.albums.preview),
-            album_total: s.albums.total,
-            tracks: engine.decorate(&db, s.tracks.preview),
-            track_total: s.tracks.total,
-        })
+        }
+    }
+    let (user, now, here) = (queries::LOCAL_USER, shelves::now(), offline());
+    let artists = offload::offload({
+        let (engine, shelf) = (engine.clone(), shelf.clone());
+        move || {
+            let db = engine.db()?;
+            let s = shelves::artists_of(&db.conn, of(&shelf), user, now, here, sizes.artists)
+                .map_err(db_err)?;
+            Ok::<_, KoanError>((
+                s.preview.into_iter().map(Artist::from).collect::<Vec<_>>(),
+                s.total,
+            ))
+        }
+    });
+    let albums = offload::offload({
+        let (engine, shelf) = (engine.clone(), shelf.clone());
+        move || {
+            let db = engine.db()?;
+            let s = shelves::albums_of(&db.conn, of(&shelf), user, now, here, sizes.albums)
+                .map_err(db_err)?;
+            Ok::<_, KoanError>((decorate_albums(&db, s.preview), s.total))
+        }
+    });
+    let tracks = offload::offload(move || {
+        let db = engine.db()?;
+        let s = shelves::tracks_of(&db.conn, of(&shelf), user, now, here, sizes.tracks)
+            .map_err(db_err)?;
+        Ok::<_, KoanError>((engine.decorate(&db, s.preview), s.total))
+    });
+    let (artists, albums, tracks) = tokio::join!(artists, albums, tracks);
+    let ((artists, artist_total), (albums, album_total), (tracks, track_total)) =
+        (artists?, albums?, tracks?);
+    Ok(ShelfSummary {
+        artists,
+        artist_total,
+        albums,
+        album_total,
+        tracks,
+        track_total,
     })
-    .await
 }
 
 #[cfg(test)]

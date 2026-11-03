@@ -122,16 +122,45 @@ pub struct ArtistQuery<'a> {
 /// Artists with their album and track counts, narrowed, ordered and paged by
 /// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
-    if let Some(ids) = fuzzy_fallback(conn, q)? {
-        return list_artists(
+    match fuzzy_fallback(conn, q)? {
+        Some(ids) => list_artists_resolved(
             conn,
             &ArtistQuery {
                 search: None,
                 ids: Some(&ids),
                 ..*q
             },
-        );
+        ),
+        None => list_artists_resolved(conn, q),
     }
+}
+
+/// `list_artists` and `count_artists` for `q`, the fuzzy fallback decided
+/// once for both: what a shelf's preview and its total read.
+pub fn list_artists_counted(
+    conn: &Connection,
+    q: &ArtistQuery,
+) -> Result<(Vec<ArtistRow>, u64), DbError> {
+    let ids = fuzzy_fallback(conn, q)?;
+    let fallback;
+    let q = match &ids {
+        Some(ids) => {
+            fallback = ArtistQuery {
+                search: None,
+                ids: Some(ids),
+                ..*q
+            };
+            &fallback
+        }
+        None => q,
+    };
+    Ok((
+        list_artists_resolved(conn, q)?,
+        count_artists_resolved(conn, q)?,
+    ))
+}
+
+fn list_artists_resolved(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
     let columns = if q.without_track_counts {
         "a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0"
     } else {
@@ -176,17 +205,29 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
 
 /// How many artists `list_artists` would list for `q`, ignoring its paging.
 pub fn count_artists(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError> {
-    if let Some(ids) = fuzzy_fallback(conn, q)? {
-        return count_artists(
+    match fuzzy_fallback(conn, q)? {
+        Some(ids) => count_artists_resolved(
             conn,
             &ArtistQuery {
                 search: None,
                 ids: Some(&ids),
                 ..*q
             },
-        );
+        ),
+        None => count_artists_resolved(conn, q),
     }
-    let (body, params) = artist_body(conn, q)?;
+}
+
+fn count_artists_resolved(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError> {
+    // The tracks join only counts tracks; no clause reads it, so the artists
+    // counted are the same without it.
+    let (body, params) = artist_body(
+        conn,
+        &ArtistQuery {
+            without_track_counts: true,
+            ..*q
+        },
+    )?;
     let n: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM (SELECT a.id {body})"),
         rusqlite::params_from_iter(params.iter()),
@@ -206,7 +247,13 @@ fn fuzzy_fallback(conn: &Connection, q: &ArtistQuery) -> Result<Option<Vec<i64>>
     let Some(query) = q.search else {
         return Ok(None);
     };
-    let (body, params) = artist_body(conn, q)?;
+    let (body, params) = artist_body(
+        conn,
+        &ArtistQuery {
+            without_track_counts: true,
+            ..*q
+        },
+    )?;
     let found: bool = conn.query_row(
         &format!("SELECT EXISTS (SELECT 1 {body})"),
         rusqlite::params_from_iter(params.iter()),

@@ -67,11 +67,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         if only_size.as_deref().is_some_and(|s| s != name) {
             continue;
         }
+        let mut made = None;
         let window = cx.open_window(size(px(width), px(height)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
+            made = Some(shell.clone());
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
             koan_kit::components::host(root, window, cx)
         })?;
+        let shell = made.ok_or("no shell")?;
         let window: AnyWindowHandle = window.into();
         cx.allow_parking();
         settle(&mut cx, window)?;
@@ -86,7 +89,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             })?;
             settle(&mut cx, window)?;
             if dark {
-                time_typing(&mut cx, window, name)?;
+                time_typing(&mut cx, window, &shell, name)?;
                 // Emptied again for the query below.
                 act(&mut cx, window, Box::new(Escape))?;
                 settle(&mut cx, window)?;
@@ -149,11 +152,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Thirty keystrokes, each timed from its dispatch through the frame drawn
-/// after it, and then the frame its answer lands in: as they come while
-/// typing, every keystroke after the first over a list of results.
+/// after it, and from its dispatch to the frame its answer lands in: as they
+/// come while typing, every keystroke after the first over a list of
+/// results. The harness's clock follows the wall clock while an answer is
+/// awaited, so a timer on the way counts as it would in the app.
 fn time_typing(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
+    shell: &koan_kit::app::Entity<Shell>,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
     let strokes: Vec<&'static str> = "record 00"
@@ -169,27 +175,50 @@ fn time_typing(
         }))
         .chain(std::iter::repeat_n("backspace", 5))
         .collect();
+    let search = cx
+        .update(|cx| {
+            shell
+                .read(cx)
+                .library()
+                .map(|stage| stage.read(cx).lib().search)
+        })
+        .ok_or("the library's pages were never made")?;
+    let answered = |cx: &mut HeadlessAppContext| {
+        cx.update(|cx| {
+            let s = search.read(cx);
+            s.query().is_empty() || s.results().is_some_and(|r| r.query == s.query())
+        })
+    };
     let (mut keys, mut answers) = (Vec::new(), Vec::new());
     for stroke in strokes {
         let keystroke = Keystroke::parse(stroke)?;
+        let start = Instant::now();
         keys.push(cx.update_window(window, |_, window, cx| {
-            let start = Instant::now();
             window.dispatch_keystroke(keystroke, cx);
             window.draw(cx).clear(cx);
             start.elapsed()
         })?);
-        cx.run_until_parked();
-        // The settle (on the harness's clock) and the read, then the frame
-        // the answer lands in.
-        cx.advance_clock(Duration::from_millis(150));
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(150));
-        cx.run_until_parked();
+        let mut last = Instant::now();
+        loop {
+            cx.run_until_parked();
+            if answered(cx) {
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(5) {
+                return Err("no answer within five seconds".into());
+            }
+            std::thread::sleep(Duration::from_micros(50));
+            let now = Instant::now();
+            cx.advance_clock(now - last);
+            last = now;
+        }
         answers.push(cx.update_window(window, |_, window, cx| {
-            let start = Instant::now();
             window.draw(cx).clear(cx);
             start.elapsed()
         })?);
+        cx.run_until_parked();
+        // Covers land before the next keystroke, as between a person's.
+        std::thread::sleep(Duration::from_millis(100));
         cx.run_until_parked();
     }
     let ms = |mut v: Vec<Duration>| {
@@ -202,7 +231,7 @@ fn time_typing(
     let (kp, km) = ms(keys);
     let (ap, am) = ms(answers);
     println!(
-        "{name}: keystroke p50 {kp:.2} ms, max {km:.2} ms; answer frame p50 {ap:.2} ms, max {am:.2} ms"
+        "{name}: keystroke drawn p50 {kp:.2} ms, max {km:.2} ms; keystroke to answer drawn p50 {ap:.2} ms, max {am:.2} ms"
     );
     Ok(())
 }
