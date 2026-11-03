@@ -866,18 +866,23 @@ impl Render for Transport {
                             p.strong,
                             &p,
                         );
-                        // The rainbow's shimmer through the playing title.
-                        div().relative().child(names).when_some(
-                            crate::rainbow::Painted::palette(cx),
-                            |title, brat| {
-                                title.child(
+                        // The rainbow's shimmer through the playing title,
+                        // over it while the rainbow is drawn; the title
+                        // otherwise stands as it is.
+                        match crate::rainbow::Painted::palette(cx) {
+                            Some(brat) => div()
+                                .relative()
+                                .min_w_0()
+                                .child(names)
+                                .child(
                                     crate::components::Sheen::new("np-title-sheen")
                                         .brat(brat)
                                         .strength(0.35)
                                         .glitch(true),
                                 )
-                            },
-                        )
+                                .into_any_element(),
+                            None => names.into_any_element(),
+                        }
                     }))
                     .children(entry.map(|e| {
                         let mut detail = links::credit(

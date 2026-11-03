@@ -13,14 +13,20 @@
 //!
 //! Two palettes: hyperpop (hot pink, cyber blue, holographic lilac, brat
 //! lime) and brat's lime alone. The beat is an onset of the low band over
-//! its running average, held as a strength and the moment it landed; the
-//! programs decay it themselves, so a beat fades out with nothing written.
+//! its running average, written once as a track falling from its strength to
+//! nothing, which the programs read (sharper decays as powers of it), so a
+//! beat fades out with nothing more written. Bursts keep their time on a
+//! track too, held at their end once played.
 
 use std::time::{Duration, Instant};
 
 use gpui_kit::*;
 
-use super::{Animated, AnimatedQuad, ShaderProgram};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+
+use super::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram};
 
 /// The palettes and a hash, in MSL, ahead of each program's `shade`.
 macro_rules! prism_msl {
@@ -88,7 +94,7 @@ static PRISM_WASH: ShaderProgram = ShaderProgram {
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float2 p = (position - size * 0.5) / size.y;
-    float pulse = u[3] * exp(-max(time - u[9], 0.0) * 5.0);
+    float pulse = pow(koan_track(u, 3, time), 1.0);
     float r = length(p);
     float seg = 6.2831853 / 6.0;
     float a = atan2(p.y, p.x) + time * 0.05 + 100.0 * seg;
@@ -112,7 +118,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let p = (position - size * 0.5) / size.y;
-    let pulse = u[0].w * exp(-max(time - u[2].y, 0.0) * 5.0);
+    let pulse = pow(koan_track(u, 3u, time), 1.0);
     let r = length(p);
     let seg = 6.2831853 / 6.0;
     var a = atan2(p.y, p.x) + time * 0.05 + 100.0 * seg;
@@ -144,7 +150,7 @@ static PRISM_PULSE: ShaderProgram = ShaderProgram {
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    float pulse = u[3] * exp(-max(time - u[9], 0.0) * 4.0);
+    float pulse = pow(koan_track(u, 3, time), 0.8);
     float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0, time));
     float glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
@@ -161,7 +167,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
-    let pulse = u[0].w * exp(-max(time - u[2].y, 0.0) * 4.0);
+    let pulse = pow(koan_track(u, 3u, time), 0.8);
     let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0u, time));
     let glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
@@ -198,7 +204,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float2 cell = floor(facet);
     float2 inside = fract(facet);
     float h = koan_prism_hash(cell);
-    float pulse = u[3] * exp(-max(time - u[9], 0.0) * 5.0);
+    float pulse = pow(koan_track(u, 3, time), 1.0);
     float sparkle = pow(max(0.0, sin(time * 3.0 * u[8] + h * 40.0)), 24.0) * (0.6 + pulse);
     float3 silver = float3(0.78, 0.80, 0.86) * (0.35 + 0.45 * z + 0.2 * h);
     float3 tint = koan_prism(h + time * 0.05 * u[8], u[4]);
@@ -225,7 +231,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let cell = floor(facet);
     let inside = fract(facet);
     let h = koan_prism_hash(cell);
-    let pulse = u[0].w * exp(-max(time - u[2].y, 0.0) * 5.0);
+    let pulse = pow(koan_track(u, 3u, time), 1.0);
     let sparkle = pow(max(0.0, sin(time * 3.0 * u[2].x + h * 40.0)), 24.0) * (0.6 + pulse);
     let silver = vec3<f32>(0.78, 0.80, 0.86) * (0.35 + 0.45 * z + 0.2 * h);
     let tint = koan_prism(h + time * 0.05 * u[2].x, u[1].x);
@@ -340,8 +346,8 @@ static CONFETTI: ShaderProgram = ShaderProgram {
         prism_msl!(),
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = time;
-    if (t < 0.0 || t > u[5]) {
+    float t = koan_track(u, 0, time);
+    if (t < 0.0 || t >= u[5]) {
         return float4(0.0);
     }
     float s = u[4];
@@ -380,8 +386,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         prism_wgsl!(),
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let t = time;
-    if (t < 0.0 || t > u[1].y) {
+    let t = koan_track(u, 0u, time);
+    if (t < 0.0 || t >= u[1].y) {
         return vec4<f32>(0.0);
     }
     let s = u[1].x;
@@ -427,8 +433,8 @@ static SWEEP: ShaderProgram = ShaderProgram {
         prism_msl!(),
         r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = time / u[5];
-    if (t < 0.0 || t > 1.0) {
+    float t = koan_track(u, 0, time) / u[5];
+    if (t < 0.0 || t >= 1.0) {
         return float4(0.0);
     }
     float2 c = float2(u[0], u[1]);
@@ -449,8 +455,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         prism_wgsl!(),
         r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let t = time / u[1].y;
-    if (t < 0.0 || t > 1.0) {
+    let t = koan_track(u, 0u, time) / u[1].y;
+    if (t < 0.0 || t >= 1.0) {
         return vec4<f32>(0.0);
     }
     let c = u[0].xy;
@@ -543,7 +549,7 @@ float koan_disco_blend(thread float3 &colour, thread float &alpha, float3 c, flo
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float s = u[10];
     float spin = time * 0.35 * u[8];
-    float beat = u[3] * exp(-max(time - u[9], 0.0) * 8.0);
+    float beat = pow(koan_track(u, 3, time), 1.6);
     float far = length(size);
     float3 colour = float3(0.0);
     float alpha = 0.0;
@@ -611,7 +617,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let s = u[2].z;
     let spin = time * 0.35 * u[2].x;
-    let beat = u[0].w * exp(-max(time - u[2].y, 0.0) * 8.0);
+    let beat = pow(koan_track(u, 3u, time), 1.6);
     let far = length(size);
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;
@@ -753,8 +759,8 @@ float koan_brat_word(float2 p) {
 }
 
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = time;
-    if (t < 0.0 || t > u[5]) {
+    float t = koan_track(u, 0, time);
+    if (t < 0.0 || t >= u[5]) {
         return float4(0.0);
     }
     float s = u[4];
@@ -817,8 +823,8 @@ fn koan_brat_word(p: vec2<f32>) -> f32 {
 }
 
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let t = time;
-    if (t < 0.0 || t > u[1].y) {
+    let t = koan_track(u, 0u, time);
+    if (t < 0.0 || t >= u[1].y) {
         return vec4<f32>(0.0);
     }
     let s = u[1].x;
@@ -897,7 +903,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float s = u[10];
     float low = koan_track(u, 0, time);
     float high = koan_track(u, 2, time);
-    float beat = u[3] * exp(-max(time - u[9], 0.0) * 3.0);
+    float beat = pow(koan_track(u, 3, time), 0.6);
     float3 colour = float3(0.0);
     float alpha = 0.0;
     // Lasers from the top corners, criss-crossing.
@@ -974,7 +980,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let s = u[2].z;
     let low = koan_track(u, 0u, time);
     let high = koan_track(u, 2u, time);
-    let beat = u[0].w * exp(-max(time - u[2].y, 0.0) * 3.0);
+    let beat = pow(koan_track(u, 3u, time), 0.6);
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;
     for (var i = 0; i < 6; i++) {
@@ -1044,11 +1050,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
-/// How long a beat holds its strength, as the programs decay it: e^-5t.
-const BEAT_DECAY: f32 = 5.0;
+/// How long a beat takes to fade.
+const BEAT_DECAY: Duration = Duration::from_millis(700);
 /// The least time between two beats, in seconds: the flashes they bring
 /// stay under three a second, the photosensitive limit for flashing.
-const MIN_BEAT_GAP: f32 = 1.0 / 3.0;
+const MIN_BEAT_GAP: Duration = Duration::from_millis(334);
 
 /// A window's prism: the uniforms the wash layer, the pulse and the mirror
 /// ball read, fed by the analyser. Clones share it; keep one per window,
@@ -1056,7 +1062,8 @@ const MIN_BEAT_GAP: f32 = 1.0 / 3.0;
 #[derive(Clone)]
 pub struct Prism {
     animated: Animated,
-    origin: Instant,
+    /// When the last beat landed, to keep beats a third of a second apart.
+    last_beat: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Default for Prism {
@@ -1068,10 +1075,12 @@ impl Default for Prism {
 impl Prism {
     pub fn new() -> Self {
         let animated = Animated::new();
-        let origin = Instant::now();
-        animated.set_origin(origin);
         animated.set_all(6, &[1.0, 0.0, 1.0]);
-        Self { animated, origin }
+        animated.hold(3, 0.0);
+        Self {
+            animated,
+            last_beat: Arc::default(),
+        }
     }
 
     /// A frame from the analyser: the three bands, each 0 to 1. A low band
@@ -1086,12 +1095,15 @@ impl Prism {
         }
         a.set(7, average * 0.92 + bands[0] * 0.08);
         let onset = ((bands[0] - average * 1.25 - 0.04) * 4.0).min(1.0);
-        let now = self.origin.elapsed().as_secs_f32();
-        let held = a.get(3) * (-(now - a.get(9)).max(0.0) * BEAT_DECAY).exp();
-        let rested = now - a.get(9) >= MIN_BEAT_GAP;
+        let now = Animated::now();
+        let held = a.at(3, now);
+        let mut last = self.last_beat.lock();
+        let rested = last.is_none_or(|at| now.saturating_duration_since(at) >= MIN_BEAT_GAP);
         if onset > 0.05 && onset > held && rested {
-            a.set(9, now);
-            a.set(3, onset);
+            *last = Some(now);
+            // From its strength to nothing, quickly then slowly: the
+            // programs take powers of it for sharper decays.
+            a.segment(3, onset, 0.0, now, BEAT_DECAY, Ease::QuickOut, Repeat::Once);
         }
     }
 
@@ -1150,6 +1162,13 @@ impl Prism {
     }
 }
 
+/// A burst's clock before it is fired: past any length, so it draws nothing.
+fn spent() -> Animated {
+    let animated = Animated::new();
+    animated.hold(0, f32::MAX);
+    animated
+}
+
 /// A burst drawn over the whole window, fired at a point: confetti, or the
 /// rainbow sweep between records.
 #[derive(Clone)]
@@ -1162,7 +1181,7 @@ pub struct Burst {
 impl Burst {
     pub fn confetti() -> Self {
         Self {
-            animated: Animated::new(),
+            animated: spent(),
             program: &CONFETTI,
             length: Duration::from_millis(1800),
         }
@@ -1172,7 +1191,7 @@ impl Burst {
     /// otherwise.
     pub fn sticker() -> Self {
         Self {
-            animated: Animated::new(),
+            animated: spent(),
             program: &STICKER,
             length: Duration::from_millis(2600),
         }
@@ -1180,7 +1199,7 @@ impl Burst {
 
     pub fn sweep() -> Self {
         Self {
-            animated: Animated::new(),
+            animated: spent(),
             program: &SWEEP,
             length: Duration::from_millis(1300),
         }
@@ -1204,8 +1223,18 @@ impl Burst {
                 self.length.as_secs_f32(),
             ],
         );
-        self.animated.set_origin(Instant::now());
-        self.animated.run_for(self.length);
+        // Its time, as a track from nothing to its length: held at the end
+        // once played, so no later present, however its clock moves, plays
+        // it again.
+        self.animated.segment(
+            0,
+            0.0,
+            self.length.as_secs_f32(),
+            Animated::now(),
+            self.length,
+            Ease::Linear,
+            Repeat::Once,
+        );
     }
 
     /// The quad, laid out over the whole window.

@@ -118,7 +118,7 @@ impl WindowRoot {
                     this.follow(&painted, true, cx);
                     // Coming out: confetti and a sticker in the middle of the
                     // window.
-                    if this.rainbow && !was && this.active {
+                    if this.rainbow && !was && this.active && KoanTheme::motion_allowed(cx) {
                         this.throw_confetti(None);
                         let middle =
                             Point::new(this.viewport.width / 2.0, this.viewport.height / 2.0);
@@ -137,8 +137,8 @@ impl WindowRoot {
                 }),
                 // A heart favourited: confetti from the pointer, in the
                 // window in front.
-                cx.observe_global_in::<crate::rainbow::Celebration>(window, |this, window, _| {
-                    if window.is_window_active() {
+                cx.observe_global_in::<crate::rainbow::Celebration>(window, |this, window, cx| {
+                    if window.is_window_active() && KoanTheme::motion_allowed(cx) {
                         this.throw_confetti(Some(window.mouse_position()));
                     }
                 }),
@@ -167,7 +167,9 @@ impl WindowRoot {
     /// Feeds the prism the analyser and runs its clock while the rainbow is
     /// drawn and this window is in front and shows; otherwise neither.
     fn feed_prism(&mut self, cx: &mut Context<Self>) {
-        let drawn = self.rainbow && SHADED;
+        // Under Reduce Motion or Low Power nothing of it is drawn, so the
+        // analyser is not read for it and its clock stands.
+        let drawn = self.rainbow && SHADED && KoanTheme::motion_allowed(cx);
         let running = drawn && self.active && self.visible;
         self.prism.run(running);
         if drawn != self.prism_fed {
@@ -188,6 +190,7 @@ impl WindowRoot {
         // Reduce Motion or Low Power may have moved: the prism's layers come
         // or go with them.
         if self.rainbow {
+            self.feed_prism(cx);
             cx.notify();
         }
         let theme = cx.global::<KoanTheme>();
@@ -223,7 +226,12 @@ impl WindowRoot {
         // The rainbow paints over the record: its sheen in the wash, its
         // accent its own. The record's is fetched again once it goes.
         if crate::rainbow::Rainbow::drawn(cx) {
-            if self.rainbow && playing_album != self.swept && self.swept.is_some() && self.active {
+            if self.rainbow
+                && playing_album != self.swept
+                && self.swept.is_some()
+                && self.active
+                && KoanTheme::motion_allowed(cx)
+            {
                 let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
                 let brat = crate::rainbow::Painted::now() == Some(true);
                 self.sweep.fire(middle, self.scale, brat);

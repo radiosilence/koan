@@ -623,8 +623,9 @@ impl StoryContent {
                     )
                     .label("beat")
                     .on_click(move |_, _, _| {
-                        prism.hear([0.1, 0.4, 0.5]);
-                        prism.hear([1.0, 0.7, 0.9]);
+                        let frame = std::time::Duration::from_millis(16);
+                        prism.hear([0.1, 0.4, 0.5], frame);
+                        prism.hear([1.0, 0.7, 0.9], frame);
                     })
                 };
                 let overlay =
