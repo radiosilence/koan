@@ -198,9 +198,8 @@ impl RenderOnce for Collection {
                     let columns = grid.columns.max(1);
                     let mut tiles = tiles.into_iter().peekable();
                     while tiles.peek().is_some() {
-                        // On the grid's own inset: the page's margin and a
-                        // share of the spare width, so the tiles keep their
-                        // size as the window resizes.
+                        // On the grid's inset, the page's margin: the first
+                        // column is level with the heading above it.
                         lines.push(
                             div()
                                 .w_full()

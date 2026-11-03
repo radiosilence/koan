@@ -129,7 +129,7 @@ pub use lists::{
     spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
-pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };

@@ -80,6 +80,19 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // A menu closing after what held the keyboard went (its page left
+        // behind) gives it to the page showing.
+        let (shell, here) = (cx.weak_entity(), window.window_handle());
+        crate::components::on_menu_focus_lost(
+            move |window, cx| {
+                if window.window_handle() == here {
+                    shell
+                        .update(cx, |shell, cx| shell.focus_page(window, cx))
+                        .ok();
+                }
+            },
+            cx,
+        );
         let nav = cx.new(|_| Navigator::default());
         // A measuring run can open on the page it measures.
         #[cfg(feature = "profiler")]

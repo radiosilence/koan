@@ -282,10 +282,31 @@ pub enum Layer {
     Question = 3,
 }
 
+/// The key context of everything drawn over the window: the app binds its
+/// shortcuts outside it, so none acts behind a sheet or a question.
+pub const MODAL: &str = "Modal";
+
 /// `element` drawn on `layer`, covering its parent: the parent lays it out,
 /// and it is painted once the window's content is.
+///
+/// It holds the keyboard as a modal: its keys are `MODAL`'s, and a ⌘ or Ctrl
+/// key nothing inside bound is taken here, so the macOS menu bar's key
+/// equivalent behind it does not act either. Keys that type are left alone.
 pub fn layered(layer: Layer, element: impl IntoElement) -> impl IntoElement {
-    deferred(div().absolute().inset_0().child(element)).with_priority(layer as usize)
+    deferred(
+        div()
+            .absolute()
+            .inset_0()
+            .key_context(MODAL)
+            .on_key_down(|e: &KeyDownEvent, _, cx| {
+                let m = &e.keystroke.modifiers;
+                if m.platform || m.control || (m.alt && e.keystroke.key_char.is_none()) {
+                    cx.stop_propagation();
+                }
+            })
+            .child(element),
+    )
+    .with_priority(layer as usize)
 }
 
 /// The sheet presented, placed over the window, for the shell to draw under

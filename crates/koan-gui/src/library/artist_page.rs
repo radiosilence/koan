@@ -677,14 +677,8 @@ impl ArtistPage {
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }
-        // Inside the page's margin already: only the grid's share of the
-        // spare width is added.
-        div()
-            .flex()
-            .gap(grid.gap)
-            .pl(grid.inset - grid.margin)
-            .h(grid.row)
-            .children(tiles)
+        // Inside the page's margin already, which is the grid's inset.
+        div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
 
     fn header(
