@@ -139,6 +139,22 @@ struct State {
     placing: Option<Option<Pixels>>,
     /// Drawn before: the first draw shows its line still.
     drawn: bool,
+    /// Frames waited for the sung line to be laid out, so the wait ends.
+    waited: u8,
+    /// Which song's lines these are: another song starts afresh.
+    song: u64,
+}
+
+/// How many frames to wait for the sung line's first layout before placing
+/// it is given up.
+const WAIT: u8 = 4;
+
+/// A song's lines, told apart from another's.
+fn song_of(lines: &[SharedString]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    lines.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl RenderOnce for SyncedLines {
@@ -159,14 +175,29 @@ impl RenderOnce for SyncedLines {
                 before: None,
                 placing: None,
                 drawn: false,
+                waited: 0,
+                song: 0,
             }
         });
-        let active = self.active;
+        let count = self.lines.len();
+        let active = self.active.filter(|line| *line < count);
+        let song = song_of(&self.lines);
         // An item for each line, after the room above the first.
         let item = |line: usize| line + 1;
         let moving = KoanTheme::motion_allowed(cx);
         let (scroll, animated, before, waiting) = state.update(cx, |s, _| {
+            // Another song lands at once, from the top of its own lines.
+            if s.song != song {
+                s.song = song;
+                s.drawn = false;
+                s.active = None;
+                s.before = None;
+                s.placing = None;
+                s.animated.hold(0, 1.0);
+                s.animated.hold(1, 0.0);
+            }
             if s.active != active {
+                s.waited = 0;
                 s.before = s.active;
                 s.active = active;
                 let animates = s.drawn && moving;
@@ -219,7 +250,13 @@ impl RenderOnce for SyncedLines {
                             None => s.animated.hold(1, 0.0),
                         }
                     }
-                    None => waiting = true,
+                    // Not laid out yet: placed once it has been, for a few
+                    // frames, and then left to the scroll as it stands.
+                    None if s.waited < WAIT => {
+                        s.waited += 1;
+                        waiting = true;
+                    }
+                    None => s.placing = None,
                 }
             }
             (s.scroll.clone(), s.animated.clone(), s.before, waiting)
@@ -228,37 +265,7 @@ impl RenderOnce for SyncedLines {
             (Some(b), Some(a)) => b < a,
             _ => true,
         };
-        // Where the sung line and the one before stand in the layer, as the
-        // column was laid out last.
-        let rect = |line: Option<usize>| {
-            line.and_then(|l| scroll.bounds_for_item(item(l)))
-                .map(|b| {
-                    let top = b.top() + scroll.offset().y - scroll.bounds().top();
-                    [
-                        f32::from(top) * scale,
-                        f32::from(top + b.size.height) * scale,
-                    ]
-                })
-                .unwrap_or([-1.0, -1.0])
-        };
-        let [n0, n1] = rect(active);
-        let [o0, o1] = rect(before);
-        animated.set_all(
-            0,
-            &[
-                n0,
-                n1,
-                o0,
-                o1,
-                UPCOMING,
-                PAST,
-                if forward { UPCOMING } else { PAST },
-                if forward { PAST } else { UPCOMING },
-                f32::from(band) * scale,
-            ],
-        );
-        if waiting || (n0 < 0.0 && active.is_some()) {
-            // Not laid out yet: placed once it has been.
+        if waiting {
             window.request_animation_frame();
         }
         // Room above the first line and below the last, so either can sit
@@ -316,6 +323,11 @@ impl RenderOnce for SyncedLines {
                     d.child(LinesLayer {
                         child: column.into_any_element(),
                         animated,
+                        scroll: scroll.clone(),
+                        sung: active.map(item),
+                        before: before.filter(|line| *line < count).map(item),
+                        forward,
+                        band: f32::from(band),
                     })
                 } else {
                     d.child(column)
@@ -330,6 +342,51 @@ impl RenderOnce for SyncedLines {
 struct LinesLayer {
     child: AnyElement,
     animated: Animated,
+    scroll: ScrollHandle,
+    /// The items of the sung line and the one sung before it.
+    sung: Option<usize>,
+    before: Option<usize>,
+    /// The song moved on rather than back.
+    forward: bool,
+    /// The edge's fade, in points.
+    band: f32,
+}
+
+impl LinesLayer {
+    /// Where the sung line and the one before stand in the layer, in device
+    /// pixels from its top, as the column is laid out and scrolled now: a
+    /// scroll by the person moves them with it.
+    fn place(&self, bounds: Bounds<Pixels>, scale: f32) {
+        let rect = |item: Option<usize>| {
+            item.and_then(|i| self.scroll.bounds_for_item(i))
+                .map(|b| {
+                    let top = b.top() + self.scroll.offset().y - bounds.top();
+                    [
+                        f32::from(top) * scale,
+                        f32::from(top + b.size.height) * scale,
+                    ]
+                })
+                // Nowhere: no row of the layer is that line.
+                .unwrap_or([-1.0, -1.0])
+        };
+        let [n0, n1] = rect(self.sung);
+        let [o0, o1] = rect(self.before);
+        let (upcoming, past) = (UPCOMING, PAST);
+        self.animated.set_all(
+            0,
+            &[
+                n0,
+                n1,
+                o0,
+                o1,
+                upcoming,
+                past,
+                if self.forward { upcoming } else { past },
+                if self.forward { past } else { upcoming },
+                self.band * scale,
+            ],
+        );
+    }
 }
 
 impl IntoElement for LinesLayer {
@@ -391,6 +448,7 @@ impl Element for LinesLayer {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.place(bounds, window.scale_factor());
         let child = &mut self.child;
         self.animated
             .paint_layer(&LYRICS, bounds, window, cx, |window, cx| {
