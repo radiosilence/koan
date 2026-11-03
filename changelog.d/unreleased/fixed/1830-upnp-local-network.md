@@ -1,0 +1,1 @@
+- **Network speakers on the desktop app.** When macOS keeps the app off the local network, the output menu says so and where to allow it instead of staying empty; `just gui-run` launches a build as an app of its own, so it can be allowed.

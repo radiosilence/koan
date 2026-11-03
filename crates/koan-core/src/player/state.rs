@@ -2584,19 +2584,21 @@ impl SharedPlayerState {
             // The byte count is the download thread's own counter, written per
             // chunk without the playlist lock, so a transfer never bumps the
             // playlist version.
+            // Read whatever the item's load state: one streaming from a
+            // download in progress is Ready while its bytes still arrive.
             let download_progress = match item.state {
-                ItemState::Pending => item
+                ItemState::Failed(_) => None,
+                _ => item
                     .db_id
                     .and_then(|id| transfers.get(&id).copied())
                     .or_else(|| mirrored.get(&item.id).copied()),
-                _ => None,
             };
             let transferring = download_progress.is_some();
 
             let status = match (place, &item.state) {
                 (Place::Cursor, state) => QueueEntryStatus::at_cursor(state, transferring),
                 (_, ItemState::Failed(_)) => QueueEntryStatus::Failed,
-                (_, ItemState::Pending) if transferring => QueueEntryStatus::Downloading,
+                (_, _) if transferring => QueueEntryStatus::Downloading,
                 (Place::Played, _) => QueueEntryStatus::Played,
                 // Waiting its turn, not arriving: a spinner on every one of
                 // these read as the whole album downloading at once.

@@ -228,6 +228,8 @@ pub struct Devices {
 pub struct Renderers {
     pub renderers: Vec<RendererInfo>,
     pub output: Option<RendererOutput>,
+    /// macOS refused the last search the local network.
+    pub blocked: bool,
 }
 
 #[derive(Clone)]
@@ -398,9 +400,19 @@ impl Mirror {
                 StateSlice::Connection { connection } => {
                     set(&self.connection, Some(connection), cx)
                 }
-                StateSlice::Renderers { renderers, output } => {
-                    set(&self.renderers, Renderers { renderers, output }, cx)
-                }
+                StateSlice::Renderers {
+                    renderers,
+                    output,
+                    local_network_blocked,
+                } => set(
+                    &self.renderers,
+                    Renderers {
+                        renderers,
+                        output,
+                        blocked: local_network_blocked,
+                    },
+                    cx,
+                ),
             }
         }
         replaced
