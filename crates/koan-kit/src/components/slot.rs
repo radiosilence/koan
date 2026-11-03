@@ -231,6 +231,9 @@ impl Drop for ColorSlot {
 }
 
 // sRGB and OKLab, for slots mixed in OKLab.
+// The published OKLab matrices, digit for digit, as the Swift and Kotlin
+// accents use them.
+#[allow(clippy::excessive_precision)]
 fn srgb_to_oklab(c: [f32; 3]) -> [f32; 3] {
     let linear = c.map(|v| {
         if v <= 0.04045 {
@@ -250,6 +253,9 @@ fn srgb_to_oklab(c: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+// The published OKLab matrices, digit for digit, as the Swift and Kotlin
+// accents use them.
+#[allow(clippy::excessive_precision)]
 fn oklab_to_srgb([l0, a, b]: [f32; 3]) -> [f32; 3] {
     let l = (l0 + 0.3963377774 * a + 0.2158037573 * b).powi(3);
     let m = (l0 - 0.1055613458 * a - 0.0638541728 * b).powi(3);
