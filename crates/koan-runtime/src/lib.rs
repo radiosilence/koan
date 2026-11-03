@@ -5537,11 +5537,44 @@ impl KoanEngine {
         .await
     }
 
+    /// Carry out exactly the plan previewed from `selection` (`check` with
+    /// the same pattern, folder and `move_ancillary`), then point the queue
+    /// at where the files went. Fails with a bad argument, nothing moved,
+    /// when the library has changed since the selection was read: preview
+    /// again.
+    ///
+    /// The rename and the database rows land together, and playback survives
+    /// it — a Unix rename keeps the open descriptor.
+    pub async fn organize_execute_previewed(
+        self: Arc<Self>,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base_dir: String,
+        move_ancillary: bool,
+    ) -> Result<OrganizePlan, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let result = koan_core::organize::execute_resolved(
+                &db,
+                &selection.inner,
+                &pattern,
+                Some(Path::new(&base_dir)),
+                move_ancillary,
+            )
+            .map_err(organize_err)?;
+            self.follow_moved_files(&result);
+            self.bump_library();
+            Ok(OrganizePlan::build(result, selection.requested))
+        })
+        .await
+    }
+
     /// Carry out the moves, then point the queue at where the files went.
     ///
     /// The rename and the database rows land together, and playback survives it
     /// — a Unix rename keeps the open descriptor. Destructive: run it only for
-    /// a plan the user has seen.
+    /// a plan the user has seen. The apps use `organize_execute_previewed`,
+    /// which runs the plan they showed rather than reading the library again.
     pub async fn organize_execute(
         self: Arc<Self>,
         pattern: String,
