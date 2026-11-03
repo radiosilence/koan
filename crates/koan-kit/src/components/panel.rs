@@ -148,19 +148,30 @@ pub struct ActionColumns {
 }
 
 impl ActionColumns {
-    /// The columns for rows whose actions are `rows`, each in order: from the
-    /// end, a column holds words where any row puts words there.
+    /// The columns for rows whose actions are `rows`, each in order: a run
+    /// of kinds every row's actions fit in order, aligned to the end, each
+    /// row merged in from its last action, a kind both have kept as one
+    /// column.
     pub fn of(rows: &[Vec<Slot>], words: Pixels) -> Self {
-        let count = rows.iter().map(Vec::len).max().unwrap_or(0);
-        let kinds = (0..count)
-            .map(|from_end| {
-                let words = rows.iter().any(|row| {
-                    row.len() > from_end && row[row.len() - 1 - from_end] == Slot::Words
-                });
-                if words { Slot::Words } else { Slot::Glyph }
-            })
-            .rev()
-            .collect();
+        let kinds = rows.iter().fold(Vec::new(), |kinds: Vec<Slot>, row| {
+            let (mut i, mut j) = (kinds.len(), row.len());
+            let mut merged = Vec::with_capacity(i.max(j));
+            while i > 0 || j > 0 {
+                if i > 0 && j > 0 && kinds[i - 1] == row[j - 1] {
+                    merged.push(kinds[i - 1]);
+                    i -= 1;
+                    j -= 1;
+                } else if i > 0 {
+                    merged.push(kinds[i - 1]);
+                    i -= 1;
+                } else {
+                    merged.push(row[j - 1]);
+                    j -= 1;
+                }
+            }
+            merged.reverse();
+            merged
+        });
         Self { kinds, words }
     }
 
@@ -541,6 +552,9 @@ impl RenderOnce for MenuRow {
         let columns = self.columns.clone().unwrap_or_default();
         let shares = columns.kinds.contains(&Slot::Words);
         let keyed = self.keyed;
+        // A disabled row with actions is still reached by the arrows, and
+        // lit where they are.
+        let reached = !self.trailing.is_empty();
         let own_words: Vec<SharedString> = self
             .trailing
             .iter()
@@ -657,9 +671,10 @@ impl RenderOnce for MenuRow {
                 row.bg(if self.highlighted && live { lit } else { rest })
                     .when(live, |row| row.hover(move |row| row.bg(lit)))
             })
-            .when(!grounded && self.highlighted && !self.disabled, |row| {
-                row.bg(surface)
-            })
+            .when(
+                !grounded && self.highlighted && (!self.disabled || reached),
+                |row| row.bg(surface),
+            )
             .when(!grounded && !self.disabled, |row| {
                 row.hover(move |row| row.bg(surface))
             })
@@ -833,5 +848,10 @@ mod action_column_tests {
         assert_eq!(columns.place(&[Words]), [1], "a tick with the words");
         let glyphs = ActionColumns::of(&[vec![Glyph, Glyph], vec![Glyph]], px(0.));
         assert_eq!(glyphs.place(&[Glyph]), [1], "the last of the glyphs");
+        // Two glyphs beside a glyph and words: a column for each, none lost.
+        let both = ActionColumns::of(&[vec![Glyph, Words], vec![Glyph, Glyph]], px(80.));
+        assert_eq!(both.kinds, [Glyph, Glyph, Words]);
+        assert_eq!(both.place(&[Glyph, Glyph]), [0, 1]);
+        assert_eq!(both.place(&[Glyph, Words]), [1, 2]);
     }
 }

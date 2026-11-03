@@ -436,7 +436,9 @@ impl Menu {
 
     fn choosable(&self, index: usize) -> bool {
         match &self.entries[index] {
-            Entry::Item(item) => !item.disabled && item.run.is_some(),
+            // A row that cannot be chosen is still reached for its actions
+            // (forgetting a device out of reach); Return on it does nothing.
+            Entry::Item(item) => (!item.disabled && item.run.is_some()) || !item.actions.is_empty(),
             Entry::Submenu { .. } => true,
             Entry::Separator | Entry::Heading(_) | Entry::Control(_) | Entry::Note(_) => false,
         }
@@ -553,7 +555,7 @@ impl Menu {
     /// How many actions the row at `index` has.
     fn actions_of(&self, index: Option<usize>) -> usize {
         match index.map(|i| &self.entries[i]) {
-            Some(Entry::Item(item)) if !item.disabled => item.actions.len(),
+            Some(Entry::Item(item)) => item.actions.len(),
             _ => 0,
         }
     }
