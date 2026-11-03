@@ -40,9 +40,6 @@ use crate::theme::Hsla;
 const QUIETEST: f32 = 0.12;
 /// Seconds a band takes to forget half of a loud passage.
 const FORGET: f32 = 4.0;
-/// The analyser's rate while bars are on screen: each frame is a keyframe
-/// the GPU glides the bars to by the next, at the display's rate.
-const RATE: u8 = 30;
 
 #[derive(Default)]
 struct Registry {
@@ -224,7 +221,6 @@ fn follow(levels: &Levels, cx: &mut App) {
         return;
     }
     let engine = engine(cx);
-    engine.set_viz_fps(RATE);
     let stream = engine.viz_stream();
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<Vec<WindowId>>();
@@ -297,8 +293,9 @@ impl Registry {
         let moved = next != self.bands;
         self.bands = next;
         if moved {
-            // Glided to by the next frame's arrival.
-            let over = std::time::Duration::from_secs_f32(elapsed.max(1.0 / RATE as f32));
+            // Each frame is the next keyframe, glided to over the time the
+            // engine took to send it, so the bars arrive as the next does.
+            let over = std::time::Duration::from_secs_f32(elapsed);
             for (_, bars) in self.shaders.values() {
                 bars.glide(next, over);
             }
