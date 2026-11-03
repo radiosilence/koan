@@ -244,7 +244,10 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     }
     let (view, focus) = {
         let a = asking.read(cx);
-        (a.sheet.clone()?, a.sheet_focus.as_ref().map(|(f, _)| f.clone()))
+        (
+            a.sheet.clone()?,
+            a.sheet_focus.as_ref().map(|(f, _)| f.clone()),
+        )
     };
     let look = Look::of(window, cx);
     Some(

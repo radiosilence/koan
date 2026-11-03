@@ -1,6 +1,7 @@
 //! Drags a row of the queue in the real window, headlessly, and checks the
 //! queue's order moved: the first track dropped below the third, grouped
-//! by record as the queue opens or, with `KOAN_DRAG_FLAT`, flat. GPUI's
+//! by record as the queue opens or, with `KOAN_DRAG_FLAT`, flat. The queue
+//! is laid out again mid-drag, as a queue sent whole is (#1823). GPUI's
 //! headless renderer draws the window and the pointer is synthetic input
 //! delivered to it; nothing on the screen is read.
 //!
@@ -78,10 +79,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_gui::mirror::regroup(&queue, grouped, cx);
     });
     settle(&mut cx, window)?;
-    // The first record's first and third tracks: under its heading when
-    // grouped.
-    let (first, third) = if grouped { (1, 3) } else { (0, 2) };
-
     let order = |cx: &mut HeadlessAppContext| {
         cx.update(|cx| {
             let queue = cx.global::<Mirror>().queue.clone();
@@ -94,6 +91,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
     };
     let before = order(&mut cx);
+    // The rows of the queue's first and third tracks, under whatever
+    // headings the layout puts above them.
+    let row_of = |id: &String, cx: &mut HeadlessAppContext| {
+        cx.update(|cx| {
+            let queue = cx.global::<Mirror>().queue.clone();
+            queue.read(cx).track_rows.get(id).copied()
+        })
+    };
+    let (Some(first), Some(third)) = (row_of(&before[0], &mut cx), row_of(&before[2], &mut cx))
+    else {
+        return Err("the queue's tracks were not laid out".into());
+    };
     let bounds = |row: usize, cx: &mut HeadlessAppContext| -> Option<Bounds<Pixels>> {
         cx.update(|cx| shell.read(cx).queue().read(cx).row_bounds(row))
     };
@@ -102,7 +111,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     // Below the third row's middle: after it.
     let target = point(to.center().x, to.center().y + to.size.height / 4.);
-    drag(&mut cx, window, from.center(), target)?;
+    // The queue is sent whole while the drag lasts, as a download landing
+    // or a rescan sends it: the drop still lands.
+    drag(&mut cx, window, from.center(), target, |cx| {
+        cx.update(|cx| {
+            let queue = cx.global::<Mirror>().queue.clone();
+            koan_gui::mirror::regroup(&queue, grouped, cx);
+        });
+        cx.run_until_parked();
+    })?;
     settle(&mut cx, window)?;
 
     let after = order(&mut cx);
@@ -118,12 +135,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Presses at `from`, moves to `to` in steps with the button held, as a
-/// hand would, and lets go there.
+/// hand would, runs `meanwhile`, and lets go there.
 fn drag(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
     from: Point<Pixels>,
     to: Point<Pixels>,
+    meanwhile: impl FnOnce(&mut HeadlessAppContext),
 ) -> Result<(), Box<dyn Error>> {
     let input = |cx: &mut HeadlessAppContext, event: PlatformInput| {
         cx.update_window(window, |_, window, cx| {
@@ -152,10 +170,7 @@ fn drag(
     const STEPS: usize = 8;
     for step in 1..=STEPS {
         let t = step as f32 / STEPS as f32;
-        let at = point(
-            from.x + (to.x - from.x) * t,
-            from.y + (to.y - from.y) * t,
-        );
+        let at = point(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
         input(
             cx,
             PlatformInput::MouseMove(MouseMoveEvent {
@@ -166,6 +181,7 @@ fn drag(
         )?;
         cx.run_until_parked();
     }
+    meanwhile(cx);
     input(
         cx,
         PlatformInput::MouseUp(MouseUpEvent {

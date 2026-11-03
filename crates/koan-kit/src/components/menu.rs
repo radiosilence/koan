@@ -843,14 +843,12 @@ mod tests {
                         .submenu("add to playlist", window, cx, move |menu, _, _| {
                             let (first, second) = (chosen.clone(), chosen.clone());
                             menu.item(
-                                MenuEntry::data("Morning").on_click(move |_, _, _| {
-                                    first.set(Some("Morning"))
-                                }),
+                                MenuEntry::data("Morning")
+                                    .on_click(move |_, _, _| first.set(Some("Morning"))),
                             )
                             .item(
-                                MenuEntry::data("Evening").on_click(move |_, _, _| {
-                                    second.set(Some("Evening"))
-                                }),
+                                MenuEntry::data("Evening")
+                                    .on_click(move |_, _, _| second.set(Some("Evening"))),
                             )
                         })
                 })
@@ -883,10 +881,14 @@ mod tests {
             Modifiers::default(),
         );
         cx.run_until_parked();
-        let opener = cx.debug_bounds("menu: add to playlist").expect("the menu opened");
+        let opener = cx
+            .debug_bounds("menu: add to playlist")
+            .expect("the menu opened");
         cx.simulate_mouse_move(opener.center(), None, Modifiers::default());
         cx.run_until_parked();
-        let evening = cx.debug_bounds("menu: Evening").expect("the submenu opened");
+        let evening = cx
+            .debug_bounds("menu: Evening")
+            .expect("the submenu opened");
         cx.simulate_mouse_move(evening.center(), None, Modifiers::default());
         cx.run_until_parked();
         cx.simulate_click(evening.center(), Modifiers::default());
