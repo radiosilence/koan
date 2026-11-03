@@ -1417,7 +1417,8 @@ fn koan_slot_track(ends: vec4<f32>, shape: vec4<f32>, time: f32) -> f32 {
         return to;
     }
     let e = max(time - ends.z, 0.0);
-    let code = u32(shape.x);
+    // KOAN: 16 marks a colour mixed in OKLab, not part of the track (#1859).
+    let code = u32(shape.x) % 16u;
     let kind = code % 4u;
     let repeat = code / 4u;
     if (kind == 2u) {
@@ -1449,7 +1450,28 @@ fn koan_rgba(hsla: Hsla) -> vec4<f32> {
     }
     let base = 1u + min(u32(hsla.h - 2.0), 254u) * 4u;
     let t = koan_slot_track(koan_slots[base + 2u], koan_slots[base + 3u], koan_slots[0].x);
-    var color = clamp(mix(koan_slots[base], koan_slots[base + 1u], t), vec4<f32>(0.0), vec4<f32>(1.0));
+    var color = mix(koan_slots[base], koan_slots[base + 1u], t);
+    // KOAN: a slot mixed in OKLab holds its ends as OKLab, so its hue turns
+    // rather than passing through grey (#1859).
+    if (u32(koan_slots[base + 3u].x) >= 16u) {
+        color = vec4<f32>(koan_oklab_to_srgb(color.rgb), color.a);
+    }
+    color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
     color.a *= hsla.a;
     return color;
+}
+
+fn koan_oklab_to_srgb(lab: vec3<f32>) -> vec3<f32> {
+    var l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    var m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    var s = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    l = l * l * l;
+    m = m * m * m;
+    s = s * s * s;
+    let linear_rgb = clamp(vec3<f32>(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(1.055 * pow(linear_rgb, vec3<f32>(1.0 / 2.4)) - 0.055, 12.92 * linear_rgb,
+                  linear_rgb <= vec3<f32>(0.0031308));
 }

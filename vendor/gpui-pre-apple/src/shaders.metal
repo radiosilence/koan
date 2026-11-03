@@ -5,6 +5,7 @@ using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
 float4 koan_rgba(Hsla hsla, constant float *slots);  // KOAN: colour slots (#1859).
+float3 koan_oklab_to_srgb(float3 lab);  // KOAN: #1859.
 float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
@@ -1336,7 +1337,8 @@ float koan_slot_track(constant float *t, float time) {
     return to;
   }
   float e = max(time - t[2], 0.0);
-  uint code = uint(t[4]);
+  // KOAN: 16 marks a colour mixed in OKLab, not part of the track (#1859).
+  uint code = uint(t[4]) % 16;
   uint kind = code % 4;
   uint repeat = code / 4;
   if (kind == 2) {
@@ -1366,10 +1368,30 @@ float4 koan_rgba(Hsla hsla, constant float *slots) {
   uint index = min(uint(hsla.h - 2.0), 254u);
   constant float *slot = slots + 4 + index * 16;
   float t = koan_slot_track(slot + 8, slots[0]);
-  float4 color = clamp(
-      mix(float4(slot[0], slot[1], slot[2], slot[3]),
-          float4(slot[4], slot[5], slot[6], slot[7]), t),
-      0.0, 1.0);
+  float4 color = mix(float4(slot[0], slot[1], slot[2], slot[3]),
+                     float4(slot[4], slot[5], slot[6], slot[7]), t);
+  // KOAN: a slot mixed in OKLab holds its ends as OKLab, so its hue turns
+  // rather than passing through grey (#1859).
+  if (uint(slot[12]) >= 16) {
+    color.rgb = koan_oklab_to_srgb(color.rgb);
+  }
+  color = clamp(color, 0.0, 1.0);
   color.a *= hsla.a;
   return color;
+}
+
+float3 koan_oklab_to_srgb(float3 lab) {
+  float l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+  float m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+  float s = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+  l = l * l * l;
+  m = m * m * m;
+  s = s * s * s;
+  float3 linear_rgb = float3(
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+  linear_rgb = clamp(linear_rgb, 0.0, 1.0);
+  return select(1.055 * pow(linear_rgb, 1.0 / 2.4) - 0.055, 12.92 * linear_rgb,
+                linear_rgb <= 0.0031308);
 }
