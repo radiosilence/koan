@@ -276,15 +276,17 @@ pub fn mark<V: Menus>(
 
 /// The list's one context menu, over whatever its rows marked. A right
 /// click on the list clears the mark first, in the capture phase, so one on
-/// empty space acts on nothing.
+/// empty space acts on nothing. `spot` is the page's keyboard cursor, which
+/// the page passes as it renders: reading the page from here would read it
+/// while it is being updated.
 pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
     element: E,
     view: WeakEntity<V>,
+    spot: Option<crate::components::CursorSpot>,
     window: &mut Window,
     cx: &mut App,
 ) -> E {
     let clear = view.clone();
-    let spot = view.upgrade().and_then(|page| page.read(cx).cursor_spot());
     element
         .capture_any_mouse_down(super::listen(
             clear,

@@ -629,6 +629,7 @@ impl Render for TrackBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         );
