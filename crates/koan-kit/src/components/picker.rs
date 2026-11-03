@@ -7,9 +7,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, MenuPanel, MenuRow, accessible, answers_click, child, focus, ring};
-use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
-};
+use crate::theme::{DISABLED_OPACITY, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
 
 /// A pop-up picker: the chosen option in `control`, `ink`, with a chevron, in
 /// the theme's bordered button, as the Mac's `KoanPicker` is; it opens the
@@ -107,7 +105,7 @@ impl RenderOnce for Picker {
         // The theme's bordered button, as a form's dropdown is.
         .py(look.spaced(6.))
         .px(look.spaced(12.))
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(look.palette.muted.hsla())
         .text_role(TypeRole::Control, &look)
         .text_color(color)

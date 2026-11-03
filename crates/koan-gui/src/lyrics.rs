@@ -158,6 +158,7 @@ impl LyricsPanel {
         else {
             return;
         };
+        crate::transport::land(at, cx);
         command(cx, "seek to a line", move |e| e.seek(at));
     }
 }

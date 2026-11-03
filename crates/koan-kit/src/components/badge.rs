@@ -7,7 +7,7 @@ use gpui_kit::{
 };
 
 use super::Handler;
-use crate::theme::{HAIRLINE, KoanStyled, Look, Tone, TypeRole};
+use crate::theme::{KoanStyled, Look, Tone, TypeRole};
 
 /// A small fact set apart, such as a format: `fine` in `ink` in a square
 /// `rule` outline, or in the accent where the fact is a match.
@@ -48,7 +48,7 @@ impl RenderOnce for Badge {
         .flex_none()
         .px(px(7.0))
         .py(px(2.0))
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(outline)
         .text_role(TypeRole::Fine, &look)
         .text_color(text)
@@ -93,7 +93,7 @@ impl RenderOnce for Chip {
             .flex_none()
             .px(look.spaced(12.0))
             .py(look.spaced(6.0))
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.muted.hsla())
             .text_role(TypeRole::Meta, &look)
             .text_color(look.palette.ink.hsla())

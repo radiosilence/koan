@@ -33,6 +33,8 @@ pub struct MenuEntry {
     trailing: Vec<Trailing>,
     keys: Option<SharedString>,
     run: Option<Run>,
+    stays_open: bool,
+    actions: Vec<(Icon, SharedString, bool, Run)>,
 }
 
 impl MenuEntry {
@@ -51,7 +53,43 @@ impl MenuEntry {
             trailing: Vec::new(),
             keys: None,
             run: None,
+            stays_open: false,
+            actions: Vec::new(),
         }
+    }
+
+    /// A quiet glyph at the row's end that acts on what the row names
+    /// without choosing it ("move here", "forget this device"), with `help`
+    /// as its tooltip. Every row of the menu keeps the same slots, so the
+    /// actions line up.
+    pub fn action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((icon, help.into(), false, Rc::new(run)));
+        self
+    }
+
+    /// `action`, its glyph in the accent while `lit`: a setting that is on
+    /// for what the row names, as an output's EQ.
+    pub fn lit_action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        lit: bool,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((icon, help.into(), lit, Rc::new(run)));
+        self
+    }
+
+    /// Choosing it leaves the menu open: a choice among outputs or devices,
+    /// whose tick and details the menu shows moving as it is refilled.
+    pub fn stays_open(mut self) -> Self {
+        self.stays_open = true;
+        self
     }
 
     /// The keys that do the same, at the row's end in `muted`: a menu drawn
@@ -405,7 +443,9 @@ impl Menu {
         match &self.entries[index] {
             Entry::Item(item) if !item.disabled => {
                 if let Some(run) = item.run.clone() {
-                    cx.emit(DismissEvent);
+                    if !item.stays_open {
+                        cx.emit(DismissEvent);
+                    }
                     run(&ClickEvent::default(), window, cx);
                 }
             }
@@ -449,6 +489,15 @@ impl Render for Menu {
         let look = Look::of(window, cx);
         let menu = cx.entity();
         let mut panel = MenuPanel::new();
+        let slots = self
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Item(item) => item.trailing.len() + item.actions.len(),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
         for (index, entry) in self.entries.iter().enumerate() {
             let highlighted = self.highlighted == Some(index);
             let hovered = {
@@ -514,6 +563,17 @@ impl Render for Menu {
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
                     }
+                    for (k, (icon, help, lit, run)) in item.actions.iter().enumerate() {
+                        let run = run.clone();
+                        row = row.lit_action(
+                            ("action", index * 8 + k),
+                            *icon,
+                            help.clone(),
+                            *lit,
+                            move |event, window, cx| run(event, window, cx),
+                        );
+                    }
+                    row = row.slots(slots);
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }
@@ -602,39 +662,67 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .map(|(at, menu, _)| (*at, menu.clone()));
         let build = Rc::new(build);
         let opener = state.clone();
-        let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-            let build = build.clone();
-            let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
-            // Nothing to act on, nothing to open.
-            if menu.read(cx).entries.is_empty() {
-                return;
-            }
-            let at = event.position;
-            // Where the keyboard was, given back as the menu closes: a list's
-            // keys work again after a choice or Escape.
-            let before = window.focused(cx);
-            let own = menu.focus_handle(cx);
-            opener.update(cx, |open, cx| {
-                let closing = cx.subscribe_in(
-                    &menu,
-                    window,
-                    move |open: &mut Open, _, _: &DismissEvent, window, cx| {
-                        open.0 = None;
-                        // Only from the menu: a choice that put up a sheet
-                        // or opened a field keeps the keyboard where it went.
-                        let in_menu =
-                            window.focused(cx).is_none() || own.contains_focused(window, cx);
-                        if in_menu && let Some(before) = &before {
-                            window.focus(before, cx);
-                        }
-                        cx.notify();
-                    },
-                );
-                open.0 = Some((at, menu.clone(), closing));
-                cx.notify();
+        let open = Rc::new(
+            move |at: Point<Pixels>, window: &mut Window, cx: &mut App| {
+                let build = build.clone();
+                let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
+                // Nothing to act on, nothing to open.
+                if menu.read(cx).entries.is_empty() {
+                    return;
+                }
+                // Where the keyboard was, given back as the menu closes: a list's
+                // keys work again after a choice or Escape.
+                let before = window.focused(cx);
+                let own = menu.focus_handle(cx);
+                opener.update(cx, |open, cx| {
+                    let closing = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |open: &mut Open, _, _: &DismissEvent, window, cx| {
+                            open.0 = None;
+                            // Only from the menu: a choice that put up a sheet
+                            // or opened a field keeps the keyboard where it went.
+                            let in_menu =
+                                window.focused(cx).is_none() || own.contains_focused(window, cx);
+                            if in_menu && let Some(before) = &before {
+                                window.focus(before, cx);
+                            }
+                            cx.notify();
+                        },
+                    );
+                    open.0 = Some((at, menu.clone(), closing));
+                    cx.notify();
+                });
+                window.focus(&menu.focus_handle(cx), cx);
+            },
+        );
+        let by_key = open.clone();
+        let mut this = self
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                open(event.position, window, cx)
+            })
+            // The menu key: under the keyboard's cursor as the next frame
+            // draws it (the list has revealed the cursor's item, and the key
+            // makes the keyboard the last input, which shows the ring), or
+            // at the pointer where no ring is drawn in that frame. The first
+            // callback runs before that frame draws, the second after it.
+            .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
+                cx.default_global::<super::CursorAt>().0 = None;
+                window.refresh();
+                let by_key = by_key.clone();
+                window.on_next_frame(move |window, _| {
+                    window.refresh();
+                    window.on_next_frame(move |window, cx| {
+                        let id = window.window_handle().window_id();
+                        let at = cx
+                            .try_global::<super::CursorAt>()
+                            .and_then(|c| c.0)
+                            .filter(|(drawn, _)| *drawn == id)
+                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        by_key(at, window, cx)
+                    });
+                });
             });
-            window.focus(&menu.focus_handle(cx), cx);
-        });
         if let Some((at, menu)) = shown {
             this = this.child(
                 deferred(

@@ -1,0 +1,1 @@
+- **The desktop app keeps running in the menu bar, and opens at login.** With its window closed it stays reachable from your other devices, its menu bar item shows what is playing and brings the window back, and it can ask the system to start it when you log in.

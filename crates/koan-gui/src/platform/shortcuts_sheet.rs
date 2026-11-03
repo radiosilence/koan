@@ -13,7 +13,7 @@ use koan_kit::app::*;
 use koan_kit::raw::OperatingSystem;
 
 use crate::components::{Badge, Button, ButtonKind, sheet};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 use super::actions::{APPLICATION, Group, HOTKEYS, LISTS, MENU, Shortcut, caption};
 
@@ -151,7 +151,7 @@ impl Render for ShortcutsSheet {
                     .pt(look.space(Space::L))
                     .gap(look.space(Space::L))
                     .child(columns(&HOTKEYS.iter().chain(LISTS).collect::<Vec<_>>()))
-                    .child(div().h(HAIRLINE).bg(look.palette.rule.hsla()))
+                    .child(div().h(look.hairline).bg(look.palette.rule.hsla()))
                     .child(sheet::note(modifier, Tone::Muted, &look))
                     .child(columns(&with_modifier(os)))
                     .child(sheet::note(

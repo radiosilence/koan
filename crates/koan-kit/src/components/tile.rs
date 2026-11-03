@@ -59,6 +59,7 @@ pub struct TileArt {
     on_device: Option<f32>,
     heart: Option<(bool, bool)>,
     pick: Option<bool>,
+    cursor: bool,
 }
 
 impl TileArt {
@@ -84,6 +85,7 @@ impl TileArt {
             on_device: None,
             heart: None,
             pick: None,
+            cursor: false,
         }
     }
 
@@ -128,6 +130,13 @@ impl TileArt {
     /// While picking: whether this record is picked.
     pub fn pick(mut self, picked: Option<bool>) -> Self {
         self.pick = picked;
+        self
+    }
+
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// the focus ring, inside the sleeve, once the keyboard was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -292,6 +301,9 @@ impl RenderOnce for TileArt {
                     .child(tick.points(Self::TICK / 1.2).color(gpui_kit::white())),
             );
         }
+        if self.cursor && window.last_input_was_keyboard() {
+            art = art.child(super::cursor_ring(&look));
+        }
         art
     }
 }
@@ -340,6 +352,7 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn tiles_keep_their_size_and_the_room_around_them_takes_the_width() {

@@ -444,8 +444,10 @@ pub fn adopt_cached_files(db: &Database, cache_dir: &Path) -> Result<usize, DbEr
 /// that goes on claiming to be ready plays nothing at all. Call this after
 /// either clearing function, from anywhere with a player attached. Putting the
 /// items back to `Pending` is all it takes: the download queue follows the
-/// playlist and fetches them.
+/// playlist and fetches them. The finished transfers whose files went are
+/// forgotten too, so no client goes on showing them as on this device.
 pub fn requeue_cleared_downloads(state: &SharedPlayerState) {
+    state.downloads().forget_removed();
     let stale = state.reset_items_with_missing_files();
     if !stale.is_empty() {
         log::info!(

@@ -13,11 +13,11 @@
 use koan_ffi::{DeviceInfo, DeviceReach, PlayState};
 use koan_kit::app::*;
 
-use crate::components::{Button, ButtonKind, Menu, MenuEntry};
-use crate::engine::{command, engine};
+use crate::components::{Menu, MenuEntry};
+use crate::engine::{engine, reported};
 use crate::mirror::Mirror;
 use crate::notice;
-use crate::theme::{Icon, Tone, label};
+use crate::theme::{Icon, Tone};
 
 /// What the control menu draws, read from the slices as it opens and again
 /// whenever the devices move while it is open.
@@ -117,13 +117,14 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             "paused while you control another device"
         })
         .checked(here)
+        .stays_open()
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
-        this = this.trailing(move_button(
-            "move-here",
-            None,
-            "Bring what the other device is playing back here".into(),
-        ));
+        this = this.action(
+            Icon::Move,
+            "move here: bring what the other device is playing back here",
+            |_, _, cx| move_music(None, cx),
+        );
     }
     let mut menu = menu.section("control");
     // The system keeps the app off the local network until the person allows
@@ -147,7 +148,11 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             Some(owner) => format!("shared by {owner} · {}", detail(device, view.now)),
             None => detail(device, view.now),
         };
+        // An Apple TV asleep that nothing wakes yet is chosen to set its
+        // waking up: the pairing is what makes it reachable.
+        let pair_first = unreachable && device.tv_pairable && !device.tv_paired;
         let id = device.id.clone();
+        let name = device.name.clone();
         let mut entry = MenuEntry::data(device.name.clone())
             .icon(platform_icon(&device.platform))
             .reach(if device.nearby {
@@ -158,66 +163,68 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             .rich(detail)
             .warns(unreachable || warning)
             .checked(selected)
-            .disabled(unreachable && !selected)
-            .on_click(move |_, _, cx| control(Some(id.clone()), cx));
-        if view.can_move(Some(device)) {
-            entry = entry.trailing(move_button(
-                ("move-to", crate::transport::id_hash(&device.id)),
-                Some(device.id.clone()),
-                format!(
-                    "Send what is playing to {}, and control it there",
-                    device.name
-                ),
-            ));
+            .disabled(unreachable && !selected && !pair_first)
+            .on_click(move |_, window, cx| {
+                if pair_first {
+                    crate::tv_wake::open(id.clone(), name.clone(), window, cx);
+                } else {
+                    control(Some(id.clone()), cx);
+                }
+            });
+        // Choosing a device keeps the menu up to show it waking; the pairing
+        // sheet needs the menu out of its way.
+        if !pair_first {
+            entry = entry.stays_open();
         }
+        // Secondary actions first, so "move here" takes the last slot on
+        // every row it is on.
         // An Apple TV can be paired to be turned on from here, once, for
         // all the account's devices.
         if device.tv_pairable {
             let (id, name, paired) = (device.id.clone(), device.name.clone(), device.tv_paired);
-            entry = entry.trailing(move |_, _| {
-                let (id, name) = (id.clone(), name.clone());
-                Button::icon_only(
-                    ("tv-wake", crate::transport::id_hash(&id)),
-                    if paired {
-                        Icon::Close
-                    } else {
-                        Icon::Television
-                    },
-                    label(if paired {
-                        "stop waking"
-                    } else {
-                        "set up waking…"
-                    }),
-                )
-                .on_click(move |_, window, cx| {
-                    cx.stop_propagation();
+            entry = entry.action(
+                if paired {
+                    Icon::Close
+                } else {
+                    Icon::Television
+                },
+                if paired {
+                    "stop waking this TV from here"
+                } else {
+                    "set up waking this TV from here…"
+                },
+                move |_, window, cx| {
                     if paired {
                         crate::tv_wake::stop(id.clone(), name.clone(), window, cx);
                     } else {
                         crate::tv_wake::open(id.clone(), name.clone(), window, cx);
                     }
-                })
-                .into_any_element()
-            });
+                },
+            );
         }
         // A device out of reach can be dropped from the list until it is
         // heard from again.
         if !device.awake {
             let id = device.id.clone();
-            entry = entry.trailing(move |_, _| {
-                let id = id.clone();
-                Button::icon_only(
-                    ("forget", crate::transport::id_hash(&id)),
-                    Icon::Clear,
-                    label("forget this device"),
-                )
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
+            entry = entry.action(
+                Icon::Clear,
+                "forget this device until it is heard from again",
+                move |_, _, cx| {
                     let id = id.clone();
-                    command(cx, "forget device", move |e| e.forget_device(id));
-                })
-                .into_any_element()
-            });
+                    reported(cx, "forget device", move |e| e.forget_device(id));
+                },
+            );
+        }
+        if view.can_move(Some(device)) {
+            let to = device.id.clone();
+            entry = entry.action(
+                Icon::Move,
+                format!(
+                    "move here: send what is playing to {}, and control it there",
+                    device.name
+                ),
+                move |_, _, cx| move_music(Some(to.clone()), cx),
+            );
         }
         menu = menu.item(entry);
     }
@@ -232,28 +239,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
 }
 
 fn control(id: Option<String>, cx: &mut App) {
-    command(cx, "control device", move |e| e.control_device(id));
-}
-
-/// "Move here": what the device in view is playing goes to `to` (this
-/// device with `None`), which is controlled from then on.
-fn move_button(
-    id: impl Into<ElementId>,
-    to: Option<String>,
-    help: String,
-) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
-    let id = id.into();
-    move |_, _| {
-        let to = to.clone();
-        Button::new(id.clone(), ButtonKind::Bordered)
-            .label("move here")
-            .help(crate::theme::label(&help))
-            .on_click(move |_, _, cx| {
-                cx.stop_propagation();
-                move_music(to.clone(), cx);
-            })
-            .into_any_element()
-    }
+    reported(cx, "control device", move |e| e.control_device(id));
 }
 
 /// Moves the music, then says what became of it where the device's state
@@ -373,7 +359,7 @@ fn detail(device: &DeviceInfo, now: i64) -> String {
             );
         }
         if device.tv_pairable {
-            return format!("asleep{seen}. Its waking is set up from the Mac or iPhone app.");
+            return format!("asleep{seen}. Choosing it sets it up to be turned on from here.");
         }
         // A computer drops out when kōan is quit or it is off, and nothing
         // reaches it until someone opens kōan there.

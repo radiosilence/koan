@@ -21,7 +21,7 @@ use super::sheet::{Confirm, Sheets, note};
 use super::{flows, manage, prompts, stage};
 use crate::components::{Button, ButtonKind, FormRow, SectionHeader, TextField, Toggle};
 use crate::theme::{
-    HAIRLINE, Icon, KoanIcon, KoanStyled, Look, MARK, Space, Tone, TypeRole, label, observe_accent,
+    Icon, KoanIcon, KoanStyled, Look, MARK, Space, Tone, TypeRole, label, observe_accent,
 };
 
 /// The page a window shows: the device's chain, drawn by `EqBody` as a
@@ -853,7 +853,7 @@ impl EqBody {
         let link = |look: &Look| {
             div()
                 .ml(look.spaced(18.0))
-                .w(if matched { MARK } else { HAIRLINE })
+                .w(if matched { MARK } else { look.hairline })
                 .h(look.spaced(14.0))
                 .bg(if matched {
                     look.accent.hsla()
@@ -1228,7 +1228,7 @@ impl EqBody {
                     .top_0()
                     .bottom_0()
                     .left(look.spaced(18.0))
-                    .w(if matched { MARK } else { HAIRLINE })
+                    .w(if matched { MARK } else { look.hairline })
                     .bg(if matched {
                         look.accent.hsla()
                     } else {
@@ -1271,7 +1271,7 @@ fn block(
         .items_center()
         .gap(look.space(Space::M))
         .p(look.space(Space::S))
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(outline)
         .child(
             div()
@@ -1324,7 +1324,7 @@ fn placeholder(
         .flex_col()
         .gap(look.spaced(2.0))
         .p(look.space(Space::S))
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_dashed()
         .border_color(outline.unwrap_or(look.palette.muted.hsla()))
         .cursor_pointer()

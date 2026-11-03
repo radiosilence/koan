@@ -502,7 +502,7 @@ final class EngineMirror: Observable {
             }
         case .connection(let connection):
             mutate(\.connection) { _connection = connection }
-        case .renderers(let renderers, let output):
+        case .renderers(let renderers, let output, _):
             mutate(\.renderers) {
                 _renderers = renderers
                 _rendererOutput = output

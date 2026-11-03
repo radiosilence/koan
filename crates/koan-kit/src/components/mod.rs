@@ -69,8 +69,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Global, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Window, canvas, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, PACE_TICK, SHADED, SHADER_UNIFORMS, ShaderProgram};
@@ -89,7 +90,8 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
-        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+        Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
+        PageUp, Pick, Right, ShowMenu, Up,
     };
 }
 pub use empty::EmptyState;
@@ -113,10 +115,13 @@ pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use panel::TOOLTIPS_DRAWN;
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
-pub use placeholder::Placeholder;
+pub use placeholder::{Placeholder, enso_svg};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -302,7 +307,25 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
+        .child(
+            canvas(
+                |bounds, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
 }
+
+/// Where the keyboard's cursor ring was drawn, and in which window: what the
+/// menu key opens a context menu under. The key clears it and lets a frame
+/// draw, so only a ring drawn in that frame counts.
+#[derive(Default)]
+pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
+
+impl Global for CursorAt {}
 
 /// Two colours mixed, `t` of the way from `a` to `b`.
 pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {

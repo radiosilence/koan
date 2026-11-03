@@ -25,7 +25,7 @@ use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::{Next, Previous, help};
+use crate::platform::actions::{Next, Previous, ShowEq, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -292,6 +292,7 @@ impl Transport {
     fn output_view(&self, cx: &App) -> OutputView {
         let devices = &self.devices.read(cx).0;
         OutputView {
+            blocked: self.renderers.read(cx).0.blocked,
             outputs: self.outputs.read(cx).0.clone(),
             problem: self
                 .renderers
@@ -329,11 +330,13 @@ impl Transport {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn menu_button(
         &self,
         which: Menu,
         icon: Icon,
         label: &'static str,
+        help: String,
         enabled: bool,
         p: &Paint,
         cx: &mut Context<Self>,
@@ -342,6 +345,7 @@ impl Transport {
             which,
             text_button(icon, label, p)
                 .id(label)
+                .tooltip(tip(help))
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
             move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
@@ -366,7 +370,15 @@ impl Transport {
                 .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
         });
         let Some(name) = name else {
-            return self.menu_button(Menu::Devices, Icon::Devices, "devices", true, p, cx);
+            return self.menu_button(
+                Menu::Devices,
+                Icon::Devices,
+                "devices",
+                "play on another device".to_owned(),
+                true,
+                p,
+                cx,
+            );
         };
         let glyph = if away {
             KoanIcon::new(Icon::Warning)
@@ -381,6 +393,11 @@ impl Transport {
             Menu::Devices,
             trailing_item(p)
                 .id("devices")
+                .tooltip(tip(if away {
+                    format!("{name} is out of reach")
+                } else {
+                    format!("playing on {name}")
+                }))
                 .gap(p.space(Space::Xs))
                 .child(glyph)
                 .child(Badge::new(name).accent(!away)),
@@ -395,7 +412,7 @@ impl Transport {
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
         let plain = eq.flat || eq.off;
         let color = if plain { p.ink } else { p.accent_text };
-        let summary: SharedString = eq.summary().into();
+        let summary: SharedString = help(&eq.summary(), &ShowEq, cx).into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
@@ -454,6 +471,8 @@ struct OutputView {
     processed: Option<String>,
     /// The device controlled, by name.
     controlled: Option<String>,
+    /// macOS refused the last search for renderers the local network.
+    blocked: bool,
 }
 
 /// Where the device in view plays, as the Mac's output picker lists it: the
@@ -471,26 +490,20 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         ));
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
-        entry.checked(chosen).on_click(move |_, _, cx| {
-            let choice = choice.clone();
-            command(cx, "select output", move |e| e.select_output(choice));
-        })
+        entry
+            .checked(chosen)
+            .stays_open()
+            .on_click(move |_, _, cx| {
+                let choice = choice.clone();
+                command(cx, "select output", move |e| e.select_output(choice));
+            })
     };
-    let eq = |id: String, on: bool| {
-        move |_: &mut Window, _: &mut App| {
-            let device = id.clone();
-            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
-                .icon(Icon::Filters)
-                .label("eq")
-                .when(on, |b| b.tone(Tone::Accent))
-                // The EQ of the device this row names, which need not be the
-                // one in use.
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    crate::dsp::window::open(Some(device.clone()), cx);
-                })
-                .into_any_element()
-        }
+    // The EQ of the device a row names, which need not be the one in use;
+    // lit while it has one.
+    let eq = |entry: MenuEntry, id: String, on: bool| {
+        entry.lit_action(Icon::Filters, "eq for this output", on, move |_, _, cx| {
+            crate::dsp::window::open(Some(id.clone()), cx);
+        })
     };
     let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
@@ -522,11 +535,14 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = device.preset.is_some() || device.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(device.name.clone())
-                .icon(output_icon(&device.kind))
-                .rich(detail)
-                .warns(busy)
-                .trailing(eq(device.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(device.name.clone())
+                    .icon(output_icon(&device.kind))
+                    .rich(detail)
+                    .warns(busy),
+                device.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
@@ -553,18 +569,24 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = renderer.preset.is_some() || renderer.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(renderer.name.clone())
-                .icon(Icon::Speaker)
-                .reach(Icon::Wifi)
-                .rich(detail)
-                .warns(problem.is_some() || busy)
-                .trailing(eq(renderer.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(renderer.name.clone())
+                    .icon(Icon::Speaker)
+                    .reach(Icon::Wifi)
+                    .rich(detail)
+                    .warns(problem.is_some() || busy),
+                renderer.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
         if chosen {
             playing = Some(renderer.name.clone());
         }
+    }
+    if here && view.blocked && outputs.renderers.is_empty() {
+        menu = menu.note(blocked_note());
     }
     let Some(name) = playing else {
         return menu;
@@ -601,12 +623,17 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     menu
 }
 
-/// A stable small number for an id string, for an element id.
-pub(crate) fn id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    id.hash(&mut h);
-    h.finish()
+/// Why no network speaker shows while macOS keeps the app off the local
+/// network: whom to allow, which for a binary started from a terminal is the
+/// terminal, since the permission is the app's that started it.
+fn blocked_note() -> String {
+    let bundled = std::env::current_exe()
+        .is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"));
+    if bundled {
+        "macOS isn't letting kōan on the local network, so no network speaker can be found. Allow it in System Settings › Privacy & Security › Local Network.".to_owned()
+    } else {
+        "macOS isn't letting kōan on the local network, so no network speaker can be found. Started outside its app, it has the permission of the app that started it: allow that app in System Settings › Privacy & Security › Local Network, or run kōan from its bundle.".to_owned()
+    }
 }
 
 /// An output's glyph by how it is connected, as the Mac's picker gives it.
@@ -963,6 +990,12 @@ impl Render for Transport {
                             window,
                             cx,
                         )
+                        .tooltip(tip(if shuffle {
+                            "shuffle: on"
+                        } else {
+                            "shuffle: off"
+                        }
+                        .to_owned()))
                         .on_click(move |_, _, cx| {
                             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
                         }),
@@ -988,6 +1021,12 @@ impl Render for Transport {
                             window,
                             cx,
                         )
+                        .tooltip(tip(match now.repeat_mode {
+                            RepeatMode::Off => "repeat: off",
+                            RepeatMode::Queue => "repeat: the queue",
+                            RepeatMode::One => "repeat: this track",
+                        }
+                        .to_owned()))
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
                         }),
@@ -1036,12 +1075,25 @@ impl Render for Transport {
                 } else {
                     "sleep"
                 },
+                if now.sleep.is_some() {
+                    "sleep timer: set".to_owned()
+                } else {
+                    "sleep timer".to_owned()
+                },
                 true,
                 &p,
                 cx,
             ))
             .child(self.control_button(&p, cx))
-            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", true, &p, cx))
+            .child(self.menu_button(
+                Menu::Output,
+                Icon::Speaker,
+                "output",
+                "output".to_owned(),
+                true,
+                &p,
+                cx,
+            ))
             // This device's own output's EQ; another device's is chosen there.
             .children(
                 self.eq
@@ -1088,6 +1140,31 @@ impl Focusable for Transport {
     }
 }
 
+/// How long the slider stands on a seek's target waiting for the engine.
+const LANDING: Duration = Duration::from_secs(1);
+/// How near the engine's playhead must come to a seek's target to be its
+/// answer.
+const NEAR_MS: u64 = 250;
+
+/// A seek sent and not yet heard back, however it was made (the slider, the
+/// skip keys, a lyric's line, the media keys): the playhead it sets. Until
+/// the engine reports a playhead there, the seek slider stands on it, so a
+/// seek lands at once with no frame at the old place.
+#[derive(Default)]
+pub struct Landing(Option<Playhead>);
+
+impl Global for Landing {}
+
+/// Called as a seek to `target_ms` is sent.
+pub fn land(target_ms: u64, cx: &mut App) {
+    let current = *cx.global::<Mirror>().playhead.read(cx);
+    cx.set_global(Landing(Some(Playhead {
+        position_ms: target_ms,
+        at: Instant::now(),
+        ..current
+    })));
+}
+
 /// The seek slider and the times either side of it.
 ///
 /// The position is reckoned from the playhead's anchor. While it runs, one
@@ -1106,6 +1183,8 @@ pub struct Seek {
     tick: Option<Task<()>>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
+    /// Wakes the slider when a seek's target lapses unanswered.
+    lapse: Option<Task<()>>,
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
@@ -1121,6 +1200,7 @@ impl Seek {
         let mut subscriptions = vec![
             cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
             cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            cx.observe_global::<Landing>(|this, cx| this.moved(cx)),
             // The fill is the accent.
             theme::observe_accent(cx),
             // Nothing draws the slider while the window is hidden, so
@@ -1142,6 +1222,7 @@ impl Seek {
             playback: mirror.playback,
             tick: None,
             dragging: None,
+            lapse: None,
             width: Default::default(),
             shown_second: None,
             glide: Glide::new(),
@@ -1173,9 +1254,56 @@ impl Seek {
         self.playback.read(cx).0.duration_ms
     }
 
+    /// The playhead the slider shows: the latest seek's target until the
+    /// engine reports a playhead there, or a second has gone by without it
+    /// (a seek the engine did not take). An anchor from an earlier seek,
+    /// arriving while a later one is on its way, is passed over.
+    fn shown(&self, cx: &App) -> (Playhead, bool) {
+        let current = *self.playhead.read(cx);
+        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
+            return (current, false);
+        };
+        let now = Instant::now();
+        let duration = self.duration_ms(cx);
+        let arrived = current.at >= target.at
+            && current.at(now, duration).abs_diff(target.at(now, duration)) < NEAR_MS;
+        if arrived || target.at.elapsed() >= LANDING {
+            (current, true)
+        } else {
+            (target, false)
+        }
+    }
+
+    /// `shown`, dropping a target that has landed or lapsed.
+    fn anchor(&mut self, cx: &mut Context<Self>) -> Playhead {
+        let (shown, settled) = self.shown(cx);
+        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
+            return shown;
+        };
+        if settled {
+            cx.set_global(Landing(None));
+            self.lapse = None;
+            return shown;
+        }
+        // Nothing else may draw the slider again when the target lapses
+        // (paused, a seek refused): a wake for that moment.
+        if self.lapse.is_none() {
+            let wait = LANDING.saturating_sub(target.at.elapsed());
+            self.lapse = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(wait).await;
+                this.update(cx, |this, cx| {
+                    this.lapse = None;
+                    this.moved(cx);
+                })
+                .ok();
+            }));
+        }
+        target
+    }
+
     fn schedule(&mut self, cx: &mut Context<Self>) {
         self.tick = None;
-        let anchor = *self.playhead.read(cx);
+        let anchor = self.anchor(cx);
         let duration = self.duration_ms(cx);
         let now = Instant::now();
         if duration > 0 {
@@ -1223,6 +1351,7 @@ impl Seek {
         };
         let target = ((share as f64 * duration as f64) as u64).min(limit);
         if duration > 0 {
+            land(target, cx);
             command(cx, "seek", move |e| e.seek(target));
         }
         self.schedule(cx);
@@ -1234,7 +1363,7 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.playhead.read(cx).at(Instant::now(), duration);
+        let position = self.shown(cx).0.at(Instant::now(), duration);
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,

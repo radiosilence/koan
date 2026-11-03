@@ -8,7 +8,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Cover, CoverArt, RowMetrics};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole};
+use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
 /// The share of the accent that lights a drop target.
 const LIT: f32 = 0.18;
@@ -49,7 +49,7 @@ impl RenderOnce for DragChip {
             .p(look.space(Space::Xs))
             .pr(look.space(Space::M))
             .bg(p.surface.hsla())
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(p.rule.hsla())
             .text_role(TypeRole::Meta, &look)
             .text_color(p.ink.hsla())

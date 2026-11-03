@@ -134,6 +134,7 @@ impl DevicesPane {
                         )
                     };
                     let device = info.device.clone();
+                    let device_id = info.device_id.clone();
                     let (allow_model, allow_engine, allow_pair) = (model.clone(), engine.clone(), typed.clone());
                     let (deny_model, deny_engine, deny_pair) = (model.clone(), engine.clone(), typed.clone());
                     let (signed, declined) = (device.clone(), device.clone());
@@ -160,8 +161,13 @@ impl DevicesPane {
                             })
                         })
                         .action(Action::new("Allow", move |_, _, cx| {
-                            let (engine, pair, device, who) =
-                                (allow_engine.clone(), allow_pair.clone(), signed.clone(), who.clone());
+                            let (engine, pair, device, who, device_id) = (
+                                allow_engine.clone(),
+                                allow_pair.clone(),
+                                signed.clone(),
+                                who.clone(),
+                                device_id.clone(),
+                            );
                             allow_model.update(cx, |m, cx| {
                                 m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
@@ -170,7 +176,11 @@ impl DevicesPane {
                                     cx,
                                     move |_| engine.approve_pairing(pair),
                                     move |m, result, cx| match result {
-                                        Ok(name) => m.done(format!("{name} is signed in as {who}."), cx),
+                                        Ok(name) => {
+                                            m.done(format!("{name} is signed in as {who}."), cx);
+                                            // A TV signed in from here is offered waking once it links.
+                                            crate::tv_wake::signed_in(device_id, name, cx);
+                                        }
                                         Err(e) => m.report(format!("Could not sign {device} in: {}", describe(&e)), cx),
                                     },
                                 )
@@ -468,6 +478,8 @@ impl Render for DevicesPane {
             &look,
         ));
 
+        sections.push(background(&settings, &model, entity.clone(), &look, cx));
+
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
             .as_ref()
@@ -701,6 +713,69 @@ impl Render for DevicesPane {
         }
         page("devices", &look, sections)
     }
+}
+
+/// Staying reachable with the window closed, as the Mac's "In the
+/// background": kept running, and opening at login, which the system owns.
+fn background(
+    settings: &koan_ffi::Settings,
+    model: &Entity<crate::settings::model::SettingsModel>,
+    pane: Entity<impl Render>,
+    look: &Look,
+    cx: &App,
+) -> AnyElement {
+    use crate::platform::residency::{self, Login};
+    let mut rows = Vec::new();
+    {
+        let model = model.clone();
+        let label = if cfg!(target_os = "macos") {
+            "Keep running in the menu bar"
+        } else {
+            "Keep running with the window closed"
+        };
+        rows.push(
+            Toggle::new("keep-running", label, settings.devices_keep_running)
+                .on_change(move |on, _, cx| {
+                    let on = *on;
+                    model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_keep_running = on));
+                    residency::apply(on, cx);
+                })
+                .into_any_element(),
+        );
+    }
+    let login = residency::login();
+    if login != Login::Unavailable {
+        rows.push(
+            Toggle::new(
+                "open-at-login",
+                "Open at login",
+                matches!(login, Login::On | Login::NeedsApproval),
+            )
+            .on_change(move |on, _, cx| {
+                residency::set_login(*on, cx);
+                // What the system now says shows at once.
+                pane.update(cx, |_, cx| cx.notify());
+            })
+            .into_any_element(),
+        );
+    }
+    if let Some(error) = residency::login_error(cx) {
+        rows.push(note(error, Icon::Warning, Tone::Bad, look));
+    }
+    if login == Login::NeedsApproval {
+        rows.push(note(
+            "Allow kōan in System Settings ▸ General ▸ Login Items.",
+            Icon::Warning,
+            Tone::Bad,
+            look,
+        ));
+    }
+    let footer = if cfg!(target_os = "macos") {
+        "With its window closed, kōan stays in the menu bar, signed in to your server and listening on this network, so your other devices can see and control this Mac. A Mac cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again."
+    } else {
+        "With its window closed, kōan keeps running, signed in to your server and listening on this network, so your other devices can see and control this computer; opening kōan again brings its window back. A computer cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again."
+    };
+    section(Some("In the background"), rows, Some(footer.into()), look)
 }
 
 #[cfg(test)]

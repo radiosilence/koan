@@ -92,7 +92,7 @@ impl RenderOnce for Cover {
                         let at = *a.landed.get_or_insert_with(Instant::now);
                         a.waited && at.elapsed() < Motion::NORMAL
                     })
-                });
+                }) && crate::theme::KoanTheme::motion_allowed(cx);
                 if fading {
                     // Until it lands, so the spinner under it goes with the
                     // render after; a burst of the motion's length.

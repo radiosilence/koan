@@ -379,6 +379,29 @@ impl super::keys::KeyedList for HistoryPage {
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         actions::play_list(&self.lib, self.row_tracks(), ix, cx);
     }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        let Some(ix) = ix else {
+            self.menu = None;
+            self.menu_plays.clear();
+            return;
+        };
+        let (plays, items, album) = {
+            let plays = self.acting_on(ix);
+            let album = match plays.as_slice() {
+                [one] => one.track.album_id,
+                _ => None,
+            };
+            let items: Vec<Playable> = plays.iter().map(|e| Playable::Track(e.track.id)).collect();
+            (plays.iter().map(|e| e.id).collect(), items, album)
+        };
+        self.menu_plays = plays;
+        self.menu = Some(actions::MenuTarget {
+            items: items.into(),
+            album,
+            after: None,
+        });
+    }
 }
 
 koan_kit::app::actions!(history, [Forget]);
@@ -525,7 +548,6 @@ impl HistoryPage {
 
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {
