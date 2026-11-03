@@ -61,6 +61,9 @@ pub fn opens_panel<T: Selectable + IntoElement + 'static>(
     }
 }
 
+/// The panel, made each time it opens.
+type Content = Rc<dyn Fn(Dismiss, &mut Window, &mut App) -> AnyElement>;
+
 /// The trigger in either state, chosen as the panel's state is read.
 type Trigger = Box<dyn FnOnce(bool) -> AnyElement>;
 
@@ -68,7 +71,7 @@ type Trigger = Box<dyn FnOnce(bool) -> AnyElement>;
 struct OpensPanel {
     id: ElementId,
     trigger: Trigger,
-    content: Rc<dyn Fn(Dismiss, &mut Window, &mut App) -> AnyElement>,
+    content: Content,
 }
 
 impl RenderOnce for OpensPanel {
