@@ -1,0 +1,1 @@
+- **koan-kit motion playground.** A storybook page to design and tune keyframed motion: each easing on a sample at the display's rate, a draggable Bézier, spring parameters, the curve plotted, scrubbing, and the call to copy.
