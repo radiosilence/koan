@@ -522,3 +522,122 @@ pub(crate) fn answers_click<E: StatefulInteractiveElement>(
         handler(&gpui_kit::ClickEvent::default(), window, cx)
     })
 }
+
+/// What the components' tests share: a window holding a component, the
+/// pointer and the keys reaching it, and the node a screen reader meets.
+#[cfg(test)]
+pub(crate) mod testing {
+    use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
+    use gpui_kit::{
+        AnyElement, Bounds, Context, Entity, IntoElement, Modifiers, ParentElement, Pixels, Point,
+        Render, Styled, TestAppContext, VisualTestContext, Window, div, px,
+    };
+    use serde_json::Value;
+
+    type Build = Box<dyn Fn(&mut Window, &mut Context<Stage>) -> Vec<(&'static str, AnyElement)>>;
+
+    /// A page drawing whatever its builder returns, each part wrapped at its
+    /// own size so a test can find it by the selector it gives.
+    pub struct Stage {
+        build: Build,
+    }
+
+    impl Render for Stage {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(600.))
+                .flex()
+                .flex_col()
+                .items_start()
+                .children((self.build)(window, cx).into_iter().map(|(name, element)| {
+                    div().debug_selector(move || name.into()).child(element)
+                }))
+        }
+    }
+
+    /// Opens a window on the parts, with the theme installed and a screen
+    /// reader attached, so the accessibility tree is built.
+    pub fn stage(
+        cx: &mut TestAppContext,
+        build: impl Fn(&mut Window, &mut Context<Stage>) -> Vec<(&'static str, AnyElement)>
+        + 'static,
+    ) -> (Entity<Stage>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (stage, cx) = cx.add_window_view(|_, _| Stage {
+            build: Box::new(build),
+        });
+        cx.update(|window, _| window.set_a11y_active_for_test(true));
+        cx.run_until_parked();
+        (stage, cx)
+    }
+
+    /// Redraws and settles, after a test changed what the parts hold.
+    pub fn redraw(cx: &mut VisualTestContext) {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    /// Where the part named `name` was drawn.
+    pub fn bounds(cx: &mut VisualTestContext, name: &'static str) -> Bounds<Pixels> {
+        cx.debug_bounds(name)
+            .unwrap_or_else(|| panic!("{name} is not drawn"))
+    }
+
+    /// A click at `at`.
+    pub fn click_at(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_click(at, Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    /// A click at the centre of the part named `name`.
+    pub fn click(cx: &mut VisualTestContext, name: &'static str) {
+        let at = bounds(cx, name).center();
+        click_at(cx, at);
+    }
+
+    /// The accessibility tree as JSON.
+    pub fn tree(cx: &mut VisualTestContext) -> Value {
+        let json = cx
+            .update(|window, _| window.debug_a11y_tree_json())
+            .expect("a tree while a screen reader is attached");
+        serde_json::from_str(&json).expect("JSON")
+    }
+
+    /// The node a screen reader knows by `label`: its id and its semantics.
+    pub fn node(cx: &mut VisualTestContext, label: &str) -> (NodeId, Value) {
+        let tree = tree(cx);
+        let node = tree["nodes"]
+            .as_object()
+            .expect("nodes")
+            .values()
+            .find(|node| node["aria"]["label"] == label)
+            .unwrap_or_else(|| panic!("no node named {label} in {tree:#}"))
+            .clone();
+        let id = node["accesskit_id"]
+            .as_str()
+            .expect("an id")
+            .parse()
+            .expect("a number");
+        (NodeId(id), node["aria"].clone())
+    }
+
+    /// A screen reader asking the node named `label` to do `action`.
+    pub fn act(cx: &mut VisualTestContext, label: &str, action: Action) {
+        let (target, _) = node(cx, label);
+        cx.update(|window, cx| {
+            window.dispatch_a11y_action(
+                ActionRequest {
+                    action,
+                    target_tree: TreeId::ROOT,
+                    target_node: target,
+                    data: None,
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+    }
+}

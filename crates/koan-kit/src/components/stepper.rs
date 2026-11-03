@@ -196,3 +196,107 @@ impl RenderOnce for StepButton {
             .children(ring(&handle, &look, window))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::accesskit::Action;
+    use gpui_kit::{IntoElement, TestAppContext, VisualTestContext, point, px};
+
+    use super::*;
+    use crate::components::testing::{act, bounds, click_at, node, redraw, stage};
+
+    /// A stepper over 1..=9 in twos holding its value in `value`, and a
+    /// disabled one that must never change.
+    fn steppers(
+        cx: &mut TestAppContext,
+        value: Rc<Cell<i64>>,
+        refused: Rc<Cell<bool>>,
+    ) -> &mut VisualTestContext {
+        let (_, cx) = stage(cx, move |_, _| {
+            let (value, refused) = (value.clone(), refused.clone());
+            vec![
+                (
+                    "rate",
+                    div()
+                        .w(px(300.))
+                        .child(
+                            Stepper::new("rate", "rate", value.get(), 1..=9)
+                                .step(2)
+                                .shown(format!("{}×", value.get()))
+                                .on_change(move |to, _, _| value.set(*to)),
+                        )
+                        .into_any_element(),
+                ),
+                (
+                    "workers",
+                    div()
+                        .w(px(300.))
+                        .child(
+                            Stepper::new("workers", "workers", 4, 1..=8)
+                                .disabled(true)
+                                .on_change(move |_, _, _| refused.set(true)),
+                        )
+                        .into_any_element(),
+                ),
+            ]
+        });
+        cx
+    }
+
+    /// A click on the trailing button, "more".
+    fn more(cx: &mut VisualTestContext, name: &'static str) {
+        let b = bounds(cx, name);
+        click_at(cx, point(b.right() - px(14.), b.center().y));
+    }
+
+    #[gpui_kit::test]
+    fn a_spin_button_says_its_value_range_and_step(cx: &mut TestAppContext) {
+        let cx = steppers(cx, Rc::new(Cell::new(3)), Rc::default());
+        let (_, rate) = node(cx, "rate");
+        assert_eq!(rate["role"], "SpinButton");
+        assert_eq!(rate["numeric_value"], 3.0);
+        assert_eq!(rate["min_numeric_value"], 1.0);
+        assert_eq!(rate["max_numeric_value"], 9.0);
+        assert_eq!(rate["numeric_value_step"], 2.0);
+        assert_eq!(rate["value"], "3×");
+    }
+
+    #[gpui_kit::test]
+    fn more_steps_up_and_stops_at_the_top(cx: &mut TestAppContext) {
+        let value = Rc::new(Cell::new(5));
+        let cx = steppers(cx, value.clone(), Rc::default());
+        more(cx, "rate");
+        assert_eq!(value.get(), 7);
+        redraw(cx);
+        more(cx, "rate");
+        assert_eq!(value.get(), 9);
+        redraw(cx);
+        value.set(9);
+        more(cx, "rate");
+        assert_eq!(value.get(), 9, "stepped past the top");
+    }
+
+    #[gpui_kit::test]
+    fn a_screen_reader_steps_it_within_the_range(cx: &mut TestAppContext) {
+        let value = Rc::new(Cell::new(2));
+        let cx = steppers(cx, value.clone(), Rc::default());
+        act(cx, "rate", Action::Decrement);
+        assert_eq!(value.get(), 1, "clamped to the bottom");
+        redraw(cx);
+        act(cx, "rate", Action::Increment);
+        assert_eq!(value.get(), 3);
+    }
+
+    #[gpui_kit::test]
+    fn a_disabled_stepper_refuses_input_and_says_so(cx: &mut TestAppContext) {
+        let refused = Rc::new(Cell::new(false));
+        let cx = steppers(cx, Rc::new(Cell::new(3)), refused.clone());
+        more(cx, "workers");
+        act(cx, "workers", Action::Increment);
+        assert!(!refused.get(), "a disabled stepper changed");
+        assert_eq!(node(cx, "workers").1["disabled"], true);
+    }
+}

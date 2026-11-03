@@ -254,3 +254,97 @@ pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
         .h(look.hairline)
         .bg(color)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::accesskit::Action;
+    use gpui_kit::{IntoElement, TestAppContext};
+
+    use super::*;
+    use crate::components::testing::{act, click, node, redraw, stage};
+
+    /// A toggle holding its value in `on`, as an owner would, and a
+    /// disabled one that must never be told anything.
+    fn toggles(
+        cx: &mut TestAppContext,
+        on: Rc<Cell<bool>>,
+        refused: Rc<Cell<bool>>,
+    ) -> &mut gpui_kit::VisualTestContext {
+        let (_, cx) = stage(cx, move |_, _| {
+            let (on, refused) = (on.clone(), refused.clone());
+            vec![
+                (
+                    "fade",
+                    Toggle::new("fade", "fade on pause", on.get())
+                        .on_change(move |value, _, _| on.set(*value))
+                        .into_any_element(),
+                ),
+                (
+                    "locked",
+                    Toggle::new("locked", "locked", false)
+                        .disabled(true)
+                        .on_change(move |_, _, _| refused.set(true))
+                        .into_any_element(),
+                ),
+                (
+                    "group",
+                    IconToggle::new("group", Icon::Album, "group by album", true)
+                        .into_any_element(),
+                ),
+            ]
+        });
+        cx
+    }
+
+    #[gpui_kit::test]
+    fn a_click_flips_the_value_and_the_switch_reports_it(cx: &mut TestAppContext) {
+        let on = Rc::new(Cell::new(false));
+        let cx = toggles(cx, on.clone(), Rc::default());
+        let (_, fade) = node(cx, "fade on pause");
+        assert_eq!(fade["role"], "Switch");
+        assert_eq!(fade["toggled"], "False");
+        click(cx, "fade");
+        assert!(on.get());
+        redraw(cx);
+        assert_eq!(node(cx, "fade on pause").1["toggled"], "True");
+        click(cx, "fade");
+        assert!(!on.get());
+    }
+
+    #[gpui_kit::test]
+    fn the_keyboard_flips_a_focused_toggle(cx: &mut TestAppContext) {
+        let on = Rc::new(Cell::new(false));
+        let cx = toggles(cx, on.clone(), Rc::default());
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.simulate_keystrokes("space");
+        assert!(on.get(), "space did not reach the toggle");
+    }
+
+    #[gpui_kit::test]
+    fn a_screen_reader_s_click_flips_it(cx: &mut TestAppContext) {
+        let on = Rc::new(Cell::new(false));
+        let cx = toggles(cx, on.clone(), Rc::default());
+        act(cx, "fade on pause", Action::Click);
+        assert!(on.get());
+    }
+
+    #[gpui_kit::test]
+    fn a_disabled_toggle_refuses_input_and_says_so(cx: &mut TestAppContext) {
+        let refused = Rc::new(Cell::new(false));
+        let cx = toggles(cx, Rc::default(), refused.clone());
+        click(cx, "locked");
+        act(cx, "locked", Action::Click);
+        assert!(!refused.get(), "a disabled toggle changed");
+        assert_eq!(node(cx, "locked").1["disabled"], true);
+    }
+
+    #[gpui_kit::test]
+    fn an_icon_toggle_is_a_switch_named_by_its_text(cx: &mut TestAppContext) {
+        let cx = toggles(cx, Rc::default(), Rc::default());
+        let (_, group) = node(cx, "group by album");
+        assert_eq!(group["toggled"], "True");
+    }
+}

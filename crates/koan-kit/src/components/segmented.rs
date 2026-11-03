@@ -112,3 +112,70 @@ impl RenderOnce for Segmented {
         row.children(ring(&handle, &look, window))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::accesskit::Action;
+    use gpui_kit::{IntoElement, TestAppContext, VisualTestContext, point};
+
+    use super::*;
+    use crate::components::testing::{act, bounds, click_at, node, redraw, stage, tree};
+
+    fn looks(cx: &mut TestAppContext, chosen: Rc<Cell<usize>>) -> &mut VisualTestContext {
+        let (_, cx) = stage(cx, move |_, _| {
+            let chosen = chosen.clone();
+            vec![(
+                "look",
+                Segmented::new("look", ["kōan", "system", "plain"], chosen.get())
+                    .on_change(move |index, _, _| chosen.set(*index))
+                    .into_any_element(),
+            )]
+        });
+        cx
+    }
+
+    #[gpui_kit::test]
+    fn a_radio_group_of_options_one_toggled(cx: &mut TestAppContext) {
+        let cx = looks(cx, Rc::new(Cell::new(1)));
+        assert!(tree(cx).to_string().contains("RadioGroup"));
+        for (name, at, on) in [("kōan", 1, "False"), ("system", 2, "True"), ("plain", 3, "False")] {
+            let (_, option) = node(cx, name);
+            assert_eq!(option["role"], "RadioButton");
+            assert_eq!(option["toggled"], on, "{name}");
+            assert_eq!(option["position_in_set"], at, "{name}");
+            assert_eq!(option["size_of_set"], 3, "{name}");
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_click_chooses_an_option(cx: &mut TestAppContext) {
+        let chosen = Rc::new(Cell::new(0));
+        let cx = looks(cx, chosen.clone());
+        let b = bounds(cx, "look");
+        click_at(cx, point(b.right() - gpui_kit::px(4.), b.center().y));
+        assert_eq!(chosen.get(), 2);
+        redraw(cx);
+        assert_eq!(node(cx, "plain").1["toggled"], "True");
+        act(cx, "kōan", Action::Click);
+        assert_eq!(chosen.get(), 0);
+    }
+
+    #[gpui_kit::test]
+    fn arrows_move_the_choice_and_stop_at_the_ends(cx: &mut TestAppContext) {
+        let chosen = Rc::new(Cell::new(0));
+        let cx = looks(cx, chosen.clone());
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.simulate_keystrokes("left");
+        assert_eq!(chosen.get(), 0, "moved before the first");
+        cx.simulate_keystrokes("right");
+        assert_eq!(chosen.get(), 1);
+        redraw(cx);
+        chosen.set(2);
+        redraw(cx);
+        cx.simulate_keystrokes("right");
+        assert_eq!(chosen.get(), 2, "moved past the last");
+    }
+}
