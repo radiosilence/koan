@@ -1,0 +1,1 @@
+- **The smoke run sets its environment before any thread starts.** As its safety note says it does.

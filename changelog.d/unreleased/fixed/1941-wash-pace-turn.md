@@ -1,0 +1,1 @@
+- **The wash's Turn eases, and every wash follows Drift.** A change of Turn now eases the wash to its new angle rather than snapping. The wash drawn without shaders moves at the chosen pace on Linux, where it cannot turn, and on Android, where it also turns as far as chosen.
