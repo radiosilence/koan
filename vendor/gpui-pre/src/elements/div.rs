@@ -3960,6 +3960,17 @@ fn handle_tooltip_mouse_move(
         }
     };
 
+    // KOAN: what the pointer did to the tooltip, as it changes (#1814).
+    match action {
+        Action::None => {}
+        Action::CancelShow => log::debug!("tooltip: cancel show, view {current_view:?}"),
+        Action::ScheduleShow => log::debug!(
+            "tooltip: schedule show, view {current_view:?}, mouse {:?}, keyboard last {}",
+            window.mouse_position(),
+            window.last_input_was_keyboard()
+        ),
+        Action::CheckVisible => log::debug!("tooltip: check visible, view {current_view:?}"),
+    }
     match action {
         Action::None => {}
         Action::CancelShow => {
@@ -3977,13 +3988,18 @@ fn handle_tooltip_mouse_move(
                         return;
                     };
                     cx.update(|window, cx| {
-                        show_tooltip(
+                        let shown = show_tooltip(
                             &active_tooltip,
                             &build_tooltip,
                             &check_is_hovered_during_prepaint,
                             None,
                             window,
                             cx,
+                        );
+                        // KOAN: the delay passed (#1814).
+                        log::debug!(
+                            "tooltip: delay passed, view {current_view:?}, built {shown}, still over {}",
+                            check_is_hovered_during_prepaint(window)
                         );
                         // KOAN: a refresh replays a cached view's last
                         // prepaint, made before the tooltip was active, so

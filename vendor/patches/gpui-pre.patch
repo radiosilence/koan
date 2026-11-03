@@ -559,7 +559,7 @@ index 0000000..7651cfc
 +    })
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..781d942 100644
+index 11f0b72..bc05c16 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -619,10 +619,42 @@ index 11f0b72..781d942 100644
                          long_press_tooltip_active.set(true);
                          window.prevent_default();
                          cx.stop_propagation();
-@@ -3956,6 +3985,11 @@ fn handle_tooltip_mouse_move(
+@@ -3931,6 +3960,17 @@ fn handle_tooltip_mouse_move(
+         }
+     };
+ 
++    // KOAN: what the pointer did to the tooltip, as it changes (#1814).
++    match action {
++        Action::None => {}
++        Action::CancelShow => log::debug!("tooltip: cancel show, view {current_view:?}"),
++        Action::ScheduleShow => log::debug!(
++            "tooltip: schedule show, view {current_view:?}, mouse {:?}, keyboard last {}",
++            window.mouse_position(),
++            window.last_input_was_keyboard()
++        ),
++        Action::CheckVisible => log::debug!("tooltip: check visible, view {current_view:?}"),
++    }
+     match action {
+         Action::None => {}
+         Action::CancelShow => {
+@@ -3948,7 +3988,7 @@ fn handle_tooltip_mouse_move(
+                         return;
+                     };
+                     cx.update(|window, cx| {
+-                        show_tooltip(
++                        let shown = show_tooltip(
+                             &active_tooltip,
+                             &build_tooltip,
+                             &check_is_hovered_during_prepaint,
+@@ -3956,6 +3996,16 @@ fn handle_tooltip_mouse_move(
                              window,
                              cx,
                          );
++                        // KOAN: the delay passed (#1814).
++                        log::debug!(
++                            "tooltip: delay passed, view {current_view:?}, built {shown}, still over {}",
++                            check_is_hovered_during_prepaint(window)
++                        );
 +                        // KOAN: a refresh replays a cached view's last
 +                        // prepaint, made before the tooltip was active, so
 +                        // the tooltip of an element in one never showed. Its
@@ -1946,7 +1978,7 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..dbcc309 100644
+index c559412..4244f87 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1281,6 +1281,10 @@ pub struct Window {
@@ -2060,7 +2092,21 @@ index c559412..dbcc309 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4741,107 @@ impl Window {
+@@ -3867,6 +3918,13 @@ impl Window {
+             // case, instead update the tooltip's visibility here.
+             let is_visible =
+                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
++            // KOAN: a tooltip asked for and whether it was drawn (#1814).
++            log::debug!(
++                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
++                mouse_position,
++                self.mouse_position(),
++                tooltip_bounds
++            );
+             if !is_visible {
+                 continue;
+             }
+@@ -4690,6 +4748,107 @@ impl Window {
          }
      }
  
@@ -2168,7 +2214,7 @@ index c559412..dbcc309 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4929,12 @@ impl Window {
+@@ -4777,7 +4936,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -2182,7 +2228,7 @@ index c559412..dbcc309 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7074,6 +7231,22 @@ impl Window {
+@@ -7074,6 +7238,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  
