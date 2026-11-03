@@ -11,7 +11,7 @@ use std::rc::Rc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{child, fade};
+use super::child;
 use crate::theme::Motion;
 
 /// How far a slide stands open, as last drawn: held by the owner, which
@@ -53,7 +53,7 @@ impl Slide {
 
 impl RenderOnce for Slide {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let open = fade(
+        let open = super::ease(
             child(&self.id, "open"),
             self.shown,
             Motion::SETTLE,

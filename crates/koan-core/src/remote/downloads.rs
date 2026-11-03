@@ -764,13 +764,19 @@ const RATE_SMOOTHING: f64 = 0.3;
 /// arithmetic is mostly noise.
 const MIN_SAMPLE_GAP: Duration = Duration::from_millis(250);
 
+/// How often a reading is taken and published while bytes land: about 15 a
+/// second, the rate a client's progress bars and rings are given new
+/// figures at. Each transfer's rate still moves only every
+/// `MIN_SAMPLE_GAP`; its byte count moves with every reading.
+const READING_GAP: Duration = Duration::from_millis(66);
+
 impl DownloadStore {
     /// Take a rate reading, if one is due.
     ///
     /// Called by the downloader as bytes land, not by a timer: what knows a
     /// transfer moved is the code moving it, and what knows it stopped is the
     /// absence of the next call. Chunks arrive far faster than a figure needs
-    /// redrawing, so this is gated to `MIN_SAMPLE_GAP` before it touches the
+    /// redrawing, so this is gated to `READING_GAP` before it touches the
     /// list every client is reading.
     ///
     /// Every running transfer is sampled, not just the one that moved: a
@@ -783,7 +789,7 @@ impl DownloadStore {
     pub fn progressed(&self) {
         let now = clock_ns();
         let last = self.last_sample.load(Ordering::Relaxed);
-        if last != 0 && now.saturating_sub(last) < MIN_SAMPLE_GAP.as_nanos() as u64 {
+        if last != 0 && now.saturating_sub(last) < READING_GAP.as_nanos() as u64 {
             return;
         }
         // One chunk among the transfers running takes the reading; the rest

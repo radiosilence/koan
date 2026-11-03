@@ -34,11 +34,12 @@ pub struct ProgressRing {
     glide: Option<Glide>,
 }
 
-/// The ring from twelve o'clock: `u[0]` the share at the origin (below zero
-/// while unknown), `u[1]` its rate a second, `u[8..12]` the colour. The
-/// stroke is the ring's own share of its side, so a glide drawn at two sizes
-/// needs nothing per size. Ahead of the last report it reckons at
-/// most a second on, so a transfer that stalls is not drawn finishing.
+/// The ring from twelve o'clock, from its `Glide`: track 0 the share, `u[0]`
+/// 1 while the size is unknown (track 2 turning it), `u[1]` the share a
+/// second past the last report, `u[8..12]` the colour. The stroke is the
+/// ring's own share of its side, so a glide drawn at two sizes needs nothing
+/// per size. Ahead of the last report it reckons at most a second on, so a
+/// transfer that stalls is not drawn finishing.
 static RING: ShaderProgram = ShaderProgram {
     name: "koan-progress-ring",
     msl: r#"
@@ -56,21 +57,21 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         a += 1.0;
     }
     float shown;
-    if (u[0] < 0.0) {
-        float start = a - fract(time);
+    if (u[0] > 0.5) {
+        float start = a - koan_track(u, 2, time);
         if (start < 0.0) {
             start += 1.0;
         }
         shown = start < 0.7 ? 1.0 : 0.0;
     } else {
-        float share = clamp(u[0] + u[1] * min(time, 1.0), 0.02, 1.0);
+        float share = clamp(min(koan_track(u, 0, time), u[1]), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
     }
     return float4(u[8], u[9], u[10], u[11] * edge * shown);
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>) -> vec4<f32> {
     let side = min(size.x, size.y);
     let stroke = side * 0.125;
     let d = position - size * 0.5;
@@ -84,14 +85,14 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         a += 1.0;
     }
     var shown = 0.0;
-    if (u[0].x < 0.0) {
-        var start = a - fract(time);
+    if (u[0].x > 0.5) {
+        var start = a - koan_track(u, 2u, time);
         if (start < 0.0) {
             start += 1.0;
         }
         shown = select(0.0, 1.0, start < 0.7);
     } else {
-        let share = clamp(u[0].x + u[0].y * min(time, 1.0), 0.02, 1.0);
+        let share = clamp(min(koan_track(u, 0u, time), u[0].y), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
     }
     return vec4<f32>(u[2].xyz, u[2].w * edge * shown);

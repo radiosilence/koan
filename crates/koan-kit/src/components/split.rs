@@ -106,7 +106,7 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        let open = super::fade(
+        let open = super::ease(
             child(&self.id, "shown"),
             self.shown,
             Motion::SETTLE,
