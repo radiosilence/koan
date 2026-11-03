@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
-use koan_kit::app::AppContext;
+use koan_kit::app::input::{Escape, MoveDown};
+use koan_kit::app::{Action, AppContext};
 use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic keys, which only the
 // app's entry and tools reach.
@@ -78,24 +79,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             settle(&mut cx, window)?;
             cx.capture_screenshot(window)?
                 .save(out.join(format!("search-{name}-{look}.png")))?;
-            key(&mut cx, window, "down")?;
+            act(&mut cx, window, Box::new(MoveDown))?;
             settle(&mut cx, window)?;
             cx.capture_screenshot(window)?
                 .save(out.join(format!("search-{name}-lit-{look}.png")))?;
             // Down to the last row, "All results…", scrolled into view.
             for _ in 0..20 {
-                key(&mut cx, window, "down")?;
+                act(&mut cx, window, Box::new(MoveDown))?;
             }
             settle(&mut cx, window)?;
             cx.capture_screenshot(window)?
                 .save(out.join(format!("search-{name}-last-{look}.png")))?;
             // Escape twice: the query emptied, then the box closed.
-            key(&mut cx, window, "escape")?;
-            key(&mut cx, window, "escape")?;
+            act(&mut cx, window, Box::new(Escape))?;
+            act(&mut cx, window, Box::new(Escape))?;
             settle(&mut cx, window)?;
         }
+        cx.update_window(window, |_, window, _| window.remove_window())?;
+        cx.run_until_parked();
     }
     println!("PNGs in {}", out.display());
+    Ok(())
+}
+
+/// An action to whatever holds the keyboard, as its key would send it.
+fn act(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    action: Box<dyn Action>,
+) -> Result<(), Box<dyn Error>> {
+    cx.update_window(window, |_, window, cx| window.dispatch_action(action, cx))?;
+    cx.run_until_parked();
     Ok(())
 }
 
