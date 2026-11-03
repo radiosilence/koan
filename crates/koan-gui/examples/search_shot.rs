@@ -43,7 +43,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let only_size = args.next();
     let only_look = args.next();
     std::fs::create_dir_all(&out)?;
-    koan_gui::platform::logging::init();
     // SAFETY: set before any other thread starts.
     unsafe {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
