@@ -798,6 +798,7 @@ fn typing(stack: &[KeyContext]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn a_field_keeps_the_keyboard_when_the_route_moves() {

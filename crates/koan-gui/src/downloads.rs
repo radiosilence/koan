@@ -381,6 +381,7 @@ fn ask_clear_settled(settled: usize, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn figure(written: u64, total: u64, rate: u64) -> TransferFigure {
         TransferFigure {

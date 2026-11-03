@@ -339,6 +339,7 @@ fn file_path(url: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn paths_survive_the_handover() {

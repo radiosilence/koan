@@ -992,6 +992,7 @@ impl Wash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     /// The program writes the drift's figures, the field's side and the
     /// strength into its source, and must agree with the constants.

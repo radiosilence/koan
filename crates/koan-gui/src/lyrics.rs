@@ -258,6 +258,7 @@ fn place(lines: &[LyricLine], position: f64) -> (Option<usize>, Option<f64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {

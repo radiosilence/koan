@@ -1806,6 +1806,7 @@ impl Render for QueueView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     /// Below the last row the drop is at the end, whatever row the pointer
     /// last crossed; outside the page there is none; over the rows, theirs.

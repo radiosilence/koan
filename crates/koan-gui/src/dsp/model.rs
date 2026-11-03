@@ -1008,6 +1008,7 @@ pub fn joined(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn rates_read_as_people_write_them() {

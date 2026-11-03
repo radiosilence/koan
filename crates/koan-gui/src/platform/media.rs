@@ -468,6 +468,7 @@ fn remove(path: PathBuf, cx: &AsyncApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
     use koan_ffi::{EntryStatus, QueueItem, RepeatMode, RunRole};
 
     fn item(title: &str, duration_ms: Option<u64>) -> QueueItem {

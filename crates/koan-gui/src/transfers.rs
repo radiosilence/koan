@@ -285,6 +285,7 @@ fn stored(on_server: bool, on_disk: bool) -> Option<Availability> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn stored_here(mark: Option<Availability>) -> bool {
         matches!(mark, Some(Availability::Stored { on_disk: true, .. }))

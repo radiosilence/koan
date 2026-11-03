@@ -373,6 +373,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::{BarLevels, Registry, VizLevels, WindowId};
+    use core::prelude::v1::test;
 
     fn heard(low: f32, mid: f32, high: f32) -> VizLevels {
         VizLevels { low, mid, high }

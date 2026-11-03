@@ -270,6 +270,7 @@ pub fn in_window(menu: Menu, window: &mut Window, cx: &mut Context<Menu>) -> Men
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     /// The window's menus drop exactly what is macOS's alone, and keep every
     /// menu that has anything else in it.

@@ -776,6 +776,7 @@ fn background(
 #[cfg(test)]
 mod tests {
     use super::{ConnectedInfo, detail};
+    use core::prelude::v1::test;
 
     fn connection(via_server: bool, inbound: bool, own: bool) -> ConnectedInfo {
         ConnectedInfo {

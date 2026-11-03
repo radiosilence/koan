@@ -688,6 +688,7 @@ pub fn footer(read_only: bool) -> SharedString {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn figures_show_to_their_places_without_trailing_zeros() {

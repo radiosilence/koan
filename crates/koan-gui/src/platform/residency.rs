@@ -403,6 +403,7 @@ mod login_item {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use core::prelude::v1::test;
 
         #[test]
         fn an_exec_path_is_quoted_as_the_spec_asks() {

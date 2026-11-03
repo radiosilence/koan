@@ -69,6 +69,7 @@ fn runs(dark: &[bool], side: usize) -> Vec<(u16, u16, u16)> {
 #[cfg(test)]
 mod tests {
     use super::runs;
+    use core::prelude::v1::test;
 
     #[test]
     fn runs_cover_every_dark_module_once() {

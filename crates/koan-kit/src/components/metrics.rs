@@ -394,6 +394,7 @@ impl TileGrid {
 mod transport_tests {
     use super::*;
     use crate::theme::{Accent, Palette};
+    use core::prelude::v1::test;
 
     fn look(text_size: u32) -> Look {
         Look {
@@ -451,6 +452,7 @@ mod transport_tests {
 #[cfg(test)]
 mod tile_grid_tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn rows_hold_the_columns_sleeve_and_caption() {

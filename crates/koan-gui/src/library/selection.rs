@@ -176,6 +176,7 @@ impl Selection {
 mod tests {
     use super::*;
     use Playable::Album as A;
+    use core::prelude::v1::test;
 
     #[test]
     fn ticks_keep_their_order_and_a_range_takes_page_order() {

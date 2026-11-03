@@ -157,6 +157,7 @@ fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn summary(track_ids: Vec<i64>, errors: &[&str]) -> ImportSummary {
         ImportSummary {

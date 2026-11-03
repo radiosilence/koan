@@ -1440,6 +1440,7 @@ pub fn set_from_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
     use koan_ffi::{DspProfileSummary, DspTuningEntry};
 
     fn overview(active: Option<&str>, chain: &[(&str, bool)]) -> DspOverview {

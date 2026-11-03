@@ -625,6 +625,7 @@ impl RenderOnce for Slider {
 
 #[cfg(test)]
 mod tests {
+    use core::prelude::v1::test;
     use std::cell::Cell;
     use std::rc::Rc;
 

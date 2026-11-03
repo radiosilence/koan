@@ -406,6 +406,7 @@ fn mix_oklab(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     /// With more contrast asked for, every hue's accent reaches 7:1 on both
     /// grounds of the contrast palette, light and dark.

@@ -169,6 +169,7 @@ impl Render for ShortcutsSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn every_group_with_a_hotkey_lists_it() {

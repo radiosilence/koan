@@ -159,6 +159,7 @@ impl Render for DragPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn neighbouring_tracks_merge_into_one_source() {

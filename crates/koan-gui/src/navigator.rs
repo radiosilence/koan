@@ -207,6 +207,7 @@ impl Navigator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     const QUEUE: Route = Route::Queue;
     const ALBUMS: Route = Route::Albums;

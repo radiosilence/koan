@@ -54,6 +54,7 @@ pub fn ago(at: i64, now: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ago, clock};
+    use core::prelude::v1::test;
 
     #[test]
     fn reads_as_time_ago() {

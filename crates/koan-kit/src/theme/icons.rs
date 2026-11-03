@@ -309,6 +309,7 @@ impl RenderOnce for KoanIcon {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn stroke_follows_the_rule() {

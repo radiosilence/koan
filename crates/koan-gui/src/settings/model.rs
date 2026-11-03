@@ -724,6 +724,7 @@ pub use crate::time::bytes;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn settings(port: u16) -> Settings {
         Settings {

@@ -875,6 +875,7 @@ pub fn mode_label(
 #[cfg(test)]
 mod tests {
     use super::host;
+    use core::prelude::v1::test;
 
     #[test]
     fn reads_a_host() {

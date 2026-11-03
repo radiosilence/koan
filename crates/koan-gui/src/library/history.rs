@@ -665,6 +665,7 @@ impl Focusable for HistoryPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn plays_fall_under_their_days_newest_first() {

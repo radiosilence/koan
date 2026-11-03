@@ -1282,6 +1282,7 @@ impl Focusable for PlaylistPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn an_entry_is_listed_under_its_own_id_and_waits_for_nothing() {

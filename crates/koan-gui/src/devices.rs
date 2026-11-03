@@ -388,6 +388,7 @@ fn detail(device: &DeviceInfo, now: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn moved(started: bool, queued: bool, left_out: u32) -> koan_ffi::MoveResult {
         koan_ffi::MoveResult {

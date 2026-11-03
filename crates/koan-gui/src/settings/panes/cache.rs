@@ -110,6 +110,7 @@ pub fn downloads_note(ahead: Option<u32>, keeping: Keeping) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn reads_the_limit_as_the_core_does() {

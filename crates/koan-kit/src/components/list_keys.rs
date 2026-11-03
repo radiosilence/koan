@@ -119,6 +119,7 @@ impl ListCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn the_cursor_steps_and_extends_within_the_list() {

@@ -1455,6 +1455,7 @@ fn same_step(a: &Commit, b: &Commit) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn the_axis_is_logarithmic_from_20_hz_to_20_khz() {

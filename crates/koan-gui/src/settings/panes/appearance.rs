@@ -285,6 +285,7 @@ impl Render for AppearancePane {
 #[cfg(test)]
 mod tests {
     use super::{fraction, snapped};
+    use core::prelude::v1::test;
 
     #[test]
     fn a_slider_lands_on_steps() {

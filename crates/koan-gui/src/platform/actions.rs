@@ -561,6 +561,7 @@ fn skip(engine: &Arc<KoanEngine>, by_ms: i64, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn mac_captions_follow_the_order_macos_prints() {

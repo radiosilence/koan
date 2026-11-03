@@ -42,6 +42,7 @@ fn khz(hz: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn durations_read_as_the_mac_writes_them() {

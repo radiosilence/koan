@@ -578,6 +578,7 @@ fn after_start(model: Entity<SettingsModel>) -> Landed {
 #[cfg(test)]
 mod tests {
     use super::{InviteTo, invite_options};
+    use core::prelude::v1::test;
 
     fn values(options: Vec<(String, InviteTo)>) -> Vec<InviteTo> {
         options.into_iter().map(|(_, v)| v).collect()

@@ -942,6 +942,7 @@ impl Focusable for ShelfPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn counts_name_only_the_kinds_there_are() {

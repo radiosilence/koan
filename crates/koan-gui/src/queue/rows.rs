@@ -168,6 +168,7 @@ pub fn position(rows: &[Row], dest: usize, len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
     use koan_ffi::EntryStatus;
 
     fn item(id: &str, run: RunRole) -> QueueItem {

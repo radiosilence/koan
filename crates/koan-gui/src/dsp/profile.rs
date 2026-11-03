@@ -1792,6 +1792,7 @@ fn warning(text: impl Into<SharedString>, look: &Look) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     fn t(id: &str) -> DspTargetOption {
         DspTargetOption {
