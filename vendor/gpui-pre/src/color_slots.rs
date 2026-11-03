@@ -220,9 +220,19 @@ pub fn color_slot_of(color: &Hsla) -> Option<usize> {
 /// The colour slot `index` shows now, its alpha scaled by `alpha`: what a
 /// colour naming a slot is wherever the CPU reads it.
 pub fn color_slot_rgba(index: usize, alpha: f32) -> Rgba {
-    let mut rgba = with_table(|table| shown(table, index, present_now()));
+    color_slot_rgba_at(index, alpha, present_now())
+}
+
+/// The colour slot `index` shows at `at`, its alpha scaled by `alpha`.
+pub fn color_slot_rgba_at(index: usize, alpha: f32, at: Instant) -> Rgba {
+    let mut rgba = with_table(|table| shown(table, index, at));
     rgba.a *= alpha;
     rgba
+}
+
+/// Whether colour slot `index` moves at `at`.
+pub fn color_slot_moving(index: usize, at: Instant) -> bool {
+    with_table(|table| table.ends[index] > seconds(table, at))
 }
 
 /// Bytes of a frame's table.

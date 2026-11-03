@@ -150,8 +150,7 @@ impl Glide {
     fn style(&self, look: &Style) {
         self.0.set_all(2, &[look.fill, look.thumb, look.inset]);
         for (i, color) in [look.fill_color, look.thumb_color].into_iter().enumerate() {
-            let rgba = color.to_rgb();
-            self.0.set_all(8 + i * 4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            self.0.set_color(8 + i * 4, color);
         }
     }
 }

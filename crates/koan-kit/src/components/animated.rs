@@ -248,6 +248,15 @@ impl Animated {
     }
 
     /// Uniforms from `start` on.
+    /// `color` into the four uniforms from `index`, as red, green, blue and
+    /// alpha. A colour naming a colour slot (the accent) is read from the
+    /// slot at each present, so it moves in the program with no frame drawn.
+    pub fn set_color(&self, index: usize, color: Hsla) {
+        if self.0.uniforms.set_color(index, color) {
+            self.wake();
+        }
+    }
+
     pub fn set_all(&self, start: usize, values: &[f32]) {
         let mut changed = false;
         for (i, value) in values.iter().enumerate() {

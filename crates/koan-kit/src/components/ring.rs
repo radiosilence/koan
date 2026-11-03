@@ -192,10 +192,10 @@ impl RenderOnce for ProgressRing {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
         if let Some(glide) = self.glide.filter(|_| SHADED) {
-            let color = self.color.to_rgb();
+            let color = self.color;
             return canvas(
                 move |_, window, cx| {
-                    glide.0.set_all(8, &[color.r, color.g, color.b, color.a]);
+                    glide.0.set_color(8, color);
                     glide.0.attach(false, window, cx);
                     glide
                 },
