@@ -575,12 +575,16 @@ impl Render for Found {
             }
             let row = row
                 .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    if *hovered && this.lit != Some(ix) {
+                    // A row left over from the last answer is not the query's.
+                    if *hovered && this.lit != Some(ix) && ix < this.rows(cx).len() {
                         this.lit = Some(ix);
                         cx.notify();
                     }
                 }))
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                    if ix >= this.rows(cx).len() {
+                        return;
+                    }
                     this.lit = Some(ix);
                     let m = e.modifiers();
                     if m.secondary(cx) && !m.shift {
