@@ -141,10 +141,9 @@ impl Render for ShortcutsSheet {
 
         // Over the window as every sheet is: centred, the page dimmed.
         // As wide as its columns at the text size, so a larger size keeps
-        // them side by side; inside the window, scrolling if it must.
+        // them side by side.
         let panel = sheet::panel("keyboard shortcuts", &look)
             .w(look.spaced(560.0))
-            .max_w(relative(0.95))
             .id("shortcuts-sheet")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
