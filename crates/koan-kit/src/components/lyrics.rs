@@ -15,9 +15,9 @@
 
 use std::time::Instant;
 
+use super::Scrollbar;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::base::Scrollbar;
 
 use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 use crate::theme::{KoanStyled, KoanTheme, Look, Motion, TypeRole};
@@ -534,10 +534,9 @@ mod tests {
 
     /// The song moving on to a line that wraps at the sung size and not at
     /// the others' lands it mid-panel, its new size laid out first.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_sung_line_lands_mid_panel_at_its_new_size(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
             crate::theme::init(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| {
@@ -576,10 +575,9 @@ mod tests {
     }
 
     /// Only the sung line is drawn large; the others in the control size.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn only_the_sung_line_is_large(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|_, _| Lines::new(Rc::new(Cell::new(None))));
@@ -597,7 +595,6 @@ mod tests {
     #[gpui::test]
     fn a_click_names_the_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let clicked = Rc::new(Cell::new(None));

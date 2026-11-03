@@ -217,7 +217,6 @@ mod tests {
     #[gpui::test]
     fn a_copy_lands_on_the_clipboard_and_says_so(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (_, cx) = cx.add_window_view(|_, _| Page);

@@ -1,0 +1,1 @@
+- **koan-kit draws every component itself.** The scrollbar, the panels controls open, the window root and the focus trap are koan-kit's own, and gpui-kit is no longer a dependency. The scrollbar fades on the GPU without drawing frames, and a panel gives the keyboard back to where it was when it closes.

@@ -377,7 +377,6 @@ impl Render for Quad {
 #[gpui::test]
 fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
         cx.set_reduce_motion(true);
     });

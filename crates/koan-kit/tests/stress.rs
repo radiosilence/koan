@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
+use gpui::{
     ColorSlot, Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba, ShaderUniforms,
     Styled, TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, point, present_now, px,
 };
@@ -319,11 +319,10 @@ impl Render for Buttons {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn a_hover_storm_gives_back_every_colour_slot(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let free = free_slots();
@@ -369,11 +368,10 @@ fn accent(rng: &mut Rng) -> Accent {
     ]))
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Painted);
@@ -403,11 +401,10 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
     let _ = last;
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn reduce_motion_mid_settle_lands_the_accent(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Painted);
@@ -453,11 +450,10 @@ impl Render for Quad {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn reduce_motion_toggled_mid_animation_lands_and_lifts(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let animated = Animated::new();
@@ -570,7 +566,7 @@ fn two_writers_publish_whole_tracks_and_rebase_once() {
 /// Draws the accent and counts its renders.
 struct Observer {
     renders: Arc<std::sync::atomic::AtomicUsize>,
-    _accent: gpui_kit::Subscription,
+    _accent: gpui::Subscription,
 }
 
 impl Render for Observer {
@@ -583,11 +579,10 @@ impl Render for Observer {
 /// The accent turns on the GPU: a retarget, the rainbow's every step
 /// included, draws no view again, not even one observing the accent, since
 /// what it draws names the slots.
-#[gpui_kit::test]
+#[gpui::test]
 fn a_retarget_redraws_no_view(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let renders = Arc::new(std::sync::atomic::AtomicUsize::new(0));

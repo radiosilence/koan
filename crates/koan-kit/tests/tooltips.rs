@@ -50,7 +50,6 @@ fn hover_finds_a_tooltip(cx: &mut gpui::VisualTestContext) -> bool {
 #[gpui::test]
 fn a_toolbar_button_in_a_cached_view_shows_its_tooltip(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, cx| Root(cx.new(|_| Page)));
@@ -63,7 +62,6 @@ fn a_toolbar_button_in_a_cached_view_shows_its_tooltip(cx: &mut TestAppContext) 
 #[gpui::test]
 fn a_toolbar_button_shows_its_tooltip(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Page);

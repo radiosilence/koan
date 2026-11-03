@@ -380,7 +380,6 @@ impl WindowRoot {
 
 impl Render for WindowRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
         self.viewport = window.viewport_size();
         self.scale = window.scale_factor();
         let fill = || StyleRefinement::default().size_full();

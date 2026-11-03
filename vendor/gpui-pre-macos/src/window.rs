@@ -407,6 +407,21 @@ pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
     }
 }
 
+// KOAN: (#2021) see `build_window_class`.
+extern "C" fn window_accessibility_hit_test(
+    this: &AnyObject,
+    _: Sel,
+    point: NSPoint,
+) -> *mut AnyObject {
+    unsafe {
+        let view: *mut AnyObject = msg_send![this, contentView];
+        if view.is_null() {
+            return ptr::null_mut();
+        }
+        msg_send![view, accessibilityHitTest: point]
+    }
+}
+
 unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyClass {
     unsafe {
         let mut decl = ClassBuilder::new(name, superclass).unwrap();
@@ -467,6 +482,14 @@ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyCl
         );
 
         decl.add_method(sel!(close), close_window as extern "C" fn(_, Sel));
+
+        // KOAN: (#2021) VoiceOver's hit test (the pointer, a touch on the
+        // trackpad) asks the window, whose own answer stops at the content
+        // view; it is passed on to the view, which knows the app's nodes.
+        decl.add_method(
+            sel!(accessibilityHitTest:),
+            window_accessibility_hit_test as extern "C" fn(_, Sel, NSPoint) -> *mut AnyObject,
+        );
 
         decl.add_method(
             sel!(draggingEntered:),

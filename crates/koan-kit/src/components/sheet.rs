@@ -32,9 +32,9 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
 
 /// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
 /// sheet drawn by its owner rather than presented through `present`.
-pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement {
-    use gpui_kit::base::FocusTrapElement as _;
-    panel.focus_trap("sheet-trap", focus)
+pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle, cx: &mut App) -> impl IntoElement {
+    use super::focus_trap::FocusTrap as _;
+    panel.focus_trap(focus, cx)
 }
 
 /// Tab and Shift-Tab: the next control in the window's order, kept inside
@@ -42,29 +42,7 @@ pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement
 /// window's root keeps it. For an app that binds Tab in a context of its
 /// own, which the root's binding never reaches.
 pub fn step_focus(forward: bool, window: &mut Window, cx: &mut App) {
-    let advance = |window: &mut Window, cx: &mut App| {
-        if forward {
-            window.focus_next(cx)
-        } else {
-            window.focus_prev(cx)
-        }
-    };
-    let Some(container) = gpui_kit::base::active_focus_trap(window, cx) else {
-        advance(window, cx);
-        return;
-    };
-    advance(window, cx);
-    let mut visited = Vec::new();
-    while !container.contains_focused(window, cx) {
-        let focused = window.focused(cx);
-        if visited.contains(&focused) {
-            // Nothing in it takes Tab: the container keeps the keyboard.
-            container.focus(window, cx);
-            break;
-        }
-        visited.push(focused);
-        advance(window, cx);
-    }
+    super::focus_trap::step(forward, window, cx);
 }
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
@@ -356,14 +334,14 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .occlude()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(view);
-    Some(trapped(scrim, focus.as_ref()))
+    Some(trapped(scrim, focus.as_ref(), cx))
 }
 
 /// A scrim holding the keyboard keeps Tab inside it.
-fn trapped(scrim: Stateful<Div>, focus: Option<&FocusHandle>) -> AnyElement {
-    use gpui_kit::base::FocusTrapElement as _;
+fn trapped(scrim: Stateful<Div>, focus: Option<&FocusHandle>, cx: &mut App) -> AnyElement {
+    use super::focus_trap::FocusTrap as _;
     match focus {
-        Some(focus) => scrim.focus_trap("sheet-trap", focus).into_any_element(),
+        Some(focus) => scrim.focus_trap(focus, cx).into_any_element(),
         None => scrim.into_any_element(),
     }
 }
@@ -554,7 +532,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                         }),
                 ),
         );
-    Some(trapped(scrim, focus.as_ref()))
+    Some(trapped(scrim, focus.as_ref(), cx))
 }
 
 #[cfg(test)]
@@ -582,7 +560,6 @@ mod tests {
     #[gpui::test]
     fn the_keyboard_goes_back_to_what_asked(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (asker, cx) = cx.add_window_view(|_, cx| Asker {
@@ -641,7 +618,6 @@ mod tests {
     #[gpui::test]
     fn a_presented_sheet_goes_with_escape(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {
@@ -670,7 +646,6 @@ mod tests {
     #[gpui::test]
     fn a_held_sheet_stays_through_escape(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {

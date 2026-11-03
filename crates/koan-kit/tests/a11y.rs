@@ -94,7 +94,6 @@ impl Render for Page {
 
 fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Rc<Cell<u32>>, Rc<Cell<f32>>) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let page = Page::default();
@@ -285,7 +284,6 @@ impl Render for Queue {
 #[gpui::test]
 fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -378,7 +376,6 @@ fn drawn_rows(tree: &str) -> (usize, usize) {
 #[gpui::test]
 fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let list = RowListState::new();
@@ -437,7 +434,6 @@ impl Render for Uniform {
 #[gpui::test]
 fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let scroll = UniformListScrollHandle::new();
@@ -506,7 +502,6 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
     use koan_kit::components::FieldState;
     cx.update(|cx| {
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
     });
     let window = cx.add_window(|window, cx| Fields {

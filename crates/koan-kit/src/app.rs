@@ -33,14 +33,6 @@ pub mod platform {
         SystemMenuType, TouchPhase,
     };
     pub use gpui_platform::application;
-
-    /// What every app and test calls once before anything else. The
-    /// window's root, the scrollbar and the filter panels are still
-    /// gpui-kit's (#2021), so its components are initialised here;
-    /// with them gone, this is empty.
-    pub fn init(cx: &mut super::App) {
-        gpui_kit::init(cx);
-    }
 }
 
 /// A sleeve as the renderer holds it: decoded off the main thread by the

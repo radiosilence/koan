@@ -27,7 +27,6 @@ impl Render for Host {
 
 fn host(cx: &mut TestAppContext, rows: usize) -> (Entity<Host>, &mut VisualTestContext) {
     cx.update(|cx| {
-        crate::app::platform::init(cx);
         crate::theme::init(cx);
     });
     let (host, cx) = cx.add_window_view(|window, cx| {

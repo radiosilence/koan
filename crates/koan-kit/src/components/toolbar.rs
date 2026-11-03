@@ -228,7 +228,6 @@ impl RenderOnce for ToolbarGroup {
 #[derive(IntoElement)]
 pub struct ToolbarButton {
     button: Button,
-    selected: bool,
 }
 
 impl ToolbarButton {
@@ -236,7 +235,6 @@ impl ToolbarButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon, label: impl AsRef<str>) -> Self {
         Self {
             button: Button::new(id, ButtonKind::Toolbar).icon(icon).label(label),
-            selected: false,
         }
     }
 
@@ -255,7 +253,6 @@ impl ToolbarButton {
     /// that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
-        self.selected = selected;
         self
     }
 
@@ -269,13 +266,9 @@ impl ToolbarButton {
 }
 
 /// A popover's trigger: drawn pressed while what it opened shows.
-impl gpui_kit::base::Selectable for ToolbarButton {
+impl super::Selectable for ToolbarButton {
     fn selected(self, selected: bool) -> Self {
         ToolbarButton::selected(self, selected)
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
     }
 }
 
@@ -318,32 +311,10 @@ impl ToolbarMenu {
 impl RenderOnce for ToolbarMenu {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let content = self.content;
-        opens_panel(self.id, self.button, move |dismiss, window, cx| {
+        super::opens_panel(self.id, self.button, move |dismiss, window, cx| {
             content(dismiss, window, cx).into_any_element()
         })
     }
-}
-
-/// A control that opens a panel under it, made each time it opens: a
-/// toolbar's menu, a filter's choices, the selection's playlists. The
-/// trigger is drawn pressed while the panel shows; the panel's rows call
-/// the `Dismiss` they are given before they act. A press outside closes it.
-pub fn opens_panel<T: gpui_kit::base::Selectable + IntoElement + 'static>(
-    id: impl Into<ElementId>,
-    trigger: T,
-    content: impl Fn(Dismiss, &mut Window, &mut App) -> AnyElement + 'static,
-) -> impl IntoElement {
-    gpui_kit::component::popover::Popover::new(id)
-        .appearance(false)
-        .arrow(false)
-        .trigger(trigger)
-        .content(move |_, window, cx| {
-            let state = cx.weak_entity();
-            let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
-                state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
-            });
-            content(dismiss, window, cx)
-        })
 }
 
 /// A word that opens a panel (`opens_panel`): a filter's value, "add to
@@ -366,14 +337,10 @@ impl TextTrigger {
     }
 }
 
-impl gpui_kit::base::Selectable for TextTrigger {
+impl super::Selectable for TextTrigger {
     fn selected(mut self, selected: bool) -> Self {
         self.open = selected;
         self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.open
     }
 }
 

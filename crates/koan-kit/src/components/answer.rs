@@ -423,7 +423,6 @@ mod tests {
     #[gpui::test]
     fn each_control_follows_its_own_mark(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| Two {
@@ -448,7 +447,6 @@ mod tests {
     #[gpui::test]
     fn a_handler_s_answer_holds_off_one_change(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let (view, cx) = cx.add_window_view(|_, _| Two {

@@ -217,7 +217,6 @@ mod tests {
     #[gpui::test]
     fn a_drag_commits_once_when_let_go(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let commits = Rc::new(RefCell::new(Vec::new()));

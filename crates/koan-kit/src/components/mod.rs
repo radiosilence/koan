@@ -32,6 +32,7 @@ mod empty;
 mod fade;
 pub mod field;
 mod filter_field;
+pub mod focus_trap;
 mod form;
 mod heart;
 mod inspector;
@@ -48,13 +49,16 @@ mod panel;
 mod picker;
 mod pill;
 pub(crate) mod placeholder;
+mod popover;
 mod prism;
 mod progress;
 mod qr;
 mod ring;
+mod root;
 mod row_list;
 mod rows;
 mod scroll;
+mod scrollbar;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
@@ -164,7 +168,7 @@ pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
-    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS, opens_panel,
+    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
@@ -677,6 +681,16 @@ pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element.on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
         handler(&gpui::ClickEvent::default(), window, cx)
     })
+}
+
+pub use popover::{Selectable, opens_panel};
+pub use root::Root;
+pub use scrollbar::{ScrollSource, Scrollbar};
+
+/// The window root's and the panels' keys, bound once by `theme::init`.
+pub(crate) fn bind_root(cx: &mut gpui::App) {
+    root::bind(cx);
+    popover::bind(cx);
 }
 
 #[cfg(test)]

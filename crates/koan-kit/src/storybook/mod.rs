@@ -147,8 +147,7 @@ impl Storybook {
 }
 
 impl Render for Storybook {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .relative()
             .size_full()
@@ -860,6 +859,38 @@ impl StoryContent {
                     .into_any_element(),
                 SectionHeader::new("Tooltip").into_any_element(),
                 div().child(self.tooltip.clone()).into_any_element(),
+                SectionHeader::new(
+                    "Opening a panel: pressed while it shows; a press outside, Escape or the trigger closes it",
+                )
+                .into_any_element(),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(look.space(Space::L))
+                    .child(crate::components::ToolbarMenu::new(
+                        "story-panel-menu",
+                        crate::components::ToolbarButton::new("story-panel-sort", Icon::Sort, "sort"),
+                        |dismiss, _, _| {
+                            MenuPanel::new()
+                                .child(MenuRow::new("story-sort-title", "Title").checked(true))
+                                .child(
+                                    MenuRow::new("story-sort-year", "Year")
+                                        .checked(false)
+                                        .on_click(move |_, window, cx| dismiss(window, cx)),
+                                )
+                        },
+                    ))
+                    .child(crate::components::opens_panel(
+                        "story-panel-word",
+                        crate::components::TextTrigger::new("story-panel-trigger", "any genre"),
+                        |_, _, _| {
+                            MenuPanel::new()
+                                .child(MenuRow::new("story-genre-any", "Any").checked(true))
+                                .child(MenuRow::new("story-genre-jazz", "Jazz").checked(false))
+                                .into_any_element()
+                        },
+                    ))
+                    .into_any_element(),
             ],
             Story::Badges => vec![
                 SectionHeader::new("Badges").into_any_element(),

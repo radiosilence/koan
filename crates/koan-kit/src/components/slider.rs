@@ -928,7 +928,6 @@ mod tests {
     #[gpui::test]
     fn a_drag_redraws_only_the_slider(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            crate::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let renders = Rc::new(Cell::new(0));

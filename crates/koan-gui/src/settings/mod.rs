@@ -530,7 +530,6 @@ impl Render for SettingsWindow {
         window: &mut Window,
         cx: &mut koan_kit::app::Context<Self>,
     ) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
         let look = Look::of(window, cx);
         let tabs = self.tabs(cx);
         let entity = cx.entity();
