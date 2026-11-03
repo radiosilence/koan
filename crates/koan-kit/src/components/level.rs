@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    App, AppContext as _, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Window, div,
+    App, AppContext as _, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window,
+    div,
 };
 
 use super::{Handler, Slider, child};
@@ -41,6 +42,14 @@ const LANDING: Duration = Duration::from_secs(3);
 enum Held {
     Dragging(u32),
     Landing(u32, Instant),
+}
+
+/// A slider's hold, and the one timer that ends a landing at its deadline:
+/// replaced at each commit, which drops and so cancels the one before.
+#[derive(Default)]
+struct Hold {
+    held: Option<Held>,
+    deadline: Option<Task<()>>,
 }
 
 impl Level {
@@ -81,12 +90,21 @@ impl RenderOnce for Level {
         // Where a drag has the slider, and then the value committed until it
         // lands. Keyed state redraws the view that draws it, and only that
         // view.
-        let held = window.use_keyed_state(child(&self.id, "held"), cx, |_, _| None::<Held>);
+        let held = window.use_keyed_state(child(&self.id, "held"), cx, |_, _| Hold::default());
         let max = self.max;
-        let shown = match *held.read(cx) {
-            Some(Held::Dragging(to)) => to,
-            Some(Held::Landing(to, until)) if to != self.value && Instant::now() < until => to,
-            _ => self.value,
+        let value = self.value;
+        // A landing ends as soon as the value given agrees, or its deadline
+        // passes: from then on a change made elsewhere shows at once.
+        let landed = match held.read(cx).held {
+            Some(Held::Landing(to, until)) => to == value || Instant::now() >= until,
+            _ => false,
+        };
+        if landed {
+            held.update(cx, |hold, _| *hold = Hold::default());
+        }
+        let shown = match held.read(cx).held {
+            Some(Held::Dragging(to) | Held::Landing(to, _)) => to,
+            None => value,
         };
         let (moving, committing) = (held.clone(), held);
         let fallback = self.value;
@@ -97,28 +115,27 @@ impl RenderOnce for Level {
             .compact()
             .on_change(move |fraction, _, cx| {
                 let to = (fraction * max as f32).round() as u32;
-                moving.update(cx, |held, cx| {
-                    if !matches!(*held, Some(Held::Dragging(at)) if at == to) {
-                        *held = Some(Held::Dragging(to));
+                moving.update(cx, |hold, cx| {
+                    if !matches!(hold.held, Some(Held::Dragging(at)) if at == to) {
+                        hold.held = Some(Held::Dragging(to));
                         cx.notify();
                     }
                 });
             })
             .on_commit(move |_, window, cx| {
-                let to = committing.update(cx, |held, cx| {
-                    let to = match *held {
+                let to = committing.update(cx, |hold, cx| {
+                    let to = match hold.held {
                         Some(Held::Dragging(to) | Held::Landing(to, _)) => to,
                         None => fallback,
                     };
-                    *held = Some(Held::Landing(to, Instant::now() + LANDING));
-                    cx.notify();
+                    hold.held = Some(Held::Landing(to, Instant::now() + LANDING));
                     // Once, at the deadline, so a value the device never
                     // reports gives way to the one it does.
-                    cx.spawn(async move |held, cx| {
+                    hold.deadline = Some(cx.spawn(async move |hold, cx| {
                         cx.background_executor().timer(LANDING).await;
-                        held.update(cx, |_, cx| cx.notify()).ok();
-                    })
-                    .detach();
+                        hold.update(cx, |_, cx| cx.notify()).ok();
+                    }));
+                    cx.notify();
                     to
                 });
                 if let Some(commit) = &on_commit {
