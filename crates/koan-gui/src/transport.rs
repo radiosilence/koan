@@ -1119,6 +1119,9 @@ impl Render for Transport {
                         && !bar.contains(&before, window)
                     {
                         window.focus(&before, cx);
+                        // The bar's own focus-on-press runs after this, on a
+                        // press no control took (a gap, a link, the cover).
+                        window.prevent_default();
                     }
                 }
             })
