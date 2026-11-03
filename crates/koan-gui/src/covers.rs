@@ -51,9 +51,10 @@ pub struct Covers {
     /// Moves when every sleeve is dropped, so a fetch begun before lands
     /// nowhere.
     generation: u64,
-    /// Fetches running for records the library has since lost: what they
-    /// bring is another record's sleeve, or none, and is dropped.
-    superseded: HashSet<(i64, u32)>,
+    /// Moves for a record each time the library loses it, so a fetch begun
+    /// before brings another record's sleeve, or none, and is dropped; a
+    /// fetch asked for since is not.
+    forgotten: HashMap<i64, u64>,
 }
 
 #[derive(Clone)]
@@ -106,7 +107,6 @@ impl Covers {
         covers.update(cx, |covers, cx| {
             covers.generation += 1;
             covers.waiting.clear();
-            covers.superseded.clear();
             covers.ready = 0;
             for (_, held) in covers.held.drain() {
                 if let Held::Ready(image, _) = held {
@@ -131,21 +131,14 @@ impl Covers {
                 .filter(|(album, _)| albums.contains(album))
                 .copied()
                 .collect();
-            if keys.is_empty() {
-                return;
+            for album in &albums {
+                *covers.forgotten.entry(*album).or_default() += 1;
             }
-            let waiting: HashSet<(i64, u32)> = covers.waiting.iter().copied().collect();
             covers.waiting.retain(|key| !albums.contains(&key.0));
             for key in keys {
-                match covers.held.remove(&key) {
-                    Some(Held::Ready(image, _)) => {
-                        covers.ready -= 1;
-                        cx.drop_image(image, None);
-                    }
-                    Some(Held::Loading) if !waiting.contains(&key) => {
-                        covers.superseded.insert(key);
-                    }
-                    _ => {}
+                if let Some(Held::Ready(image, _)) = covers.held.remove(&key) {
+                    covers.ready -= 1;
+                    cx.drop_image(image, None);
                 }
             }
             cx.notify();
@@ -188,6 +181,7 @@ impl Covers {
             let renderer = cx.svg_renderer();
             let background = cx.background_executor().clone();
             let generation = self.generation;
+            let forgotten = self.forgotten.get(&album_id).copied();
             cx.spawn(async move |this, cx| {
                 let held = background
                     .spawn(async move {
@@ -212,7 +206,7 @@ impl Covers {
                 this.update(cx, |covers, cx| {
                     covers.running -= 1;
                     if covers.generation != generation
-                        || covers.superseded.remove(&(album_id, size))
+                        || covers.forgotten.get(&album_id).copied() != forgotten
                     {
                         if let Held::Ready(image, _) = held {
                             cx.drop_image(image, None);

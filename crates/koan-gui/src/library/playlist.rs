@@ -933,7 +933,7 @@ impl PlaylistPage {
         &mut self,
         row: usize,
         p: &Paint,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows.len();
@@ -955,7 +955,7 @@ impl PlaylistPage {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
