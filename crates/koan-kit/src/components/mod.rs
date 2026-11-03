@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+pub(crate) use animated::curve;
 mod answer;
 mod arrive;
 mod availability;
@@ -39,6 +40,7 @@ mod level;
 mod link_text;
 mod list_keys;
 mod lists;
+mod lyrics;
 mod menu;
 mod metrics;
 mod page;
@@ -79,7 +81,7 @@ use std::time::Instant;
 use gpui_kit::{
     AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+    Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
@@ -117,7 +119,7 @@ pub use form::{
     form_text,
 };
 pub use heart::Heart;
-pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
@@ -126,6 +128,7 @@ pub use lists::{
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
     uniform_list, width_probe,
 };
+pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
@@ -453,6 +456,62 @@ pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut
     })
 }
 
+/// The fill under a control that lights under the pointer, as every
+/// control's does: `surface` arriving with the pointer, `hover` while
+/// pressed, fading out over `Motion::LEAVE` once it has gone. The caller
+/// tracks `pointer` on the control with `track` and adds the fill before its
+/// content, so the content draws over it.
+pub(crate) fn hover_fill(
+    id: &ElementId,
+    look: &Look,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<Pointer>, AnyElement) {
+    let state = pointer(&child(id, "pointer"), window, cx);
+    let (hovered, pressed) = {
+        let p = state.read(cx);
+        (p.hovered, p.pressed)
+    };
+    let color = if pressed {
+        look.palette.hover.hsla()
+    } else {
+        look.palette.surface.hsla()
+    };
+    let lit = transition(child(id, "lit"), hovered || pressed, window, cx);
+    (state, fill(color, &lit))
+}
+
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
+}
+
+/// A row a click acts on, lit under the pointer as controls are (`surface`,
+/// leaving over `Motion::LEAVE`): its content goes in as children, over the
+/// fill.
+pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let id = id.into();
+    let look = Look::of(window, cx);
+    let (state, fill) = hover_fill(&id, &look, window, cx);
+    track(div().id(id), &state)
+        .relative()
+        .cursor_pointer()
+        .child(fill)
+}
+
 /// A fill under a control, in `color`, faded with `transition`.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if !SHADED {
@@ -463,8 +522,8 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
             .bg(color.opacity(amount))
             .into_any_element();
     }
-    let rgba = color.to_rgb();
-    transition.set_all(0, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
+    transition.set_color(0, color);
+    transition.set(4, 0.0);
     AnimatedQuad::new(&TRANSITION, transition)
         .decorative()
         .absolute()

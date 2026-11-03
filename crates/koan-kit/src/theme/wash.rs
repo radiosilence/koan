@@ -63,14 +63,11 @@ const REACH: f32 = 0.12;
 const RISE: f32 = 0.10;
 const SCALE_PERIOD: f32 = 13.0;
 const TRAVEL_PERIOD: f32 = 23.0;
-/// The turn either way at full drift, in radians, and its period: the
-/// Mac's ±3° over 19 s. A field this soft moves most visibly by turning.
-const TURN: f32 = 3.0 * std::f32::consts::PI / 180.0;
+/// The turn's period at full drift: the Mac's 19 s. A field this soft
+/// moves most visibly by turning.
 const TURN_PERIOD: f32 = 19.0;
-/// A dissolve between records, and the drift starting or coming to rest:
-/// long enough that the room is seen to have changed without being caught
-/// changing.
-const EASE: Duration = Duration::from_secs(2);
+/// A dissolve between records, and the drift starting or coming to rest.
+const EASE: Duration = Motion::DISSOLVE;
 /// The drift's whole cycle: both swings back where they started. The shader's
 /// clock is counted from a multiple of it, so it stays small and exact.
 const CYCLE: f32 = 598.0;
@@ -973,8 +970,11 @@ impl Wash {
             .child(
                 canvas(
                     move |_, window, cx| {
+                        // Not decorative: Reduce Motion stops the drift
+                        // through its amplitude, and the dissolve between
+                        // records still runs, as the Mac's does.
                         for (_, shader) in &quads {
-                            shader.attach(true, window, cx);
+                            shader.attach(false, window, cx);
                         }
                         quads
                     },

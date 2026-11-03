@@ -151,6 +151,15 @@ pub struct QueueView {
     /// The rest of the queue can be shuffled in place: there is a rest, and
     /// shuffle play is off (it keeps an order of its own beside the queue).
     shufflable: bool,
+    /// The queue items as of the last edit, which the next is told against.
+    known: HashSet<String>,
+    /// Items moved by a drag here, landing with the next edit.
+    moved: Vec<String>,
+    /// The rows that landed with the last edit, and how many edits have
+    /// landed rows: the rows lift for a moment where they went.
+    landed: HashSet<String>,
+    landing: u64,
+    _settle: Option<Task<()>>,
     _subscriptions: [Subscription; 6],
 }
 
@@ -174,6 +183,7 @@ impl QueueView {
             cx.observe(&queue, |this, queue, cx| {
                 if queue.read(cx).whole != this.whole {
                     this.lay_out(cx);
+                    this.land(cx);
                 }
                 this.follow(cx);
                 cx.notify();
@@ -223,6 +233,11 @@ impl QueueView {
                 let now = &cx.global::<Mirror>().playback.read(cx).0;
                 now.queue_shufflable && !now.shuffle
             },
+            known: HashSet::new(),
+            moved: Vec::new(),
+            landed: HashSet::new(),
+            landing: 0,
+            _settle: None,
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
@@ -231,7 +246,43 @@ impl QueueView {
             crate::mirror::regroup(&view.queue, grouped, cx);
         }
         view.lay_out(cx);
+        view.known = view.queue.read(cx).at.keys().cloned().collect();
         view
+    }
+
+    /// After an edit, the rows that landed: those added (from a drop, a
+    /// menu, another device) and those a drag here moved. A queue new
+    /// throughout, or one restored, is drawn still: nothing landed in it.
+    fn land(&mut self, cx: &mut Context<Self>) {
+        let queue = self.queue.read(cx);
+        let now: HashSet<String> = queue.at.keys().cloned().collect();
+        let mut landed: HashSet<String> = now.difference(&self.known).cloned().collect();
+        if landed.len() == now.len() {
+            landed.clear();
+        }
+        landed.extend(
+            std::mem::take(&mut self.moved)
+                .into_iter()
+                .filter(|id| now.contains(id)),
+        );
+        self.known = now;
+        if landed.is_empty() {
+            return;
+        }
+        self.landed = landed;
+        self.landing += 1;
+        // Let go once the lift has run, so a row scrolled in later is still.
+        self._settle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::theme::Motion::SETTLE)
+                .await;
+            this.update(cx, |this, _| this.landed.clear()).ok();
+        }));
+    }
+
+    /// The landing a row is part of, while its lift runs.
+    fn landed(&self, id: &str) -> Option<u64> {
+        self.landed.contains(id).then_some(self.landing)
     }
 
     /// Where row `row` was drawn last frame, in the window; `None` while it
@@ -525,6 +576,7 @@ impl QueueView {
         else {
             return;
         };
+        self.moved = moving.clone();
         command(cx, "move in queue", move |e| {
             e.move_in_queue(moving, target, after)
         });
@@ -661,8 +713,9 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                 };
+                let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
-                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
+                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading).landed(landed),
                     &run[0],
                     detail(run),
                     sleeve.unwrap_or_else(|| div().into_any_element()),
@@ -688,7 +741,7 @@ impl QueueView {
                     wide: !queue.disc_records.is_empty(),
                 };
                 let frame = track(
-                    TableRow::new(ElementId::Name(id.clone()), kind),
+                    TableRow::new(ElementId::Name(id.clone()), kind).landed(self.landed(&id)),
                     item,
                     grouped,
                     sleeve,

@@ -95,8 +95,27 @@ impl RenderOnce for CopyButton {
         let state = moment(&self.id, window, cx);
         let copied = state.read(cx).copied;
         let value = self.value;
+        // The face is monospaced: each word padded either side to the longer
+        // one's length keeps the button's width, and the word centred, as it
+        // says "copied" and back, so what is beside it does not move.
+        let said = label("copied");
+        let width = said.chars().count().max(self.label.chars().count());
+        let held = |text: &SharedString| -> SharedString {
+            let pad = width - text.chars().count();
+            let (before, after) = (pad / 2, pad - pad / 2);
+            format!(
+                "{}{text}{}",
+                "\u{a0}".repeat(before),
+                "\u{a0}".repeat(after)
+            )
+            .into()
+        };
         Button::new(self.id, self.kind)
-            .text(if copied { label("copied") } else { self.label })
+            .text(if copied {
+                held(&said)
+            } else {
+                held(&self.label)
+            })
             .icon(if copied { Icon::Check } else { self.icon })
             .disabled(self.disabled)
             .on_click(move |_, _, cx| copy(&state, &value, cx))

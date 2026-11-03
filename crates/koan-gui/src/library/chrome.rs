@@ -10,7 +10,7 @@ use koan_kit::app::*;
 use super::browse::{self, Browse};
 use super::drag::Playable;
 use super::selection::Selection;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::Paint;
 use super::{Lib, actions};
 use crate::components::{
     Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, MenuSeparator, SelectionBar,

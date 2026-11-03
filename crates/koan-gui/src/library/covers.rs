@@ -1511,7 +1511,10 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
     for pixel in rgba.pixels_mut() {
         pixel.0.swap(0, 2);
     }
-    Some((RenderImage::new(smallvec![::image::Frame::new(rgba)]), colour))
+    Some((
+        RenderImage::new(smallvec![::image::Frame::new(rgba)]),
+        colour,
+    ))
 }
 
 #[cfg(test)]

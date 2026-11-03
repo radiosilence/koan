@@ -1,6 +1,6 @@
 //! A window's root: the wash beneath and the content over it, as two cached
-//! views (see ARCHITECTURE.md), so a frame of the drift or of the accent
-//! settling never lays the page out again.
+//! views (see ARCHITECTURE.md), so a frame of the drift never lays the page
+//! out again.
 //!
 //! The root also follows the playing record: its sleeve, fetched and decoded
 //! off the main thread, sets the accent and the wash, and the wash drifts

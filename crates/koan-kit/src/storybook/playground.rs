@@ -16,7 +16,7 @@ use crate::components::{
     ShaderProgram, Slider, Stepper,
 };
 use crate::theme::KoanStyled;
-use crate::theme::{Look, Space, Tone, TypeRole, HAIRLINE};
+use crate::theme::{HAIRLINE, Look, Space, Tone, TypeRole};
 
 const PROPERTIES: [&str; 4] = ["position", "opacity", "scale", "colour"];
 const EASES: [&str; 5] = ["linear", "in-out", "quick-out", "bézier", "spring"];

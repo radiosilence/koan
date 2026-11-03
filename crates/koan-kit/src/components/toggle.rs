@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
@@ -55,6 +55,9 @@ impl RenderOnce for Toggle {
         let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
+        // Turned on elsewhere (Settings read again, a shortcut), it answers
+        // as a click does.
+        follow_on(&answers, self.checked, accent, window, cx);
         let edge = fade(
             child(&self.id, "edge"),
             self.checked,
@@ -182,6 +185,7 @@ impl RenderOnce for IconToggle {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
+        follow_on(&answers, self.checked, look.accent.hsla(), window, cx);
         let color = fade(
             child(&self.id, "on"),
             self.checked,
@@ -270,4 +274,14 @@ pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
         .bottom(px(-5.0) - look.hairline)
         .h(look.hairline)
         .bg(color)
+}
+
+/// A toggle's ring for turning on however it was turned: the click answers
+/// at once, and a change made elsewhere answers as the toggle next draws.
+fn follow_on(answers: &Answerer, on: bool, accent: Hsla, window: &mut Window, cx: &mut App) {
+    if on {
+        answers.follow(1, Answer::Ring, accent, window, cx);
+    } else {
+        answers.note(0, cx);
+    }
 }
