@@ -208,6 +208,9 @@ pub fn choice_row(
     }
 }
 
+/// What a choice row runs when it is picked.
+type OnChoose = Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct ChoiceRow {
     id: koan_kit::app::ElementId,
@@ -215,7 +218,7 @@ pub struct ChoiceRow {
     detail: Option<SharedString>,
     trailing: Option<AnyElement>,
     look: Look,
-    on_click: Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>,
+    on_click: OnChoose,
 }
 
 impl RenderOnce for ChoiceRow {

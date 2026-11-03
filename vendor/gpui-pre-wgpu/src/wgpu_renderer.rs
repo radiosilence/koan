@@ -2206,13 +2206,12 @@ impl WgpuRendererCore {
     }
 
     // KOAN: (#1859, #1878) each layer group's scene drawn into a texture of
-    // its own, over clear: the size of the shader composing it, its content
-    // moved to the texture's origin, or the window's size for one holding
-    // paths. A group is drawn again when the frame is new, and at every
-    // present while a shader in it or a colour slot it draws with moves, so
-    // those move with it. Groups nested in others are drawn first, as their
-    // composing shader is in the enclosing group's scene. A texture keeps its
-    // bind group while its size holds.
+    // its own, over clear: the visible part of the shader composing it, its
+    // content moved to the texture's origin, or the window's size for one
+    // holding paths or too large. A group is drawn again when the frame is
+    // new or when `Scene::layer_group_stale` says so. Groups nested in others
+    // are drawn first, as their composing shader is in the enclosing group's
+    // scene. A texture keeps its bind group while its size holds.
     fn draw_layer_groups(
         &mut self,
         scene: &Scene,
@@ -2225,6 +2224,15 @@ impl WgpuRendererCore {
         }
         let now = gpui::present_now();
         let new_frame = self.resources().layer_groups.generation != scene.generation;
+        let slot_generation = gpui::color_slots_generation();
+        let slots_written = self.resources().layer_groups.slot_generation != slot_generation;
+        let count = scene.layer_groups.len();
+        let mut moving = std::mem::take(&mut self.resources_mut().layer_groups.moving);
+        if new_frame {
+            moving.clear();
+        }
+        moving.resize(count, false);
+        let mut redrawn = vec![false; count];
         let extents: Vec<Size<DevicePixels>> = scene
             .layer_group_frames
             .iter()
@@ -2251,9 +2259,17 @@ impl WgpuRendererCore {
             let fits = held[index]
                 .as_ref()
                 .is_some_and(|(t, _)| t.width() == width && t.height() == height);
-            if fits && !new_frame && !scene.layer_group_moves(index, now) {
+            let stale = scene.layer_group_stale(
+                index,
+                now,
+                slots_written,
+                &mut moving[index],
+                &redrawn,
+            );
+            if fits && !new_frame && !stale {
                 continue;
             }
+            redrawn[index] = true;
             let (texture, bind_group) = match held[index].take().filter(|_| fits) {
                 Some(kept) => kept,
                 None => {
@@ -2296,6 +2312,8 @@ impl WgpuRendererCore {
         self.resources_mut().prune_bind_groups = true;
         let groups = &mut self.resources_mut().layer_groups;
         groups.layers = held;
+        groups.moving = moving;
+        groups.slot_generation = slot_generation;
         groups.generation = scene.generation;
         groups.size = (size.width.0 as u32, size.height.0 as u32);
         result
@@ -3893,7 +3911,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             uniforms: uniforms.clone(),
             image: None,
             group: None,
-            group_local: false,
+            group_inset: Default::default(),
         });
         scene.finish();
         let size = Size {
@@ -3990,6 +4008,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             program: &PROGRAM,
             uniforms: uniforms.clone(),
             image: None,
+            group: None,
+            group_inset: Default::default(),
         });
         scene.finish();
         let mut renderer = WgpuHeadlessRenderer::new()?;
@@ -4059,7 +4079,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             uniforms: uniforms.clone(),
             image: None,
             group: None,
-            group_local: false,
+            group_inset: Default::default(),
         }
     }
 
@@ -4091,6 +4111,65 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
             assert!(close(&whole, &moved), "covered: {covered}, moved");
         }
+        Ok(())
+    }
+
+    // KOAN: (#1878) a layer group at the identity pose, partly outside the
+    // window, composed through its texture gives the pixels its content does
+    // drawn without a group: the offset, the clipped frame, the tile and the
+    // texture's viewport agree.
+    #[cfg(target_os = "linux")]
+    static IDENTITY: gpui::ShaderProgram = gpui::ShaderProgram {
+        name: "koan-test-identity",
+        msl: "",
+        wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let c = koan_sample(tile, position / size);
+    var rgb = vec3<f32>(0.0);
+    if (c.a > 0.0) {
+        rgb = c.rgb / c.a;
+    }
+    return vec4<f32>(rgb, c.a);
+}
+"#,
+        prepare: None,
+    };
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_a_group_at_rest_matches_its_content() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 0.5);
+        let scene = |grouped: bool| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 64.0, 32.0, gpui::blue()));
+            if grouped {
+                scene.push_group();
+            }
+            scene.insert_primitive(solid_quad(10.0, 10.0, 20.0, 10.0, gpui::green()));
+            scene.insert_primitive(shader_at(30.0, 8.0, 24.0, 16.0, &uniforms));
+            if grouped {
+                let mut compose = shader_at(4.0, 4.0, 80.0, 40.0, &uniforms);
+                compose.program = &IDENTITY;
+                compose.uniforms = Arc::new(gpui::ShaderUniforms::new());
+                compose.content_mask = solid_quad(0.0, 0.0, 64.0, 32.0, gpui::red()).content_mask;
+                scene.pop_group(compose);
+            }
+            scene.finish();
+            scene
+        };
+        let grouped = scene(true);
+        assert!(grouped.layer_group_frames[0].is_some());
+        let plain = renderer.compose_scene_to_image(&scene(false), device_size(64, 32))?;
+        let composed = renderer.compose_scene_to_image(&grouped, device_size(64, 32))?;
+        assert!(
+            plain
+                .as_raw()
+                .iter()
+                .zip(composed.as_raw())
+                .all(|(x, y)| x.abs_diff(*y) <= 2)
+        );
         Ok(())
     }
 

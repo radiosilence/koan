@@ -632,10 +632,22 @@ index 2328e95..f00ef65 100644
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..49b0721 100644
+index 6cb3387..d63fece 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,42 @@ pub struct Scene {
+@@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+ #[expect(missing_docs)]
+ pub type DrawOrder = u32;
+ 
++// KOAN: the largest layer group texture made to the group's size, in device
++// pixels: wgpu's default limit, under Metal's. A larger group takes the
++// window's size (#1878).
++const MAX_GROUP_EXTENT: f32 = 8192.0;
++
+ /// A boolean stored as a `u32` so that GPU-facing structs contain no
+ /// compiler-inserted padding bytes, which would be undefined behavior to
+ /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
+@@ -50,6 +55,42 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -678,7 +690,7 @@ index 6cb3387..49b0721 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +102,123 @@ impl Scene {
+@@ -66,6 +107,146 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
@@ -728,12 +740,35 @@ index 6cb3387..49b0721 100644
 +            || self.layer_groups.iter().any(Scene::has_live_shaders)
 +    }
 +
-+    // KOAN: whether group `group` is drawn again at this present: a shader
-+    // in it moves, or a colour slot it draws with does (#1878).
-+    pub fn layer_group_moves(&self, group: usize, at: std::time::Instant) -> bool {
-+        self.layer_groups
-+            .get(group)
-+            .is_some_and(|group| !group.shaders.is_empty() || group.color_slots_moving(at))
++    // KOAN: whether group `group`, held from an earlier present, is drawn
++    // again at this one, as `compose_frame` decides for its layers (#1878):
++    // while a shader in it is live or a colour slot it draws with moves, once
++    // more after they stop so the last value lands, when the slot table was
++    // written since (a held write, as under Reduce Motion), and when a group
++    // nested in it was drawn again. `was_moving` is the group's from the last
++    // present, updated here; `redrawn` holds the groups drawn this present.
++    pub fn layer_group_stale(
++        &self,
++        group: usize,
++        at: std::time::Instant,
++        slots_written: bool,
++        was_moving: &mut bool,
++        redrawn: &[bool],
++    ) -> bool {
++        let Some(group) = self.layer_groups.get(group) else {
++            return false;
++        };
++        let moving = group.shaders.iter().any(|shader| shader.uniforms.is_live())
++            || group.color_slots_moving(at);
++        let landing = std::mem::replace(was_moving, moving);
++        moving
++            || landing
++            || (slots_written && !group.color_slots.is_empty())
++            || group.shaders.iter().any(|shader| {
++                shader
++                    .group
++                    .is_some_and(|nested| redrawn.get(nested).copied().unwrap_or(false))
++            })
 +    }
 +
 +    // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
@@ -802,7 +837,7 @@ index 6cb3387..49b0721 100644
      }
  
      pub fn len(&self) -> usize {
-@@ -86,6 +239,16 @@ impl Scene {
+@@ -86,6 +267,16 @@ impl Scene {
  
      pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
          let mut primitive = primitive.into();
@@ -819,7 +854,7 @@ index 6cb3387..49b0721 100644
          let clipped_bounds = primitive
              .bounds()
              .intersect(&primitive.content_mask().bounds);
-@@ -133,17 +296,58 @@ impl Scene {
+@@ -133,17 +324,71 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -853,11 +888,24 @@ index 6cb3387..49b0721 100644
 +        shader.group = Some(group);
 +        self.paint_operations
 +            .push(PaintOperation::EndGroup(shader.clone()));
-+        // The texture is the group's own size, its content at its origin,
-+        // unless it holds paths (#1878).
-+        let local = self.layer_groups[group].paths.is_empty();
-+        shader.group_local = local;
-+        self.layer_group_frames[group] = local.then_some(shader.bounds);
++        // The texture is the visible part of the group's bounds, its content
++        // at its origin, unless it holds paths or would pass the largest
++        // texture a device is sure to make (#1878). Content outside the mask
++        // is clipped by its own masks already.
++        let frame = shader.bounds.intersect(&shader.content_mask.bounds);
++        let local = self.layer_groups[group].paths.is_empty()
++            && frame.size.width.0 <= MAX_GROUP_EXTENT
++            && frame.size.height.0 <= MAX_GROUP_EXTENT;
++        let origin = if local {
++            frame.origin
++        } else {
++            Point::default()
++        };
++        shader.group_inset = point(
++            ScaledPixels(shader.bounds.origin.x.0 - origin.x.0),
++            ScaledPixels(shader.bounds.origin.y.0 - origin.y.0),
++        );
++        self.layer_group_frames[group] = local.then_some(frame);
 +        // Into the enclosing group's scene, or this one. Its operation is
 +        // already recorded, as the EndGroup's: not twice.
 +        let ops = self.paint_operations.len();
@@ -878,7 +926,7 @@ index 6cb3387..49b0721 100644
              }
          }
      }
-@@ -160,6 +364,197 @@ impl Scene {
+@@ -160,6 +405,197 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -1076,7 +1124,7 @@ index 6cb3387..49b0721 100644
      }
  
      #[cfg_attr(
-@@ -187,6 +582,8 @@ impl Scene {
+@@ -187,6 +623,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -1085,7 +1133,7 @@ index 6cb3387..49b0721 100644
          }
      }
  }
-@@ -209,12 +606,17 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +647,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -1103,7 +1151,7 @@ index 6cb3387..49b0721 100644
  }
  
  #[derive(Clone)]
-@@ -228,6 +630,7 @@ pub enum Primitive {
+@@ -228,6 +671,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -1111,7 +1159,7 @@ index 6cb3387..49b0721 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +645,7 @@ impl Primitive {
+@@ -242,6 +686,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -1119,7 +1167,7 @@ index 6cb3387..49b0721 100644
          }
      }
  
-@@ -255,6 +659,7 @@ impl Primitive {
+@@ -255,6 +700,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -1127,7 +1175,7 @@ index 6cb3387..49b0721 100644
          }
      }
  }
-@@ -283,6 +688,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +729,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -1137,7 +1185,7 @@ index 6cb3387..49b0721 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +724,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +765,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -1149,7 +1197,7 @@ index 6cb3387..49b0721 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +874,40 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +915,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
@@ -1190,7 +1238,7 @@ index 6cb3387..49b0721 100644
          }
      }
  }
-@@ -493,6 +940,14 @@ pub enum PrimitiveBatch {
+@@ -493,6 +981,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -1205,7 +1253,7 @@ index 6cb3387..49b0721 100644
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +980,10 @@ impl PrimitiveBatch {
+@@ -525,6 +1021,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -1216,17 +1264,17 @@ index 6cb3387..49b0721 100644
          }
      }
  }
-@@ -947,3 +1406,4 @@ impl PathVertex<Pixels> {
+@@ -947,3 +1447,4 @@ impl PathVertex<Pixels> {
          }
      }
  }
 +
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..6e47a0a
+index 0000000..e94c2ce
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,751 @@
+@@ -0,0 +1,755 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -1241,7 +1289,7 @@ index 0000000..6e47a0a
 +use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 +use std::time::Instant;
 +
-+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Primitive, ScaledPixels};
++use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Point, Primitive, ScaledPixels};
 +
 +/// How many plain floats a shader's uniform block holds, written by the app
 +/// when they change: colours, sizes, flags.
@@ -1886,10 +1934,12 @@ index 0000000..6e47a0a
 +    // painted inside `Window::paint_layer_group`, drawn into a texture of
 +    // its own (#1859).
 +    pub group: Option<usize>,
-+    // KOAN: whether the group's texture is the size of the shader's bounds,
-+    // its content moved to the texture's origin; otherwise it is the
-+    // window's size, its content where it was painted (#1878).
-+    pub group_local: bool,
++    // KOAN: where the shader's origin sits in its group's texture: the
++    // texture is the visible part of the shader's bounds, its content moved
++    // to the texture's origin, or the window's size, its content where it was
++    // painted. Taken when the group closes, so an enclosing group moving the
++    // shader leaves it as it is (#1878).
++    pub group_inset: Point<ScaledPixels>,
 +}
 +
 +impl From<PaintShader> for Primitive {
@@ -1942,8 +1992,8 @@ index 0000000..6e47a0a
 +            clip: rect(&shader.content_mask.bounds),
 +            uniforms,
 +            time: [time, 0.0, 0.0, 0.0],
-+            // A group's texture is the quad's own size, or the window's
-+            // with its content where it was painted (#1878).
++            // A group's texture holds the quad's bounds from its inset
++            // (#1878).
 +            tile: match (&shader.image, shader.group) {
 +                (Some(tile), _) => {
 +                    let b = tile.bounds;
@@ -1954,10 +2004,12 @@ index 0000000..6e47a0a
 +                        b.size.height.0 as f32,
 +                    ]
 +                }
-+                (None, Some(_)) if shader.group_local => {
-+                    [0.0, 0.0, shader.bounds.size.width.0, shader.bounds.size.height.0]
-+                }
-+                (None, Some(_)) => rect(&shader.bounds),
++                (None, Some(_)) => [
++                    shader.group_inset.x.0,
++                    shader.group_inset.y.0,
++                    shader.bounds.size.width.0,
++                    shader.bounds.size.height.0,
++                ],
 +                (None, None) => [0.0; 4],
 +            },
 +        }
@@ -2016,7 +2068,7 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..84bf8e0 100644
+index c559412..70ab100 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1281,6 +1281,10 @@ pub struct Window {
@@ -2162,7 +2214,7 @@ index c559412..84bf8e0 100644
 +            uniforms,
 +            image: None,
 +            group: None,
-+            group_local: false,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +    }
@@ -2193,7 +2245,7 @@ index c559412..84bf8e0 100644
 +            uniforms,
 +            image: None,
 +            group: None,
-+            group_local: false,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.pop_group(shader);
 +    }
@@ -2232,7 +2284,7 @@ index c559412..84bf8e0 100644
 +            uniforms,
 +            image: Some(tile),
 +            group: None,
-+            group_local: false,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +        Ok(())

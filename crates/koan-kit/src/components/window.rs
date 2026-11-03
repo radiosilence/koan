@@ -187,11 +187,12 @@ pub fn draws_decorations(window: &Window) -> bool {
 /// moves the window; double-clicked, it zooms it as the system's title bar
 /// would. `area`'s id keys whether a press is under way.
 pub fn moves_window(mut area: Stateful<Div>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    // A `Stateful` element always has its id.
     let id = area
         .interactivity()
         .element_id
         .clone()
-        .unwrap_or_else(|| ElementId::Name("window-move".into()));
+        .expect("a stateful element has an id");
     let pressed = window.use_keyed_state(super::child(&id, "pressed"), cx, |_, _| false);
     let set = |to: bool| {
         let pressed = pressed.clone();

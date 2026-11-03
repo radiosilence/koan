@@ -53,7 +53,11 @@ pub fn open(device: Option<String>, cx: &mut App) {
         cx.new(|cx| WindowRoot::new(page, window, cx))
     });
     match (opened, made) {
-        (Ok(handle), Some(page)) => cx.global_mut::<EqWindow>().window = Some((handle, page)),
+        (Ok(handle), Some(page)) => {
+            cx.global_mut::<EqWindow>().window = Some((handle, page));
+            // Opened from the menu bar with no window: in the Dock again.
+            crate::platform::residency::settle_dock(cx);
+        }
         (Err(e), _) => log::error!("the EQ window did not open: {e}"),
         _ => {}
     }

@@ -77,6 +77,17 @@ impl Selection {
         self.toggle(item);
     }
 
+    /// A plain arrow onto `item` on a page whose tiles play on a click:
+    /// while picking, it alone is picked and picking goes on, as a list's
+    /// arrow does; otherwise it is marked (`mark`).
+    pub fn arrow(&mut self, item: Playable) {
+        if self.active {
+            self.only(item);
+        } else {
+            self.mark(item);
+        }
+    }
+
     /// Whether there is anything for Esc to clear.
     pub fn is_clear(&self) -> bool {
         !self.active && self.picked.is_empty()

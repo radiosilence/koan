@@ -184,6 +184,9 @@ pub struct Asking {
     /// Given back on the next draw after the sheet closed, where closing
     /// had no window to give it back in.
     restore: Option<(FocusHandle, Option<FocusHandle>)>,
+    /// The sheet is busy with something it must see through (organise
+    /// moving files): Escape leaves it be.
+    held: bool,
 }
 
 /// Shows `view` as the window's sheet, over the shell and under the
@@ -205,14 +208,23 @@ pub fn present(view: impl Into<AnyView>, window: &mut Window, cx: &mut App) {
         a.sheet = Some(view);
         a.sheet_focus = Some((focus, before));
         a.restore = None;
+        a.held = false;
         cx.notify();
     });
+}
+
+/// While `held`, the sheet presented is busy with something it must see
+/// through, such as files on the move: Escape leaves it showing, as its
+/// disabled cancel does. Closing it lets go.
+pub fn hold(held: bool, cx: &mut App) {
+    asking(cx).update(cx, |a, _| a.held = held);
 }
 
 /// Takes the sheet away. The keyboard goes back to what had it before, on
 /// the window's next draw.
 pub fn close(cx: &mut App) {
     asking(cx).update(cx, |a, cx| {
+        a.held = false;
         if a.sheet.take().is_some() {
             a.restore = a.sheet_focus.take();
             cx.notify();
@@ -265,6 +277,16 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             // The window's bare keys are bound outside `Ask`.
             .key_context("Ask")
             .when_some(focus, |d, focus| d.track_focus(&focus))
+            // Escape puts it away as its cancel does, once nothing inside it
+            // (a field, a menu) has taken the key for its own.
+            .on_key_down(|e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    if !asking(cx).read(cx).held {
+                        close(cx);
+                    }
+                }
+            })
             .absolute()
             .inset_0()
             .flex()
@@ -525,5 +547,95 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
         assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
+
+    struct Presenter {
+        focus: FocusHandle,
+    }
+
+    impl Render for Presenter {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .children(presented(window, cx))
+        }
+    }
+
+    struct Panel;
+
+    impl Render for Panel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    /// A sheet presented over the window goes with Escape, as its cancel
+    /// does, and gives the keyboard back to what presented it.
+    #[gpui_kit::test]
+    fn a_presented_sheet_goes_with_escape(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let focus = presenter.read_with(cx, |p, _| p.focus.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus, cx);
+            let panel = cx.new(|_| Panel);
+            present(panel, window, cx);
+        });
+        let host = cx.update(|_, cx| asking(cx));
+        cx.update(|_, cx| presenter.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| host.read(cx).sheet.is_some()));
+        cx.simulate_keystrokes("escape");
+        cx.update(|_, cx| presenter.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| host.read(cx).sheet.is_none()));
+        assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
+
+    /// A sheet busy with something it must see through stays through
+    /// Escape, and goes with it again once it lets go.
+    #[gpui_kit::test]
+    fn a_held_sheet_stays_through_escape(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (presenter, cx) = cx.add_window_view(|_, cx| Presenter {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let focus = presenter.read_with(cx, |p, _| p.focus.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus, cx);
+            let panel = cx.new(|_| Panel);
+            present(panel, window, cx);
+            hold(true, cx);
+        });
+        let host = cx.update(|_, cx| asking(cx));
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| presenter.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        };
+        redraw(cx);
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert!(
+            cx.update(|_, cx| host.read(cx).sheet.is_some()),
+            "held, it stays"
+        );
+        cx.update(|_, cx| hold(false, cx));
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert!(
+            cx.update(|_, cx| host.read(cx).sheet.is_none()),
+            "let go, it goes"
+        );
     }
 }

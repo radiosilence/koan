@@ -312,7 +312,7 @@ impl RenderOnce for NavHeading {
 pub struct NavNote {
     text: SharedString,
     tone: crate::theme::Tone,
-    said: Option<(ElementId, u64)>,
+    said: Option<(ElementId, u64, bool)>,
 }
 
 impl NavNote {
@@ -327,9 +327,11 @@ impl NavNote {
     /// A line the app says things in, under `id` whatever it says: each new
     /// thing said (`count` moving), a link copied, answers with a line
     /// drawn under it as it appears, so a notice replacing one like it is
-    /// seen to.
-    pub fn said(mut self, id: impl Into<ElementId>, count: u64) -> Self {
-        self.said = Some((id.into(), count));
+    /// seen to. `fresh` while it has only just been said: drawn fresh then
+    /// (the line appearing), it answers; drawn again later (its sidebar
+    /// shown again), it does not answer an old notice.
+    pub fn said(mut self, id: impl Into<ElementId>, count: u64, fresh: bool) -> Self {
+        self.said = Some((id.into(), count, fresh));
         self
     }
 }
@@ -337,9 +339,14 @@ impl NavNote {
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let answer = self.said.map(|(id, count)| {
+        let answer = self.said.map(|(id, count, fresh)| {
             let answers = super::Answerer::of(&id, window, cx);
-            answers.announce(count, super::Answer::Sweep, look.accent.hsla(), window, cx);
+            let accent = look.accent.hsla();
+            if fresh {
+                answers.announce(count, super::Answer::Sweep, accent, window, cx);
+            } else {
+                answers.follow(count, super::Answer::Sweep, accent, window, cx);
+            }
             answers.layer(window, cx)
         });
         let id = SharedString::from(format!("note-{}", self.text));

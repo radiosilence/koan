@@ -10,6 +10,10 @@ use koan_kit::app::*;
 use crate::settings::Ctx;
 use crate::settings::form::{Row, page, section};
 
+/// The sliders' ends, in characters: the longest word among them ("twice as
+/// fast"), so the pane's rails start and stop level with each other.
+const ENDS: usize = 13;
+
 pub struct AppearancePane {
     ctx: Ctx,
     /// A slider's value while it is dragged, applied when let go: a new
@@ -55,12 +59,18 @@ impl AppearancePane {
             return;
         }
         let theme = cx.global::<KoanTheme>();
-        let pace = self.wash_drift.take().unwrap_or(theme.wash_drift);
-        let turn = self.wash_turn.take().unwrap_or(theme.wash_turn);
+        let (drift, turned) = (self.wash_drift.take(), self.wash_turn.take());
+        let pace = drift.unwrap_or(theme.wash_drift);
+        let turn = turned.unwrap_or(theme.wash_turn);
         KoanTheme::set_wash_drift(pace, turn, cx);
+        // Only the setting that moved is written.
         let engine = self.ctx.model.read(cx).engine();
-        engine.set_wash_drift(pace as u16);
-        engine.set_wash_turn(turn as u8);
+        if drift.is_some() {
+            engine.set_wash_drift(pace as u16);
+        }
+        if turned.is_some() {
+            engine.set_wash_turn(turn as u8);
+        }
         cx.notify();
     }
 
@@ -76,6 +86,81 @@ impl AppearancePane {
             .set_wash_tint(percent as u8);
         cx.notify();
     }
+}
+
+/// The wash's sliders, each held while dragged and committed when let go.
+#[derive(Clone, Copy)]
+enum Held {
+    Tint,
+    Drift,
+    Turn,
+}
+
+impl Held {
+    /// Its id, the name a screen reader gives it, its ends, its range and
+    /// the step it lands on.
+    fn spec(self) -> (&'static str, &'static str, (&'static str, &'static str), u32, u32) {
+        match self {
+            Held::Tint => ("wash-tint", "tint", ("full colour", "held"), 100, 5),
+            Held::Drift => ("wash-drift", "drift", ("still", "twice as fast"), 200, 10),
+            Held::Turn => ("wash-turn", "turn", ("none", "10°"), 10, 1),
+        }
+    }
+
+    fn label(self, value: u32) -> String {
+        match self {
+            Held::Tint => format!("Theme tint {value}%"),
+            Held::Drift => format!("Drift {value}%"),
+            Held::Turn => format!("Turn {value}°"),
+        }
+    }
+}
+
+impl AppearancePane {
+    fn held(&mut self, which: Held) -> &mut Option<u32> {
+        match which {
+            Held::Tint => &mut self.wash_tint,
+            Held::Drift => &mut self.wash_drift,
+            Held::Turn => &mut self.wash_turn,
+        }
+    }
+
+    fn commit(&mut self, which: Held, cx: &mut Context<Self>) {
+        match which {
+            Held::Tint => self.commit_wash_tint(cx),
+            Held::Drift | Held::Turn => self.commit_drift(cx),
+        }
+    }
+}
+
+/// One of the wash's rows: its label with the value, and its slider.
+fn held_row(which: Held, value: u32, entity: &Entity<AppearancePane>) -> AnyElement {
+    let (id, name, (low, high), max, step) = which.spec();
+    let (moving, landing) = (entity.clone(), entity.clone());
+    Row::new(which.label(value))
+        .control(
+            div().w_full().child(
+                Slider::new(id, value as f32 / max as f32)
+                    .named(name)
+                    .ends(low, high)
+                    .ends_width(ENDS)
+                    .step(step as f32 / max as f32)
+                    .on_change(move |f, _, cx| {
+                        let to = snapped(*f, 0, max, step);
+                        moving.update(cx, |pane, cx| {
+                            let held = pane.held(which);
+                            if *held != Some(to) {
+                                *held = Some(to);
+                                cx.notify();
+                            }
+                        })
+                    })
+                    .on_commit(move |_, _, cx| {
+                        landing.update(cx, |pane, cx| pane.commit(which, cx))
+                    }),
+            ),
+        )
+        .into_any_element()
 }
 
 /// Where a percentage sits on its slider, 0 to 1.
@@ -105,6 +190,7 @@ impl Render for AppearancePane {
 
         let size_slider = Slider::new("text-size", fraction(text_size, low, high))
             .ends(format!("{low}%"), format!("{high}%"))
+            .ends_width(ENDS)
             .step(TEXT_SIZE_STEP as f32 / (high - low) as f32)
             .on_change({
                 let entity = entity.clone();
@@ -164,96 +250,14 @@ impl Render for AppearancePane {
                     })
                     .into_any_element(),
             );
-            colour_rows.push(
-                Row::new(format!("Theme tint {wash_tint}%"))
-                    .control(
-                        div().w_full().child(
-                            Slider::new("wash-tint", wash_tint as f32 / 100.)
-                                .ends("full colour", "held")
-                                .step(0.05)
-                                .on_change({
-                                    let entity = entity.clone();
-                                    move |f, _, cx| {
-                                        let percent = snapped(*f, 0, 100, 5);
-                                        entity.update(cx, |pane, cx| {
-                                            if pane.wash_tint != Some(percent) {
-                                                pane.wash_tint = Some(percent);
-                                                cx.notify();
-                                            }
-                                        })
-                                    }
-                                })
-                                .on_commit({
-                                    let entity = entity.clone();
-                                    move |_, _, cx| {
-                                        entity.update(cx, |pane, cx| pane.commit_wash_tint(cx))
-                                    }
-                                }),
-                        ),
-                    )
-                    .into_any_element(),
-            );
-            // How the wash moves while music plays.
-            colour_rows.push(
-                Row::new(format!("Drift {wash_drift}%"))
-                    .control(
-                        div().w_full().child(
-                            Slider::new("wash-drift", wash_drift as f32 / 200.)
-                                .named("drift")
-                                .ends("still", "twice as fast")
-                                .step(0.05)
-                                .on_change({
-                                    let entity = entity.clone();
-                                    move |f, _, cx| {
-                                        let percent = snapped(*f, 0, 200, 10);
-                                        entity.update(cx, |pane, cx| {
-                                            if pane.wash_drift != Some(percent) {
-                                                pane.wash_drift = Some(percent);
-                                                cx.notify();
-                                            }
-                                        })
-                                    }
-                                })
-                                .on_commit({
-                                    let entity = entity.clone();
-                                    move |_, _, cx| {
-                                        entity.update(cx, |pane, cx| pane.commit_drift(cx))
-                                    }
-                                }),
-                        ),
-                    )
-                    .into_any_element(),
-            );
-            colour_rows.push(
-                Row::new(format!("Turn {wash_turn}°"))
-                    .control(
-                        div().w_full().child(
-                            Slider::new("wash-turn", wash_turn as f32 / 10.)
-                                .named("turn")
-                                .ends("none", "10°")
-                                .step(0.1)
-                                .on_change({
-                                    let entity = entity.clone();
-                                    move |f, _, cx| {
-                                        let degrees = snapped(*f, 0, 10, 1);
-                                        entity.update(cx, |pane, cx| {
-                                            if pane.wash_turn != Some(degrees) {
-                                                pane.wash_turn = Some(degrees);
-                                                cx.notify();
-                                            }
-                                        })
-                                    }
-                                })
-                                .on_commit({
-                                    let entity = entity.clone();
-                                    move |_, _, cx| {
-                                        entity.update(cx, |pane, cx| pane.commit_drift(cx))
-                                    }
-                                }),
-                        ),
-                    )
-                    .into_any_element(),
-            );
+            // The tint, then how the wash moves while music plays.
+            for (which, value) in [
+                (Held::Tint, wash_tint),
+                (Held::Drift, wash_drift),
+                (Held::Turn, wash_turn),
+            ] {
+                colour_rows.push(held_row(which, value, &entity));
+            }
         }
         let tint_note = if record_colours {
             " Theme tint is how far the wash is darkened in dark mode, or lightened in light, so text over it keeps its contrast: at 0 the sleeve keeps its own colours."

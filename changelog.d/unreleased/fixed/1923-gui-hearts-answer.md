@@ -1,0 +1,1 @@
+- **Hearts answer favourites changed elsewhere, wherever they are.** A record favourited from a menu, a shortcut or another device now answers on its tile even when the pointer is not over it, and a heart emptied elsewhere is seen to close on a row rather than vanishing; a notice no longer answers again when the sidebar is shown again while it stands.

@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Primitive, ScaledPixels};
+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Point, Primitive, ScaledPixels};
 
 /// How many plain floats a shader's uniform block holds, written by the app
 /// when they change: colours, sizes, flags.
@@ -657,10 +657,12 @@ pub struct PaintShader {
     // painted inside `Window::paint_layer_group`, drawn into a texture of
     // its own (#1859).
     pub group: Option<usize>,
-    // KOAN: whether the group's texture is the size of the shader's bounds,
-    // its content moved to the texture's origin; otherwise it is the
-    // window's size, its content where it was painted (#1878).
-    pub group_local: bool,
+    // KOAN: where the shader's origin sits in its group's texture: the
+    // texture is the visible part of the shader's bounds, its content moved
+    // to the texture's origin, or the window's size, its content where it was
+    // painted. Taken when the group closes, so an enclosing group moving the
+    // shader leaves it as it is (#1878).
+    pub group_inset: Point<ScaledPixels>,
 }
 
 impl From<PaintShader> for Primitive {
@@ -713,8 +715,8 @@ impl ShaderInstance {
             clip: rect(&shader.content_mask.bounds),
             uniforms,
             time: [time, 0.0, 0.0, 0.0],
-            // A group's texture is the quad's own size, or the window's
-            // with its content where it was painted (#1878).
+            // A group's texture holds the quad's bounds from its inset
+            // (#1878).
             tile: match (&shader.image, shader.group) {
                 (Some(tile), _) => {
                     let b = tile.bounds;
@@ -725,10 +727,12 @@ impl ShaderInstance {
                         b.size.height.0 as f32,
                     ]
                 }
-                (None, Some(_)) if shader.group_local => {
-                    [0.0, 0.0, shader.bounds.size.width.0, shader.bounds.size.height.0]
-                }
-                (None, Some(_)) => rect(&shader.bounds),
+                (None, Some(_)) => [
+                    shader.group_inset.x.0,
+                    shader.group_inset.y.0,
+                    shader.bounds.size.width.0,
+                    shader.bounds.size.height.0,
+                ],
                 (None, None) => [0.0; 4],
             },
         }

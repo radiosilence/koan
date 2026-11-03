@@ -20,6 +20,19 @@ gui-library dir albums="5000" tracks="10":
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
     KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
 
+# The kōan GUI app headlessly as it is used: playing, the pointer churning
+# over every page while it redraws, the wheel scrolling; fails on any panic.
+# Against the walk's generated library, copied fresh and muted for each run.
+gui-smoke out="target/gui-smoke" secs="30":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -d "$lib/config" ] || just gui-library "$lib" 300 10
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    # Silent, and blind to renderers and the network's devices.
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
+    KOAN_SMOKE_SECS={{secs}} KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example smoke
+
 # Walk every page of the kōan GUI app headlessly: a PNG of each, dark and
 # light, and its frame times while scrolled, failing over the 144 Hz budget.
 # Against a generated library, copied fresh for each run.

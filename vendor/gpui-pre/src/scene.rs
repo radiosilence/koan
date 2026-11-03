@@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
+// KOAN: the largest layer group texture made to the group's size, in device
+// pixels: wgpu's default limit, under Metal's. A larger group takes the
+// window's size (#1878).
+const MAX_GROUP_EXTENT: f32 = 8192.0;
+
 /// A boolean stored as a `u32` so that GPU-facing structs contain no
 /// compiler-inserted padding bytes, which would be undefined behavior to
 /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
@@ -148,12 +153,35 @@ impl Scene {
             || self.layer_groups.iter().any(Scene::has_live_shaders)
     }
 
-    // KOAN: whether group `group` is drawn again at this present: a shader
-    // in it moves, or a colour slot it draws with does (#1878).
-    pub fn layer_group_moves(&self, group: usize, at: std::time::Instant) -> bool {
-        self.layer_groups
-            .get(group)
-            .is_some_and(|group| !group.shaders.is_empty() || group.color_slots_moving(at))
+    // KOAN: whether group `group`, held from an earlier present, is drawn
+    // again at this one, as `compose_frame` decides for its layers (#1878):
+    // while a shader in it is live or a colour slot it draws with moves, once
+    // more after they stop so the last value lands, when the slot table was
+    // written since (a held write, as under Reduce Motion), and when a group
+    // nested in it was drawn again. `was_moving` is the group's from the last
+    // present, updated here; `redrawn` holds the groups drawn this present.
+    pub fn layer_group_stale(
+        &self,
+        group: usize,
+        at: std::time::Instant,
+        slots_written: bool,
+        was_moving: &mut bool,
+        redrawn: &[bool],
+    ) -> bool {
+        let Some(group) = self.layer_groups.get(group) else {
+            return false;
+        };
+        let moving = group.shaders.iter().any(|shader| shader.uniforms.is_live())
+            || group.color_slots_moving(at);
+        let landing = std::mem::replace(was_moving, moving);
+        moving
+            || landing
+            || (slots_written && !group.color_slots.is_empty())
+            || group.shaders.iter().any(|shader| {
+                shader
+                    .group
+                    .is_some_and(|nested| redrawn.get(nested).copied().unwrap_or(false))
+            })
     }
 
     // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
@@ -326,11 +354,24 @@ impl Scene {
         shader.group = Some(group);
         self.paint_operations
             .push(PaintOperation::EndGroup(shader.clone()));
-        // The texture is the group's own size, its content at its origin,
-        // unless it holds paths (#1878).
-        let local = self.layer_groups[group].paths.is_empty();
-        shader.group_local = local;
-        self.layer_group_frames[group] = local.then_some(shader.bounds);
+        // The texture is the visible part of the group's bounds, its content
+        // at its origin, unless it holds paths or would pass the largest
+        // texture a device is sure to make (#1878). Content outside the mask
+        // is clipped by its own masks already.
+        let frame = shader.bounds.intersect(&shader.content_mask.bounds);
+        let local = self.layer_groups[group].paths.is_empty()
+            && frame.size.width.0 <= MAX_GROUP_EXTENT
+            && frame.size.height.0 <= MAX_GROUP_EXTENT;
+        let origin = if local {
+            frame.origin
+        } else {
+            Point::default()
+        };
+        shader.group_inset = point(
+            ScaledPixels(shader.bounds.origin.x.0 - origin.x.0),
+            ScaledPixels(shader.bounds.origin.y.0 - origin.y.0),
+        );
+        self.layer_group_frames[group] = local.then_some(frame);
         // Into the enclosing group's scene, or this one. Its operation is
         // already recorded, as the EndGroup's: not twice.
         let ops = self.paint_operations.len();

@@ -186,7 +186,7 @@ impl ShelfPage {
             menu: None,
             starting: HashSet::new(),
             aimed: Vec::new(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             keyed: false,
             revealed: None,
@@ -225,13 +225,21 @@ impl ShelfPage {
         self.shelf = ShelfKind::Search {
             query: results.query.clone(),
         };
-        self.records = results
-            .summary
+        // The search box's deeper answer, while it is open, cut to what this
+        // page previews: it shows the same whichever asked last.
+        let mut summary = results.summary.clone();
+        if results.deep {
+            use koan_core::shelves::{PREVIEW_ALBUMS, PREVIEW_ARTISTS, PREVIEW_TRACKS};
+            summary.artists.truncate(PREVIEW_ARTISTS as usize);
+            summary.albums.truncate(PREVIEW_ALBUMS as usize);
+            summary.tracks.truncate(PREVIEW_TRACKS as usize);
+        }
+        self.records = summary
             .albums
             .iter()
             .map(|a| (a.id, Rc::new(TileRecord::of(a))))
             .collect();
-        self.summary = Some(Rc::new(results.summary.clone()));
+        self.summary = Some(Rc::new(summary));
         self.adopted = Some(results);
     }
 
@@ -788,7 +796,7 @@ impl super::keys::KeyedList for ShelfPage {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
         if from == to {
-            self.selection.mark(order[from]);
+            self.selection.arrow(order[from]);
         } else {
             self.selection.only(order[from]);
             self.selection.click(order[to], true, &order);
@@ -825,7 +833,8 @@ impl super::keys::KeyedList for ShelfPage {
         }
     }
 
-    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+    fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
             let item = self.order()[ix];
             let album = match (item, &self.summary) {
@@ -836,7 +845,19 @@ impl super::keys::KeyedList for ShelfPage {
                     .and_then(|t| t.album_id),
                 _ => None,
             };
-            actions::keyed_target(&self.selection, item, album)
+            actions::keyed_target(
+                &self.selection,
+                item,
+                album,
+                Some(std::rc::Rc::new(move |cx: &mut App| {
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
+                })),
+            )
         });
     }
 }

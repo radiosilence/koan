@@ -86,7 +86,7 @@ use gpui_kit::{
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track,
+    ShaderProgram, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
@@ -113,10 +113,10 @@ pub mod list_actions {
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
-pub use filter_field::FilterField;
+pub use filter_field::{FilterButton, FilterField};
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
-    form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
+    form_note, form_text,
 };
 pub use heart::Heart;
 pub use inspector::{Inspector, plain_text};
@@ -141,7 +141,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popo
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
-pub use prism::{Burst, Prism, PrismFill, Sheen};
+pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -546,7 +546,6 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
     }
 }
 
-/// Answers a screen reader's click as a pointer's would, with `handler`.
 /// A row's or a tile's parts as a screen reader says them: the non-empty
 /// ones, in order, between commas. What `TableRow::spoken` takes.
 pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
@@ -596,6 +595,7 @@ pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
     }
 }
 
+/// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
     handler: Handler<gpui_kit::ClickEvent>,

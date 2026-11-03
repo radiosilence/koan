@@ -139,6 +139,10 @@ pub struct MetalRenderer {
     // (#1859).
     group_textures: Vec<Option<metal::Texture>>,
     group_generation: u64,
+    // KOAN: whether each group moved when last drawn, and the colour slot
+    // table it was drawn against (#1878).
+    group_moving: Vec<bool>,
+    group_slot_generation: u64,
     compose_pipelines: Option<ComposePipelines>,
     /// What a shader with no image is given to sample.
     blank_texture: Option<metal::Texture>,
@@ -443,6 +447,8 @@ impl MetalRenderer {
             shader_layers: Default::default(),    // KOAN: #1641.
             group_textures: Vec::new(),           // KOAN: #1859.
             group_generation: 0,
+            group_moving: Vec::new(),
+            group_slot_generation: 0,
             compose_pipelines: None, // KOAN: #1641.
             blank_texture: None,     // KOAN: #1641.
             underlines_pipeline_state,
@@ -1237,12 +1243,12 @@ impl MetalRenderer {
     }
 
     // KOAN: (#1859, #1878) each layer group's scene drawn into a texture of
-    // its own: the size of the shader composing it, its content moved to
-    // the texture's origin, or the window's size for one holding paths. A
-    // group is drawn again when the frame is new, and at every present while
-    // a shader in it or a colour slot it draws with moves, so those move
-    // with it. Groups nested in others are drawn first, as their composing
-    // shader is in the enclosing group's scene.
+    // its own: the visible part of the shader composing it, its content
+    // moved to the texture's origin, or the window's size for one holding
+    // paths or too large. A group is drawn again when the frame is new or
+    // when `Scene::layer_group_stale` says so. Groups nested in others are
+    // drawn first, as their composing shader is in the enclosing group's
+    // scene.
     fn draw_layer_groups(
         &mut self,
         scene: &Scene,
@@ -1250,10 +1256,19 @@ impl MetalRenderer {
     ) -> Result<()> {
         if scene.layer_groups.is_empty() {
             self.group_textures.clear();
+            self.group_moving.clear();
             return Ok(());
         }
         let now = gpui::present_now();
         let new_frame = self.group_generation != scene.generation;
+        let slot_generation = gpui::color_slots_generation();
+        let slots_written = self.group_slot_generation != slot_generation;
+        let count = scene.layer_groups.len();
+        if new_frame {
+            self.group_moving.clear();
+        }
+        self.group_moving.resize(count, false);
+        let mut redrawn = vec![false; count];
         let sizes: Vec<Size<DevicePixels>> = scene
             .layer_group_frames
             .iter()
@@ -1279,9 +1294,17 @@ impl MetalRenderer {
             let fits = held[index]
                 .as_ref()
                 .is_some_and(|t| t.width() == width && t.height() == height);
-            if fits && !new_frame && !scene.layer_group_moves(index, now) {
+            let stale = scene.layer_group_stale(
+                index,
+                now,
+                slots_written,
+                &mut self.group_moving[index],
+                &redrawn,
+            );
+            if fits && !new_frame && !stale {
                 continue;
             }
+            redrawn[index] = true;
             let target = match held[index].take().filter(|_| fits) {
                 Some(target) => target,
                 None => {
@@ -1305,6 +1328,7 @@ impl MetalRenderer {
         }
         self.group_textures = held;
         self.group_generation = scene.generation;
+        self.group_slot_generation = slot_generation;
         Ok(())
     }
 
@@ -2629,7 +2653,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             uniforms: uniforms.clone(),
             image: None,
             group: None,
-            group_local: false,
+            group_inset: Default::default(),
         });
         scene.finish();
         let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
@@ -2695,7 +2719,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
                 uniforms: uniforms.clone(),
                 image: None,
                 group: None,
-                group_local: false,
+                group_inset: Default::default(),
             });
             let over = if cover {
                 rect(30.0, 10.0, 20.0, 4.0)
@@ -2743,6 +2767,96 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         }
     }
 
+    // KOAN: (#1878) a layer group at the identity pose, partly outside the
+    // window, composed through its texture gives the pixels its content does
+    // drawn without a group: the offset, the clipped frame, the tile and the
+    // texture's viewport agree.
+    #[test]
+    fn a_group_at_rest_matches_its_content() {
+        static HALF: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-half",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    return position.x < size.x * u[0] ? float4(1.0, 0.0, 0.0, 0.5) : float4(0.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        static IDENTITY: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-identity",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float4 c = koan_sample(image, tile, position / size);
+    float3 rgb = c.a > 0.0 ? c.rgb / c.a : float3(0.0);
+    return float4(rgb, c.a);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
+            origin: Point::new(ScaledPixels(x), ScaledPixels(y)),
+            size: size(ScaledPixels(w), ScaledPixels(h)),
+        };
+        let quad = |at: Bounds<ScaledPixels>, hue: f32| gpui::Quad {
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            background: gpui::hsla(hue, 0.5, 0.5, 1.0).into(),
+            ..Default::default()
+        };
+        let shader = |at: Bounds<ScaledPixels>, program| gpui::PaintShader {
+            order: 0,
+            bounds: at,
+            content_mask: ContentMask { bounds: at },
+            program,
+            uniforms: Arc::new(gpui::ShaderUniforms::new()),
+            image: None,
+            group: None,
+            group_inset: Default::default(),
+        };
+        let scene = |grouped: bool| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(quad(rect(0.0, 0.0, 64.0, 32.0), 0.6));
+            if grouped {
+                scene.push_group();
+            }
+            scene.insert_primitive(quad(rect(10.0, 10.0, 20.0, 10.0), 0.3));
+            let half = shader(rect(30.0, 8.0, 24.0, 16.0), &HALF);
+            half.uniforms.set(0, 0.5);
+            scene.insert_primitive(half);
+            if grouped {
+                let mut compose = shader(rect(4.0, 4.0, 80.0, 40.0), &IDENTITY);
+                compose.content_mask = ContentMask {
+                    bounds: rect(0.0, 0.0, 64.0, 32.0),
+                };
+                scene.pop_group(compose);
+            }
+            scene.finish();
+            scene
+        };
+        let grouped = scene(true);
+        assert_eq!(
+            grouped.layer_group_frames[0],
+            Some(rect(4.0, 4.0, 60.0, 28.0))
+        );
+        let viewport = size(DevicePixels(64), DevicePixels(32));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let plain = renderer
+            .compose_scene_to_image(&scene(false), viewport, 1)
+            .unwrap();
+        let composed = renderer
+            .compose_scene_to_image(&grouped, viewport, 1)
+            .unwrap();
+        let worst = plain
+            .as_raw()
+            .iter()
+            .zip(composed.as_raw())
+            .map(|(x, y)| x.abs_diff(*y))
+            .max();
+        assert!(worst <= Some(2), "worst channel difference {worst:?}");
+    }
+
     // KOAN: (#1641) something drawn over a shader keeps what is drawn over
     // it in turn on top, where that sits clear of the shader: a menu over a
     // playing row keeps its text.
@@ -2778,7 +2892,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             uniforms: Arc::new(gpui::ShaderUniforms::new()),
             image: None,
             group: None,
-            group_local: false,
+            group_inset: Default::default(),
         });
         // A menu over the shader, and its text over the menu, clear of it.
         scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));
@@ -2878,8 +2992,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 #[cfg(test)]
 mod layer_group_tests {
     use gpui::{
-        Bounds, ContentMask, Path, Pixels, Quad, Scene, ScaledPixels, ShaderProgram, ShaderUniforms,
-        Size, point, px,
+        Bounds, ContentMask, Path, Pixels, Quad, ScaledPixels, Scene, ShaderProgram,
+        ShaderUniforms, Size, point, px,
     };
 
     static PROGRAM: ShaderProgram = ShaderProgram {
@@ -2916,7 +3030,7 @@ mod layer_group_tests {
             uniforms: std::sync::Arc::new(ShaderUniforms::default()),
             image: None,
             group: None,
-            group_local: false,
+            group_inset: Default::default(),
         }
     }
 
@@ -2936,7 +3050,49 @@ mod layer_group_tests {
         assert_eq!(scene.shaders[0].group, Some(0));
         let group = &scene.layer_groups[0];
         assert_eq!((group.quads.len(), group.shaders.len()), (1, 1));
-        assert!(scene.layer_group_moves(0, std::time::Instant::now()));
+    }
+
+    fn stale(scene: &Scene, was_moving: &mut bool, written: bool, redrawn: &[bool]) -> bool {
+        scene.layer_group_stale(0, std::time::Instant::now(), written, was_moving, redrawn)
+    }
+
+    /// A group is drawn again while a shader in it is live, once more after,
+    /// and not at all while its shaders rest: a group that never goes away
+    /// costs nothing between frames.
+    #[test]
+    fn a_group_is_drawn_again_while_its_shaders_move_and_once_after() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        let inner = shader(bounds(120.0, 70.0, 10.0, 10.0));
+        let uniforms = inner.uniforms.clone();
+        scene.insert_primitive(inner);
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        let mut was_moving = false;
+        assert!(!stale(&scene, &mut was_moving, false, &[false]));
+        uniforms.set_live(true);
+        assert!(stale(&scene, &mut was_moving, false, &[false]));
+        uniforms.set_live(false);
+        assert!(
+            stale(&scene, &mut was_moving, false, &[false]),
+            "the landing"
+        );
+        assert!(!stale(&scene, &mut was_moving, false, &[false]));
+    }
+
+    /// A group composing one drawn again this present is drawn again too.
+    #[test]
+    fn a_group_follows_a_group_nested_in_it() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(10.0, 10.0, 5.0, 5.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 50.0, 50.0)));
+        scene.pop_group(shader(bounds(0.0, 0.0, 100.0, 100.0)));
+        scene.finish();
+        let mut was_moving = false;
+        assert!(!stale(&scene, &mut was_moving, false, &[false, false]));
+        assert!(stale(&scene, &mut was_moving, false, &[false, true]));
     }
 
     /// A group with no paths draws into a texture its own size: its content
@@ -2958,7 +3114,70 @@ mod layer_group_tests {
         assert_eq!(moved.content_mask.bounds, bounds(10.0, 10.0, 20.0, 20.0));
         let tile = gpui::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
         assert_eq!(tile, [0.0, 0.0, 200.0, 100.0]);
-        assert!(!scene.layer_group_moves(0, std::time::Instant::now()));
+    }
+
+    /// Its texture is only the part of it inside its mask, the tile reaching
+    /// back to the bounds' origin; one too large for a device takes the
+    /// window's size.
+    #[test]
+    fn a_group_is_drawn_at_its_visible_size() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        let mut compose = shader(bounds(100.0, -950.0, 200.0, 20_000.0));
+        compose.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 800.0, 600.0),
+        };
+        scene.pop_group(compose);
+        scene.push_group();
+        scene.insert_primitive(quad(bounds(110.0, 60.0, 20.0, 20.0)));
+        let mut huge = shader(bounds(0.0, 0.0, 20_000.0, 100.0));
+        huge.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 10_000.0, 100.0),
+        };
+        scene.pop_group(huge);
+        scene.finish();
+        assert_eq!(
+            scene.layer_group_frames[0],
+            Some(bounds(100.0, 0.0, 200.0, 600.0))
+        );
+        assert_eq!(
+            scene.layer_groups[0].quads[0].bounds,
+            bounds(10.0, 60.0, 20.0, 20.0)
+        );
+        let tile = gpui::ShaderInstance::of(&scene.shaders[0], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, -950.0, 200.0, 20_000.0]);
+        assert_eq!(scene.layer_group_frames[1], None);
+        let tile = gpui::ShaderInstance::of(&scene.shaders[1], std::time::Instant::now()).tile;
+        assert_eq!(tile, [0.0, 0.0, 20_000.0, 100.0]);
+    }
+
+    /// A group at the window's size inside one at its own keeps its tile in
+    /// window coordinates as the outer group's content moves.
+    #[test]
+    fn a_nested_group_with_a_path_keeps_its_tile() {
+        let mut scene = Scene::default();
+        scene.push_group();
+        scene.push_group();
+        let mut path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
+        path.line_to(point(px(150.0), px(60.0)));
+        path.line_to(point(px(150.0), px(90.0)));
+        let mut path = path.scale(1.0);
+        path.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 1000.0, 1000.0),
+        };
+        scene.insert_primitive(path);
+        scene.pop_group(shader(bounds(105.0, 55.0, 60.0, 40.0)));
+        scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
+        scene.finish();
+        assert_eq!(scene.layer_group_frames[1], None);
+        let inner = &scene.layer_groups[0].shaders[0];
+        assert_eq!(
+            inner.bounds.origin,
+            point(ScaledPixels(5.0), ScaledPixels(5.0))
+        );
+        let tile = gpui::ShaderInstance::of(inner, std::time::Instant::now()).tile;
+        assert_eq!(tile, [105.0, 55.0, 60.0, 40.0]);
     }
 
     /// One holding a path stays the window's size, its content where it was

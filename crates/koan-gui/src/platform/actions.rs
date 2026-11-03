@@ -385,6 +385,16 @@ pub fn caption(key: &str, os: OperatingSystem) -> String {
         ("escape", _) => "esc".to_string(),
         ("space", _) => "space".to_string(),
         (k, _) if mods.is_empty() => k.to_string(),
+        // A key named in a word keeps the case the unmodified one is shown
+        // in, "tab" beside "⇧tab"; on Linux it is capitalised, as "Ctrl" is.
+        (k, true) if k.chars().count() > 1 => k.to_string(),
+        (k, false) if k.chars().count() > 1 => {
+            let mut chars = k.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
         (k, _) => k.to_uppercase(),
     };
     if mac {
@@ -461,8 +471,12 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     ] {
         push(&mut bindings, key, action, Some(window.clone()), cx);
     }
-    let lists =
-        Rc::new(KeyBindingContextPredicate::parse("List && !Input").expect("a valid context"));
+    // Not under a menu or a question opened over the list: their keys are
+    // their own, as the bare table's are.
+    let lists = Rc::new(
+        KeyBindingContextPredicate::parse("List && !Input && !Ask && !KoanMenu")
+            .expect("a valid context"),
+    );
     for shortcut in LISTS {
         for key in shortcut.keys {
             push(
@@ -572,6 +586,8 @@ mod tests {
         assert_eq!(caption("secondary--", mac), "⌘-");
         assert_eq!(caption("secondary-/", mac), "⌘/");
         assert_eq!(caption("backspace", mac), "⌫");
+        assert_eq!(caption("shift-tab", mac), "⇧tab");
+        assert_eq!(caption("shift-f6", mac), "⇧f6");
     }
 
     #[test]
@@ -580,6 +596,7 @@ mod tests {
         assert_eq!(caption("secondary-shift-k", linux), "Ctrl+Shift+K");
         assert_eq!(caption("alt-left", linux), "Alt+Left");
         assert_eq!(caption("secondary--", linux), "Ctrl+-");
+        assert_eq!(caption("shift-tab", linux), "Shift+Tab");
     }
 
     #[test]

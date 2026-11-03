@@ -8,9 +8,9 @@ Copies of published crates carried with patches until the patches are taken upst
 
 | Crate | Version | Patches |
 |---|---|---|
-| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Tracks and the present clock (#1859): `src/shader.rs`. Colour slots (#1859): `src/color_slots.rs`, `scene.rs`, `window.rs`. Accessibility (#1776, #1778): `aria_disabled` and `aria_live` in `elements/div.rs` and the debug tree; `Window::dispatch_a11y_action` and `set_a11y_active_for_test` for tests (`window.rs`, `window/a11y.rs`) |
-| `gpui-pre-apple` | 0.3.10 | Shader quads drawn by Metal (#1641), and `koan_track` in their prelude (#1859): `metal_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.metal` |
-| `gpui-pre-wgpu` | 0.3.10 | Shader quads drawn by wgpu, and the layered compose (#1641), and `koan_track` in their prelude (#1859): `wgpu_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.wgsl`, `shaders_subpixel.wgsl` |
+| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Tracks and the present clock (#1859): `src/shader.rs`. Colour slots (#1859): `src/color_slots.rs`, `scene.rs`, `window.rs`. Layer groups (#1859, #1878): `scene.rs`, `shader.rs`, `window.rs`. Accessibility (#1776, #1778): `aria_disabled` and `aria_live` in `elements/div.rs` and the debug tree; `Window::dispatch_a11y_action` and `set_a11y_active_for_test` for tests (`window.rs`, `window/a11y.rs`) |
+| `gpui-pre-apple` | 0.3.10 | Shader quads drawn by Metal (#1641), and `koan_track` in their prelude (#1859), layer groups (#1859, #1878): `metal_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.metal` |
+| `gpui-pre-wgpu` | 0.3.10 | Shader quads drawn by wgpu, and the layered compose (#1641), and `koan_track` in their prelude (#1859), layer groups (#1859, #1878): `wgpu_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.wgsl`, `shaders_subpixel.wgsl` |
 | `gpui-pre-macos` | 0.3.10 | Idle frames (#1609): `window.rs`, `display_link.rs`. The present lead from the display link's output time (#1859): `display_link.rs` |
 | `gpui-pre-linux` | 0.3.10 | Idle frames on X11 (#1609): `linux/x11/client.rs`, `window.rs` |
 | `gpui-base` | 0.8.1 | The text caret drawn by a shader (#1786): `input/base/blink_cursor.rs`, `element.rs`, `state.rs` |
@@ -34,6 +34,14 @@ A colour that moves without a frame drawn: an app-wide table of 255 colours (`co
 ### Tracks (#1859)
 
 The block of uniforms is 80 floats: 16 plain values written when they change, then eight tracks of eight. A track is one segment of a moving value (`from`, `to`, `start` in seconds of shader time, `length`, a curve, a repeat), which the program evaluates at present time through the prelude's `koan_track(u, k, time)`; `Track::at` in `shader.rs` is the same evaluation on the CPU, which a retarget samples so it starts from what is on screen, and `tracks_draw_where_the_cpu_says` in `metal_renderer.rs` holds the two together. Curves are linear, a CSS cubic Bézier (its control points as half-float pairs) and a damped spring in closed form; a track holds its end, loops or alternates. A shader presents while a track moves and once more as the last comes to rest, with no `live` or `continuous` set by hand: the app writes keyframes when its data changes and the GPU draws every frame.
+
+### Layer groups (#1859, #1878)
+
+What is painted inside `Window::paint_layer_group` goes into a scene of its own (`Scene::push_group`, `pop_group`), drawn into a texture and composed by the shader closing the group, which samples it as its image: a panel slides, fades or dissolves by its shader's tracks without a frame drawn. Shaders and nested groups painted inside are the group's, so they move and clip with it.
+
+A group's texture is the visible part of the composing shader's bounds (its bounds within its content mask), the group's content moved to the texture's origin, so a small panel costs a small texture and a tall one scrolled mostly out of view costs only what shows. A group holding paths, whose rasterisation goes through textures the window's size, or one larger than 8192 device pixels on a side, takes the window's size with its content where it was painted. Where the composing shader's origin sits in the texture (`PaintShader::group_inset`) is taken when the group closes, so a group nested in another keeps its tile as the outer group's content moves.
+
+Each group is drawn again when a frame is drawn, and at a present only when `Scene::layer_group_stale` says so: while a shader in it is live or a colour slot it draws with moves, once more after they stop so the last value lands, when the colour slot table was written since (a held write, as under Reduce Motion), and when a group nested in it was drawn again. A group at rest costs its compose alone. koan-kit's layers let a group go once it has settled, so content at rest draws in the window's scene as it would without one. `a_group_at_rest_matches_its_content` in `metal_renderer.rs`, and `wgpu_a_group_at_rest_matches_its_content` in `wgpu_renderer.rs` on Linux, check that a group at the identity pose gives the pixels its content does ungrouped; the scene-side tests are in `layer_group_tests`.
 
 `time` is reckoned at the present clock (`present_now`): now plus the lead the platform reports between encoding a frame and its showing (on macOS, the display link's output time), so motion does not jitter with encode latency, and the app's retarget reads the same clock.
 

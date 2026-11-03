@@ -1,0 +1,1 @@
+- **The keyboard keeps a pick in the album grid, the artist page and the shelves.** An arrow key while picking no longer ends the pick and drops what was ticked; a verb from the menu key over a pick ends it as one from a right click does; ↑ on a grid's top row stays where it is rather than jumping to the first record; and a long shelf keeps its spacing between rows.
