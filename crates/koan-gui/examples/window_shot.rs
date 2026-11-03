@@ -9,7 +9,7 @@
 //! `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
 //! `playlist:<id>`) draws that page instead of the queue. With
 //! `KOAN_SHOT_TRACKS`, a playlist of the same tracks is made too, and its id
-//! printed.
+//! printed. `KOAN_SHOT_WIDTH` draws it that many points wide.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -89,7 +89,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut shots = Vec::new();
     for dark in [true, false] {
-        let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
+        // `KOAN_SHOT_WIDTH` narrows it, to the window's least width say.
+        let width = std::env::var("KOAN_SHOT_WIDTH")
+            .ok()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(WIDTH);
+        let window = cx.open_window(size(px(width), px(HEIGHT)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
             if let Some(route) = route() {
                 shell.update(cx, |shell, cx| shell.show(route, cx));

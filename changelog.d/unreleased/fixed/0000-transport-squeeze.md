@@ -1,0 +1,1 @@
+- **The transport keeps its sides, and has a heart.** At larger text sizes or a narrow window the bar no longer squeezes out the playing record or the trailing buttons: the centre gives way first, the title is cut rather than lost, and only when even that is not enough do the trailing items go, the format first and the output last. The playing track has a heart beside its title.
