@@ -1870,18 +1870,10 @@ index 0000000..75dc0d0
 +    }
 +}
 diff --git a/src/view.rs b/src/view.rs
-index 76688b7..bc550cd 100644
+index 76688b7..50436d1 100644
 --- a/src/view.rs
 +++ b/src/view.rs
-@@ -8,7 +8,6 @@ use crate::{Empty, Window};
- use anyhow::Result;
- use collections::FxHashSet;
- use refineable::Refineable;
--use std::mem;
- use std::{
-     any::{TypeId, type_name},
-     fmt,
-@@ -322,6 +321,11 @@ impl<V: View> IntoElement for ViewElement<V> {
+@@ -322,6 +322,11 @@ impl<V: View> IntoElement for ViewElement<V> {
  
  struct ViewElementState {
      prepaint_range: Range<PrepaintStateIndex>,
@@ -1893,7 +1885,7 @@ index 76688b7..bc550cd 100644
      paint_range: Range<PaintIndex>,
      cache_key: ViewElementCacheKey,
      accessed_entities: FxHashSet<EntityId>,
-@@ -549,6 +553,10 @@ fn prepaint_view(
+@@ -549,6 +554,10 @@ fn prepaint_view(
                      && element_state.cache_key.text_style == text_style
                      && !window.dirty_views.contains(&entity_id)
                      && !window.refreshing
@@ -1904,7 +1896,7 @@ index 76688b7..bc550cd 100644
                  {
                      let prepaint_start = window.prepaint_index();
                      window.reuse_prepaint(element_state.prepaint_range.clone());
-@@ -556,11 +564,16 @@ fn prepaint_view(
+@@ -556,6 +565,7 @@ fn prepaint_view(
                          .extend_accessed(&element_state.accessed_entities);
                      let prepaint_end = window.prepaint_index();
                      element_state.prepaint_range = prepaint_start..prepaint_end;
@@ -1912,24 +1904,7 @@ index 76688b7..bc550cd 100644
  
                      return (None, element_state);
                  }
- 
--                let refreshing = mem::replace(&mut window.refreshing, true);
-+                // KOAN: a view drawn again leaves the cached views inside it
-+                // to their own keys: one that is neither dirty nor moved is
-+                // reused, so a change redraws its own view and its ancestors
-+                // and nothing beside them. Only a refresh of the window draws
-+                // everything again.
-                 let prepaint_start = window.prepaint_index();
-                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                     let mut element = render(window, cx);
-@@ -570,13 +583,14 @@ fn prepaint_view(
-                 });
- 
-                 let prepaint_end = window.prepaint_index();
--                window.refreshing = refreshing;
- 
-                 (
-                     Some(element),
+@@ -577,6 +587,8 @@ fn prepaint_view(
                      ViewElementState {
                          accessed_entities,
                          prepaint_range: prepaint_start..prepaint_end,
@@ -1938,18 +1913,7 @@ index 76688b7..bc550cd 100644
                          paint_range: PaintIndex::default()..PaintIndex::default(),
                          cache_key: ViewElementCacheKey {
                              bounds,
-@@ -623,15 +637,16 @@ fn paint_view(
-                     let paint_start = window.paint_index();
- 
-                     if let Some(element) = element {
--                        let refreshing = mem::replace(&mut window.refreshing, true);
-+                        // KOAN: as in prepaint, the cached views inside are
-+                        // left to their own keys.
-                         element.paint(window, cx);
--                        window.refreshing = refreshing;
-                     } else {
-                         window.reuse_paint(element_state.paint_range.clone());
-                     }
+@@ -632,6 +644,7 @@ fn paint_view(
  
                      let paint_end = window.paint_index();
                      element_state.paint_range = paint_start..paint_end;

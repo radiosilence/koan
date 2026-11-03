@@ -18,6 +18,7 @@ use koan_kit::app::*;
 
 use crate::components::{Availability, Glide, RingGlide};
 use crate::mirror::Mirror;
+use crate::theme::Hsla;
 
 /// Each transfer's glides, by track.
 pub struct Transfers {
