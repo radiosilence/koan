@@ -27,6 +27,11 @@ impl ToolbarMetrics {
     pub const SPACER: Pixels = px(16.);
     /// The filter field, from its glyph to the end of its text.
     pub const FIELD: Pixels = px(167.);
+    /// The narrowest the filter field gets in a narrow page column, before
+    /// any of the toolbar's buttons go.
+    pub const FIELD_MIN: Pixels = px(64.);
+    /// The filter field's height to click: a toolbar button's.
+    pub const FIELD_HIT: Pixels = crate::theme::TOOLBAR_BUTTON;
     /// Between the filter field's glyph and its text.
     pub const FIELD_GLYPH_GAP: Pixels = px(10.);
     /// The window's own buttons (the Mac's traffic lights), 14 tall,

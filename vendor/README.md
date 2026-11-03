@@ -29,7 +29,7 @@ Metal compiles each program the first time it is drawn, between a prelude declar
 
 ### Colour slots (#1859)
 
-A colour that moves without a frame drawn: an app-wide table of 255 colours (`color_slots.rs`), each two colours and a track between them, which the stock quad, shadow, underline and monochrome sprite shaders read at present time (`koan_rgba` in `shaders.metal`, `shaders.wgsl` and `shaders_subpixel.wgsl`, the table bound beside the instances). A colour names a slot by a hue of 2 or more (`ColorSlot::hsla`), so no primitive changes shape and element opacity still scales it. The scene collects the slots it and each of its layers draw with (`scene.rs`), and a window presents while one moves (`window.rs`). A slot may mix in OKLab, flagged by 16 in its track's code, so a hue turns rather than passing through grey.
+A colour that moves without a frame drawn: an app-wide table of 255 colours (`color_slots.rs`), each two colours and a track between them, which the stock quad, shadow, underline and monochrome sprite shaders read at present time (`koan_rgba` in `shaders.metal`, `shaders.wgsl` and `shaders_subpixel.wgsl`, the table bound beside the instances). A colour names a slot by a hue of 2 or more (`ColorSlot::hsla`), so no primitive changes shape and element opacity still scales it. The scene collects the slots it and each of its layers draw with (`scene.rs`), and a window presents while one moves (`window.rs`).
 
 ### Tracks (#1859)
 

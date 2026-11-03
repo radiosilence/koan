@@ -6,14 +6,14 @@ use koan_ffi::Playlist;
 use koan_kit::app::*;
 
 use crate::components::{
-    Button, ButtonKind, CoverArt, DropTarget, INSERTION, ListCursor, Mosaic, NavHeading, NavNote,
-    NavRow, RowMetrics, ScrollArea, list_actions,
+    Button, ButtonKind, CoverArt, DropTarget, INSERTION, KoanContextMenu, ListCursor, Menu,
+    MenuEntry, Mosaic, NavHeading, NavNote, NavRow, RowMetrics, ScrollArea, list_actions,
 };
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::{PlayableDrag, PlaylistDrag};
-use crate::library::playlist::new_playlist;
+use crate::library::playlist::{self, new_playlist};
 use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -65,12 +65,15 @@ pub struct Sidebar {
     /// with the arrows.
     focus: FocusHandle,
     cursor: ListCursor,
-    _subscriptions: [Subscription; 5],
+    /// Transfers queued or running, counted beside "downloads" while any are.
+    running: usize,
+    _subscriptions: [Subscription; 6],
 }
 
 impl Sidebar {
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let library = cx.global::<Mirror>().library.clone();
+        let transfers = cx.global::<Mirror>().transfers.clone();
         let mut sidebar = Self {
             status: cx.new(crate::sidebar_status::SidebarStatus::new),
             nav: nav.clone(),
@@ -87,7 +90,15 @@ impl Sidebar {
             focus: cx.focus_handle(),
             cursor: ListCursor::default(),
             import_problem: None,
+            running: running(&transfers.read(cx).0),
             _subscriptions: [
+                cx.observe(&transfers, |this, transfers, cx| {
+                    let now = running(&transfers.read(cx).0);
+                    if now != this.running {
+                        this.running = now;
+                        cx.notify();
+                    }
+                }),
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
                 cx.observe(nav, |_, _, cx| cx.notify()),
@@ -97,6 +108,9 @@ impl Sidebar {
                 // What became of music moved, or a command another device
                 // did not take.
                 cx.observe_global::<crate::notice::Notice>(|_, cx| cx.notify()),
+                // Music sent to the queue or a playlist from a page: its
+                // row answers.
+                cx.observe_global::<crate::library::actions::Arrivals>(|_, cx| cx.notify()),
                 cx.observe_global::<Imports>(|this, cx| {
                     let running = cx.global::<Imports>().running;
                     if running > 0 && this.importing == 0 {
@@ -132,6 +146,13 @@ impl Sidebar {
         let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
         self.search = Some((field, watch));
         cx.notify();
+    }
+
+    /// Where the search field takes the keyboard, once the library is open.
+    pub fn search_focus(&self, cx: &App) -> Option<FocusHandle> {
+        self.search
+            .as_ref()
+            .map(|(field, _)| field.read(cx).focus_handle(cx))
     }
 
     /// ⌘K and `/`: the keyboard to the search field.
@@ -284,6 +305,63 @@ impl Focusable for Sidebar {
     }
 }
 
+/// A playlist row's menu, as the Mac's sidebar has it: playing it, and
+/// renaming, writing out or deleting it, each asked first.
+fn playlist_menu(menu: Menu, playlist: &Playlist, nav: &Entity<Navigator>) -> Menu {
+    let id = playlist.id;
+    let play = |shuffled: bool| {
+        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+            command(cx, "play playlist", move |e| {
+                e.queue(
+                    vec![koan_ffi::TrackSet::Playlist { id }],
+                    koan_ffi::Placement::Replace {
+                        start_at: None,
+                        shuffled,
+                    },
+                )
+            })
+        }
+    };
+    let (rename, export, delete) = (playlist.clone(), playlist.clone(), playlist.clone());
+    let nav = nav.clone();
+    menu.item(
+        MenuEntry::new("play")
+            .icon(Icon::Play)
+            .on_click(play(false)),
+    )
+    .item(
+        MenuEntry::new("shuffle")
+            .icon(Icon::Shuffle)
+            .on_click(play(true)),
+    )
+    .separator()
+    .item(
+        MenuEntry::new("rename…")
+            .disabled(playlist.from_file)
+            .on_click(move |_, window, cx| playlist::ask_rename(&rename, window, cx)),
+    )
+    .item(MenuEntry::new("export as M3U8…").on_click(move |_, _, cx| {
+        playlist::export(
+            engine(cx),
+            export.id,
+            export.name.clone(),
+            cx,
+            |note, cx| crate::notice::show(note, Tone::Muted, cx),
+        )
+    }))
+    .separator()
+    .item(
+        MenuEntry::new("delete…")
+            .destructive()
+            .on_click(move |_, window, cx| playlist::ask_delete(&delete, nav.clone(), window, cx)),
+    )
+}
+
+/// How many transfers are yet to settle.
+fn running(transfers: &[koan_ffi::Transfer]) -> usize {
+    transfers.iter().filter(|t| !t.state.is_settled()).count()
+}
+
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -323,6 +401,9 @@ impl Render for Sidebar {
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
+        let arrivals = cx
+            .default_global::<crate::library::actions::Arrivals>()
+            .clone();
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
@@ -335,20 +416,21 @@ impl Render for Sidebar {
             // queue's row are queued.
             .child(
                 row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
+                    .arrivals(arrivals.queue)
                     .drop_highlight::<ExternalPaths>(&p.look)
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .drop_highlight::<PlaylistDrag>(&p.look)
-                    .on_drop(cx.listener(|this, dragged: &PlaylistDrag, _, cx| {
+                    .accept(cx.listener(|this, dragged: &PlaylistDrag, _, cx| {
                         this.drop_playlist = None;
                         let sets = dragged.as_library().sets.to_vec();
                         command(cx, "queue a playlist", move |e| {
                             e.queue(sets, koan_ffi::Placement::Append)
                         });
                     }))
-                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                    .accept(cx.listener(|_, paths: &ExternalPaths, _, cx| {
                         drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
                     }))
-                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                    .accept(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
                         let sets = dragged.sets.to_vec();
                         command(cx, "queue from the library", move |e| {
                             e.queue(sets, koan_ffi::Placement::Append)
@@ -366,7 +448,11 @@ impl Render for Sidebar {
             })
             .child(NavHeading::new("library"))
             .children(LIBRARY.map(|(page, label, icon)| {
+                let running = self.running;
                 row(page, ElementId::Name(label.into()), label, icon, cx)
+                    .when(page == Route::Downloads && running > 0, |row| {
+                        row.trailing(running.to_string())
+                    })
             }))
             // "new", and a drop on the heading makes a playlist of what was
             // dropped.
@@ -423,6 +509,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
+                        .arrivals(arrivals.to(playlist.id))
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))
@@ -455,7 +542,7 @@ impl Render for Sidebar {
                         .when(!playlist.readonly, |row| {
                             row.drop_highlight::<ExternalPaths>(&p.look)
                                 .drop_highlight::<PlayableDrag>(&p.look)
-                                .on_drop(cx.listener({
+                                .accept(cx.listener({
                                     let id = playlist.id;
                                     move |_, paths: &ExternalPaths, _, cx| {
                                         drop::add_files_to_playlist(
@@ -466,7 +553,7 @@ impl Render for Sidebar {
                                         )
                                     }
                                 }))
-                                .on_drop(cx.listener({
+                                .accept(cx.listener({
                                     let id = playlist.id;
                                     move |_, dragged: &PlayableDrag, _, cx| {
                                         if dragged.is_from(id) {
@@ -494,8 +581,21 @@ impl Render for Sidebar {
                                 .bg(accent)
                                 .map(|d| if top { d.top_0() } else { d.bottom_0() })
                         };
+                        let menu = {
+                            let (playlist, nav) = (playlist.clone(), self.nav.clone());
+                            move |menu: Menu, _: &mut Window, _: &mut Context<Menu>| {
+                                playlist_menu(menu, &playlist, &nav)
+                            }
+                        };
                         div()
+                            .id(("nav-playlist-row", playlist.id as u64))
                             .relative()
+                            .koan_context_menu(
+                                ("nav-playlist-menu", playlist.id as u64),
+                                window,
+                                cx,
+                                menu,
+                            )
                             .on_drag_move::<PlaylistDrag>(cx.listener(
                                 move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
                                     if !event.bounds.contains(&event.event.position) {
@@ -571,8 +671,8 @@ impl Render for Sidebar {
             )
             .children(
                 cx.try_global::<crate::notice::Notice>()
-                    .and_then(|n| n.text.clone())
-                    .map(|(text, tone)| NavNote::new(text, tone)),
+                    .and_then(|n| n.text.clone().map(|text| (text, n.said)))
+                    .map(|((text, tone), said)| NavNote::new(text, tone).said("notice", said)),
             )
     }
 }

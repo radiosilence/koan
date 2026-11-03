@@ -19,6 +19,7 @@ pub struct Pill {
     text: SharedString,
     /// `Some` while picking: whether this one is picked.
     tick: Option<bool>,
+    cursor: bool,
 }
 
 impl Pill {
@@ -32,6 +33,7 @@ impl Pill {
             icon,
             text: text.into(),
             tick: None,
+            cursor: false,
         }
     }
 
@@ -39,6 +41,13 @@ impl Pill {
     /// the accent when `picked`.
     pub fn ticking(mut self, picked: bool) -> Self {
         self.tick = Some(picked);
+        self
+    }
+
+    /// Under the page's keyboard cursor while the page holds the keyboard:
+    /// the focus ring, once the keyboard was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -66,7 +75,10 @@ impl RenderOnce for Pill {
             None => KoanIcon::new(self.icon).color(p.muted.hsla()),
         }
         .role(TypeRole::Fine);
+        let ring =
+            (self.cursor && window.last_input_was_keyboard()).then(|| super::cursor_ring(&look));
         self.base
+            .relative()
             .flex()
             .flex_none()
             .items_center()
@@ -87,5 +99,6 @@ impl RenderOnce for Pill {
                     .text_color(p.ink.hsla())
                     .child(self.text),
             )
+            .children(ring)
     }
 }

@@ -198,6 +198,7 @@ pub struct RowNumber {
     number: SharedString,
     glyph: Option<crate::theme::Icon>,
     current: bool,
+    picked: bool,
     bars: Option<AnyElement>,
     on_play: Option<Play>,
 }
@@ -209,6 +210,7 @@ impl RowNumber {
             number: number.into(),
             glyph: None,
             current: false,
+            picked: false,
             bars: None,
             on_play: None,
         }
@@ -229,6 +231,13 @@ impl RowNumber {
         self
     }
 
+    /// The row is picked: the number, glyph and play mark in `on_selection`,
+    /// on the row's `selection` fill, where `muted` and the accent fade.
+    pub fn picked(mut self, picked: bool) -> Self {
+        self.picked = picked;
+        self
+    }
+
     /// Drawn in the number's place while the row is current, playing or
     /// paused: the bars fall flat on a pause rather than giving the number
     /// back.
@@ -246,11 +255,15 @@ impl RowNumber {
 impl RenderOnce for RowNumber {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let accent = look.text_color(crate::theme::Tone::Accent);
+        let accent = if self.picked {
+            look.palette.on_selection.hsla()
+        } else {
+            look.text_color(crate::theme::Tone::Accent)
+        };
         if let Some(bars) = self.bars {
             return div().flex().justify_end().child(bars).into_any_element();
         }
-        let tone = if self.current {
+        let tone = if self.current || self.picked {
             accent
         } else {
             look.palette.muted.hsla()

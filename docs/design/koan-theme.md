@@ -33,6 +33,8 @@ New screens follow these by default; a screen that breaks one says why in its PR
 | `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. Was `#8c8c8c`, which is 4.3:1 on `surface` |
 | `accent` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row, toggles on, focus. Mint is its value with nothing playing; see [Accent](#accent) |
 | `bad` | `#ef6b73` | `#c43f3f` | Errors and destructive actions |
+| `selection` | `#464646` | `#5c5c5c` | A picked list row's fill, opaque over the wash |
+| `on_selection` | `#ffffff` | `#ffffff` | Everything on a picked row: text, numbers, marks and errors |
 
 `accent` is `--color-brand` in `theme.css`.
 
