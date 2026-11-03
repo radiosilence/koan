@@ -1,0 +1,1 @@
+- **Organise moves only what it previewed.** In the kōan GUI app, choosing a named pattern previews it before it can be run, rather than moving files under a pattern whose plan was never shown, and whether cover art and cue sheets go with the music is saved before the move reads it.

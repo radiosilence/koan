@@ -81,6 +81,10 @@ pub enum PlayerError {
     /// queue and skipped.
     #[error("{0}")]
     Unplayable(String),
+    /// An output opened for a session nobody waits for any more: the open
+    /// stopped short, or what it made was dropped on its own thread.
+    #[error("the output was no longer wanted")]
+    Abandoned,
 }
 
 /// Everything needed to read a track that is still downloading: where it is,
@@ -152,7 +156,29 @@ pub struct Player {
     /// Configured output device name. None = system default.
     output_device_name: Option<String>,
     /// Platform audio backend (CoreAudio on macOS and iOS, cpal on Linux).
-    backend: Box<dyn AudioBackend>,
+    backend: Arc<dyn AudioBackend>,
+    /// The output opening off this thread, while one is.
+    opening: Option<OpenFlight>,
+    /// An output opened and not yet taken by the session it was for.
+    prepared: Option<Box<PreparedOutput>>,
+    /// Bumped by every open asked for: a late answer to an older one is
+    /// dropped, its output with it.
+    open_ticket: u64,
+    /// Open threads still running, the one wanted and any abandoned. An open
+    /// stuck in the audio system cannot be stopped, so at most one abandoned
+    /// one is let run.
+    open_threads: Arc<std::sync::atomic::AtomicUsize>,
+    /// The ticket of the open the player wants, 0 for none: the open thread
+    /// reads it before each call into the audio system.
+    open_live: Arc<std::sync::atomic::AtomicU64>,
+    /// The last session's output being torn down, if it was torn down off
+    /// this thread.
+    teardown: Option<Arc<Teardown>>,
+    /// Bumped by each DSP reading asked for: an older one landing is dropped.
+    dsp_ticket: u64,
+    /// Open the output on this thread instead: tests that drive the player
+    /// without its command loop.
+    open_inline: bool,
     /// How the file currently streaming had to be opened. A seek reopens it and
     /// must not undo what the probe settled on.
     stream_mode: streaming::ProbeMode,
@@ -230,6 +256,7 @@ struct SleepSet {
     fade: Option<std::time::Duration>,
 }
 
+#[derive(Clone)]
 struct DspCache {
     config: Arc<crate::config::Config>,
     device: String,
@@ -260,8 +287,178 @@ enum Transport {
     /// A track asked for that cannot open yet. Nothing opens a track without
     /// one of these or a command naming it.
     Waiting(Waiting),
+    /// A session ready but for its output, which opens on another thread
+    /// (`spawn_open`): what plays, from where and whether, which the commands
+    /// meanwhile change. It starts once the output is open.
+    Opening(Box<Pending>),
     /// A session is open, decoding into the ring.
     Loaded(Session),
+}
+
+/// What a session waiting for its output starts with.
+struct Pending {
+    id: QueueItemId,
+    position_ms: u64,
+    start: Run,
+    track: TrackInfo,
+    info: buffer::StreamInfo,
+    first: buffer::SourceEntry,
+    stream: Option<LiveStream>,
+}
+
+/// What an output is opened for: the device asked for (`None`, the system's
+/// default) and the stream's format. An output opened for one is no use to
+/// another, whose rate or channels it was not set up for.
+#[derive(Clone, Debug, PartialEq)]
+struct OpenKey {
+    device: Option<String>,
+    sample_rate: u32,
+    channels: u16,
+    bit_depth: Option<u16>,
+}
+
+/// An output opened off the player thread, ready for a session: the device
+/// resolved, its rate switched, the unit made over a ring of its own.
+/// Everything that can wait on the audio system is done.
+pub(crate) struct PreparedOutput {
+    key: OpenKey,
+    producer: rtrb::Producer<f32>,
+    parts: OpenedOutput,
+    /// When it was made: one kept while stopped is not reused after
+    /// `PREPARED_FOR`, since the default device or route may have moved.
+    made: std::time::Instant,
+}
+
+/// How long an output opened for a session that was stopped meanwhile is
+/// kept for the next play on the same key.
+const PREPARED_FOR: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Open threads abandoned and still running that a new open may run beside.
+/// A call stuck in the audio system cannot be interrupted, so each one is a
+/// thread for as long as the system takes; more are not started meanwhile.
+const MAX_ABANDONED_OPENS: usize = 1;
+
+/// Drop an output off the player thread: disposing of an audio unit goes
+/// through the same audio system whose stalls the open thread exists for.
+fn discard(output: Box<PreparedOutput>) {
+    // Without a thread, the drop happens here after all.
+    let _ = thread::Builder::new()
+        .name("koan-output-drop".into())
+        .spawn(move || drop(output));
+}
+
+/// What `open_output` makes.
+struct OpenedOutput {
+    device: backend::DeviceInfo,
+    dsp: Option<Arc<crate::audio::dsp::Setup>>,
+    engine: Box<dyn AudioEngineHandle>,
+    /// Where the device's rate settled, which the player publishes as the
+    /// output rate: a switch the device refused shows as resampled.
+    settled: f64,
+    /// When the device's rate was switched, if it was: the lead-in counts
+    /// the relock from then.
+    switched: Option<std::time::Instant>,
+    /// Whether the stream fell back to the system mixer, and the mixer's
+    /// rate if it did.
+    mixed: Option<bool>,
+    mixer_rate: Option<f64>,
+    /// The device's rate watch, made on the open thread where that call can
+    /// stall (`AudioBackend::rate_watch_on_player`). It says nothing until
+    /// `armed`, which the session using this output sets, so the watch of an
+    /// output never used writes no shared state.
+    rate_watch: Option<Box<dyn SampleRateWatch>>,
+    armed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// An output opened, or why not, for the ask `ticket`.
+pub struct OutputReady {
+    ticket: u64,
+    key: OpenKey,
+    result: Result<Box<PreparedOutput>, PlayerError>,
+}
+
+impl std::fmt::Debug for OutputReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputReady")
+            .field("ticket", &self.ticket)
+            .field("opened", &self.result.is_ok())
+            .finish()
+    }
+}
+
+/// An output opening: which ask it answers and what it opens for.
+struct OpenFlight {
+    ticket: u64,
+    key: OpenKey,
+    /// The device moved under it (a restart, a route change) while it could
+    /// not be abandoned: its output is dropped when it lands and another
+    /// asked for.
+    outdated: bool,
+}
+
+/// A session's output torn down on a thread of its own (`stop_engine`), and
+/// whether that has finished. The next open waits for it before touching the
+/// device: a rate switch under a unit still being disposed of is what
+/// crashed in #89.
+#[derive(Default)]
+struct Teardown {
+    done: parking_lot::Mutex<bool>,
+    finished: parking_lot::Condvar,
+}
+
+impl Teardown {
+    fn finish(&self) {
+        *self.done.lock() = true;
+        self.finished.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut done = self.done.lock();
+        while !*done {
+            self.finished.wait(&mut done);
+        }
+    }
+}
+
+/// The output device's DSP, read again off the player thread: resolving the
+/// device is a call into the audio system.
+pub struct DspLoaded {
+    ticket: u64,
+    /// The output device asked for when the reading began.
+    wanted: Option<String>,
+    config: Arc<crate::config::Config>,
+    /// The device resolved, or `None` where none could be.
+    device: Option<String>,
+    setup: Option<Arc<crate::audio::dsp::Setup>>,
+}
+
+impl std::fmt::Debug for DspLoaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DspLoaded")
+            .field("ticket", &self.ticket)
+            .field("device", &self.device)
+            .finish()
+    }
+}
+
+/// What the open thread needs of the player.
+struct OpenContext {
+    backend: Arc<dyn AudioBackend>,
+    /// For the rate watch only: the open thread itself writes no state.
+    state: Arc<SharedPlayerState>,
+    samples_played: Arc<std::sync::atomic::AtomicU64>,
+    /// The ask this open answers, and the one the player wants answered
+    /// (`Player::open_live`). Once they differ the open stops touching the
+    /// device. Ticket 0 opens inline and is never abandoned.
+    ticket: u64,
+    live: Arc<std::sync::atomic::AtomicU64>,
+    /// The player's DSP cache as the open began.
+    dsp: Option<DspCache>,
+    /// The last session's output, still being torn down: waited for before
+    /// the device is touched.
+    after: Option<Arc<Teardown>>,
+    #[cfg(test)]
+    dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
 }
 
 /// A track that cannot open yet, and how it opens once it can: at the start
@@ -410,7 +607,15 @@ impl Player {
             probing: Default::default(),
             batch_buffer: None,
             output_device_name: cfg.playback.output_device.clone(),
-            backend: crate::audio::platform_backend(),
+            backend: Arc::from(crate::audio::platform_backend()),
+            opening: None,
+            prepared: None,
+            open_ticket: 0,
+            open_threads: Arc::default(),
+            open_live: Arc::default(),
+            teardown: None,
+            dsp_ticket: 0,
+            open_inline: cfg!(test),
             stream_mode: streaming::ProbeMode::Full,
             history: None,
             downloads: None,
@@ -452,132 +657,116 @@ impl Player {
         &self.undo_stack
     }
 
-    /// Create an audio engine for a stream, switching the output device to the
-    /// source rate first so output is bit-perfect.
+    /// Create an audio engine for a stream on this thread, switching the
+    /// output device to the source rate first so output is bit-perfect: what
+    /// `open_output` does off it, for a player opening inline.
     ///
     /// The engine is always configured with the source's own rate and channel
     /// count — the format the decode thread writes into the ring buffer. A
     /// device that cannot take the requested rate (MPEG-2/2.5 MP3 rates are
     /// commonly refused) resamples instead of playing at the wrong speed.
+    #[cfg(test)]
     #[allow(clippy::type_complexity)]
     fn create_engine_for(
         &mut self,
         info: &buffer::StreamInfo,
         consumer: rtrb::Consumer<f32>,
     ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
-        let device = self.resolve_device()?;
-        let device_rate = self.backend.get_device_sample_rate(&device)?;
-        // The setup the decode thread was just handed, not a fresh read: a
-        // config edited in between would put the engine at another rate.
-        let dsp = match &self.dsp {
-            Some(cache) if cache.device == device.name => cache.setup.clone(),
-            _ => self.dsp_for(&device.name),
-        };
-        // The rate the decode thread writes at: the source's, unless DSP
-        // resamples it to reach an impulse response.
-        let source_rate =
-            dsp.as_ref()
-                .map_or(info.sample_rate, |d| d.output_rate(info.sample_rate)) as f64;
-
-        // Anything read between here and the switch landing would pair this
-        // track with the last one's output rate, and a rate switch is not
-        // instant. Say nothing instead.
+        let key = self.open_key(info);
         self.shared_state.clear_output_sample_rate();
+        let mut opened = open_output(&self.open_context(0), &key, consumer)?;
+        self.keep_dsp(&opened);
+        self.apply_lead_in(&opened);
+        let watch = self.publish_output(&mut opened);
+        Ok((opened.engine, watch))
+    }
 
-        // DSP and ReplayGain hand the output floats of their own making: no
-        // source bit depth survives them.
-        let gained = crate::config::Config::cached().playback.replaygain
-            != crate::config::ReplayGainMode::Off;
-        let bit_depth = if dsp.is_some() || gained {
-            None
-        } else {
-            info.bit_depth
-        };
-        if (device_rate - source_rate).abs() > 0.1 {
-            log::info!(
-                "switching device sample rate: {}Hz → {}Hz",
-                device_rate,
-                source_rate
-            );
+    /// What an output for `info` is opened for, on the device asked for.
+    fn open_key(&self, info: &buffer::StreamInfo) -> OpenKey {
+        OpenKey {
+            device: self.output_device_name.clone(),
+            sample_rate: info.sample_rate,
+            channels: info.channels,
+            bit_depth: info.bit_depth,
         }
-        let settled = match self.backend.prepare_output(
-            &device,
-            device_rate,
-            source_rate,
-            info.channels,
-            bit_depth,
-        ) {
-            Ok(rate) => rate,
-            Err(e) => {
-                log::warn!("failed to set device sample rate: {}", e);
-                device_rate
-            }
-        };
-        if (settled - source_rate).abs() > 0.1 {
-            log::warn!(
-                "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
-                settled,
-                source_rate
-            );
-        }
+    }
 
+    fn open_context(&self, ticket: u64) -> OpenContext {
+        OpenContext {
+            backend: self.backend.clone(),
+            state: self.shared_state.clone(),
+            samples_played: self.timeline.samples_played_counter(),
+            ticket,
+            live: self.open_live.clone(),
+            dsp: self.dsp.clone(),
+            after: self.teardown.clone(),
+            #[cfg(test)]
+            dsp_override: self.dsp_override.clone(),
+        }
+    }
+
+    /// Say what the output settled at, from the player thread, and arm the
+    /// device's rate watch for the session now using it. Where the backend
+    /// keeps the watch for the session playing (iOS), it is made here, a call
+    /// that touches nothing of the audio system's; elsewhere the open thread
+    /// made it.
+    fn publish_output(&self, opened: &mut OpenedOutput) -> Option<Box<dyn SampleRateWatch>> {
         // The front ends compare this against the source rate to say whether
         // anything had to resample.
-        self.shared_state
-            .set_output_sample_rate(settled.round() as u32);
-
-        // koan is not the only client of this device. Subscribe so the front
-        // ends learn about a rate someone else moved instead of trusting the
-        // reading above until the next track happens to build an engine.
-        let watch_state = self.shared_state.clone();
-        let watch_name = device.name.clone();
-        let rate_watch = self.backend.watch_device_sample_rate(
-            &device,
-            Box::new(move |rate| {
-                log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
-                watch_state.set_output_sample_rate(rate.round() as u32);
-            }),
-        );
-
-        let engine = self.backend.create_engine(
-            &device,
-            source_rate,
-            info.channels as u32,
-            consumer,
-            self.timeline.samples_played_counter(),
-        )?;
-        // Said of the stream as it opened, which may have fallen back to the
-        // system mixer after asking for more: then the rate is the mixer's.
-        let mixed = self.backend.output_mixed();
-        self.shared_state.set_output_mixed(mixed);
-        if mixed == Some(true)
-            && let Ok(rate) = self.backend.get_device_sample_rate(&device)
-        {
-            self.shared_state
-                .set_output_sample_rate(rate.round() as u32);
+        let state = &self.shared_state;
+        state.set_output_sample_rate(opened.settled.round() as u32);
+        state.set_output_mixed(opened.mixed);
+        if let Some(rate) = opened.mixer_rate {
+            state.set_output_sample_rate(rate.round() as u32);
         }
-        // iOS answers 0 until its session has first been activated, and no
-        // switch from an unknown rate is one to wait out. A new engine inside the
-        // silence, a seek, still has the rest of the relock ahead of it.
+        opened
+            .armed
+            .store(true, std::sync::atomic::Ordering::Release);
+        if self.backend.rate_watch_on_player() {
+            return rate_watch(
+                self.backend.as_ref(),
+                &self.shared_state,
+                &opened.device,
+                &opened.armed,
+            );
+        }
+        opened.rate_watch.take()
+    }
+
+    /// The DSP setup an output was opened with, kept as the one in use for
+    /// its device, as `dsp_for` keeps what it loads.
+    fn keep_dsp(&mut self, opened: &OpenedOutput) {
+        self.dsp = Some(DspCache {
+            config: crate::config::Config::cached(),
+            device: opened.device.name.clone(),
+            setup: opened.dsp.clone(),
+        });
+    }
+
+    /// The silence after a rate switch, before the track is heard: the
+    /// device relocking, counted from the switch. A new engine inside the
+    /// silence, a seek, still has the rest of the relock ahead of it.
+    fn apply_lead_in(&mut self, opened: &OpenedOutput) {
         let now = std::time::Instant::now();
-        let lead_in = if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {
-            std::time::Duration::from_millis(
+        let lead_in = match opened.switched {
+            Some(at) => std::time::Duration::from_millis(
                 crate::config::Config::cached()
                     .playback
                     .rate_switch_lead_in_ms as u64,
             )
-        } else {
-            self.lead_in_ends
+            .saturating_sub(now.saturating_duration_since(at)),
+            None => self
+                .lead_in_ends
                 .map(|end| end.saturating_duration_since(now))
-                .unwrap_or_default()
+                .unwrap_or_default(),
         };
         self.lead_in_ends = None;
         if !lead_in.is_zero() {
-            engine.lead_in((settled * lead_in.as_secs_f64()) as u64);
+            opened
+                .engine
+                .lead_in((opened.settled * lead_in.as_secs_f64()) as u64);
             self.lead_in_ends = Some(now + lead_in);
         }
-
-        Ok((engine, rate_watch))
     }
 
     /// The DSP profile for `device`, loaded once per config and device.
@@ -606,22 +795,7 @@ impl Player {
         {
             return cache.setup.clone();
         }
-        let setup = crate::audio::dsp::profiles::for_playing(|| {
-            let chain = crate::audio::dsp::output_chain(&config.dsp, device)?;
-            crate::audio::dsp::Setup::load(&chain.profile, &chain.all, &crate::config::config_dir())
-                .inspect_err(|e| {
-                    log::error!(
-                        "dsp: profile '{}' not loaded, playing without it: {e}",
-                        chain.name
-                    )
-                })
-                .ok()
-                .flatten()
-                .map(|mut setup| {
-                    setup.name = chain.name;
-                    Arc::new(setup)
-                })
-        });
+        let setup = load_dsp(&config, device);
         self.dsp = Some(DspCache {
             config,
             device: device.to_string(),
@@ -635,12 +809,84 @@ impl Player {
     /// loaded, responses included, since the files can change without the
     /// config doing so. A preset given to another device, from the Play on
     /// menu, changes nothing here and restarts nothing.
+    /// Read the output device's DSP again, and restart what plays if it
+    /// changed. A renderer is named by its link; a local device is resolved
+    /// off this thread, a call into the audio system, and the reading comes
+    /// back as `DspLoaded`. A player opening inline (tests) reads it here.
     fn reload_dsp(&mut self) {
-        let device = match &self.renderer {
-            Some(link) => Ok(link.device_name().to_string()),
-            None => self.resolve_device().map(|d| d.name),
+        let local = match &self.renderer {
+            Some(link) => {
+                let device = link.device_name().to_string();
+                self.apply_dsp(Some(device), None);
+                return;
+            }
+            None => self.open_inline,
         };
-        let Ok(device) = device else {
+        if local {
+            let device = self.resolve_device().map(|d| d.name).ok();
+            self.apply_dsp(device, None);
+            return;
+        }
+        self.dsp_ticket += 1;
+        let ticket = self.dsp_ticket;
+        let mut ctx = self.open_context(0);
+        // Read afresh: the cache is what is being checked.
+        ctx.dsp = None;
+        let wanted = self.output_device_name.clone();
+        let tx = self.commands.tx.clone();
+        let spawned = thread::Builder::new()
+            .name("koan-dsp-read".into())
+            .spawn(move || {
+                let config = crate::config::Config::cached();
+                let device = resolve_device_on(ctx.backend.as_ref(), wanted.as_deref())
+                    .ok()
+                    .map(|d| d.name);
+                let setup = device.as_deref().and_then(|d| ctx.dsp_for(d));
+                let _ = tx.send(PlayerCommand::DspLoaded(DspLoaded {
+                    ticket,
+                    wanted,
+                    config,
+                    device,
+                    setup,
+                }));
+            });
+        if let Err(e) = spawned {
+            log::warn!("dsp: not read again: {e}");
+        }
+    }
+
+    /// A DSP reading from `reload_dsp`'s thread: dropped if a newer one was
+    /// asked for since, or if the output moved meanwhile (another device, a
+    /// renderer), since it reads a device no longer in use and would restart
+    /// what plays for nothing.
+    fn on_dsp_loaded(&mut self, loaded: DspLoaded) {
+        if loaded.ticket != self.dsp_ticket
+            || loaded.wanted != self.output_device_name
+            || self.renderer.is_some()
+        {
+            return;
+        }
+        let DspLoaded {
+            config,
+            device,
+            setup,
+            ..
+        } = loaded;
+        self.apply_dsp(device, Some((config, setup)));
+    }
+
+    /// Take the DSP read for `device` (here, when `read` is `None`) as the
+    /// one in use, restarting what plays if it changed.
+    #[allow(clippy::type_complexity)]
+    fn apply_dsp(
+        &mut self,
+        device: Option<String>,
+        read: Option<(
+            Arc<crate::config::Config>,
+            Option<Arc<crate::audio::dsp::Setup>>,
+        )>,
+    ) {
+        let Some(device) = device else {
             self.dsp = None;
             return;
         };
@@ -649,7 +895,17 @@ impl Player {
             .take()
             .filter(|c| c.device == device)
             .map(|c| c.setup);
-        let now = self.dsp_for(&device);
+        let now = match read {
+            Some((config, setup)) => {
+                self.dsp = Some(DspCache {
+                    config,
+                    device,
+                    setup: setup.clone(),
+                });
+                setup
+            }
+            None => self.dsp_for(&device),
+        };
         let changed = match was {
             Some(was) => was != now,
             None => now.is_some(),
@@ -681,41 +937,10 @@ impl Player {
         self.restart_on_current_track();
     }
 
-    /// ReplayGain and DSP for a session on the output device.
-    fn processing(&mut self) -> buffer::Processing {
-        let cfg = crate::config::Config::cached();
-        let dsp = match self.resolve_device() {
-            Ok(device) => self.dsp_for(&device.name),
-            Err(_) => None,
-        };
-        buffer::Processing {
-            rg_mode: cfg.playback.replaygain,
-            pre_amp_db: cfg.playback.pre_amp_db,
-            dsp,
-            depth_limit: Arc::default(),
-        }
-    }
-
     /// Resolve the output device: use configured device name if set,
     /// falling back to system default if not set or if the named device is unavailable.
     fn resolve_device(&self) -> Result<backend::DeviceInfo, PlayerError> {
-        if let Some(ref name) = self.output_device_name {
-            match self.backend.list_devices() {
-                Ok(devices) => {
-                    if let Some(dev) = devices.into_iter().find(|d| d.name == *name) {
-                        return Ok(dev);
-                    }
-                    log::warn!(
-                        "configured output device '{}' not found, falling back to default",
-                        name,
-                    );
-                }
-                Err(e) => {
-                    log::warn!("failed to list devices while resolving '{}': {}", name, e);
-                }
-            }
-        }
-        Ok(self.backend.default_device()?)
+        resolve_device_on(self.backend.as_ref(), self.output_device_name.as_deref())
     }
 
     /// Switch the output device. Persists to config and restarts the engine
@@ -735,8 +960,19 @@ impl Player {
         if self.renderer.is_some() {
             self.use_renderer(None);
         } else {
-            self.restart_on_current_track();
+            self.reopen_for_device();
         }
+    }
+
+    /// The output device changed: what plays restarts on it, and a session
+    /// still waiting for its output waits for the new device's.
+    fn reopen_for_device(&mut self) {
+        if matches!(self.transport, Transport::Opening(_)) {
+            self.reopen_output();
+            return;
+        }
+        self.drop_prepared();
+        self.restart_on_current_track();
     }
 
     /// Clear the configured output device, reverting to system default.
@@ -755,7 +991,7 @@ impl Player {
         if self.renderer.is_some() {
             self.use_renderer(None);
         } else {
-            self.restart_on_current_track();
+            self.reopen_for_device();
         }
     }
 
@@ -799,7 +1035,10 @@ impl Player {
     }
 
     fn forget_waiting(&mut self) {
-        if matches!(self.transport, Transport::Waiting(_)) {
+        if matches!(
+            self.transport,
+            Transport::Waiting(_) | Transport::Opening(_)
+        ) {
             self.transport = Transport::Idle;
         }
     }
@@ -829,6 +1068,17 @@ impl Player {
                 true,
                 None,
             ),
+            // As asked, playing or paused, the track it opens with shown:
+            // an output opening in milliseconds is nobody's business, and
+            // the playhead stands still meanwhile (`playhead_moving`).
+            Transport::Opening(pending) => (
+                match pending.start {
+                    Run::Playing => PlaybackState::Playing,
+                    Run::Paused => PlaybackState::Paused,
+                },
+                false,
+                Some(&pending.track),
+            ),
             Transport::Loaded(session) => (
                 match session.run {
                     Run::Playing => PlaybackState::Playing,
@@ -841,6 +1091,24 @@ impl Player {
         if state.track_info().as_ref() != track {
             state.set_track_info(track.cloned());
         }
+        // Waiting for the output: on which device, since when (kept while it
+        // is the same device), and whether asking again would be refused.
+        let opening = match &self.transport {
+            Transport::Opening(pending) => {
+                let device = self.open_key(&pending.info).device;
+                let since = state
+                    .output_opening()
+                    .filter(|o| o.device == device)
+                    .map_or_else(std::time::Instant::now, |o| o.since);
+                Some(crate::player::state::OutputOpening {
+                    device,
+                    since,
+                    stuck: self.abandoned_opens() >= MAX_ABANDONED_OPENS,
+                })
+            }
+            _ => None,
+        };
+        state.set_output_opening(opening);
         state.set_transport(playback, waiting);
         // Only a session decoded here can have been processed: a renderer
         // handed the original file plays it as it is.
@@ -871,6 +1139,7 @@ impl Player {
         match &self.transport {
             Transport::Idle => None,
             Transport::Waiting(waiting) => Some(waiting.start),
+            Transport::Opening(pending) => Some(pending.start),
             Transport::Loaded(session) => Some(session.run),
         }
     }
@@ -1140,17 +1409,107 @@ impl Player {
             }
         );
 
-        let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+        let pending = Pending {
+            id,
+            position_ms: seek_ms,
+            start,
+            track,
+            info,
+            first,
+            stream,
+        };
+        let key = self.open_key(&pending.info);
+        // Anything read between here and the switch landing would pair this
+        // track with the last one's output rate, and a rate switch is not
+        // instant. Say nothing instead.
+        self.shared_state.clear_output_sample_rate();
+        match self.take_output(&key)? {
+            Some(output) => self.start_session(pending, output),
+            // The output opens on its own thread; the session waits for it,
+            // and the commands meanwhile change what it starts with.
+            None => {
+                self.transport = Transport::Opening(Box::new(pending));
+                self.want_output(key);
+                Ok(())
+            }
+        }
+    }
+
+    /// The output opened for `key`: on this thread for a player opening
+    /// inline, else the one an open thread handed back for it, if it is
+    /// recent. Any other kept output is dropped.
+    fn take_output(&mut self, key: &OpenKey) -> Result<Option<Box<PreparedOutput>>, PlayerError> {
+        if self.open_inline {
+            let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+            let parts = open_output(&self.open_context(0), key, consumer)?;
+            return Ok(Some(Box::new(PreparedOutput {
+                key: key.clone(),
+                producer,
+                parts,
+                made: std::time::Instant::now(),
+            })));
+        }
+        Ok(self.prepared.take().and_then(|p| {
+            if p.key == *key && p.made.elapsed() < PREPARED_FOR {
+                Some(p)
+            } else {
+                discard(p);
+                None
+            }
+        }))
+    }
+
+    /// Forget an output kept for the next play: the device it was opened on
+    /// is no longer the one to play on.
+    fn drop_prepared(&mut self) {
+        if let Some(p) = self.prepared.take() {
+            discard(p);
+        }
+    }
+
+    /// Start a session on its output, from where the commands while it
+    /// opened left it. Nothing here waits on the audio system.
+    fn start_session(
+        &mut self,
+        pending: Pending,
+        output: Box<PreparedOutput>,
+    ) -> Result<(), PlayerError> {
+        let Pending {
+            id,
+            position_ms: seek_ms,
+            start,
+            track,
+            info,
+            first,
+            stream,
+        } = pending;
+        let PreparedOutput {
+            producer,
+            mut parts,
+            ..
+        } = *output;
+        self.keep_dsp(&parts);
+        self.apply_lead_in(&parts);
+        let rate_watch = self.publish_output(&mut parts);
+        let OpenedOutput {
+            engine, dsp: setup, ..
+        } = parts;
         self.timeline.reset();
         let lookahead = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let next_track = self.decode_cursor(id, lookahead.clone());
-        // Files and downloads in progress open here alike, so both get the
-        // output's processing.
-        let processing = self.processing();
+        // The decoder is handed the setup the output was opened with, so the
+        // two agree on the rate.
+        let cfg = crate::config::Config::cached();
+        let processing = buffer::Processing {
+            rg_mode: cfg.playback.replaygain,
+            pre_amp_db: cfg.playback.pre_amp_db,
+            dsp: setup.clone(),
+            depth_limit: Arc::default(),
+        };
         let depth_limit = processing.depth_limit.clone();
-        // The decoder starts before the output opens and runs far ahead of
-        // it, past a short track's end within the first moments. Until the
-        // output says what it keeps, a deeper track than this one ends the run.
+        // The decoder runs far ahead of the output, past a short track's end
+        // within the first moments. Until the output says what it keeps, a
+        // deeper track than this one ends the run.
         depth_limit.store(
             self.assumed_depth(&info),
             std::sync::atomic::Ordering::Relaxed,
@@ -1178,18 +1537,12 @@ impl Player {
             },
         )?;
 
-        let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
         self.timeline.set_presentation(engine.presentation());
         depth_limit.store(
             self.backend.output_depth().unwrap_or(0),
             std::sync::atomic::Ordering::Relaxed,
         );
-        // The setup `create_engine_for` chose the rate by.
-        let dsp = self
-            .dsp
-            .as_ref()
-            .and_then(|c| c.setup.as_ref())
-            .map(|s| s.status(info.sample_rate));
+        let dsp = setup.as_ref().map(|s| s.status(info.sample_rate));
         // A session opened paused leaves the unit stopped: starting it and
         // stopping it again lets a moment of the track out.
         if start == Run::Playing {
@@ -1213,6 +1566,231 @@ impl Player {
             }),
         });
         Ok(())
+    }
+
+    /// Have an output opening for `key`. One already opening for it goes
+    /// on. One opening for another key (a device chosen, a track of another
+    /// format) is abandoned for a new one, unless an earlier abandoned open
+    /// is still stuck: then it is left to land, and `on_output_opened` asks
+    /// again.
+    fn want_output(&mut self, key: OpenKey) {
+        match &self.opening {
+            Some(flight) if flight.key == key && !flight.outdated => {}
+            Some(_) if self.abandoned_opens() >= MAX_ABANDONED_OPENS => {}
+            _ => {
+                self.abandon_open();
+                self.spawn_open(key);
+            }
+        }
+    }
+
+    /// The device moved under the session waiting for its output (a restart,
+    /// a route or DSP change): the open under way, made for the device as it
+    /// was, is abandoned for a new one, or if that is not allowed yet, marked
+    /// to be dropped when it lands.
+    fn reopen_output(&mut self) {
+        self.drop_prepared();
+        let Transport::Opening(pending) = &self.transport else {
+            return;
+        };
+        let key = self.open_key(&pending.info);
+        if let Some(flight) = &mut self.opening {
+            flight.outdated = true;
+        }
+        self.want_output(key);
+    }
+
+    /// Stop waiting for the open under way. Its thread stops before its next
+    /// call into the audio system and drops anything it made.
+    fn abandon_open(&mut self) {
+        if self.opening.take().is_some() {
+            self.open_live
+                .store(0, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Open threads abandoned and still running: stuck in the audio system.
+    fn abandoned_opens(&self) -> usize {
+        let running = self.open_threads.load(std::sync::atomic::Ordering::Acquire);
+        running.saturating_sub(usize::from(self.opening.is_some()))
+    }
+
+    /// Open the output for `key` on a thread of its own. With an abandoned
+    /// open still stuck beyond the allowance, nothing starts: the session
+    /// waits, and the next open thread to return makes room
+    /// (`on_output_opened`).
+    fn spawn_open(&mut self, key: OpenKey) {
+        debug_assert!(self.opening.is_none());
+        if self.abandoned_opens() > MAX_ABANDONED_OPENS {
+            log::warn!("output: an earlier attempt is still stuck; waiting for it to return");
+            return;
+        }
+        self.open_ticket += 1;
+        let ticket = self.open_ticket;
+        self.open_live
+            .store(ticket, std::sync::atomic::Ordering::Release);
+        self.opening = Some(OpenFlight {
+            ticket,
+            key: key.clone(),
+            outdated: false,
+        });
+        let ctx = self.open_context(ticket);
+        let tx = self.commands.tx.clone();
+        let threads = self.open_threads.clone();
+        threads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let spawned = thread::Builder::new()
+            .name("koan-output-open".into())
+            .spawn(move || {
+                let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+                let result = open_output(&ctx, &key, consumer).and_then(|parts| {
+                    let output = Box::new(PreparedOutput {
+                        key: key.clone(),
+                        producer,
+                        parts,
+                        made: std::time::Instant::now(),
+                    });
+                    // Not wanted any more: dropped here, off the player's
+                    // thread, however long the audio system takes.
+                    if ctx.abandoned() {
+                        drop(output);
+                        return Err(PlayerError::Abandoned);
+                    }
+                    Ok(output)
+                });
+                threads.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                // The player may be gone, with its channel.
+                let _ = tx.send(PlayerCommand::OutputOpened(OutputReady {
+                    ticket,
+                    key,
+                    result,
+                }));
+            });
+        if let Err(e) = spawned {
+            self.open_threads
+                .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+            self.opening = None;
+            self.start_failed(
+                "output",
+                &PlayerError::Backend(BackendError::Platform(format!(
+                    "the output could not be opened: {e}"
+                ))),
+            );
+            self.stop_playback_and_clear_state();
+        }
+    }
+
+    /// An output opened, or did not: the session waiting for it starts, from
+    /// wherever the commands since left it. An answer to an ask since
+    /// abandoned is dropped, its output off this thread, and its thread's
+    /// return may make room for an open that was waiting for one.
+    fn on_output_opened(&mut self, ready: OutputReady) {
+        let OutputReady {
+            ticket,
+            key: opened_for,
+            result,
+        } = ready;
+        let Some(flight) = self.opening.take_if(|f| f.ticket == ticket) else {
+            if let Ok(output) = result {
+                discard(output);
+            }
+            if self.opening.is_none()
+                && let Transport::Opening(pending) = &self.transport
+            {
+                let key = self.open_key(&pending.info);
+                self.spawn_open(key);
+            }
+            return;
+        };
+        let Transport::Opening(pending) = &self.transport else {
+            // Nothing waits for it any more: kept for the next session it
+            // suits, for a while.
+            if let Ok(output) = result
+                && !flight.outdated
+                && let Some(old) = self.prepared.replace(output)
+            {
+                discard(old);
+            }
+            return;
+        };
+        // The track or the device changed while it opened: an answer for
+        // what is no longer wanted, success or failure, says nothing about
+        // what is.
+        let key = self.open_key(&pending.info);
+        if opened_for != key || flight.outdated {
+            if let Ok(output) = result {
+                discard(output);
+            }
+            self.spawn_open(key);
+            return;
+        }
+        let Transport::Opening(pending) = std::mem::replace(&mut self.transport, Transport::Idle)
+        else {
+            unreachable!()
+        };
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => {
+                self.start_failed("output", &e);
+                self.stop_playback_and_clear_state();
+                return;
+            }
+        };
+        let start = pending.start;
+        match self.start_session(*pending, output) {
+            Ok(()) => {
+                self.shared_state.set_start_failure(None);
+                self.report(match start {
+                    Run::Playing => PlaybackReportState::Playing,
+                    Run::Paused => PlaybackReportState::Paused,
+                });
+            }
+            Err(e) => {
+                self.start_failed("output", &e);
+                self.stop_playback_and_clear_state();
+            }
+        }
+        self.wake_analyzer();
+    }
+
+    /// Ask the output again: the attempt under way is abandoned. Refused
+    /// while an earlier abandoned one is still stuck, which the wait note
+    /// says (`OutputOpening::stuck`).
+    fn retry_output(&mut self) {
+        let Transport::Opening(pending) = &self.transport else {
+            return;
+        };
+        if self.abandoned_opens() >= MAX_ABANDONED_OPENS {
+            log::warn!("output: an earlier attempt is still stuck; not asking again yet");
+            return;
+        }
+        log::info!("output: asking again");
+        let key = self.open_key(&pending.info);
+        self.abandon_open();
+        self.spawn_open(key);
+    }
+
+    /// Stop waiting for the output. A named device that would not open gives
+    /// way to the system's default, for this run (the setting is left as it
+    /// is), when the open under way may be abandoned. Otherwise playback
+    /// stops, and the open under way is left to land: its output is kept for
+    /// a play soon after, and no further thread is started.
+    fn cancel_output(&mut self) {
+        let Transport::Opening(pending) = &self.transport else {
+            return;
+        };
+        let mut key = self.open_key(&pending.info);
+        if let Some(device) = key.device.take()
+            && self.abandoned_opens() < MAX_ABANDONED_OPENS
+        {
+            log::info!("output: '{device}' did not open; playing on the system's default");
+            self.output_device_name = None;
+            self.drop_prepared();
+            self.abandon_open();
+            self.spawn_open(key);
+            return;
+        }
+        log::info!("output: stopped waiting for it");
+        self.stop_playback_and_clear_state();
     }
 
     /// Gapless lookahead: the decode thread keeps its own cursor, separate
@@ -1447,6 +2025,20 @@ impl Player {
     }
 
     fn seek_to(&mut self, position_ms: u64) {
+        // Opening: where it starts moves, inside the track.
+        if let Transport::Opening(pending) = &mut self.transport {
+            let duration = pending.info.duration_ms;
+            let at = if duration > 0 {
+                position_ms.min(duration.saturating_sub(state::SEEK_END_GUARD_MS))
+            } else {
+                position_ms
+            };
+            pending.position_ms = at;
+            let id = pending.id;
+            self.shared_state.set_position_ms(at);
+            self.on_track_changed(id, at);
+            return;
+        }
         let Some(id) = self.session().map(|s| s.track.id) else {
             return;
         };
@@ -1476,6 +2068,10 @@ impl Player {
     /// the session's path, which names the `.part` file for a track that was still
     /// downloading when it started and is not renamed when the download lands.
     fn restart_current(&mut self, position_ms: u64) -> Result<(), PlayerError> {
+        if matches!(self.transport, Transport::Opening(_)) {
+            self.reopen_output();
+            return Ok(());
+        }
         let Some(session) = self.session() else {
             return Ok(());
         };
@@ -1580,6 +2176,10 @@ impl Player {
                 waiting.start = Run::Paused;
                 return;
             }
+            Transport::Opening(pending) => {
+                pending.start = Run::Paused;
+                return;
+            }
             Transport::Loaded(session) => {
                 if let Output::Local(local) = &session.output {
                     match fade {
@@ -1624,6 +2224,10 @@ impl Player {
             Transport::Waiting(waiting) => {
                 let waiting = *waiting;
                 self.cue(waiting.id, waiting.position_ms, Run::Playing);
+                return;
+            }
+            Transport::Opening(pending) => {
+                pending.start = Run::Playing;
                 return;
             }
             Transport::Loaded(session) => session,
@@ -1717,6 +2321,7 @@ impl Player {
             engine,
             mut decode_handle,
             stream,
+            _rate_watch: rate_watch,
             ..
         } = local;
 
@@ -1729,8 +2334,53 @@ impl Player {
         }
         decode_handle.stop();
         self.timeline.set_presentation(None);
-        drop(engine);
+        // Where the backend keeps one watch for the session playing (iOS),
+        // dropping it clears that slot: dropped here, before the next session
+        // makes its own on this thread.
+        let rate_watch = if self.backend.rate_watch_on_player() {
+            drop(rate_watch);
+            None
+        } else {
+            rate_watch
+        };
+        self.dispose(engine, rate_watch);
         self.answer_silence();
+    }
+
+    /// Dispose of a stopped session's output: the unit and the device's rate
+    /// watch, both calls into the audio system, on a thread of its own. The
+    /// next open waits for it to finish before touching the device. A player
+    /// opening inline (tests) disposes of it here.
+    fn dispose(
+        &mut self,
+        engine: Box<dyn AudioEngineHandle>,
+        rate_watch: Option<Box<dyn SampleRateWatch>>,
+    ) {
+        if self.open_inline {
+            drop(engine);
+            drop(rate_watch);
+            return;
+        }
+        let teardown = Arc::new(Teardown::default());
+        let done = teardown.clone();
+        // One teardown at a time, in order: an open waits for the latest,
+        // which has waited for the one before it.
+        let before = self.teardown.take();
+        let parts = (engine, rate_watch);
+        let spawned = thread::Builder::new()
+            .name("koan-output-drop".into())
+            .spawn(move || {
+                if let Some(before) = before {
+                    before.wait();
+                }
+                drop(parts);
+                done.finish();
+            });
+        // Without a thread it was disposed of as the closure dropped.
+        if spawned.is_err() {
+            teardown.finish();
+        }
+        self.teardown = Some(teardown);
     }
 
     /// Tell whoever waited for the pause where the playhead came to rest.
@@ -2597,6 +3247,9 @@ impl Player {
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished(session) => self.on_decode_finished(session),
+            PlayerCommand::OutputOpened(ready) => self.on_output_opened(ready),
+            PlayerCommand::RetryOutput => self.retry_output(),
+            PlayerCommand::CancelOutput => self.cancel_output(),
             // Nothing to do but wake: the loop works out when the playhead
             // reaches the track just queued.
             PlayerCommand::TrackQueued => {}
@@ -2636,12 +3289,15 @@ impl Player {
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
             PlayerCommand::RestartOutput => {
                 log::info!("restarting audio output");
+                self.drop_prepared();
                 self.restart_on_current_track();
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
             PlayerCommand::ReloadDsp => self.reload_dsp(),
+            PlayerCommand::DspLoaded(loaded) => self.on_dsp_loaded(loaded),
             PlayerCommand::RouteChanged => {
                 crate::audio::follow_route();
+                self.drop_prepared();
                 self.reload_dsp();
             }
             PlayerCommand::UseRenderer(connection) => {
@@ -2794,6 +3450,7 @@ impl Player {
         let orphaned = match &self.transport {
             Transport::Idle => false,
             Transport::Waiting(waiting) => self.shared_state.get_item(waiting.id).is_none(),
+            Transport::Opening(pending) => self.shared_state.get_item(pending.id).is_none(),
             Transport::Loaded(session) => self.shared_state.get_item(session.track.id).is_none(),
         };
         if !orphaned {
@@ -3010,6 +3667,7 @@ impl Player {
             log::warn!("dsp: not brought up to date: {e}");
         }
         let mut player = Self::new();
+        player.open_inline = false;
         player.history = PlayRecorder::spawn();
         let state = player.shared_state();
         let timeline = player.timeline();
@@ -3051,6 +3709,209 @@ fn step_pass(steps: &[state::Lookahead], boundary: usize) -> Option<u64> {
         .iter()
         .rfind(|step| step.boundary == boundary)
         .map(|step| step.pass)
+}
+
+/// Open the output for `key`: resolve the device, switch it to the source's
+/// rate (bit-perfect), and make the unit over `consumer`. Everything here can
+/// wait on the audio system (a busy daemon, a DAC waking), so the player runs
+/// it on a thread of its own (`spawn_open`) and goes on answering commands.
+/// It writes no shared state: the player publishes what it found when the
+/// session starts (`publish_output`). Abandoned, it stops before the next call
+/// into the audio system, so an open nobody wants switches no device's rate.
+fn open_output(
+    ctx: &OpenContext,
+    key: &OpenKey,
+    consumer: rtrb::Consumer<f32>,
+) -> Result<OpenedOutput, PlayerError> {
+    if let Some(teardown) = &ctx.after {
+        teardown.wait();
+    }
+    ctx.go_on()?;
+    let device = resolve_device_on(ctx.backend.as_ref(), key.device.as_deref())?;
+    ctx.go_on()?;
+    let device_rate = ctx.backend.get_device_sample_rate(&device)?;
+    // Read once, here: the session's decoder is handed this same setup
+    // (`start_session`), so the engine and the decoder agree on its rate.
+    let dsp = ctx.dsp_for(&device.name);
+    // The rate the decode thread writes at: the source's, unless DSP
+    // resamples it to reach an impulse response.
+    let source_rate = dsp
+        .as_ref()
+        .map_or(key.sample_rate, |d| d.output_rate(key.sample_rate)) as f64;
+
+    // DSP and ReplayGain hand the output floats of their own making: no
+    // source bit depth survives them.
+    let gained =
+        crate::config::Config::cached().playback.replaygain != crate::config::ReplayGainMode::Off;
+    let bit_depth = if dsp.is_some() || gained {
+        None
+    } else {
+        key.bit_depth
+    };
+    if (device_rate - source_rate).abs() > 0.1 {
+        log::info!(
+            "switching device sample rate: {}Hz → {}Hz",
+            device_rate,
+            source_rate
+        );
+    }
+    ctx.go_on()?;
+    let settled =
+        match ctx
+            .backend
+            .prepare_output(&device, device_rate, source_rate, key.channels, bit_depth)
+        {
+            Ok(rate) => rate,
+            Err(e) => {
+                log::warn!("failed to set device sample rate: {}", e);
+                device_rate
+            }
+        };
+    if (settled - source_rate).abs() > 0.1 {
+        log::warn!(
+            "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
+            settled,
+            source_rate
+        );
+    }
+    // iOS answers 0 until its session has first been activated, and no
+    // switch from an unknown rate is one to wait out.
+    let switched =
+        (device_rate > 0.0 && (settled - device_rate).abs() > 0.1).then(std::time::Instant::now);
+
+    ctx.go_on()?;
+    let engine = ctx.backend.create_engine(
+        &device,
+        source_rate,
+        key.channels as u32,
+        consumer,
+        ctx.samples_played.clone(),
+    )?;
+    // Said of the stream as it opened, which may have fallen back to the
+    // system mixer after asking for more: then the rate is the mixer's.
+    let mixed = ctx.backend.output_mixed();
+    let mixer_rate = if mixed == Some(true) && !ctx.abandoned() {
+        ctx.backend.get_device_sample_rate(&device).ok()
+    } else {
+        None
+    };
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let rate_watch = if ctx.backend.rate_watch_on_player() || ctx.abandoned() {
+        None
+    } else {
+        rate_watch(ctx.backend.as_ref(), &ctx.state, &device, &armed)
+    };
+    Ok(OpenedOutput {
+        device,
+        dsp,
+        engine,
+        settled,
+        switched,
+        mixed,
+        mixer_rate,
+        rate_watch,
+        armed,
+    })
+}
+
+/// Watch `device` for a rate someone else moves: koan is not its only
+/// client, and the reading would otherwise stand until the next track. Says
+/// nothing until `armed`.
+fn rate_watch(
+    backend: &dyn AudioBackend,
+    state: &Arc<SharedPlayerState>,
+    device: &backend::DeviceInfo,
+    armed: &Arc<std::sync::atomic::AtomicBool>,
+) -> Option<Box<dyn SampleRateWatch>> {
+    let state = state.clone();
+    let armed = armed.clone();
+    let name = device.name.clone();
+    backend.watch_device_sample_rate(
+        device,
+        Box::new(move |rate| {
+            if !armed.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            log::info!("device sample rate changed externally: {rate}Hz on '{name}'");
+            state.set_output_sample_rate(rate.round() as u32);
+        }),
+    )
+}
+
+impl OpenContext {
+    /// The DSP profile for `device` as the config has it now.
+    fn dsp_for(&self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
+        #[cfg(test)]
+        if let Some(setup) = &self.dsp_override {
+            return Some(setup.clone());
+        }
+        let config = crate::config::Config::cached();
+        if let Some(cache) = &self.dsp
+            && Arc::ptr_eq(&cache.config, &config)
+            && cache.device == device
+        {
+            return cache.setup.clone();
+        }
+        load_dsp(&config, device)
+    }
+
+    /// Whether the player has stopped wanting this open.
+    fn abandoned(&self) -> bool {
+        self.ticket != 0 && self.live.load(std::sync::atomic::Ordering::Acquire) != self.ticket
+    }
+
+    fn go_on(&self) -> Result<(), PlayerError> {
+        if self.abandoned() {
+            Err(PlayerError::Abandoned)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// The output `wanted` names, or the system's default where it names none or
+/// one that is not there.
+fn resolve_device_on(
+    backend: &dyn AudioBackend,
+    wanted: Option<&str>,
+) -> Result<backend::DeviceInfo, PlayerError> {
+    if let Some(name) = wanted {
+        match backend.list_devices() {
+            Ok(devices) => {
+                if let Some(dev) = devices.into_iter().find(|d| d.name == name) {
+                    return Ok(dev);
+                }
+                log::warn!(
+                    "configured output device '{}' not found, falling back to default",
+                    name,
+                );
+            }
+            Err(e) => {
+                log::warn!("failed to list devices while resolving '{}': {}", name, e);
+            }
+        }
+    }
+    Ok(backend.default_device()?)
+}
+
+/// The DSP profile `config` has for `device`, loaded from its files.
+fn load_dsp(config: &crate::config::Config, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
+    crate::audio::dsp::profiles::for_playing(|| {
+        let chain = crate::audio::dsp::output_chain(&config.dsp, device)?;
+        crate::audio::dsp::Setup::load(&chain.profile, &chain.all, &crate::config::config_dir())
+            .inspect_err(|e| {
+                log::error!(
+                    "dsp: profile '{}' not loaded, playing without it: {e}",
+                    chain.name
+                )
+            })
+            .ok()
+            .flatten()
+            .map(|mut setup| {
+                setup.name = chain.name;
+                Arc::new(setup)
+            })
+    })
 }
 
 #[cfg(test)]
@@ -3319,7 +4180,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
 
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -3458,7 +4319,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
 
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -3509,7 +4370,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
 
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -3555,7 +4416,7 @@ mod tests {
 
         let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: starts.clone(),
@@ -3621,7 +4482,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
         let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: starts.clone(),
@@ -3858,7 +4719,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
         let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: starts.clone(),
@@ -3899,7 +4760,7 @@ mod tests {
     fn a_decode_end_from_a_replaced_session_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -3953,7 +4814,7 @@ mod tests {
         repeat: Repeat,
     ) -> (Player, Vec<QueueItemId>) {
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -4369,7 +5230,7 @@ mod tests {
     fn a_sleep_timer_for_the_end_of_the_record_plays_the_record_out() {
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -4792,7 +5653,7 @@ mod tests {
     fn a_track_the_decoder_could_not_open_does_not_make_every_edit_restart() {
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -4869,7 +5730,7 @@ mod tests {
     fn gapless_playback_waits_for_a_track_still_downloading() {
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -5009,8 +5870,10 @@ mod tests {
         }
         let info = state.track_info();
         match (&player.transport, &info) {
-            (Transport::Loaded(_), None) => return Err("loaded, but no track published".into()),
-            (Transport::Loaded(_), Some(info)) => {
+            (Transport::Loaded(_) | Transport::Opening(_), None) => {
+                return Err("loaded, but no track published".into());
+            }
+            (Transport::Loaded(_) | Transport::Opening(_), Some(info)) => {
                 if !listed(info.id) {
                     return Err("playing an item not in the playlist".into());
                 }
@@ -5088,7 +5951,7 @@ mod tests {
         for seed in 1..=40u64 {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             let mut player = Player::new();
-            player.backend = Box::new(StuckBackend {
+            player.backend = Arc::new(StuckBackend {
                 rate: 8_000.0,
                 asked: Default::default(),
                 starts: Default::default(),
@@ -5395,7 +6258,7 @@ mod tests {
         crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
 
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -6196,10 +7059,10 @@ mod tests {
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
     }
 
-    /// Regression test for GitHub #89: AudioEngine must be dropped synchronously
-    /// in stop_engine() before the caller changes sample rates. If the engine is
-    /// dropped on a background thread, CoreAudio's internal buffer list can be
-    /// freed while AudioUnitUninitialize is still tearing it down → crash.
+    /// Regression test for GitHub #89: the engine must be gone before the next
+    /// rate change. A player opening inline drops it in stop_engine(); one
+    /// opening off its thread disposes of it on another, and the next open
+    /// waits for that (`a_session_torn_down_off_the_thread_is_finished_before_the_next_open`).
     #[test]
     fn stop_engine_drops_engine_synchronously() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -6249,6 +7112,157 @@ mod tests {
         assert!(
             dropped.load(Ordering::SeqCst),
             "AudioEngine must be dropped synchronously in stop_engine (GitHub #89)"
+        );
+    }
+
+    /// An engine whose teardown waits for the test, as a unit's can wait on
+    /// the audio system.
+    struct SlowDrop {
+        gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl AudioEngineHandle for SlowDrop {
+        fn start(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            false
+        }
+        fn fade_out(&self) {}
+        fn fade_in(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_silent(&self) -> bool {
+            false
+        }
+    }
+    impl Drop for SlowDrop {
+        fn drop(&mut self) {
+            let (lock, cvar) = &*self.gate;
+            let _open = cvar
+                .wait_while(lock.lock().unwrap(), |open| !*open)
+                .unwrap();
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_session_torn_down_off_the_thread_is_finished_before_the_next_open() {
+        let backend = GatedBackend::new(&[]);
+        let gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)> = Default::default();
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.transport = Transport::Loaded(test_session(
+            QueueItemId::new(),
+            Box::new(SlowDrop {
+                gate: gate.clone(),
+                dropped: dropped.clone(),
+            }),
+        ));
+
+        quick("stop", || player.stop_engine());
+        assert!(!dropped.load(Ordering::SeqCst), "disposed of elsewhere");
+
+        let ctx = player.open_context(0);
+        let key = OpenKey {
+            device: None,
+            sample_rate: 8_000,
+            channels: 1,
+            bit_depth: Some(16),
+        };
+        let opener = std::thread::spawn(move || {
+            let (_producer, consumer) = rtrb::RingBuffer::new(16);
+            open_output(&ctx, &key, consumer).map(|_| ())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            backend.prepared.lock().unwrap().is_empty(),
+            "no rate is switched under a unit still being disposed of"
+        );
+        open_gate(&gate);
+        opener.join().unwrap().unwrap();
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(*backend.prepared.lock().unwrap(), ["Built-in"]);
+    }
+
+    #[test]
+    fn the_dsp_is_read_again_off_the_player_thread() {
+        let backend = GatedBackend::new(&["list"]);
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.output_device_name = Some("Busy DAC".into());
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
+
+        quick("reload", || {
+            player.process_command(PlayerCommand::ReloadDsp)
+        });
+        backend.held(1);
+        assert!(player.dsp.is_none(), "not read yet");
+        // A second ask while the first is stuck: only the newer answer counts.
+        player.process_command(PlayerCommand::ReloadDsp);
+        open_gate(&backend.gate);
+        let mut answers = 0;
+        while answers < 2 {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(cmd @ PlayerCommand::DspLoaded(_)) => {
+                    answers += 1;
+                    player.process_command(cmd);
+                }
+                Ok(_) => {}
+                Err(e) => panic!("no reading came back: {e}"),
+            }
+        }
+        let cache = player.dsp.as_ref().expect("read");
+        assert_eq!(cache.device, "Busy DAC");
+        assert!(cache.setup.is_some());
+    }
+
+    #[test]
+    fn a_dsp_reading_for_a_device_since_changed_is_dropped() {
+        let backend = GatedBackend::new(&["list"]);
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        player.output_device_name = Some("Busy DAC".into());
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
+
+        player.process_command(PlayerCommand::ReloadDsp);
+        backend.held(1);
+        // Chosen while the reading is under way, as set_output_device and
+        // clear_output_device do, without their config writes.
+        player.output_device_name = None;
+        open_gate(&backend.gate);
+        loop {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(cmd @ PlayerCommand::DspLoaded(_)) => {
+                    player.process_command(cmd);
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => panic!("no reading came back: {e}"),
+            }
+        }
+        assert!(
+            player.dsp.is_none(),
+            "the old device's reading is not taken"
         );
     }
 
@@ -6363,6 +7377,604 @@ mod tests {
         }
     }
 
+    /// A backend whose `held` devices answer only once the test lets them:
+    /// an audio system that takes its time, or never answers. Their first
+    /// call (the rate read) waits; what follows is recorded.
+    struct GatedBackend {
+        held: Vec<&'static str>,
+        gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+        /// Engines made, by device, in order.
+        made: Arc<std::sync::Mutex<Vec<String>>>,
+        /// Devices whose output was prepared (their rate set), in order.
+        prepared: Arc<std::sync::Mutex<Vec<String>>>,
+        starts: Arc<std::sync::atomic::AtomicUsize>,
+        /// Opens waiting at the gate now.
+        waiting: Arc<std::sync::atomic::AtomicUsize>,
+        /// Each rate watch made: the thread it was made on and its callback.
+        watches: Arc<std::sync::Mutex<Vec<(String, WatchFn)>>>,
+    }
+
+    type WatchFn = Arc<dyn Fn(f64) + Send + Sync>;
+
+    struct NoWatch;
+    impl SampleRateWatch for NoWatch {}
+
+    impl GatedBackend {
+        fn new(held: &[&'static str]) -> Self {
+            Self {
+                held: held.to_vec(),
+                gate: Default::default(),
+                made: Default::default(),
+                prepared: Default::default(),
+                starts: Default::default(),
+                waiting: Default::default(),
+                watches: Default::default(),
+            }
+        }
+
+        fn wait_at_gate(&self) {
+            self.waiting.fetch_add(1, Ordering::AcqRel);
+            let (lock, cvar) = &*self.gate;
+            let _open = cvar
+                .wait_while(lock.lock().unwrap(), |open| !*open)
+                .unwrap();
+            self.waiting.fetch_sub(1, Ordering::AcqRel);
+        }
+
+        /// Wait until `n` opens are held at the gate.
+        fn held(&self, n: usize) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while self.waiting.load(Ordering::Acquire) < n {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "never reached the gate"
+                );
+                std::thread::yield_now();
+            }
+        }
+
+        fn share(&self) -> Self {
+            Self {
+                held: self.held.clone(),
+                gate: self.gate.clone(),
+                made: self.made.clone(),
+                prepared: self.prepared.clone(),
+                starts: self.starts.clone(),
+                waiting: self.waiting.clone(),
+                watches: self.watches.clone(),
+            }
+        }
+
+        fn device(name: &str) -> backend::DeviceInfo {
+            backend::DeviceInfo {
+                name: name.into(),
+                sample_rates: vec![8_000.0],
+                platform_id: 0,
+                kind: Default::default(),
+            }
+        }
+    }
+
+    fn open_gate(gate: &(std::sync::Mutex<bool>, std::sync::Condvar)) {
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+    }
+
+    impl AudioBackend for GatedBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            // "list" in `held` holds the device lookup itself.
+            if self.held.contains(&"list") {
+                self.wait_at_gate();
+            }
+            Ok(vec![Self::device("Built-in"), Self::device("Busy DAC")])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(Self::device("Built-in"))
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![8_000.0])
+        }
+        fn get_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            if self.held.contains(&device.name.as_str()) {
+                self.wait_at_gate();
+            }
+            Ok(8_000.0)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            Ok(rate)
+        }
+        fn prepare_output(
+            &self,
+            device: &backend::DeviceInfo,
+            _current: f64,
+            rate: f64,
+            _channels: u16,
+            _bit_depth: Option<u16>,
+        ) -> Result<f64, BackendError> {
+            self.prepared.lock().unwrap().push(device.name.clone());
+            Ok(rate)
+        }
+        fn watch_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            on_change: Box<dyn Fn(f64) + Send + Sync>,
+        ) -> Option<Box<dyn SampleRateWatch>> {
+            let thread = std::thread::current().name().unwrap_or_default().to_owned();
+            self.watches
+                .lock()
+                .unwrap()
+                .push((thread, Arc::from(on_change)));
+            Some(Box::new(NoWatch))
+        }
+        fn create_engine(
+            &self,
+            device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            self.made.lock().unwrap().push(device.name.clone());
+            Ok(Box::new(NullEngine {
+                starts: self.starts.clone(),
+                running: Default::default(),
+                lead_in: Default::default(),
+            }))
+        }
+    }
+
+    /// A player that opens its output off its thread, as the app's does, on
+    /// `backend`, with `n` ten-second tracks queued.
+    fn opening_player(
+        backend: &GatedBackend,
+        n: usize,
+    ) -> (Player, Vec<QueueItemId>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        let items: Vec<_> = (0..n)
+            .map(|i| {
+                let path = dir.path().join(format!("{i}.wav"));
+                crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+                PlaylistItem {
+                    path,
+                    ..make_item(&format!("t{i}"))
+                }
+            })
+            .collect();
+        let ids = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        (player, ids, dir)
+    }
+
+    /// Wait for the open thread's answer and hand it to the player, skipping
+    /// the decoder's notices.
+    fn take_opened(player: &mut Player) {
+        loop {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(cmd @ PlayerCommand::OutputOpened(_)) => {
+                    player.process_command(cmd);
+                    return;
+                }
+                Ok(_) => {}
+                Err(e) => panic!("the output never answered: {e}"),
+            }
+        }
+    }
+
+    /// Hand the player open answers until `done`: an abandoned open may
+    /// answer first, before reaching anything the test holds.
+    fn take_opened_until(player: &mut Player, done: impl Fn(&Player) -> bool) {
+        while !done(player) {
+            take_opened(player);
+        }
+    }
+
+    /// Let every open thread return and hand the player their answers.
+    fn drain_opens(player: &mut Player) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while player.open_threads.load(Ordering::Acquire) > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "an open never returned"
+            );
+            std::thread::yield_now();
+        }
+        // A thread counts itself out just before it sends.
+        while let Ok(cmd) = player
+            .commands
+            .rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+        {
+            if matches!(cmd, PlayerCommand::OutputOpened(_)) {
+                player.process_command(cmd);
+            }
+        }
+    }
+
+    fn quick<T>(what: &str, f: impl FnOnce() -> T) -> T {
+        let at = std::time::Instant::now();
+        let out = f();
+        assert!(
+            at.elapsed() < std::time::Duration::from_millis(500),
+            "{what} waited for the output"
+        );
+        out
+    }
+
+    #[test]
+    fn commands_while_the_output_opens_change_what_it_starts_with() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 2);
+        let state = player.shared_state.clone();
+
+        quick("play", || {
+            player.process_command(PlayerCommand::Play(ids[0]))
+        });
+        assert!(matches!(player.transport, Transport::Opening(_)));
+        assert_eq!(state.playback_state(), PlaybackState::Playing);
+        assert_eq!(state.track_info().map(|t| t.id), Some(ids[0]));
+        assert!(state.output_opening().is_some());
+        assert!(!state.playhead_moving(), "nothing plays until it opens");
+
+        quick("skip", || player.process_command(PlayerCommand::NextTrack));
+        assert_eq!(state.track_info().map(|t| t.id), Some(ids[1]));
+        quick("seek", || {
+            player.process_command(PlayerCommand::Seek(3_000))
+        });
+        assert_eq!(state.position_ms(), 3_000);
+        quick("pause", || player.process_command(PlayerCommand::Pause));
+        assert_eq!(state.playback_state(), PlaybackState::Paused);
+        assert!(backend.made.lock().unwrap().is_empty(), "still opening");
+
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        assert!(state.output_opening().is_none());
+        let session = player.session().expect("started once open");
+        assert_eq!(session.track.id, ids[1], "on the track skipped to");
+        assert_eq!(session.run, Run::Paused, "paused, as left");
+        assert_eq!(state.playback_state(), PlaybackState::Paused);
+        assert_eq!(
+            backend.starts.load(Ordering::Relaxed),
+            0,
+            "not a sample let out"
+        );
+        let at = state.position_ms();
+        assert!((2_750..=3_000).contains(&at), "from the seek: {at}ms");
+        assert_eq!(*backend.made.lock().unwrap(), ["Built-in"], "opened once");
+
+        player.process_command(PlayerCommand::Resume);
+        assert_eq!(backend.starts.load(Ordering::Relaxed), 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn stopping_while_the_output_opens_keeps_it_for_the_next_play() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::Stop);
+        assert_eq!(state.playback_state(), PlaybackState::Stopped);
+        assert!(state.output_opening().is_none(), "nothing waits for it");
+
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        assert!(player.session().is_none(), "the stop held");
+        assert!(player.prepared.is_some(), "kept");
+        // Stop empties the queue: the same file queued again.
+        let path = dir.path().join("0.wav");
+        let item = PlaylistItem {
+            path,
+            ..make_item("again")
+        };
+        let again = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        player.process_command(PlayerCommand::Play(again));
+        assert!(player.session().is_some(), "started on the kept output");
+        assert_eq!(backend.made.lock().unwrap().len(), 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn cancelling_a_device_that_will_not_open_plays_on_the_default() {
+        let backend = GatedBackend::new(&["Busy DAC"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+        player.output_device_name = Some("Busy DAC".into());
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert_eq!(
+            state.output_opening().and_then(|o| o.device).as_deref(),
+            Some("Busy DAC")
+        );
+        quick("cancel", || {
+            player.process_command(PlayerCommand::CancelOutput)
+        });
+        take_opened_until(&mut player, |p| p.session().is_some());
+        assert_eq!(*backend.made.lock().unwrap(), ["Built-in"]);
+        assert_eq!(state.playback_state(), PlaybackState::Playing);
+        assert!(state.output_opening().is_none());
+
+        // The abandoned open returns late, having touched the device no
+        // further, and nothing of it is kept.
+        open_gate(&backend.gate);
+        drain_opens(&mut player);
+        assert_eq!(*backend.prepared.lock().unwrap(), ["Built-in"]);
+        assert_eq!(*backend.made.lock().unwrap(), ["Built-in"]);
+        assert!(player.prepared.is_none(), "a stale answer is not kept");
+        assert_eq!(player.open_threads.load(Ordering::Acquire), 0);
+        assert!(player.session().is_some(), "still playing on the default");
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn cancelling_the_default_stops() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::CancelOutput);
+        assert_eq!(state.playback_state(), PlaybackState::Stopped);
+        assert!(player.session().is_none());
+        assert!(state.output_opening().is_none());
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        assert!(player.session().is_none(), "the cancel held");
+    }
+
+    #[test]
+    fn at_most_one_abandoned_open_is_let_run() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert_eq!(player.open_threads.load(Ordering::Acquire), 1);
+        assert!(!player.shared_state.output_opening().unwrap().stuck);
+        // Stuck in the audio system: abandoned before that, it returns.
+        backend.held(1);
+        player.process_command(PlayerCommand::RetryOutput);
+        assert_eq!(
+            player.open_threads.load(Ordering::Acquire),
+            2,
+            "asked again"
+        );
+        assert!(
+            player.shared_state.output_opening().unwrap().stuck,
+            "a further retry would be refused, and the note says so"
+        );
+        player.process_command(PlayerCommand::RetryOutput);
+        assert_eq!(
+            player.open_threads.load(Ordering::Acquire),
+            2,
+            "refused while the first is stuck"
+        );
+        // Cancelling with one stuck already stops rather than open a third.
+        player.output_device_name = None;
+        let ticket = player.open_ticket;
+        player.process_command(PlayerCommand::CancelOutput);
+        assert_eq!(player.open_ticket, ticket, "nothing more opened");
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
+
+        open_gate(&backend.gate);
+        drain_opens(&mut player);
+        assert_eq!(player.open_threads.load(Ordering::Acquire), 0);
+        assert!(player.session().is_none());
+    }
+
+    #[test]
+    fn playing_and_cancelling_on_a_wedged_default_starts_no_more_threads() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        for _ in 0..5 {
+            player.process_command(PlayerCommand::Play(ids[0]));
+            assert!(matches!(player.transport, Transport::Opening(_)));
+            player.process_command(PlayerCommand::CancelOutput);
+            assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
+        }
+        assert_eq!(
+            player.open_threads.load(Ordering::Acquire),
+            1,
+            "the one open is waited out, not abandoned"
+        );
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert!(player.session().is_some(), "plays on the open that landed");
+        assert_eq!(*backend.made.lock().unwrap(), ["Built-in"]);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_device_chosen_mid_open_is_the_one_waited_for() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::Pause);
+        player.output_device_name = Some("Busy DAC".into());
+        player.reopen_for_device();
+        player.publish();
+        assert_eq!(
+            player
+                .shared_state
+                .output_opening()
+                .and_then(|o| o.device)
+                .as_deref(),
+            Some("Busy DAC"),
+            "the note names the device waited for"
+        );
+        take_opened_until(&mut player, |p| p.session().is_some());
+        assert_eq!(*backend.made.lock().unwrap(), ["Busy DAC"]);
+        assert_eq!(player.session().unwrap().run, Run::Paused);
+
+        // The open abandoned for it returns having done nothing more.
+        open_gate(&backend.gate);
+        drain_opens(&mut player);
+        assert_eq!(*backend.prepared.lock().unwrap(), ["Busy DAC"]);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_failure_for_what_is_no_longer_wanted_does_not_stop_playback() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        let Transport::Opening(pending) = &player.transport else {
+            panic!("opening");
+        };
+        let mut other = player.open_key(&pending.info);
+        other.sample_rate = 96_000;
+        player.process_command(PlayerCommand::OutputOpened(OutputReady {
+            ticket: player.open_ticket,
+            key: other,
+            result: Err(PlayerError::Backend(BackendError::Platform("busy".into()))),
+        }));
+        assert!(
+            matches!(player.transport, Transport::Opening(_)),
+            "still waiting, for the right format"
+        );
+        assert!(player.shared_state.start_failure().is_none());
+        assert_eq!(player.open_ticket, 2, "asked again");
+        open_gate(&backend.gate);
+        drain_opens(&mut player);
+        assert!(player.session().is_some());
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_kept_output_is_dropped_when_the_route_changes() {
+        let backend = GatedBackend::new(&[]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::CancelOutput);
+        take_opened(&mut player);
+        assert!(player.prepared.is_some(), "kept for a play soon after");
+        player.process_command(PlayerCommand::RestartOutput);
+        assert!(player.prepared.is_none(), "the device may have moved");
+    }
+
+    #[test]
+    fn the_rate_watch_is_made_off_the_player_thread_and_armed_by_its_session() {
+        let backend = GatedBackend::new(&[]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+        let watch = |i: usize| backend.watches.lock().unwrap()[i].clone();
+
+        // Opened for a session stopped meanwhile: its watch says nothing.
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::CancelOutput);
+        take_opened(&mut player);
+        let (thread, unused) = watch(0);
+        assert_eq!(thread, "koan-output-open");
+        let before = state.output_sample_rate();
+        unused(96_000.0);
+        assert_eq!(state.output_sample_rate(), before, "not armed");
+
+        // Taken by the next play: armed.
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert!(player.session().is_some());
+        assert_eq!(backend.watches.lock().unwrap().len(), 1, "made once");
+        unused(96_000.0);
+        assert_eq!(state.output_sample_rate(), Some(96_000));
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn the_command_lane_never_waits_for_the_output() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 2);
+        let state = player.shared_state.clone();
+        let tx = player.command_sender();
+        std::thread::Builder::new()
+            .name("test-player".into())
+            .spawn(move || player.run())
+            .unwrap();
+
+        tx.send(PlayerCommand::Play(ids[0])).unwrap();
+        // Far more than the channel holds: each is taken while the output
+        // is still stuck opening.
+        for i in 0..100 {
+            let cmd = match i % 3 {
+                0 => PlayerCommand::Seek(i * 10),
+                1 => PlayerCommand::Pause,
+                _ => PlayerCommand::Resume,
+            };
+            tx.send_timeout(cmd, std::time::Duration::from_secs(1))
+                .expect("the player took it");
+        }
+        assert!(backend.made.lock().unwrap().is_empty(), "still opening");
+        assert!(state.output_opening().is_some());
+
+        open_gate(&backend.gate);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Started, and said so once the command is done.
+        while backend.starts.load(Ordering::Relaxed) == 0 || state.output_opening().is_some() {
+            assert!(std::time::Instant::now() < deadline, "never started");
+            std::thread::yield_now();
+        }
+        tx.send(PlayerCommand::Stop).unwrap();
+    }
+
+    #[test]
+    fn gapless_never_reopens_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = GatedBackend::new(&[]);
+        let mut player = Player::new();
+        player.open_inline = false;
+        player.backend = Arc::new(backend.share());
+        let items: Vec<_> = (0..3)
+            .map(|i| {
+                let path = dir.path().join(format!("{i}.wav"));
+                crate::test_utils::generate_wav(&path, 8_000, 1, 0.3, 16);
+                PlaylistItem {
+                    path,
+                    ..make_item(&format!("g{i}"))
+                }
+            })
+            .collect();
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Play(ids[0]));
+        take_opened(&mut player);
+        assert!(player.session().is_some());
+        // The decoder runs on into the following tracks on the one ring.
+        for _ in &ids {
+            await_queued(&player);
+        }
+        // The playhead crosses into the last track.
+        player
+            .timeline
+            .samples_played_counter()
+            .store(2 * 2_400 + 400, Ordering::Relaxed);
+        player.update_playback_state();
+        assert_eq!(player.shared_state.cursor(), Some(ids[2]));
+        while let Ok(cmd) = player.commands.rx.try_recv() {
+            assert!(!matches!(cmd, PlayerCommand::OutputOpened(_)), "reopened");
+        }
+        assert_eq!(player.open_ticket, 1, "one open asked for");
+        assert_eq!(backend.made.lock().unwrap().len(), 1, "one output made");
+        player.process_command(PlayerCommand::Stop);
+    }
+
     /// Android's shape of output: the device takes a format bit-perfect when
     /// asked, but the stream opens through the mixer, at the mixer's rate.
     struct FallbackBackend {
@@ -6450,14 +8062,14 @@ mod tests {
             duration_ms: 1000,
         };
         let mut player = Player::new();
-        player.backend = Box::new(FallbackBackend {
+        player.backend = Arc::new(FallbackBackend {
             asked_depth: Default::default(),
             mixed: Default::default(),
         });
         assert_eq!(player.assumed_depth(&info(Some(16))), 16);
         assert_eq!(player.assumed_depth(&info(None)), 24);
 
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: 44100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -6469,7 +8081,7 @@ mod tests {
     fn a_stream_that_opens_through_the_mixer_is_reported_mixed_at_its_rate() {
         let mut player = Player::new();
         let asked_depth = Arc::new(std::sync::Mutex::new(None));
-        player.backend = Box::new(FallbackBackend {
+        player.backend = Arc::new(FallbackBackend {
             asked_depth: asked_depth.clone(),
             mixed: Default::default(),
         });
@@ -6584,7 +8196,7 @@ mod tests {
 
         let consumers = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut player = Player::new();
-        player.backend = Box::new(CaptureBackend {
+        player.backend = Arc::new(CaptureBackend {
             consumers: consumers.clone(),
         });
         let mut item = make_item("tone");
@@ -6655,7 +8267,7 @@ mod tests {
         crate::test_utils::generate_wav_tone(&a, 44100, 440.0, 5.0);
         let consumers = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut player = Player::new();
-        player.backend = Box::new(CaptureBackend {
+        player.backend = Arc::new(CaptureBackend {
             consumers: consumers.clone(),
         });
         let engines = || consumers.lock().unwrap().len();
@@ -6735,7 +8347,7 @@ mod tests {
         feed.set(half as u64);
 
         let mut player = Player::new();
-        player.backend = Box::new(CaptureBackend {
+        player.backend = Arc::new(CaptureBackend {
             consumers: Default::default(),
         });
         let item = PlaylistItem {
@@ -6784,7 +8396,7 @@ mod tests {
     fn engine_format_for(source_rate: u32, channels: u16, device_rate: f64) -> (f64, u32) {
         let asked = Arc::new(std::sync::Mutex::new(None));
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: device_rate,
             asked: asked.clone(),
             starts: Default::default(),
@@ -6822,7 +8434,7 @@ mod tests {
     /// The rate the device settled at, as the front ends read it.
     fn settled_rate_for(source_rate: u32, device_rate: f64) -> Option<u32> {
         let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
+        player.backend = Arc::new(StuckBackend {
             rate: device_rate,
             asked: Arc::new(std::sync::Mutex::new(None)),
             starts: Default::default(),
@@ -6925,7 +8537,7 @@ mod tests {
         state.set_output_sample_rate(48000);
 
         let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        player.backend = Box::new(SlowBackend {
+        player.backend = Arc::new(SlowBackend {
             observed: observed.clone(),
             state: state.clone(),
             lead_in: Default::default(),
@@ -6957,7 +8569,7 @@ mod tests {
     fn lead_in_for(source_rate: u32) -> u64 {
         let mut player = Player::new();
         let lead_in = Arc::new(AtomicU64::new(0));
-        player.backend = Box::new(SlowBackend {
+        player.backend = Arc::new(SlowBackend {
             observed: Default::default(),
             state: player.shared_state.clone(),
             lead_in: lead_in.clone(),
@@ -6983,7 +8595,7 @@ mod tests {
         // though the new engine finds its rate already matching.
         let mut player = Player::new();
         let lead_in = Arc::new(AtomicU64::new(0));
-        player.backend = Box::new(SlowBackend {
+        player.backend = Arc::new(SlowBackend {
             observed: Default::default(),
             state: player.shared_state.clone(),
             lead_in: lead_in.clone(),
@@ -7004,9 +8616,10 @@ mod tests {
         let (_p, consumer) = rtrb::RingBuffer::new(16);
         player.create_engine_for(&info(48000), consumer).unwrap();
         let carried = lead_in.load(Ordering::Relaxed);
-        // Frames at the new engine's rate: what is left of the same second.
+        // Frames at the new engine's rate: what is left of the same second,
+        // not a second again.
         assert!(
-            carried > 0 && carried < first * 48000 / 44100,
+            carried > 0 && carried <= first * 48000 / 44100 + 1 && carried < 48000,
             "carried {carried} of {first}"
         );
     }
@@ -7097,7 +8710,7 @@ mod tests {
         let lead_in_at = |sample_rate| {
             let mut player = Player::new();
             let lead_in = Arc::new(AtomicU64::new(0));
-            player.backend = Box::new(IosRates {
+            player.backend = Arc::new(IosRates {
                 lead_in: lead_in.clone(),
             });
             let info = buffer::StreamInfo {
@@ -7189,7 +8802,7 @@ mod tests {
         // resampled underneath them.
         let captured = Arc::new(std::sync::Mutex::new(None));
         let mut player = Player::new();
-        player.backend = Box::new(WatchedBackend {
+        player.backend = Arc::new(WatchedBackend {
             inner: StuckBackend {
                 rate: 44100.0,
                 asked: Arc::new(std::sync::Mutex::new(None)),

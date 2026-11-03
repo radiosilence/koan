@@ -11,13 +11,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{DspBand, DspBandKind, DspPoint};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::{
     AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, SharedString,
     Subscription, Window, div,
 };
 use koan_kit::app::{InteractiveElement, StatefulInteractiveElement, Styled};
+use koan_runtime::{DspBand, DspBandKind, DspPoint};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
@@ -410,7 +410,9 @@ pub fn table<V: 'static>(
         Column::fixed(DB_W, Align::End),
         Column::fixed(Q_W, Align::End),
     ];
-    let mut table = DenseTable::new(columns);
+    // The options menu on a band of a kind this version does not know:
+    // room for it on every row, so the figures line up down the edge.
+    let mut table = DenseTable::new(columns).trailing_width(crate::theme::HIT);
     if !bands.is_empty() {
         table = table.header(["#", "Type", "Hz", "dB", "Q"]);
     }

@@ -8,26 +8,31 @@ description = "kōan's design system for GPUI: the theme and its components. Kno
 publish = false
 
 [features]
-profiler = ["gpui-kit/profiler"]
+profiler = ["gpui/profiler"]
 # GPUI's Metal shaders compiled when the app starts rather than when it is
 # built: a build then needs the Command Line Tools, not Xcode's Metal
 # toolchain. For development; releases compile them ahead, as by default.
-runtime-shaders = ["dep:gpui_platform", "gpui_platform/runtime_shaders"]
-test-support = ["gpui-kit/test-support"]
+runtime-shaders = ["gpui_platform/runtime_shaders"]
+test-support = ["gpui/test-support"]
 
 [dependencies]
-gpui-kit = "0.8.1"
-# Named only for `runtime-shaders`: gpui-kit reaches it already.
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", optional = true }
+# GPUI and its platform (koan's fork, from the workspace): the app model,
+# elements, the platform and the test harness.
+gpui.workspace = true
+gpui_platform.workspace = true
 # The wash's bake and the accent's sampling, in the version GPUI builds
 # against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 futures = "0.3"
 parking_lot = "0.13"
 smallvec = "1"
+# A text field's word and character boundaries.
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
-gpui-kit = { version = "0.8.1", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+# The headless renderer the storybook and frame-timing examples draw with.
+gpui_platform = { workspace = true, features = ["test-support"] }
 serde_json = "1"
 
 # Reduce Motion, Increase Contrast, Reduce Transparency and Low Power Mode,

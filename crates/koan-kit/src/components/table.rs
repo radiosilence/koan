@@ -10,8 +10,8 @@
 //! (the user's call over the spec's 30 % `hover`): what shows under the
 //! pointer is the play mark and the heart, through `ROW_GROUP`.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Handler, RowKind, RowMetrics};
 use crate::theme::{KoanStyled, Look, TypeRole};
@@ -46,6 +46,7 @@ pub struct TableRow {
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
+    spot: Option<super::CursorSpot>,
     leading: Vec<Cell>,
     title: Option<AnyElement>,
     lines: Vec<AnyElement>,
@@ -53,6 +54,10 @@ pub struct TableRow {
     spoken: Option<SharedString>,
     place: Option<(usize, usize)>,
     reveal: Option<Handler<()>>,
+    landed: Option<u64>,
+    /// The first of the rows that landed, which the insertion line closes
+    /// into.
+    seam: bool,
 }
 
 impl TableRow {
@@ -62,6 +67,7 @@ impl TableRow {
             kind,
             selected: false,
             cursor: false,
+            spot: None,
             leading: Vec::new(),
             title: None,
             lines: Vec::new(),
@@ -69,7 +75,26 @@ impl TableRow {
             spoken: None,
             place: None,
             reveal: None,
+            landed: None,
+            seam: false,
         }
+    }
+
+    /// The row has just landed where it is (dropped there, moved there,
+    /// added from elsewhere), the `landing`th time its list has had rows
+    /// land: its ground lifts to the accent and settles back, under its
+    /// text, so the eye finds where the rows went. Drawn new, it answers
+    /// too, since arriving is the news.
+    pub fn landed(mut self, landing: Option<u64>) -> Self {
+        self.landed = landing;
+        self
+    }
+
+    /// Of rows landing, the first: the insertion line they were dropped at
+    /// closes into it along its top edge as its ground lifts.
+    pub fn seam(mut self, first: bool) -> Self {
+        self.seam = first;
+        self
     }
 
     /// The row as one node for a screen reader, read as `name` (the title,
@@ -88,9 +113,11 @@ impl TableRow {
         self
     }
 
-    /// Run when a screen reader moves to the row: the list scrolls it, and
-    /// its neighbours, on screen, so the reader can go on past what was
-    /// drawn (`RowListState::reveal_around`).
+    /// Run when a screen reader moves to the row: the list scrolls the
+    /// neighbour the reader is heading for on screen, so it can go on past
+    /// what was drawn (`RowListState::reveal_around`, `reveal_around`), and
+    /// the view that drew the row is drawn again so the neighbour reaches the
+    /// tree even on an idle window.
     pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.reveal = Some(std::sync::Arc::new(move |_, window, cx| reveal(window, cx)));
         self
@@ -147,6 +174,14 @@ impl TableRow {
         self
     }
 
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
+        self
+    }
+
     /// Under the keyboard's cursor: its list holds the keyboard and the
     /// arrows have come to it. Drawn with the focus ring while the keyboard
     /// was used last.
@@ -198,6 +233,7 @@ pub struct RowNumber {
     number: SharedString,
     glyph: Option<crate::theme::Icon>,
     current: bool,
+    picked: bool,
     bars: Option<AnyElement>,
     on_play: Option<Play>,
 }
@@ -209,6 +245,7 @@ impl RowNumber {
             number: number.into(),
             glyph: None,
             current: false,
+            picked: false,
             bars: None,
             on_play: None,
         }
@@ -229,6 +266,13 @@ impl RowNumber {
         self
     }
 
+    /// The row is picked: the number, glyph and play mark in `on_selection`,
+    /// on the row's `selection` fill, where `muted` and the accent fade.
+    pub fn picked(mut self, picked: bool) -> Self {
+        self.picked = picked;
+        self
+    }
+
     /// Drawn in the number's place while the row is current, playing or
     /// paused: the bars fall flat on a pause rather than giving the number
     /// back.
@@ -246,11 +290,15 @@ impl RowNumber {
 impl RenderOnce for RowNumber {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let accent = look.text_color(crate::theme::Tone::Accent);
+        let accent = if self.picked {
+            look.palette.on_selection.hsla()
+        } else {
+            look.text_color(crate::theme::Tone::Accent)
+        };
         if let Some(bars) = self.bars {
             return div().flex().justify_end().child(bars).into_any_element();
         }
-        let tone = if self.current {
+        let tone = if self.current || self.picked {
             accent
         } else {
             look.palette.muted.hsla()
@@ -321,13 +369,25 @@ impl RenderOnce for TableRow {
                 .child(cell.content)
         };
         let heading = self.kind == RowKind::Heading;
+        let mut base = self.base;
+        let lift = self.landed.and_then(|landing| {
+            let id = base.interactivity().element_id.clone()?;
+            let answers = super::Answerer::of(&id, window, cx);
+            let answer = if self.seam {
+                super::Answer::Landed
+            } else {
+                super::Answer::Lift
+            };
+            answers.announce(landing, answer, look.accent.hsla(), window, cx);
+            answers.layer(window, cx)
+        });
         let base = match self.spoken {
             Some(name) => super::accessible(
-                self.base,
+                base,
                 if heading {
-                    gpui_kit::Role::Heading
+                    gpui::Role::Heading
                 } else {
-                    gpui_kit::Role::ListItem
+                    gpui::Role::ListItem
                 },
                 Some(name),
             )
@@ -336,12 +396,19 @@ impl RenderOnce for TableRow {
             .when_some(self.place, |row, (ix, count)| {
                 row.aria_position_in_set(ix + 1).aria_size_of_set(count)
             }),
-            None => self.base,
+            None => base,
         };
+        // The list holding the row is drawn again once it has scrolled: a
+        // scroll handle's change asks for no frame, and on an idle window the
+        // neighbour would never be drawn, so never reach the tree.
+        let list_view = window.current_view();
         let base = match self.reveal {
             Some(reveal) => base.on_a11y_action(
-                gpui_kit::AccessibleAction::ScrollIntoView,
-                move |_, window, cx| reveal(&(), window, cx),
+                gpui::AccessibleAction::ScrollIntoView,
+                move |_, window, cx| {
+                    reveal(&(), window, cx);
+                    cx.notify(list_view);
+                },
             ),
             None => base,
         };
@@ -355,6 +422,7 @@ impl RenderOnce for TableRow {
             .py(RowMetrics::padding(&look))
             .gap(RowMetrics::column_gap(&look))
             .when(self.selected, |d| d.bg(p.selection.hsla()))
+            .children(lift)
             // With more contrast, a picked row is outlined as well as filled:
             // a fill alone can sit close to the ground.
             .children((self.selected && look.contrast).then(|| {
@@ -390,7 +458,7 @@ impl RenderOnce for TableRow {
             }))
             .children(
                 (self.cursor && window.last_input_was_keyboard())
-                    .then(|| super::cursor_ring(&look)),
+                    .then(|| super::cursor_ring(&look, self.spot.as_ref())),
             )
     }
 }

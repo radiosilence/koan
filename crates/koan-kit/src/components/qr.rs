@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::*;
+use gpui::*;
 
 /// A code's dark modules, as horizontal runs: (row, first column, length),
 /// on a grid `side` modules square.
@@ -15,7 +15,9 @@ pub struct QrCode {
 }
 
 impl QrCode {
-    /// From the modules row by row, `side` to a row, `true` where dark.
+    /// From the modules row by row, `side` to a row, `true` where dark. A
+    /// module the slice falls short of is light: a short slice draws a code
+    /// that does not read, rather than taking the window down.
     pub fn new(dark: &[bool], side: usize) -> Self {
         Self {
             side,
@@ -51,10 +53,11 @@ fn runs(dark: &[bool], side: usize) -> Vec<(u16, u16, u16)> {
     let mut runs = Vec::new();
     for row in 0..side {
         let mut column = 0;
+        let at = |column: usize| dark.get(row * side + column).copied().unwrap_or(false);
         while column < side {
-            if dark[row * side + column] {
+            if at(column) {
                 let start = column;
-                while column < side && dark[row * side + column] {
+                while column < side && at(column) {
                     column += 1;
                 }
                 runs.push((row as u16, start as u16, (column - start) as u16));
@@ -73,7 +76,8 @@ mod tests {
     #[test]
     fn runs_cover_every_dark_module_once() {
         let side = 5;
-        let dark: Vec<bool> = (0..side * side).map(|i| (i * 7) % 3 == 0).collect();
+        // Runs of one, of several, and to a row's end.
+        let dark: Vec<bool> = (0..side * side).map(|i| i % 4 != 0).collect();
         let mut painted = vec![false; side * side];
         for (row, column, length) in runs(&dark, side) {
             for c in column..column + length {
@@ -83,5 +87,15 @@ mod tests {
             }
         }
         assert_eq!(painted, dark);
+        assert!(runs(&dark, side).iter().any(|&(_, _, length)| length > 1));
+    }
+
+    /// Modules short of the grid read as light, rather than out of bounds.
+    #[test]
+    fn a_short_slice_is_light_where_it_ends() {
+        let side = 5;
+        let dark = vec![true; side * side - 3];
+        let painted: usize = runs(&dark, side).iter().map(|r| r.2 as usize).sum();
+        assert_eq!(painted, side * side - 3);
     }
 }

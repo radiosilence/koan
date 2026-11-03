@@ -10,16 +10,18 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
+use koan_runtime::{Album, AlbumOnDevice};
 
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
 use super::tokens::{Paint, Type, Typeset};
-use crate::components::{TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths};
+use crate::components::{
+    Arrival, TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths,
+};
+use crate::theme::KoanTheme;
 use crate::theme::tokens::Motion;
-use crate::theme::{Icon, KoanIcon, KoanTheme};
 
 use crate::theme::Hsla;
 
@@ -95,8 +97,9 @@ pub struct TileState {
     pub selecting: bool,
     pub selected: bool,
     pub starting: bool,
-    /// Under the grid's keyboard cursor while the grid holds the keyboard.
-    pub cursor: bool,
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// where its ring tells the grid it was laid out.
+    pub cursor: Option<crate::components::CursorSpot>,
     pub show_artist: bool,
     pub side: Pixels,
     pub sleeve: Sleeve,
@@ -120,7 +123,7 @@ impl TileState {
             && self.selecting == other.selecting
             && self.selected == other.selected
             && self.starting == other.starting
-            && self.cursor == other.cursor
+            && self.cursor.is_some() == other.cursor.is_some()
             && self.show_artist == other.show_artist
             && self.side == other.side
             && self.pick == other.pick
@@ -147,8 +150,8 @@ pub struct TileView<V: TileHost> {
     /// The credit's names' widths, shaped at the size they were drawn at
     /// when the pointer first needed them.
     credit_widths: Option<(Pixels, Vec<Pixels>)>,
-    /// When the sleeve being faded in arrived, while it fades.
-    fade: Option<Instant>,
+    /// The sleeve fading in, while it does.
+    fade: Option<Arrival>,
     /// The record's colour, last shown before its sleeve: what the sleeve
     /// fades in over.
     ground: Option<Hsla>,
@@ -176,7 +179,9 @@ impl<V: TileHost> TileView<V> {
             credit_widths: None,
             fade: None,
             ground,
-            _accent: crate::theme::observe_accent(cx),
+            // The accent is drawn only in the playing bars: a step of the
+            // rainbow's draws the playing tile again, not every tile.
+            _accent: crate::theme::observe_accent_when(cx, |tile: &Self| tile.state.playing),
         }
     }
 
@@ -238,8 +243,20 @@ impl<V: TileHost> TileView<V> {
             self.ground = Some(*colour);
         }
         self.fade = match (&self.state.sleeve, &state.sleeve) {
-            (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade,
-            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::ARRIVE => Some(*arrived),
+            (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade.take(),
+            (_, Sleeve::Ready(_, arrived))
+                if arrived.elapsed() < Motion::ARRIVE && KoanTheme::motion_allowed(cx) =>
+            {
+                let arrival = Arrival::since(*arrived, Motion::ARRIVE);
+                // Once more as it lands, without what stood beneath.
+                let wait = arrival.lands().saturating_duration_since(Instant::now());
+                cx.spawn(async move |tile, cx| {
+                    cx.background_executor().timer(wait).await;
+                    tile.update(cx, |_, cx| cx.notify()).ok();
+                })
+                .detach();
+                Some(arrival)
+            }
             _ => None,
         };
         self.record = record.clone();
@@ -267,24 +284,12 @@ impl<V: TileHost> Render for TileView<V> {
         // it (see `origin`).
         let sleeve = match &state.sleeve {
             Sleeve::Ready(image, _) => {
-                let shown = match self.fade.filter(|_| KoanTheme::motion_allowed(cx)) {
-                    Some(arrived) => {
-                        let t = arrived.elapsed().as_secs_f32() / Motion::ARRIVE.as_secs_f32();
-                        if t < 1.0 {
-                            // Frame by frame until it lands, asked as every
-                            // animation asks, so a scroll layer knows.
-                            window.request_animation_frame();
-                            Motion::quick_out(t)
-                        } else {
-                            self.fade = None;
-                            1.0
-                        }
-                    }
-                    None => 1.0,
-                };
+                if self.fade.as_ref().is_some_and(Arrival::landed) {
+                    self.fade = None;
+                }
                 TileSleeve::Image {
                     image: image.clone(),
-                    shown,
+                    arrival: self.fade.clone(),
                     ground: self.ground,
                 }
             }
@@ -300,7 +305,7 @@ impl<V: TileHost> Render for TileView<V> {
         } else {
             None
         };
-        let art = TileArt::new(side, sleeve)
+        let art = TileArt::new(("tile-art", id as u64), side, sleeve)
             .codec(record.codec.clone())
             .badge(record.badge.clone())
             .mark(mark)
@@ -311,11 +316,19 @@ impl<V: TileHost> Render for TileView<V> {
             )
             .on_device(on_device(record.on_device, state.arriving))
             .heart(
-                (hovered.is_some() || state.favourite)
-                    .then_some((state.favourite, hovered == Some(Part::Heart))),
+                state.favourite,
+                hovered == Some(Part::Heart),
+                hovered.is_some() || state.favourite,
             )
             .pick(state.selecting.then_some(state.selected))
-            .cursor(state.cursor);
+            .cursor(state.cursor.is_some())
+            .when_some(state.cursor.as_ref(), |art, spot| art.spot(spot))
+            // The rainbow refracts through the sleeve the pointer is on.
+            .sheen(
+                crate::theme::KoanTheme::prism_now()
+                    .filter(|_| over_sleeve)
+                    .map(|brat| (ElementId::from("tile-sheen"), brat)),
+            );
 
         let title = div()
             .w_full()
@@ -500,17 +513,6 @@ impl<V: TileHost> Tiles<V> {
         AnyView::from(view)
             .cached(StyleRefinement::default().w(side).h(height))
             .into_any_element()
-    }
-}
-
-/// The heart, filled in the accent for a favourite.
-pub fn heart_glyph(p: &Paint, favourite: bool) -> KoanIcon {
-    if favourite {
-        KoanIcon::new(Icon::Favourited)
-            .role(Type::Meta)
-            .color(p.accent)
-    } else {
-        KoanIcon::new(Icon::Favourite).role(Type::Meta).color(p.ink)
     }
 }
 

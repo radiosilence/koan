@@ -3,13 +3,13 @@
 //! its detail under it, then the lesser verbs as compact buttons with their
 //! glyphs: play next, queue, copy share link, favourite.
 
-use koan_ffi::Placement;
 use koan_kit::app::*;
+use koan_runtime::Placement;
 
 use super::drag::Playable;
 use super::{Lib, actions};
 use crate::components::{Button, ButtonKind, PageHeader, PlayButton, ShuffleButton};
-use crate::theme::{Icon, Tone};
+use crate::theme::{Icon, TypeRole};
 
 /// `title` is data (a record's or an artist's name), kept in its case.
 pub fn playable_header(
@@ -64,20 +64,12 @@ pub fn playable_header(
                 }),
         )
         .action(
-            verb(
-                "header-favourite",
-                if favourite {
-                    Icon::Favourited
-                } else {
-                    Icon::Favourite
-                },
-                if favourite { "favourited" } else { "favourite" },
-            )
-            .when(favourite, |b| b.tone(Tone::Accent))
-            .on_click(move |_, _, cx| {
-                heart
-                    .feed
-                    .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
-            }),
+            crate::components::Heart::new("header-heart", favourite)
+                .role(TypeRole::Body)
+                .on_click(move |_, _, cx| {
+                    heart
+                        .feed
+                        .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
+                }),
         )
 }

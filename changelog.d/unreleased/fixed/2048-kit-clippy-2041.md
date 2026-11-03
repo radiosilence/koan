@@ -1,0 +1,1 @@
+- **Clippy passes on koan-kit again.** The code brought in from the GPUI fork is held to the workspace's lints, its colour matrices kept as published.

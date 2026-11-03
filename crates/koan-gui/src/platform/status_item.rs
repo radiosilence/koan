@@ -218,7 +218,7 @@ fn shown(playback: &Playback) -> Shown {
     Shown {
         title: entry.map(|e| e.title.clone()),
         artist: entry.map(|e| e.artist.clone()).filter(|a| !a.is_empty()),
-        playing: now.state == koan_ffi::PlayState::Playing,
+        playing: now.state == koan_runtime::PlayState::Playing,
     }
 }
 
@@ -234,7 +234,11 @@ fn mark(mtm: MainThreadMarker) -> Retained<NSImage> {
         return image;
     }
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-    let icon = app.applicationIconImage().unwrap_or_default();
+    let shared = app.applicationIconImage().unwrap_or_default();
+    // A copy: the app's icon object is shared with every other place that
+    // draws it (About), which a resize here would shrink too.
+    // SAFETY: `copy` on an NSImage returns a new, owned NSImage.
+    let icon: Retained<NSImage> = unsafe { objc2::msg_send![&shared, copy] };
     icon.setSize(NSSize::new(18.0, 18.0));
     icon
 }

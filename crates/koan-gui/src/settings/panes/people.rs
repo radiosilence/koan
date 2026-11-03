@@ -9,11 +9,9 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
-use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// overlays placed against another element.
-use koan_kit::raw::{anchored, deferred};
+use koan_runtime::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;
@@ -130,7 +128,8 @@ impl PeoplePane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
+        let username =
+            cx.new(|cx| InputState::new(window, cx).placeholder(crate::theme::label("Username")));
         Self {
             _subscriptions: vec![
                 cx.observe(&people, |_, _, cx| cx.notify()),
@@ -340,7 +339,7 @@ impl Render for PeoplePane {
         rows.push(buttons(
             vec![
                 div()
-                    .w(look.spaced(200.0))
+                    .w(look.sized(200.0))
                     .child(TextField::new(&self.username))
                     .into_any_element(),
                 Picker::new(
@@ -483,20 +482,12 @@ fn more_menu(
             .on_click(move |_, _, cx| opener(cx)),
         )
         .when(shown, |this| {
-            this.child(
-                deferred(
-                    anchored()
-                        .snap_to_window_with_margin(look.space(Space::S))
-                        .child(
-                            div()
-                                .id(("people-menu", index))
-                                .occlude()
-                                .on_mouse_down_out(move |_, _, cx| closer(cx))
-                                .child(panel),
-                        ),
-                )
-                .with_priority(1),
-            )
+            this.child(crate::components::anchored_panel(
+                ("people-menu", index),
+                panel,
+                closer,
+                look,
+            ))
         })
         .into_any_element()
 }
@@ -528,7 +519,7 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .w_full()
                     .items_center()
                     .gap(look.space(Space::Xs))
-                    .child(code.element(look.spaced(168.0), look.spaced(12.0)))
+                    .child(code.element(look.sized(168.0), look.spaced(12.0)))
                     .child(text(
                         "Scan with a phone's camera to open it there.",
                         TypeRole::Fine,

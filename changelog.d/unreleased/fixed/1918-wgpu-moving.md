@@ -1,0 +1,1 @@
+- **The desktop app builds on Linux again.** The wgpu renderer's layer groups construct the field the shader layers gained.

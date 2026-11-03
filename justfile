@@ -18,7 +18,21 @@ gui-library dir albums="5000" tracks="10":
     cargo run --release -p koan-gui --features runtime-shaders --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
     mkdir -p "{{dir}}/config"
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
-    KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
+    KOAN_CONFIG_DIR="{{dir}}/config" KOAN_PLACES_DIR="{{dir}}/config/places" cargo run --release -p koan-cli -- scan
+
+# The kōan GUI app headlessly as it is used: playing, the pointer churning
+# over every page while it redraws, the wheel scrolling; fails on any panic.
+# Against the walk's generated library, copied fresh and muted for each run.
+gui-smoke out="target/gui-smoke" secs="30":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    # A library from before the generator marked its own is made again.
+    [ -f "$lib/music/.koan-generated" ] || { rm -rf "$lib"; just gui-library "$lib" 300 10; }
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    # Silent, and blind to renderers and the network's devices.
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
+    KOAN_SMOKE_SECS={{secs}} KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example smoke
 
 # Walk every page of the kōan GUI app headlessly: a PNG of each, dark and
 # light, and its frame times while scrolled, failing over the 144 Hz budget.
@@ -44,7 +58,7 @@ gui-compare out="target/gui-compare":
     printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
     # The record, artist and playlist the walk drew.
     set -a && . "{{out}}/gui/ids.env" && set +a
-    KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
+    KOAN_CONFIG_DIR="$cfg" KOAN_PLACES_DIR="$cfg/places" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
         KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
         -ApplePersistenceIgnoreState YES
     cargo run --release -p koan-gui --features runtime-shaders --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
@@ -166,22 +180,8 @@ macos-icon:
 # icon with a spindle at the circle's centre, so it is told apart from the Mac
 # app), and AppIcon-launch.png, the same icon on the macOS icon grid, which a
 # build outside a bundle sets at launch.
-gui-icon:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir=crates/koan-gui/packaging
-    set="$dir/AppIcon.iconset"
-    rm -rf "$set" && mkdir -p "$set"
-    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
-                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
-        px="${spec%% *}"; name="${spec##* }"
-        rsvg-convert -w "$px" -h "$px" "$dir/AppIcon.svg" -o "$set/$name.png"
-    done
-    iconutil -c icns "$set" -o "$dir/AppIcon.icns"
-    rm -rf "$set"
-    rsvg-convert -w 1024 -h 1024 "$dir/AppIcon-launch.svg" -o "$dir/AppIcon-launch.png"
-    echo "built $dir/AppIcon.icns and $dir/AppIcon-launch.png"
+gui-icon *args:
+    python3 scripts/gui-icon.py {{args}}
 
 # Build the FFI static library and regenerate the Swift bindings.
 #
@@ -199,15 +199,16 @@ macos-ffi:
     export MACOSX_DEPLOYMENT_TARGET=26.0
     profile=${KOAN_FFI_PROFILE:-release}
     case "$profile" in
-        release) cargo build --release -p koan-ffi ;;
-        debug) cargo build -p koan-ffi ;;
+        release) cargo rustc --release -p koan-ffi --crate-type staticlib ;;
+        debug) cargo rustc -p koan-ffi --crate-type staticlib ;;
         *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
     esac
     lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
-    # .dylib, and cargo leaves one next to the archive. The release DMG shipped
+    # .dylib, and an older build of the crate as a cdylib may have left one
+    # next to the archive. The release DMG shipped
     # an app that referenced
     # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
     # could not launch anywhere. A directory with one file in it cannot produce
@@ -517,19 +518,6 @@ macos-test: macos-ffi
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
-# Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
-# failing on the first patch that does not apply; vendor/ is untouched then.
-vendor-gpui version kit="":
-    scripts/vendor-gpui.sh {{version}} {{kit}}
-
-# Write vendor/patches from the vendored copies: after editing one.
-vendor-gpui-patches:
-    scripts/vendor-gpui.sh --patches
-
-# The vendored copies are their releases plus their patches (CI).
-vendor-gpui-check:
-    scripts/vendor-gpui.sh --check
-
 # koan-gui's pages choosing a look by hand rather than from koan-kit, against
 # a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
 gui-theme-leaks *args:
@@ -716,7 +704,7 @@ ios-ffi platform="iphonesimulator":
     # that variable as a reason to rebuild: lowering it relinked objects built
     # for the old version, and the linker warned about every one of them.
     out=${CARGO_TARGET_DIR:-target}/ios-{{ios_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
     # From this build rather than the Mac's, so an iOS build needs no second
@@ -1223,7 +1211,7 @@ tv-ffi platform="appletvsimulator":
     # rustc must target the same version.
     export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
     out=${CARGO_TARGET_DIR:-target}/tv-{{tv_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/tv-link/{{platform}}" && mkdir -p "target/tv-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/tv-link/{{platform}}/"
     just ffi-bindings "target/tv-link/{{platform}}/libkoan_ffi.a"
@@ -1592,6 +1580,8 @@ _demo-server library out:
     cargo build -q -p koan-cli
     koan=${CARGO_TARGET_DIR:-target}/debug/koan
     dir=$(mktemp -d)
+    # Its runtime files with it, so nothing outlives the temporary directory.
+    export KOAN_PLACES_DIR="$dir/places"
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     password=demo-$RANDOM$RANDOM
     [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
@@ -1967,6 +1957,8 @@ gui-run *ARGS:
     set -euo pipefail
     if [ -z "${KOAN_CONFIG_DIR:-}" ]; then
         export KOAN_CONFIG_DIR="$PWD/target/gui-config"
+        # Its window state, locks and caches under target/ too.
+        export KOAN_PLACES_DIR="$PWD/target/gui-places"
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
@@ -1982,8 +1974,11 @@ gui-run *ARGS:
     # nearby koan appears. The bundle declares the reason, so macOS asks.
     cargo build --profile gui-dev -p koan-gui --features runtime-shaders
     # An ASCII name, so the path matches itself however a tool normalises
-    # the ō: `pkill -f` below did not find "kōan dev.app".
+    # the ō: `pkill -f` below matches bytes.
     app="$PWD/target/gui-dev/koan dev.app"
+    # The bundle under its earlier name holds the same id and the koan scheme,
+    # and LaunchServices may open links with it.
+    rm -rf "$PWD/target/gui-dev/kōan dev.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
     # A new file, never the signed one rewritten in place: macOS keeps a

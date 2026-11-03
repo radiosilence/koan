@@ -1,0 +1,1 @@
+- **Cancelling and retrying downloads.** A download that finishes just as it is cancelled plays rather than staying failed with its file on disk. "Clear finished" keeps cancelled downloads, since their row is the way to retry them. Retrying a download no longer pins it in the cache unless it was asked into the cache, and a cancel and a retry land in the order they were made.

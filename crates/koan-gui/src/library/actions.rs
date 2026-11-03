@@ -2,27 +2,53 @@
 //! menu, the selection bar's verbs, a click on a sleeve. Every one is an
 //! engine call awaited off the main thread.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
-use koan_ffi::Placement;
 use koan_kit::app::*;
+use koan_runtime::Placement;
 
 use super::Lib;
 use super::drag::{Playable, sources};
 use super::nav::Page;
 use crate::theme::{Icon, Tone};
 
+/// How many times music has gone to the queue and to each playlist from
+/// here, which the sidebar's rows answer: the music went somewhere off the
+/// page, and its place says so.
+#[derive(Clone, Default)]
+pub struct Arrivals {
+    pub queue: u64,
+    pub playlists: HashMap<i64, u64>,
+}
+
+impl Global for Arrivals {}
+
+impl Arrivals {
+    pub fn to(&self, playlist: i64) -> u64 {
+        self.playlists.get(&playlist).copied().unwrap_or_default()
+    }
+}
+
+/// Music reached the queue, or `playlist`.
+pub(crate) fn arrived(playlist: Option<i64>, cx: &mut App) {
+    let arrivals = cx.default_global::<Arrivals>();
+    match playlist {
+        None => arrivals.queue += 1,
+        Some(id) => *arrivals.playlists.entry(id).or_default() += 1,
+    }
+}
+
 /// Put `items` in the queue. The returned task ends once the engine has the
 /// command, which is when a sleeve's "starting" mark can go.
 pub fn queue(lib: &Lib, items: &[Playable], placement: Placement, cx: &mut App) -> Task<()> {
     let engine = lib.engine.clone();
     let sets = sources(items);
-    cx.spawn(async move |_| {
-        if let Err(e) = engine.queue(sets, placement).await {
-            log::warn!("queue: {e}");
-        }
+    cx.spawn(async move |cx| match engine.queue(sets, placement).await {
+        Ok(_) => cx.update(|cx| arrived(None, cx)),
+        Err(e) => log::warn!("queue: {e}"),
     })
 }
 
@@ -43,12 +69,13 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
 /// the shell has one to show.
 pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
     let engine = lib.engine.clone();
-    cx.spawn(async move |_| {
-        if let Err(e) = engine
+    cx.spawn(async move |cx| {
+        match engine
             .replace_queue(track_ids, Some(index as u32), false)
             .await
         {
-            log::warn!("play: {e}");
+            Ok(_) => cx.update(|cx| arrived(None, cx)),
+            Err(e) => log::warn!("play: {e}"),
         }
     })
     .detach();
@@ -59,8 +86,9 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
     let sets = sources(items);
     let feed = lib.feed.clone();
     cx.spawn(async move |cx| {
-        if let Err(e) = engine.add_to_playlist(playlist, sets).await {
-            log::warn!("add to playlist {playlist}: {e}");
+        match engine.add_to_playlist(playlist, sets).await {
+            Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
+            Err(e) => log::warn!("add to playlist {playlist}: {e}"),
         }
         feed.update(cx, |feed, cx| feed.reload_playlists(cx));
     })
@@ -82,26 +110,17 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
 
 /// The tracks `items` name, in order, each once: what a verb over records
 /// and artists acts on.
-pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
-    let mut ids = Vec::new();
-    for item in items {
-        let found = match item {
-            Playable::Track(id) => Ok(vec![id]),
-            Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
-            Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
-        };
-        match found {
-            Ok(found) => {
-                for id in found {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
-            }
-            Err(e) => log::warn!("tracks of a pick: {e}"),
+pub async fn track_ids_of(engine: Arc<koan_runtime::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
+    // One read for the whole pick, as the queue resolves it.
+    let found = match engine.track_ids_of(super::drag::sources(&items)).await {
+        Ok(found) => found,
+        Err(e) => {
+            log::warn!("tracks of a pick: {e}");
+            return Vec::new();
         }
-    }
-    ids
+    };
+    let mut seen = std::collections::HashSet::with_capacity(found.len());
+    found.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
 /// What a pick is called in a question about it.
@@ -158,7 +177,7 @@ pub fn remove_downloads(lib: &Lib, items: &[Playable], window: &mut Window, cx: 
 /// The question before removing downloads, and the removal: shared by the
 /// library's menus and the queue's.
 pub fn ask_remove_downloads(
-    engine: Arc<koan_ffi::KoanEngine>,
+    engine: Arc<koan_runtime::KoanEngine>,
     title: String,
     ids: Vec<i64>,
     window: &mut Window,
@@ -204,25 +223,22 @@ pub struct MenuTarget {
 
 /// What the menu key's menu acts on: the pick when the item under the
 /// keyboard's cursor is in it, the item alone otherwise. `album` is the
-/// record of a single track, for "go to album".
+/// record of a single track, for "go to album"; `after` ends the pick once
+/// a verb has run on it, as a right click's menu over the pick does.
 pub fn keyed_target(
     selection: &super::selection::Selection,
     item: Playable,
     album: Option<i64>,
+    after: After,
 ) -> MenuTarget {
-    let picked = selection.picked();
-    if selection.contains(item) && picked.len() > 1 {
-        MenuTarget {
-            items: picked.into(),
-            album: None,
-            after: None,
-        }
-    } else {
-        MenuTarget {
-            items: Arc::from([item]),
-            album,
-            after: None,
-        }
+    let items = selection.dragging(item);
+    let single = items.len() == 1;
+    MenuTarget {
+        items: items.into(),
+        album: album.filter(|_| single),
+        // What a menu verb on the pick runs after it: on the item alone,
+        // nothing.
+        after: if single { None } else { after },
     }
 }
 
@@ -232,6 +248,11 @@ pub trait Menus: Sized + 'static {
     fn lib(&self) -> &Lib;
     fn menu_target(&mut self) -> &mut Option<MenuTarget>;
     fn menu_target_ref(&self) -> &Option<MenuTarget>;
+    /// Where the list's keyboard cursor was laid out: what the menu key
+    /// opens the menu under.
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        None
+    }
 }
 
 /// A row's or tile's right mouse down, noting what the list's menu acts on.
@@ -246,10 +267,13 @@ pub fn mark<V: Menus>(
 
 /// The list's one context menu, over whatever its rows marked. A right
 /// click on the list clears the mark first, in the capture phase, so one on
-/// empty space acts on nothing.
+/// empty space acts on nothing. `spot` is the page's keyboard cursor, which
+/// the page passes as it renders: reading the page from here would read it
+/// while it is being updated.
 pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
     element: E,
     view: WeakEntity<V>,
+    spot: Option<crate::components::CursorSpot>,
     window: &mut Window,
     cx: &mut App,
 ) -> E {
@@ -263,7 +287,7 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 }
             },
         ))
-        .koan_context_menu("list-menu", window, cx, move |m, window, cx| {
+        .koan_context_menu_at("list-menu", spot, window, cx, move |m, window, cx| {
             let Some(view) = view.upgrade() else { return m };
             let (lib, target) = {
                 let page = view.read(cx);
@@ -345,12 +369,18 @@ pub fn menu(
             .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
     );
     // Moving the pick's files where a pattern puts them, previewed first.
-    let (organise_lib, organise_items) = (lib.clone(), items.clone());
-    menu = menu.separator().item(
-        MenuEntry::new("organise…")
-            .icon(Icon::Organize)
-            .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
-    );
+    let (organise_lib, organise_items, organise_after) =
+        (lib.clone(), items.clone(), after.clone());
+    menu =
+        menu.separator()
+            .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click(
+                move |_, window, cx| {
+                    organise(&organise_lib, &organise_items, window, cx);
+                    if let Some(after) = &organise_after {
+                        after(cx);
+                    }
+                },
+            ));
     // A remote library's files on this device: fetched now, or let go.
     let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
     let (drop_lib, drop_items) = (lib.clone(), items.clone());
@@ -461,8 +491,8 @@ pub fn playlist_submenu(
 /// out. Said either way on the app's notice line, since a link copied in
 /// silence, or not at all, looks the same as a click that missed.
 pub fn copy_share_link(
-    engine: Arc<koan_ffi::KoanEngine>,
-    sets: Vec<koan_ffi::TrackSet>,
+    engine: Arc<koan_runtime::KoanEngine>,
+    sets: Vec<koan_runtime::TrackSet>,
     name: Option<String>,
     cx: &mut App,
 ) {

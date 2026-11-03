@@ -1,0 +1,1 @@
+- **The seek bar shows a track downloading again.** After a track's files were cleared, its new download drew the downloaded part as already complete, so nothing showed.

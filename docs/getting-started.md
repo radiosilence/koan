@@ -20,6 +20,8 @@ Everything is set up in Settings: **Library** adds folders and scans them, **Ser
 
 The SwiftUI Mac app is no longer released. The desktop app's first launch on a Mac it ran on takes its place, as described in [The desktop app](guide/desktop.md#taking-over-from-the-mac-app).
 
+An output device can take a while to open: a DAC waking from sleep, or the Mac's audio system busy. kōan goes on taking commands meanwhile, so a seek, pause or skip applies once the device is ready, and after two seconds a line across the top of the window says which device it is waiting for. **Retry** asks the device again. **Cancel** plays on the system's default output until another device is chosen, or stops if the default is the one that will not open. The desktop app and the iOS app do the same.
+
 ## The iOS app
 
 The iOS app plays from a server; a phone has no music folder to scan. It is in public beta on [TestFlight](https://testflight.apple.com/join/96w2gjFz) until it is on the App Store, or can be built from source onto a phone plugged into a Mac with `just ios-phone`, signed with your own Apple developer team. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.

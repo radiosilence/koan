@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, child, focus, ring};
+use super::{Animated, AnimatedLayer, Ease, Handler, Repeat, accessible, child, focus, ring};
 use crate::theme::{
-    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole, label,
 };
+
+/// The shown value's roll: its layer's tracks, and the value it last showed.
+struct Roll {
+    animated: Animated,
+    value: i64,
+}
 
 /// A value moved a step at a time: the title leading in `body`, `ink`, and
 /// two square buttons trailing, each disabled at its end of the range.
@@ -87,13 +93,55 @@ impl RenderOnce for Stepper {
                 on_change: self.on_change.clone(),
             }
         };
+        // A step rolls the shown value a line the way it went: up for more,
+        // down for less, the new value coming in as the old would leave.
+        let value = self.value;
+        let roll = window.use_keyed_state(child(&self.id, "roll"), cx, |_, _| {
+            let animated = Animated::new();
+            super::layer::standing(&animated);
+            Roll { animated, value }
+        });
+        let line = look.line_height(TypeRole::Control) * window.scale_factor();
+        let rolling = roll.update(cx, |r, _| {
+            if r.value != value {
+                let from = if value > r.value { 1.0 } else { -1.0 } * f32::from(line) * 0.6;
+                let at = Animated::now();
+                r.animated.segment(
+                    2,
+                    from,
+                    0.0,
+                    at,
+                    Motion::SETTLE,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+                // A step taken while the last still rolls fades on from where
+                // the value stands, never out and back in.
+                let shown = if r.animated.moving() {
+                    r.animated.at(0, at).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                r.animated.segment(
+                    0,
+                    shown,
+                    1.0,
+                    at,
+                    Motion::SETTLE,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+                r.value = value;
+            }
+            r.animated.clone()
+        });
         let down = (self.value - self.step).max(self.min);
         let up = (self.value + self.step).min(self.max);
         // A spin button to a screen reader: its value, said as shown, and a
         // step either way.
         let mut row = accessible(
             div().id(child(&self.id, "spin")),
-            gpui_kit::Role::SpinButton,
+            gpui::Role::SpinButton,
             Some(self.title.clone()),
         )
         .aria_disabled(disabled)
@@ -104,8 +152,8 @@ impl RenderOnce for Stepper {
         .when_some(self.shown.clone(), |d, shown| d.aria_value(shown));
         if let Some(on_change) = self.on_change.clone().filter(|_| !disabled) {
             for (action, to) in [
-                (gpui_kit::AccessibleAction::Increment, up),
-                (gpui_kit::AccessibleAction::Decrement, down),
+                (gpui::AccessibleAction::Increment, up),
+                (gpui::AccessibleAction::Decrement, down),
             ] {
                 let set = on_change.clone();
                 row = row.on_a11y_action(action, move |_, window, cx| set(&to, window, cx));
@@ -124,10 +172,13 @@ impl RenderOnce for Stepper {
                     .child(self.title),
             )
             .children(self.shown.map(|shown| {
-                div()
-                    .text_role(TypeRole::Control, &look)
-                    .text_color(look.palette.muted.hsla())
-                    .child(shown)
+                AnimatedLayer::new(
+                    &rolling,
+                    div()
+                        .text_role(TypeRole::Control, &look)
+                        .text_color(look.palette.muted.hsla())
+                        .child(shown),
+                )
             }))
             .child(button(
                 "down",

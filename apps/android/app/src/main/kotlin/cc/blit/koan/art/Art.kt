@@ -126,6 +126,8 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             // The mark is older than what the library keeps: any cover cached
             // by id may be another record's now.
             if (gone.purge) {
+                // The engine's own copies too, or it answers from them.
+                runCatching { forgetKeptCovers() }
                 SleeveAccents.clear()
                 loader.diskCache?.clear()
                 loader.memoryCache?.clear()

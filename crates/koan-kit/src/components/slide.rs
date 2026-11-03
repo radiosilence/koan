@@ -1,17 +1,17 @@
-//! A panel at the trailing edge of a page that slides in and out rather
-//! than snapping: the lyrics, an inspector. Its width eases between nothing
-//! and the panel's over `Motion::SETTLE`, the panel laid out at full width
-//! and clipped, so nothing in it reflows as it goes; at once under Reduce
-//! Motion. The owner keeps the panel while it slides out and lets it go once
-//! its `SlideState` says it has gone.
+//! A panel at the trailing edge of a page whose width eases in and out over
+//! `Motion::SETTLE`: the lyrics, an inspector. The panel is laid out at its
+//! full width and clipped, so it does not reflow; the page beside it does,
+//! each frame. At once under Reduce Motion. The owner keeps the panel while
+//! the width eases away and lets it go once its `SlideState` says it has
+//! closed; a closed panel draws nothing.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
-use super::{child, fade};
+use super::child;
 use crate::theme::Motion;
 
 /// How far a slide stands open, as last drawn: held by the owner, which
@@ -53,7 +53,7 @@ impl Slide {
 
 impl RenderOnce for Slide {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let open = fade(
+        let open = super::ease(
             child(&self.id, "open"),
             self.shown,
             Motion::SETTLE,

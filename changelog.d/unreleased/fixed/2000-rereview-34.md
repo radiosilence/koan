@@ -1,0 +1,1 @@
+- **Menu row buttons work with a screen reader.** In the kōan GUI app a menu row's buttons (move here, forget, waking, EQ) can be pressed through VoiceOver or Orca, and a row with no second line no longer shows an empty tooltip.

@@ -1,0 +1,1 @@
+- **The desktop app's record grids line up with their pages.** The first and last columns of the album grid and an artist's records now sit on the page's margin, in line with the header above, and a wider window spreads the tiles apart.

@@ -33,6 +33,8 @@ New screens follow these by default; a screen that breaks one says why in its PR
 | `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. Was `#8c8c8c`, which is 4.3:1 on `surface` |
 | `accent` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row, toggles on, focus. Mint is its value with nothing playing; see [Accent](#accent) |
 | `bad` | `#ef6b73` | `#c43f3f` | Errors and destructive actions |
+| `selection` | `#464646` | `#5c5c5c` | A picked list row's fill, opaque over the wash |
+| `on_selection` | `#ffffff` | `#ffffff` | Everything on a picked row: text, numbers, marks and errors |
 
 `accent` is `--color-brand` in `theme.css`.
 
@@ -74,7 +76,7 @@ On the Mac the scale is drawn at 0.86 of these sizes, so `body` is 12.9 points. 
 - **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `accent` rule on its leading edge.
 - **Corners** are square: controls, covers, sheets and the transport. The window's own corners are the system's.
 - **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`. The [wash](#wash) is the one thing under the ground that is not flat.
-- **Motion.** Fast and direct: a quick-out curve, a snappy start and a decisive stop, with no tail, delay, stagger or overshoot, and no springs, scale pops or glass morphs. States (pressed, hover, selection, toggles) take 80 ms (`Motion.fast`); a marker moving between places, a tab's underline, goes straight to its target in 120 ms (`Motion.normal`); the accent arriving with a record eases over 250 ms (`Motion.settle`) and never draws the eye. A tab switch swaps the page at once. With Reduce Motion all of it is instant. Components take these tokens through `.koanAnimation`, never their own `.animation`. System transitions (navigation pushes, sheets) stay as the platform draws them.
+- **Motion.** Fast and direct: a quick-out curve, a snappy start and a decisive stop, with no tail, delay, stagger or overshoot, and no springs, scale pops or glass morphs. A state (pressed, hover, selection, a toggle) shows at once as it comes on and lingers for 130 ms as it goes off (`Motion::LEAVE` in koan-kit), barely seen, so the pointer leaving a control is not a hard cut; the Swift apps still take 80 ms both ways (`Motion.fast`); a marker moving between places, a tab's underline, goes straight to its target in 120 ms (`Motion.normal`); the accent arriving with a record turns with the wash's dissolve, over 2 s on its in-out curve and in OKLab (`Motion::DISSOLVE` in koan-kit; the Swift apps still ease it over 250 ms, `Motion.settle`), and never draws the eye. A tab switch swaps the page at once. With Reduce Motion all of it is instant. Components take these tokens through `.koanAnimation`, never their own `.animation`. System transitions (navigation pushes, sheets) stay as the platform draws them.
 
 ### Accent
 
@@ -90,7 +92,7 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 - Where no lightness in the band does, the accent is used for fills, indicators and rings only, at 3:1, and text that would have been the accent is `ink`.
 - A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
 - The hue is never moved. A red record gives a red accent, even one close to `bad`; errors are told apart by where they appear and what they say, not by hue alone.
-- A change of record eases to the new accent over 250 ms (`Motion.settle`), and only when the colour was not already known; one in hand lands with the record.
+- A change of record eases to the new accent over 250 ms (`Motion.settle`) when the colour was not already known, and lands with the record when it was, in the SwiftUI and Compose apps. The GPUI app turns the accent to the new colour as the wash dissolves to the record, over the same length and curve.
 - "Colours from the record" (`appearance.record_colours`) off pins the accent to mint and removes the wash, in both themes.
 
 ### Wash

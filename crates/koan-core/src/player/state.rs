@@ -825,11 +825,29 @@ pub struct QueueReading {
     pub error: Option<String>,
 }
 
+/// An output opening for the player off its thread: the device asked for
+/// (`None`, the system's default) and since when. While one is, the playhead
+/// stands still, and a front end says what it waits for once it has waited a
+/// while (`OUTPUT_WAIT_NOTE`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputOpening {
+    pub device: Option<String>,
+    pub since: std::time::Instant,
+    /// An earlier attempt is still stuck in the audio system, so asking
+    /// again is refused until it returns.
+    pub stuck: bool,
+}
+
+/// How long an output may take to open before the front ends say so.
+pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Shared player state — atomics for lock-free reads from UI thread.
 ///
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The output opening, while one is (`OutputOpening`).
+    output_opening: parking_lot::Mutex<Option<OutputOpening>>,
     /// The playback state, with `WAITING` set while the player waits for a
     /// track it was asked for. One atomic, so no reader sees one updated
     /// without the other.
@@ -923,6 +941,27 @@ pub struct SharedPlayerState {
     sleep: parking_lot::RwLock<Option<Sleep>>,
     /// The sleep timer is fading playback out.
     sleep_fading: AtomicBool,
+    /// Whether the saved session may be written now, as the process that
+    /// owns it decides: an app holds it back until its restore has landed.
+    /// Saves from outside the player's owner, such as `savePlaybackState`,
+    /// ask it. None allows them.
+    save_gate: SaveGateSlot,
+}
+
+/// See [`SharedPlayerState::may_save_session`].
+pub type SaveGate = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// The owner's save gate, if it set one. A closure has no `Debug`, so this
+/// says only whether one is set.
+#[derive(Default)]
+struct SaveGateSlot(parking_lot::RwLock<Option<SaveGate>>);
+
+impl std::fmt::Debug for SaveGateSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SaveGateSlot")
+            .field(&self.0.read().is_some())
+            .finish()
+    }
 }
 
 /// A renderer's playhead: `position_ms`, plus the time since `running` if it
@@ -961,12 +1000,25 @@ impl SharedPlayerState {
             start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
+            output_opening: parking_lot::Mutex::new(None),
             pending_seek: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
             sleep: parking_lot::RwLock::new(None),
             sleep_fading: AtomicBool::new(false),
+            save_gate: SaveGateSlot::default(),
         })
+    }
+
+    /// Installs the owner's rule for when the saved session may be written.
+    pub fn set_save_gate(&self, gate: SaveGate) {
+        *self.save_gate.0.write() = Some(gate);
+    }
+
+    /// Whether a save of the session from outside its owner may go ahead: the
+    /// owner's gate, or yes where it set none.
+    pub fn may_save_session(&self) -> bool {
+        self.save_gate.0.read().as_ref().is_none_or(|gate| gate())
     }
 
     // --- Playback state ---
@@ -1004,6 +1056,20 @@ impl SharedPlayerState {
         self.transport() == (PlaybackState::Stopped, false)
     }
 
+    /// The output opening, while one is.
+    pub fn output_opening(&self) -> Option<OutputOpening> {
+        self.output_opening.lock().clone()
+    }
+
+    pub(crate) fn set_output_opening(&self, opening: Option<OutputOpening>) {
+        let mut held = self.output_opening.lock();
+        if *held != opening {
+            *held = opening;
+            drop(held);
+            self.changed();
+        }
+    }
+
     /// Publish the playback state and the wait together.
     pub fn set_transport(&self, state: PlaybackState, waiting: bool) {
         let bits = state as u8 | if waiting { WAITING } else { 0 };
@@ -1016,7 +1082,13 @@ impl SharedPlayerState {
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
         if let Some(seek) = self.pending_seek() {
-            return seek;
+            // Counting on from a target near the end stops at the end.
+            let duration = self.duration_ms();
+            return if duration > 0 {
+                seek.min(duration)
+            } else {
+                seek
+            };
         }
         let clock = *self.renderer_clock.lock();
         if let Some(clock) = clock {
@@ -1041,6 +1113,10 @@ impl SharedPlayerState {
         let since = seek.at.elapsed();
         if since >= SEEK_PATIENCE {
             *pending = None;
+            drop(pending);
+            // The playhead read from the timeline again is news to every
+            // front end that drew the seek's.
+            crate::signal::engine_changed().bump();
             return None;
         }
         Some(if seek.moving {
@@ -1048,6 +1124,19 @@ impl SharedPlayerState {
         } else {
             seek.position_ms
         })
+    }
+
+    /// When a seek on its way to the player lapses if the player has not
+    /// taken it, for a front end that publishes the playhead to wait no
+    /// longer than that. One already lapsed is let go here, with the change
+    /// signal, so the deadline returned is never past.
+    pub fn seek_deadline(&self) -> Option<std::time::Instant> {
+        let at = (*self.pending_seek.lock())?.at;
+        if at.elapsed() >= SEEK_PATIENCE {
+            self.pending_seek();
+            return None;
+        }
+        Some(at + SEEK_PATIENCE)
     }
 
     /// Where a seek to `position_ms` lands: held inside what has arrived of
@@ -1118,6 +1207,10 @@ impl SharedPlayerState {
     /// A renderer playing a file keeps its clock here; one playing a stream
     /// processed here keeps it on the timeline, in time into the stream.
     pub fn playhead_moving(&self) -> bool {
+        // Nothing plays until the output has opened, whatever was asked.
+        if self.output_opening.lock().is_some() {
+            return false;
+        }
         let clock =
             (*self.renderer_clock.lock()).or_else(|| self.timeline.get().and_then(|t| t.clock()));
         match clock {
@@ -1924,6 +2017,21 @@ impl SharedPlayerState {
             self.bump_version();
         }
         failed
+    }
+
+    /// The items for `track_id` that failed as cancelled, to be given the file
+    /// that arrived after all.
+    pub fn cancelled_items(&self, track_id: i64) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter(|item| {
+                item.db_id == Some(track_id)
+                    && matches!(&item.state, ItemState::Failed(reason)
+                        if reason == crate::remote::downloads::CANCELLED)
+            })
+            .map(|item| item.id)
+            .collect()
     }
 
     /// Every item for one of `track_ids` that failed goes back to waiting for

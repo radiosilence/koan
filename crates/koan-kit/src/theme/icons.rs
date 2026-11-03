@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
 
-use gpui_kit::{
+use gpui::{
     App, AssetSource, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, Styled, Window, div, px, svg,
 };
@@ -148,19 +148,18 @@ fn glyph_named(name: &str) -> Option<&'static Glyph> {
         .find(|glyph| glyph.name == name)
 }
 
-/// The app's assets: the icon set's sprites, and gpui-kit's own assets (the
-/// glyphs gpui-component's controls draw) for every other path.
+/// The app's assets: the icon set's sprites and the ensō, drawn from code.
 pub struct Assets;
 
 impl AssetSource for Assets {
-    fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         if path == crate::components::placeholder::ENSO {
             return Ok(Some(Cow::Owned(
                 crate::components::placeholder::enso_svg().into_bytes(),
             )));
         }
         let Some(rest) = path.strip_prefix(PREFIX) else {
-            return gpui_kit::assets::Assets.load(path);
+            return Ok(None);
         };
         let mut parts = rest.split('/');
         let (Some(name), Some(units), Some(layer), None) =
@@ -176,8 +175,8 @@ impl AssetSource for Assets {
         Ok(Some(Cow::Owned(render(glyph, units, layer).into_bytes())))
     }
 
-    fn list(&self, path: &str) -> gpui_kit::Result<Vec<SharedString>> {
-        gpui_kit::assets::Assets.list(path)
+    fn list(&self, _: &str) -> gpui::Result<Vec<SharedString>> {
+        Ok(Vec::new())
     }
 }
 

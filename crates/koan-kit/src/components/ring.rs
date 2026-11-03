@@ -16,7 +16,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::*;
+use gpui::*;
 
 use super::{Glide, SHADED, ShaderProgram};
 use crate::theme::{Look, TypeRole};
@@ -34,11 +34,12 @@ pub struct ProgressRing {
     glide: Option<Glide>,
 }
 
-/// The ring from twelve o'clock: `u[0]` the share at the origin (below zero
-/// while unknown), `u[1]` its rate a second, `u[8..12]` the colour. The
-/// stroke is the ring's own share of its side, so a glide drawn at two sizes
-/// needs nothing per size. Ahead of the last report it reckons at
-/// most a second on, so a transfer that stalls is not drawn finishing.
+/// The ring from twelve o'clock, from its `Glide`: track 0 the share, `u[0]`
+/// 1 while the size is unknown (track 2 turning it), `u[1]` the share a
+/// second past the last report, `u[8..12]` the colour. The stroke is the
+/// ring's own share of its side, so a glide drawn at two sizes needs nothing
+/// per size. Ahead of the last report it reckons at most a second on, so a
+/// transfer that stalls is not drawn finishing.
 static RING: ShaderProgram = ShaderProgram {
     name: "koan-progress-ring",
     msl: r#"
@@ -56,21 +57,21 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         a += 1.0;
     }
     float shown;
-    if (u[0] < 0.0) {
-        float start = a - fract(time);
+    if (u[0] > 0.5) {
+        float start = a - koan_track(u, 2, time);
         if (start < 0.0) {
             start += 1.0;
         }
         shown = start < 0.7 ? 1.0 : 0.0;
     } else {
-        float share = clamp(u[0] + u[1] * min(time, 1.0), 0.02, 1.0);
+        float share = clamp(min(koan_track(u, 0, time), u[1]), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
     }
     return float4(u[8], u[9], u[10], u[11] * edge * shown);
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let side = min(size.x, size.y);
     let stroke = side * 0.125;
     let d = position - size * 0.5;
@@ -84,14 +85,14 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         a += 1.0;
     }
     var shown = 0.0;
-    if (u[0].x < 0.0) {
-        var start = a - fract(time);
+    if (u[0].x > 0.5) {
+        var start = a - koan_track(u, 2u, time);
         if (start < 0.0) {
             start += 1.0;
         }
         shown = select(0.0, 1.0, start < 0.7);
     } else {
-        let share = clamp(u[0].x + u[0].y * min(time, 1.0), 0.02, 1.0);
+        let share = clamp(min(koan_track(u, 0u, time), u[0].y), 0.02, 1.0);
         shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
     }
     return vec4<f32>(u[2].xyz, u[2].w * edge * shown);
@@ -119,8 +120,7 @@ impl ProgressRing {
     /// the glide, so a glide is drawn in one colour: one per colour, and
     /// never one a slider also draws.
     pub fn glide(mut self, glide: &Glide) -> Self {
-        let value = glide.value();
-        self.progress = (value >= 0.0).then_some(value);
+        self.progress = glide.known().then(|| glide.value());
         self.glide = Some(glide.clone());
         self
     }
@@ -190,11 +190,16 @@ impl RenderOnce for ProgressRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
-        if let Some(glide) = self.glide.filter(|_| SHADED) {
-            let color = self.color.to_rgb();
+        // Under Reduce Motion an unknown amount is the still arc drawn
+        // below, the glide's turn left as it is for when motion returns; a
+        // known share is information and still glides.
+        let moving = crate::theme::KoanTheme::motion_allowed(cx);
+        let still_unknown = self.glide.as_ref().is_some_and(|g| g.unknown()) && !moving;
+        if let Some(glide) = self.glide.filter(|_| SHADED && !still_unknown) {
+            let color = self.color;
             return canvas(
                 move |_, window, cx| {
-                    glide.0.set_all(8, &[color.r, color.g, color.b, color.a]);
+                    glide.0.set_color(8, color);
                     glide.0.attach(false, window, cx);
                     glide
                 },
@@ -205,9 +210,9 @@ impl RenderOnce for ProgressRing {
             .into_any_element();
         }
         let ring = dots(side);
-        let (progress, color) = (self.progress, self.color);
+        let progress = self.progress.filter(|_| !still_unknown);
+        let color = self.color;
         // With Reduce Motion an unknown amount is a still arc.
-        let moving = crate::theme::KoanTheme::motion_allowed(cx);
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
@@ -247,5 +252,18 @@ mod tests {
         assert_eq!(drawn(Some(0.5), Duration::ZERO, 100), (0, 50));
         assert_eq!(drawn(Some(0.0), Duration::ZERO, 100).1, 2);
         assert_eq!(drawn(None, Duration::from_millis(500), 100), (50, 70));
+    }
+
+    /// Drawn without shaders, a transfer of unknown size turns; one known
+    /// fills to its share.
+    #[test]
+    fn an_unknown_size_turns_rather_than_standing_empty() {
+        let glide = Glide::new();
+        glide.set_unknown();
+        let ring = ProgressRing::new(Some(0.3), Hsla::default()).glide(&glide);
+        assert_eq!(ring.progress, None);
+        glide.set(0.4, 0.0, std::time::Instant::now());
+        let ring = ProgressRing::new(None, Hsla::default()).glide(&glide);
+        assert!(ring.progress.is_some_and(|p| (p - 0.4).abs() < 1e-3));
     }
 }

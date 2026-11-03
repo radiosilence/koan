@@ -8,14 +8,15 @@ use std::error::Error;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, browse::Browse};
 use koan_gui::theme;
 use koan_kit::app::{AppContext as _, Entity};
+use koan_runtime::KoanEngine;
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, px, size};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
     }
@@ -38,7 +39,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     cx.update(|cx| {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-        koan_kit::raw::init(cx);
         theme::init(cx);
     });
     let lib = cx.update(|cx| {

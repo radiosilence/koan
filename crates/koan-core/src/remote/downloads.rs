@@ -204,11 +204,21 @@ struct Entry {
     /// Let go of by the person: withdrawn, it settles as failed with
     /// [`CANCELLED`] rather than leaving no row, so it can be retried.
     cancelled: bool,
+    /// Asked into the cache for its own sake at some point, which a cancel
+    /// does not undo: a retry fetches it into the cache again, where a track
+    /// only the queue wanted is not pinned by being retried.
+    pinned: bool,
 }
 
 impl Entry {
     fn is_live(&self) -> bool {
         !self.download.state.is_settled()
+    }
+
+    /// A cancelled row, the only way to retry what it held: kept by "clear
+    /// finished" and by the limit on settled rows.
+    fn retry_handle(&self) -> bool {
+        matches!(&self.download.state, DownloadState::Failed(reason) if reason == CANCELLED)
     }
 
     fn wanted(&self) -> bool {
@@ -227,7 +237,10 @@ fn join_in(entries: &mut [Entry], track_id: i64, waiter: Option<QueueItemId>) ->
         Some(id) => {
             entry.waiters.insert(id);
         }
-        None => entry.keep = true,
+        None => {
+            entry.keep = true;
+            entry.pinned = true;
+        }
     }
     // Wanted again before its worker withdrew it: it carries on.
     entry.cancelled = false;
@@ -265,6 +278,9 @@ pub struct DownloadStore {
     /// far more often than a figure needs redrawing, so this is what holds
     /// them to `MIN_SAMPLE_GAP`. An atomic, because it is asked per chunk.
     last_sample: AtomicU64,
+    /// How close together readings may be, in nanoseconds; 0 for
+    /// `MIN_SAMPLE_GAP`. See `set_reading_gap`.
+    reading_gap: AtomicU64,
     figures: AtomicU64,
     /// Rung when the figures move. Its own signal rather than the engine's:
     /// a transfer's progress is news only to what draws it, and the engine's
@@ -285,6 +301,16 @@ const SETTLED_LIMIT: usize = 50;
 impl DownloadStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Readings at most `gap` apart while bytes land, rather than
+    /// `MIN_SAMPLE_GAP`'s four a second: for a front end whose progress
+    /// moves between readings on the GPU and gains from more of them. Each
+    /// reading publishes the figures to every client of the engine, so a
+    /// phone, where they cost battery, keeps the default.
+    pub fn set_reading_gap(&self, gap: Duration) {
+        self.reading_gap
+            .store(gap.as_nanos().max(1) as u64, Ordering::Relaxed);
     }
 
     /// Bumped when an entry is listed, settles or is forgotten — not when its
@@ -349,6 +375,7 @@ impl DownloadStore {
                 waiters: waiter.into_iter().collect(),
                 keep: waiter.is_none(),
                 cancelled: false,
+                pinned: waiter.is_none(),
             },
         );
         drop(entries);
@@ -485,7 +512,9 @@ impl DownloadStore {
     /// feed a decoder reading it may be parked on.
     ///
     /// A transfer that never listed — its file was found on disk, or it failed
-    /// before fetching anything — leaves no row. Nor does a withdrawn one.
+    /// before fetching anything — leaves no row. Nor does one withdrawn because
+    /// nothing wanted it; one the person cancelled stays, failed as
+    /// [`CANCELLED`], so it can be retried.
     fn end(&self, track_id: i64, outcome: Outcome) -> Option<(Vec<QueueItemId>, Arc<ByteFeed>)> {
         let mut entries = self.entries.write();
         let ix = entries
@@ -522,8 +551,12 @@ impl DownloadStore {
         let (now, older): (Vec<_>, Vec<_>) = settled
             .into_iter()
             .partition(|e| e.download.track_id == track_id);
+        // A cancelled row is the only handle on retrying it, so the limit
+        // takes the others.
+        let (handles, older): (Vec<_>, Vec<_>) = older.into_iter().partition(Entry::retry_handle);
         live.extend(now);
         live.extend(older.into_iter().take(SETTLED_LIMIT.saturating_sub(1)));
+        live.extend(handles);
         *entries = live;
         drop(entries);
         self.samples.lock().remove(&track_id);
@@ -609,15 +642,25 @@ impl DownloadStore {
     }
 
     /// Drop the settled rows for these tracks, as they are fetched again.
-    pub fn forget_settled(&self, track_ids: &[i64]) {
+    /// Returns those of them that were asked into the cache for their own
+    /// sake, which a retry fetches into it again.
+    pub fn forget_settled(&self, track_ids: &[i64]) -> Vec<i64> {
         let mut entries = self.entries.write();
         let before = entries.len();
-        entries.retain(|e| e.is_live() || !track_ids.contains(&e.download.track_id));
+        let mut pinned = Vec::new();
+        entries.retain(|e| {
+            let drop = !e.is_live() && track_ids.contains(&e.download.track_id);
+            if drop && e.pinned && !pinned.contains(&e.download.track_id) {
+                pinned.push(e.download.track_id);
+            }
+            !drop
+        });
         let changed = entries.len() != before;
         drop(entries);
         if changed {
             self.bump();
         }
+        pinned
     }
 
     /// Drop the finished rows whose file is gone: cleared or evicted from
@@ -635,12 +678,14 @@ impl DownloadStore {
         }
     }
 
-    /// Drop everything that has already settled. The running ones are not this
-    /// call's business — stopping a transfer is a different verb.
+    /// Drop everything that has already settled, but for cancelled rows,
+    /// which are not finished and are the only way to retry them. The running
+    /// ones are not this call's business — stopping a transfer is a
+    /// different verb.
     pub fn clear_settled(&self) {
         let mut entries = self.entries.write();
         let before = entries.len();
-        entries.retain(Entry::is_live);
+        entries.retain(|e| e.is_live() || e.retry_handle());
         let changed = entries.len() != before;
         drop(entries);
         if changed {
@@ -708,7 +753,12 @@ pub fn settle(
     result: &Result<PathBuf, String>,
 ) -> Settled {
     let store = state.downloads();
-    let waiters = store.waiters(track_id);
+    let mut waiters = store.waiters(track_id);
+    // A cancel that came too late: the file arrived after its entries had
+    // failed as cancelled. They have it now, as the ones still waiting do.
+    if result.is_ok() {
+        waiters.extend(state.cancelled_items(track_id));
+    }
     for &id in &waiters {
         match result {
             Ok(path) => {
@@ -770,7 +820,7 @@ impl DownloadStore {
     /// Called by the downloader as bytes land, not by a timer: what knows a
     /// transfer moved is the code moving it, and what knows it stopped is the
     /// absence of the next call. Chunks arrive far faster than a figure needs
-    /// redrawing, so this is gated to `MIN_SAMPLE_GAP` before it touches the
+    /// redrawing, so this is gated to the reading gap before it touches the
     /// list every client is reading.
     ///
     /// Every running transfer is sampled, not just the one that moved: a
@@ -783,7 +833,11 @@ impl DownloadStore {
     pub fn progressed(&self) {
         let now = clock_ns();
         let last = self.last_sample.load(Ordering::Relaxed);
-        if last != 0 && now.saturating_sub(last) < MIN_SAMPLE_GAP.as_nanos() as u64 {
+        let gap = match self.reading_gap.load(Ordering::Relaxed) {
+            0 => MIN_SAMPLE_GAP.as_nanos() as u64,
+            gap => gap,
+        };
+        if last != 0 && now.saturating_sub(last) < gap {
             return;
         }
         // One chunk among the transfers running takes the reading; the rest
@@ -880,6 +934,44 @@ mod tests {
         assert_eq!(waiters, HashSet::from([first, again]));
         assert!(store.abandoned(track_id), "kept for its own sake no longer");
         assert!(store.let_go(99).is_empty());
+    }
+
+    /// "Clear finished" and the limit on settled rows keep a cancelled row,
+    /// the only way to retry it.
+    #[test]
+    fn a_cancelled_row_outlasts_clearing_and_the_limit() {
+        let store = DownloadStore::new();
+        let (track_id, _, _) = running(&store, 1, "train");
+        store.let_go(track_id);
+        let _ = withdraw(&store, track_id);
+        for id in 100..(100 + SETTLED_LIMIT as i64 + 5) {
+            let (id, _, _) = running(&store, id, "done");
+            let _ = store.end(id, Outcome::Failed("gone".into()));
+        }
+        assert!(store.all().iter().any(|d| d.track_id == track_id));
+        store.clear_settled();
+        let rows = store.all();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, DownloadState::Failed(CANCELLED.into()));
+    }
+
+    /// A retry fetches into the cache only what was asked into it: a track
+    /// only the queue wanted is not pinned by being retried.
+    #[test]
+    fn a_retry_pins_only_what_was_asked_into_the_cache() {
+        let store = DownloadStore::new();
+        let (queued, _, _) = running(&store, 1, "queued");
+        assert!(store.claim(2, None));
+        let _ = store.announce(
+            2,
+            "cached".into(),
+            "Artist".into(),
+            PathBuf::from("/cache/cached.opus.part"),
+            PathBuf::from("/cache/cached.opus"),
+        );
+        let _ = store.end(queued, Outcome::Failed("gone".into()));
+        let _ = store.end(2, Outcome::Failed("gone".into()));
+        assert_eq!(store.forget_settled(&[queued, 2]), [2]);
     }
 
     #[test]
@@ -1259,5 +1351,31 @@ mod tests {
         feed.set(500);
         store.progressed();
         assert_ne!(store.moved().generation(), before);
+    }
+
+    #[test]
+    fn readings_keep_the_default_gap_unless_a_front_end_asks_for_more() {
+        let readings = |gap: Option<Duration>| {
+            let store = DownloadStore::new();
+            if let Some(gap) = gap {
+                store.set_reading_gap(gap);
+            }
+            let (track_id, _, feed) = running(&store, 1, "train");
+            store.started(track_id, 1_000_000);
+            let before = store.figures();
+            let start = Instant::now();
+            let mut n = 0;
+            while start.elapsed() < Duration::from_millis(400) {
+                n += 1;
+                feed.set(n);
+                store.progressed();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            store.figures() - before
+        };
+        let default = readings(None);
+        let desktop = readings(Some(Duration::from_millis(66)));
+        assert!(default <= 3, "a quarter second apart by default: {default}");
+        assert!(desktop >= 5, "about fifteen a second when asked: {desktop}");
     }
 }

@@ -4,8 +4,8 @@
 //! shows nothing. Between rows, where a drop lands is the list's insertion
 //! line, `INSERTION`, in the accent.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Cover, CoverArt, RowMetrics};
 use crate::theme::{KoanStyled, Look, Space, TypeRole};

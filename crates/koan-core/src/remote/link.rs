@@ -991,11 +991,30 @@ impl LinkIdentity {
     /// which may be running beside it on the same config directory. `None`
     /// while another terminal UI on this machine is that device: two
     /// processes under one id would each take the other's place on the
-    /// server and the network.
+    /// server and the network. A lock the filesystem cannot take at all (some
+    /// network mounts) leaves this one the terminal device, unguarded, rather
+    /// than a terminal that keeps no session.
     pub fn terminal() -> Option<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
         let dir = config::config_dir();
-        Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD, &dir, &dir).ok()
+        match Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD, &dir, &dir) {
+            Ok(identity) => Some(identity),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
+            Err(e) => {
+                log::warn!(
+                    "the terminal device's lock could not be taken ({e}); going on without it"
+                );
+                let app = Self::this_device(None);
+                Some(Self {
+                    name: format!("{} (terminal)", app.name),
+                    device_id: file_device_id(
+                        &dir.join(format!("{}device-id", Self::TERMINAL_FILES)),
+                    ),
+                    files: Self::TERMINAL_FILES,
+                    ..app
+                })
+            }
+        }
     }
 
     /// The desktop app on this machine: from 0.70 the machine's own app,

@@ -1,0 +1,1 @@
+- **koan-kit builds again.** A name in the availability mark shadowed another.

@@ -3678,9 +3678,12 @@ impl App {
             ));
             return;
         }
-        self.tx
-            .send(PlayerCommand::Seek(target_ms.min(seekable)))
-            .ok();
+        // The bar lands now, as every front end's does (`request_seek`).
+        let target = target_ms.min(seekable);
+        self.state.request_seek(target);
+        if self.tx.send(PlayerCommand::Seek(target)).is_err() {
+            self.state.seek_taken(target);
+        }
     }
 
     /// The track info modal renders nothing once its track leaves the queue,

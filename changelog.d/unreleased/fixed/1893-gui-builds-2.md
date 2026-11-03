@@ -1,0 +1,1 @@
+- **The desktop app builds again.** Two more spots where merges met.

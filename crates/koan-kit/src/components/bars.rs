@@ -14,16 +14,17 @@
 
 use std::rc::Rc;
 
-use gpui_kit::*;
+use gpui::*;
 
-use super::{Animated, BarMetrics, SHADED};
+use super::{Animated, BarMetrics, SHADED, ShaderProgram};
 
 /// How far a bar stands with nothing playing through it, so a still bar reads
 /// as a mark rather than as nothing.
 pub const FLOOR: f32 = 0.15;
 
-/// The bars as a fragment program. Uniforms: 0..3 the bands, 4..8 the
-/// colour, 8 a bar's width and 9 the gap, in device pixels, 10 the floor.
+/// The bars as a fragment program. Uniforms: 4..8 the colour, 8 a bar's
+/// width and 9 the gap, in device pixels, 10 the floor; tracks 0..3 the
+/// bands, each gliding to the analyser's latest frame.
 pub static BARS: ShaderProgram = ShaderProgram {
     name: "koan-playing-bars",
     msl: r#"
@@ -33,20 +34,19 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     if (i < 0 || i > 2 || position.x - float(i) * pitch > u[8]) {
         return float4(0.0);
     }
-    float top = size.y * (1.0 - max(u[i], u[10]));
+    float top = size.y * (1.0 - max(koan_track(u, uint(i), time), u[10]));
     float cover = clamp(position.y - top + 0.5, 0.0, 1.0);
     return float4(u[4], u[5], u[6], u[7] * cover);
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let pitch = u[2].x + u[2].y;
     let i = i32(floor(position.x / pitch));
     if (i < 0 || i > 2 || position.x - f32(i) * pitch > u[2].x) {
         return vec4<f32>(0.0);
     }
-    var bands = u[0];
-    let top = size.y * (1.0 - max(bands[i], u[2].z));
+    let top = size.y * (1.0 - max(koan_track(u, u32(i), time), u[2].z));
     let cover = clamp(position.y - top + 0.5, 0.0, 1.0);
     return vec4<f32>(u[1].xyz, u[1].w * cover);
 }
@@ -54,8 +54,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
     prepare: None,
 };
 
-/// One slot's bands, written from any thread; a change is presented at the
-/// next refresh.
+/// One slot's bands, written from any thread as keyframes: the GPU glides
+/// each bar to its latest level at the display's rate.
 #[derive(Clone, Default)]
 pub struct BarLevels(Animated);
 
@@ -64,30 +64,33 @@ impl BarLevels {
         Self::default()
     }
 
-    /// How high each bar stands, 0 to 1, low band to high.
-    pub fn set(&self, bands: [f32; 3]) {
-        self.0.set_all(0, &bands);
+    /// Each bar standing at its band, 0 to 1, low band to high.
+    pub fn hold(&self, bands: [f32; 3]) {
+        for (i, band) in bands.into_iter().enumerate() {
+            self.0.hold(i, band);
+        }
     }
 
-    pub fn band(&self, i: usize) -> f32 {
-        self.0.get(i)
+    /// Each bar gliding from where it stands to its band over `over`: an
+    /// analyser frame, reached as the next arrives.
+    pub fn glide(&self, bands: [f32; 3], over: std::time::Duration) {
+        for (i, band) in bands.into_iter().enumerate() {
+            self.0.to(i, band, over, super::Ease::Linear);
+        }
+    }
+
+    /// Where bar `i` is gliding to.
+    pub fn target(&self, i: usize) -> f32 {
+        self.0.track(i).to
     }
 
     /// The look, in device pixels: written as the slot is laid out, a
     /// change only when the colour or the scale changed.
     fn style(&self, color: Hsla, scale: f32) {
-        let rgba = color.to_rgb();
+        self.0.set_color(4, color);
         self.0.set_all(
-            4,
-            &[
-                rgba.r,
-                rgba.g,
-                rgba.b,
-                rgba.a,
-                BarMetrics::BAR * scale,
-                BarMetrics::GAP * scale,
-                FLOOR,
-            ],
+            8,
+            &[BarMetrics::BAR * scale, BarMetrics::GAP * scale, FLOOR],
         );
     }
 }
@@ -129,6 +132,7 @@ type Attach = dyn Fn(BarsPlace, &mut Window, &mut App) -> Option<BarLevels>;
 pub struct PlayingBars {
     color: Hsla,
     attach: Rc<Attach>,
+    prism: Option<bool>,
 }
 
 impl PlayingBars {
@@ -139,13 +143,30 @@ impl PlayingBars {
         Self {
             color,
             attach: Rc::new(attach),
+            prism: None,
         }
+    }
+
+    /// Drawn as ribbons of the rainbow appearance's palette (brat's when
+    /// `Some(true)`) rather than in `color`, where the bars are a shader.
+    pub fn prism(mut self, prism: Option<bool>) -> Self {
+        self.prism = prism;
+        self
     }
 }
 
 impl RenderOnce for PlayingBars {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let Self { color, attach } = self;
+        let Self {
+            color,
+            attach,
+            prism,
+        } = self;
+        let program = if prism.is_some() {
+            &super::prism::PRISM_BARS
+        } else {
+            &BARS
+        };
         canvas(
             move |bounds, window, cx| {
                 let place = BarsPlace {
@@ -155,12 +176,15 @@ impl RenderOnce for PlayingBars {
                 };
                 let bars = attach(place, window, cx).filter(|_| SHADED)?;
                 bars.style(color, window.scale_factor());
+                if let Some(brat) = prism {
+                    bars.0.set(12, brat as u8 as f32);
+                }
                 bars.0.attach(false, window, cx);
                 Some(bars)
             },
             |bounds, bars, window, _| {
                 if let Some(bars) = bars {
-                    bars.0.paint(&BARS, None, bounds, window);
+                    bars.0.paint(program, None, bounds, window);
                 }
             },
         )

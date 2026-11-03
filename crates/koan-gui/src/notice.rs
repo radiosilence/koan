@@ -15,6 +15,10 @@ const SHOWN: Duration = Duration::from_secs(8);
 #[derive(Default)]
 pub struct Notice {
     pub text: Option<(SharedString, Tone)>,
+    /// How many notices have been shown: the line answers each.
+    pub said: u64,
+    /// When the one showing was said.
+    pub at: Option<std::time::Instant>,
     _clear: Option<Task<()>>,
 }
 
@@ -31,8 +35,11 @@ pub fn show(text: impl Into<SharedString>, tone: Tone, cx: &mut App) {
             })
         });
     });
+    let said = cx.try_global::<Notice>().map_or(0, |n| n.said) + 1;
     cx.set_global(Notice {
         text: Some((text.into(), tone)),
+        said,
+        at: Some(std::time::Instant::now()),
         _clear: Some(clear),
     });
 }

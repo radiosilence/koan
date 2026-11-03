@@ -2,8 +2,8 @@
 //! SwiftUI's `ToolbarItem` placements are, at the toolbar's height and gaps;
 //! and the toolbar button, a glyph in a 36-point cell.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, KoanTheme, Look};
@@ -14,8 +14,6 @@ pub struct ToolbarMetrics;
 
 impl ToolbarMetrics {
     pub const HEIGHT: Pixels = px(TOOLBAR_HEIGHT);
-    /// A toolbar button's cell.
-    pub const BUTTON: Pixels = px(36.);
     /// From the toolbar's edges to its first and last cells.
     pub const INSET: Pixels = px(8.);
     /// Between separate items: sidebar, back and forward; select and lyrics.
@@ -27,6 +25,11 @@ impl ToolbarMetrics {
     pub const SPACER: Pixels = px(16.);
     /// The filter field, from its glyph to the end of its text.
     pub const FIELD: Pixels = px(167.);
+    /// The narrowest the filter field gets in a narrow page column, before
+    /// any of the toolbar's buttons go.
+    pub const FIELD_MIN: Pixels = px(64.);
+    /// The filter field's height to click: a toolbar button's.
+    pub const FIELD_HIT: Pixels = crate::theme::TOOLBAR_BUTTON;
     /// Between the filter field's glyph and its text.
     pub const FIELD_GLYPH_GAP: Pixels = px(10.);
     /// The window's own buttons (the Mac's traffic lights), 14 tall,
@@ -97,7 +100,7 @@ impl Toolbar {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        super::accessible(div().id("toolbar"), gpui_kit::Role::Toolbar, None)
+        super::accessible(div().id("toolbar"), gpui::Role::Toolbar, None)
             .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()
@@ -194,24 +197,28 @@ impl ParentElement for ToolbarGroup {
 
 impl RenderOnce for ToolbarGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        // One row, the groups apart by a fixed spacer: every item is the
+        // row's own, so when the toolbar is narrow a filter field gives up
+        // its width down to its minimum while buttons and spacers keep
+        // theirs. Nested rows would each count the field's whole measure as
+        // the least they can be, and shrinking them would squeeze the
+        // buttons' rows too. The row itself may shrink below its content
+        // (`min_w_0`) for the same reason.
+        let spacer = ToolbarMetrics::SPACER - ToolbarMetrics::GROUP_GAP * 2.;
+        let mut items: Vec<AnyElement> = Vec::new();
+        for group in self.groups.into_iter().filter(|g| !g.is_empty()) {
+            if !items.is_empty() {
+                items.push(div().flex_none().w(spacer).into_any_element());
+            }
+            items.extend(group);
+        }
         div()
-            .flex_none()
+            .flex_shrink_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap(ToolbarMetrics::SPACER)
-            .children(
-                self.groups
-                    .into_iter()
-                    .filter(|g| !g.is_empty())
-                    .map(|group| {
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(ToolbarMetrics::GROUP_GAP)
-                            .children(group)
-                    }),
-            )
+            .gap(ToolbarMetrics::GROUP_GAP)
+            .children(items)
     }
 }
 
@@ -221,7 +228,6 @@ impl RenderOnce for ToolbarGroup {
 #[derive(IntoElement)]
 pub struct ToolbarButton {
     button: Button,
-    selected: bool,
 }
 
 impl ToolbarButton {
@@ -229,7 +235,6 @@ impl ToolbarButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon, label: impl AsRef<str>) -> Self {
         Self {
             button: Button::new(id, ButtonKind::Toolbar).icon(icon).label(label),
-            selected: false,
         }
     }
 
@@ -248,7 +253,6 @@ impl ToolbarButton {
     /// that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
-        self.selected = selected;
         self
     }
 
@@ -262,13 +266,9 @@ impl ToolbarButton {
 }
 
 /// A popover's trigger: drawn pressed while what it opened shows.
-impl gpui_kit::base::Selectable for ToolbarButton {
+impl super::Selectable for ToolbarButton {
     fn selected(self, selected: bool) -> Self {
         ToolbarButton::selected(self, selected)
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
     }
 }
 
@@ -311,17 +311,54 @@ impl ToolbarMenu {
 impl RenderOnce for ToolbarMenu {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let content = self.content;
-        gpui_kit::component::popover::Popover::new(self.id)
-            .appearance(false)
-            .arrow(false)
-            .trigger(self.button)
-            .content(move |_, window, cx| {
-                let state = cx.weak_entity();
-                let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
-                    state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
-                });
-                content(dismiss, window, cx)
+        super::opens_panel(self.id, self.button, move |dismiss, window, cx| {
+            content(dismiss, window, cx).into_any_element()
+        })
+    }
+}
+
+/// A word that opens a panel (`opens_panel`): a filter's value, "add to
+/// playlist". `control`, `muted`, `ink` under the pointer and while open.
+#[derive(IntoElement)]
+pub struct TextTrigger {
+    id: ElementId,
+    label: SharedString,
+    open: bool,
+}
+
+impl TextTrigger {
+    /// `label` is data or the app's words, kept as given.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            open: false,
+        }
+    }
+}
+
+impl super::Selectable for TextTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.open = selected;
+        self
+    }
+}
+
+impl RenderOnce for TextTrigger {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let ink = look.palette.ink.hsla();
+        div()
+            .id(self.id)
+            .cursor_pointer()
+            .text_role(crate::theme::TypeRole::Control, &look)
+            .text_color(if self.open {
+                ink
+            } else {
+                look.palette.muted.hsla()
             })
+            .hover(move |s| s.text_color(ink))
+            .child(self.label)
     }
 }
 

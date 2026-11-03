@@ -27,21 +27,23 @@
 //! both `cached`, so a render of the wash reuses the rest of the window as it
 //! was.
 //!
-//! The Apple apps also turn the texture through ±3°. GPUI's image sprites take
-//! no transform, so here the drift is the breath and the travel alone.
+//! The drift breathes, travels and turns through ±3° as the Apple apps' does;
+//! the turn is what makes a field this soft visibly move. The shader turns
+//! its sampling; the CPU's fallback, drawn as an image sprite, which takes no
+//! transform, breathes and travels alone.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
-    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
+use gpui::prelude::FluentBuilder;
+use gpui::{
+    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
     Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
 use super::{KoanTheme, Look, Motion, Palette};
-use crate::components::{Animated, SHADED, ShaderProgram};
+use crate::components::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 
 /// The texture's side. Blurred to mush, so drawn small and magnified: the
 /// Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
@@ -61,10 +63,11 @@ const REACH: f32 = 0.12;
 const RISE: f32 = 0.10;
 const SCALE_PERIOD: f32 = 13.0;
 const TRAVEL_PERIOD: f32 = 23.0;
-/// A dissolve between records, and the drift starting or coming to rest:
-/// long enough that the room is seen to have changed without being caught
-/// changing.
-const EASE: Duration = Duration::from_secs(2);
+/// The turn's period at full drift: the Mac's 19 s. A field this soft
+/// moves most visibly by turning.
+const TURN_PERIOD: f32 = 19.0;
+/// A dissolve between records, and the drift starting or coming to rest.
+const EASE: Duration = Motion::DISSOLVE;
 /// The drift's whole cycle: both swings back where they started. The shader's
 /// clock is counted from a multiple of it, so it stays small and exact.
 const CYCLE: f32 = 598.0;
@@ -72,22 +75,41 @@ const CYCLE: f32 = 598.0;
 /// The field's side: the blurred sleeve carries nothing finer.
 pub const FIELD: u32 = 32;
 
+/// The span of OKLab's a and b the field encodes, centred on grey: wider
+/// than any sRGB colour reaches.
+const LAB_SPAN: f64 = 0.7;
+
 /// The wash as a fragment program, made from the record's field (`field`) at
 /// each present: a cubic B-spline through the field, the tone's luminance
 /// hold, the ground at the wash's strength, and a dither of a level either
-/// way, so a gradient this soft shows no bands at any size. Uniforms: 0..3
-/// the drift's amplitude ramp (from, to, start in seconds of shader time,
-/// NaN for one standing still), 3..6 the opacity's, 6 whether to lay it over
-/// `bg` (the layer drawn first), 7 whether the appearance is dark, 8..11
-/// `bg`, 11 the hold (0 to 1); `prepare` writes the scale (12), travel (13)
-/// and opacity (14). The overscan (1.38), reach (0.12), rise (0.10), field
-/// (32) and strength (0.6) are written into the source; a test holds them to
-/// the constants.
+/// way, so a gradient this soft shows no bands at any size. Uniforms: 0
+/// whether to lay it over `bg` (the layer drawn first), 1 whether the
+/// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1), 6 the tone's luminance
+/// limit (`Tone::limit`, the one place it is set). Tracks: 0 the drift's
+/// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1),
+/// 4 the turn's swing (-1 to 1) and 5 how far it turns, in radians, each at
+/// full amplitude; a new turn eases there rather than jumping (#1883). The
+/// field is OKLab: L in red, a and b in green and blue over `LAB_SPAN`. The
+/// overscan (1.38), reach (0.12), rise (0.10), field (32), the span (0.7) and
+/// strength (0.6) are written into the source; a test holds them to the
+/// constants.
 pub static WASH: ShaderProgram = ShaderProgram {
     name: "koan-wash",
     msl: r#"
-float3 koan_wash_linear(float3 c) {
-    return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
+float3 koan_wash_from_lab(float3 f) {
+    float L = f.r;
+    float A = (f.g - 0.5) * 0.7;
+    float B = (f.b - 0.5) * 0.7;
+    float l = L + 0.3963377774 * A + 0.2158037573 * B;
+    float m = L - 0.1055613458 * A - 0.0638541728 * B;
+    float s = L - 0.0894841775 * A - 1.2914855480 * B;
+    l = l * l * l;
+    m = m * m * m;
+    s = s * s * s;
+    return max(float3(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), 0.0);
 }
 
 float3 koan_wash_gamma(float3 c) {
@@ -100,9 +122,18 @@ float koan_wash_ign(float2 p) {
 }
 
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float side = max(size.x, size.y) * 1.38 * u[12];
-    float2 centre = size * 0.5 + float2(size.x * 0.12, size.y * 0.10) * u[13];
-    float2 uv = (position - (centre - side * 0.5)) / side;
+    float amplitude = koan_track(u, 0, time);
+    float opacity = koan_track(u, 1, time);
+    float scale = 1.0 + (koan_track(u, 2, time) - 1.0) * amplitude;
+    float travel = koan_track(u, 3, time) * amplitude;
+    float turn = koan_track(u, 4, time) * koan_track(u, 5, time) * amplitude;
+    float side = max(size.x, size.y) * 1.38 * scale;
+    float2 centre = size * 0.5 + float2(size.x * 0.12, size.y * 0.10) * travel;
+    // Turned about the centre: the field is sampled the other way.
+    float2 d = position - centre;
+    float c = cos(turn);
+    float s = sin(turn);
+    float2 uv = float2(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
 
     // A cubic B-spline through the field, from four filtered reads.
     float n = 32.0;
@@ -127,31 +158,42 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 
     // The tone's hold: under `muted`'s limit in the dark, over `surface`'s
     // in the light, by the person's tint.
-    float3 light = koan_wash_linear(field);
+    float3 light = koan_wash_from_lab(field);
     float y = dot(light, float3(0.2126, 0.7152, 0.0722));
-    if (u[7] > 0.5) {
-        float limit = (0.2831 + 0.05) / 4.6 - 0.05;
+    float limit = u[6];
+    if (u[1] > 0.5) {
         if (y > limit) {
-            light *= 1.0 + (limit / y - 1.0) * u[11];
+            light *= 1.0 + (limit / y - 1.0) * u[5];
         }
     } else {
-        float limit = 0.86;
         if (y < limit) {
-            light += (1.0 - light) * ((limit - y) / (1.0 - y) * u[11]);
+            light += (1.0 - light) * ((limit - y) / (1.0 - y) * u[5]);
         }
     }
-    float3 ground = float3(u[8], u[9], u[10]);
+    float3 ground = float3(u[2], u[3], u[4]);
     float3 colour = ground + (koan_wash_gamma(light) - ground) * 0.6;
     colour += (koan_wash_ign(position) + koan_wash_ign(position + float2(37.0, 91.0)) - 1.0) / 255.0;
-    if (u[6] > 0.5) {
-        return float4(mix(ground, colour, u[14]), 1.0);
+    if (u[0] > 0.5) {
+        return float4(mix(ground, colour, opacity), 1.0);
     }
-    return float4(colour, u[14]);
+    return float4(colour, opacity);
 }
 "#,
     wgsl: r#"
-fn koan_wash_linear(c: vec3<f32>) -> vec3<f32> {
-    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+fn koan_wash_from_lab(f: vec3<f32>) -> vec3<f32> {
+    let L = f.x;
+    let A = (f.y - 0.5) * 0.7;
+    let B = (f.z - 0.5) * 0.7;
+    let l0 = L + 0.3963377774 * A + 0.2158037573 * B;
+    let m0 = L - 0.1055613458 * A - 0.0638541728 * B;
+    let s0 = L - 0.0894841775 * A - 1.2914855480 * B;
+    let l = l0 * l0 * l0;
+    let m = m0 * m0 * m0;
+    let s = s0 * s0 * s0;
+    return max(vec3<f32>(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), vec3<f32>(0.0));
 }
 
 fn koan_wash_gamma(c0: vec3<f32>) -> vec3<f32> {
@@ -163,10 +205,18 @@ fn koan_wash_ign(p: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }
 
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
-    let side = max(size.x, size.y) * 1.38 * u[3].x;
-    let centre = size * 0.5 + vec2<f32>(size.x * 0.12, size.y * 0.10) * u[3].y;
-    let uv = (position - (centre - side * 0.5)) / side;
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let amplitude = koan_track(u, 0u, time);
+    let opacity = koan_track(u, 1u, time);
+    let scale = 1.0 + (koan_track(u, 2u, time) - 1.0) * amplitude;
+    let travel = koan_track(u, 3u, time) * amplitude;
+    let turn = koan_track(u, 4u, time) * koan_track(u, 5u, time) * amplitude;
+    let side = max(size.x, size.y) * 1.38 * scale;
+    let centre = size * 0.5 + vec2<f32>(size.x * 0.12, size.y * 0.10) * travel;
+    let d = position - centre;
+    let c = cos(turn);
+    let s = sin(turn);
+    let uv = vec2<f32>(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
     let n = 32.0;
     let t = uv * n - 0.5;
     let i = floor(t);
@@ -186,46 +236,29 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
               + g1.x * koan_sample(tile, vec2<f32>(p1.x, p0.y)).rgb)
       + g1.y * (g0.x * koan_sample(tile, vec2<f32>(p0.x, p1.y)).rgb
               + g1.x * koan_sample(tile, vec2<f32>(p1.x, p1.y)).rgb);
-    var light = koan_wash_linear(field);
+    var light = koan_wash_from_lab(field);
     let y = dot(light, vec3<f32>(0.2126, 0.7152, 0.0722));
-    if (u[1].w > 0.5) {
-        let limit = (0.2831 + 0.05) / 4.6 - 0.05;
+    let limit = u[1].z;
+    if (u[0].y > 0.5) {
         if (y > limit) {
-            light = light * (1.0 + (limit / y - 1.0) * u[2].w);
+            light = light * (1.0 + (limit / y - 1.0) * u[1].y);
         }
     } else {
-        let limit = 0.86;
         if (y < limit) {
-            light = light + (1.0 - light) * ((limit - y) / (1.0 - y) * u[2].w);
+            light = light + (1.0 - light) * ((limit - y) / (1.0 - y) * u[1].y);
         }
     }
-    let ground = u[2].xyz;
+    let ground = vec3<f32>(u[0].z, u[0].w, u[1].x);
     var colour = ground + (koan_wash_gamma(light) - ground) * 0.6;
     colour = colour + (koan_wash_ign(position) + koan_wash_ign(position + vec2<f32>(37.0, 91.0)) - 1.0) / 255.0;
-    if (u[1].z > 0.5) {
-        return vec4<f32>(mix(ground, colour, u[3].z), 1.0);
+    if (u[0].x > 0.5) {
+        return vec4<f32>(mix(ground, colour, opacity), 1.0);
     }
-    return vec4<f32>(colour, u[3].z);
+    return vec4<f32>(colour, opacity);
 }
 "#,
-    prepare: Some(prepare),
+    prepare: None,
 };
-
-/// The pose and opacity at `time`, for the quad's every pixel alike.
-fn prepare(u: &mut [f32; 16], time: f32) {
-    let ramp = |from: f32, to: f32, start: f32| {
-        if start.is_nan() {
-            to
-        } else {
-            from + (to - from) * Motion::ease_in_out((time - start) / EASE.as_secs_f32())
-        }
-    };
-    let amplitude = ramp(u[0], u[1], u[2]);
-    let (scale, travel) = pose_at(time, amplitude);
-    u[12] = scale;
-    u[13] = travel;
-    u[14] = ramp(u[3], u[4], u[5]);
-}
 
 /// Where the texture is `t` seconds into the drift at `amplitude`: its scale
 /// over the overscan, and its travel across the page from -1 to 1.
@@ -261,6 +294,12 @@ impl Tone {
             Tone::Light => 0.86,
         }
     }
+}
+
+/// The luminance limit the wash is held to in an appearance, as the program
+/// takes it (uniform 6).
+pub fn tone_limit(dark: bool) -> f32 {
+    if dark { Tone::Dark } else { Tone::Light }.limit() as f32
 }
 
 /// A decoded sleeve, as straight-alpha RGBA.
@@ -340,17 +379,21 @@ pub fn field(sleeve: &Sleeve) -> image::RgbaImage {
     let cell = side / FIELD as usize;
     let mut out = image::RgbaImage::new(FIELD, FIELD);
     for (x, y, pixel) in out.enumerate_pixels_mut() {
-        let [r, g, b] = [0, 1, 2].map(|c| {
+        let linear = [0, 1, 2].map(|c| {
             let mut sum = 0.0;
             for dy in 0..cell {
                 for dx in 0..cell {
                     sum += channels[c][(y as usize * cell + dy) * side + x as usize * cell + dx];
                 }
             }
-            let v = super::accent::oklch::gamma(sum / (cell * cell) as f64) * 255.0;
-            v.round().clamp(0.0, 255.0) as u8
+            sum / (cell * cell) as f64
         });
-        pixel.0 = [b, g, r, 255];
+        // In OKLab, so the GPU's filtered reads blend in an even space, not
+        // in sRGB's encoding, which would darken and dull a colour edge.
+        let [l, a, b] = super::accent::oklch::lab(linear);
+        let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+        let chroma = |v: f64| byte(v / LAB_SPAN + 0.5);
+        pixel.0 = [chroma(b), chroma(a), byte(l), 255];
     }
     out
 }
@@ -490,17 +533,20 @@ impl Ramp {
             .filter(|end| *end > now)
     }
 
-    /// As the shader takes it: from, to, and the start in seconds after
-    /// `origin`, NaN for one standing still.
-    fn uniforms(self, origin: Instant) -> [f32; 3] {
-        let start = self.started.map_or(f32::NAN, |started| {
-            if started >= origin {
-                started.duration_since(origin).as_secs_f32()
-            } else {
-                -origin.duration_since(started).as_secs_f32()
-            }
-        });
-        [self.from, self.to, start]
+    /// Into track `k` of `shader`: the program eases it as `at` does.
+    fn write(self, shader: &Animated, k: usize) {
+        match self.started {
+            Some(started) => shader.segment(
+                k,
+                self.from,
+                self.to,
+                started,
+                EASE,
+                Ease::InOut,
+                Repeat::Once,
+            ),
+            None => shader.hold(k, self.to),
+        }
     }
 
     /// Standing at `value`, not moving.
@@ -555,6 +601,9 @@ pub struct Wash {
     /// The drift's clock: its phase is the time since, never a frame count,
     /// so frames the system skips (an occluded window) cost no motion.
     epoch: Instant,
+    /// The pace the drift was last drawn at: a change moves the epoch so the
+    /// drift carries on from where it stood.
+    pace: f32,
     hold: u32,
     /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
@@ -574,6 +623,7 @@ impl Wash {
             wanted: false,
             amplitude: Ramp::still(0.0),
             epoch: now,
+            pace: 1.0,
             hold: 100,
             released: Vec::new(),
             rest: None,
@@ -638,15 +688,29 @@ impl Wash {
             });
             return;
         }
+        let Some(texture) = texture else {
+            // Taken off: what shows fades out to the ground from where it
+            // stands, a record part-way through dissolving in and the one
+            // under it alike, so the window never jumps to the newer one
+            // first.
+            if let Some(previous) = self.previous.as_mut() {
+                previous.opacity = previous.opacity.toward(0.0, now);
+            }
+            self.current = outgoing.map(|mut layer| {
+                layer.opacity = layer.opacity.toward(0.0, now);
+                layer
+            });
+            return;
+        };
         if let Some(outgoing) = outgoing {
             // Held whole under the new record, however far its own
-            // dissolve had come, or faded out to the ground when there is
-            // none: a part-faded record held under the next would let the
-            // ground show through for the length of a dissolve.
-            let opacity = if texture.is_some() {
-                Ramp::still(1.0)
+            // dissolve had come: a part-faded record held under the next
+            // would let the ground show through for the length of a
+            // dissolve. One already fading out goes on fading as it was.
+            let opacity = if outgoing.opacity.to <= 0.0 {
+                outgoing.opacity
             } else {
-                Ramp::still(1.0).toward(0.0, now)
+                Ramp::still(1.0)
             };
             let held = Layer {
                 texture: outgoing.texture.image,
@@ -657,7 +721,7 @@ impl Wash {
                 .extend(self.previous.replace(held).map(|layer| layer.texture));
         }
         // With no record on before, `previous` keeps fading as it was.
-        self.current = texture.map(|texture| Layer {
+        self.current = Some(Layer {
             texture,
             opacity: Ramp::still(0.0).toward(1.0, now),
             shader: Animated::new(),
@@ -715,21 +779,35 @@ impl Wash {
         .detach();
     }
 
+    /// The person's pace (Settings → Appearance), drawn either way. A drift
+    /// set to nothing keeps the last pace while its amplitude eases out, so
+    /// it comes to rest as it does when the music stops.
+    fn follow_pace(&mut self, now: Instant, cx: &App) {
+        let drifting = self.amplitude.to > 0.0 || self.amplitude.moving(now);
+        let percent = cx.global::<KoanTheme>().wash_drift;
+        if !drifting || percent == 0 {
+            return;
+        }
+        let pace = percent as f32 / 100.0;
+        if pace != self.pace {
+            // The phase (now - epoch) * pace stays where it was.
+            let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+            let kept = since * self.pace as f64 / pace as f64;
+            self.epoch = now - Duration::from_secs_f64(kept);
+            self.pace = pace;
+        }
+    }
+
     /// Where the texture is this frame: its scale over the overscan, and its
-    /// travel across the page from -1 to 1.
+    /// travel across the page from -1 to 1, at the person's pace. Image
+    /// sprites take no transform, so drawn this way the wash does not turn.
     fn pose(&self, now: Instant) -> (f32, f32) {
         // Reduced to the cycle in f64 before narrowing, as the shader's clock
         // is: in f32, a window open for days counts time in steps a frame
         // long.
-        let t = (now.duration_since(self.epoch).as_secs_f64() % CYCLE as f64) as f32;
+        let since = now.duration_since(self.epoch).as_secs_f64() * self.pace as f64;
+        let t = (since % CYCLE as f64) as f32;
         pose_at(t, self.amplitude.at(now))
-    }
-
-    /// The drift's clock for the shader: the last whole cycle since the
-    /// epoch, so the phase the shader works out is the one `pose` would.
-    fn origin(&self, now: Instant) -> Instant {
-        let cycles = (now.duration_since(self.epoch).as_secs_f64() / CYCLE as f64).floor();
-        self.epoch + Duration::from_secs_f64(cycles * CYCLE as f64)
     }
 }
 
@@ -785,6 +863,15 @@ impl Render for Wash {
             self.released
                 .extend(self.previous.take().map(|layer| layer.texture));
         }
+        // Taken off and faded out to the ground: nothing left to draw.
+        let gone = self
+            .current
+            .as_ref()
+            .is_some_and(|layer| layer.opacity.to <= 0.0 && !layer.opacity.moving(now));
+        if gone {
+            self.released
+                .extend(self.current.take().map(|layer| layer.texture.image));
+        }
         for image in self.released.drain(..) {
             // After the frame that last drew it.
             window.on_next_frame(move |window, _| {
@@ -793,7 +880,8 @@ impl Render for Wash {
         }
 
         let shown = self.current.is_some() || self.previous.is_some();
-        let target = if self.wanted && shown && KoanTheme::motion_allowed(cx) {
+        let paced = cx.global::<KoanTheme>().wash_drift > 0;
+        let target = if self.wanted && shown && paced && KoanTheme::motion_allowed(cx) {
             1.0
         } else {
             0.0
@@ -808,10 +896,9 @@ impl Render for Wash {
                 .previous
                 .as_ref()
                 .is_some_and(|l| l.opacity.moving(now));
+        self.follow_pace(now, cx);
         if SHADED {
-            return self
-                .render_shaded(moving, now, &look, cx)
-                .into_any_element();
+            return self.render_shaded(now, &look, cx).into_any_element();
         }
         if moving {
             window.request_animation_frame();
@@ -860,16 +947,20 @@ impl Wash {
     /// window sleep.
     fn render_shaded(
         &mut self,
-        moving: bool,
         now: Instant,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let origin = self.origin(now);
-        let amplitude = self.amplitude.uniforms(origin);
         let bg = look.palette.bg.hsla().to_rgb();
         let mut quads: Vec<(Arc<RenderImage>, Animated)> = Vec::new();
         let mut rests = self.amplitude.rests(now);
+        // The breath, travel and turn repeat while the drift is drawn at all,
+        // and hold once it has come to rest at nothing: a wash at rest
+        // presents nothing.
+        let drifting = self.amplitude.to > 0.0 || self.amplitude.moving(now);
+        // The person's turn (Settings → Appearance); the pace is followed
+        // in `render`, for both ways of drawing.
+        let turn = cx.global::<KoanTheme>().wash_turn as f32 * std::f32::consts::PI / 180.0;
         let previous = self
             .previous
             .as_ref()
@@ -880,23 +971,48 @@ impl Wash {
             .map(|l| (l.texture.image.clone(), l.opacity, l.shader.clone()));
         for (image, opacity, shader) in previous.into_iter().chain(current) {
             let first = quads.is_empty();
-            let values: Vec<f32> = amplitude
-                .into_iter()
-                .chain(opacity.uniforms(origin))
-                .chain([
+            shader.set_all(
+                0,
+                &[
                     if first { 1.0 } else { 0.0 },
                     if look.dark { 1.0 } else { 0.0 },
                     bg.r,
                     bg.g,
                     bg.b,
                     self.hold as f32 / 100.0,
-                ])
-                .collect();
-            shader.set_all(0, &values);
-            shader.set_origin(origin);
-            // The drift already rests under Reduce Motion (`moving`); a
-            // dissolve still runs, as it does on the Mac.
-            shader.run(moving);
+                    tone_limit(look.dark),
+                ],
+            );
+            self.amplitude.write(&shader, 0);
+            opacity.write(&shader, 1);
+            if drifting {
+                let pace = self.pace;
+                let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
+                for (k, from, to, start, period) in [
+                    (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
+                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD / pace),
+                    (4, -1.0, 1.0, self.epoch, TURN_PERIOD / pace),
+                ] {
+                    shader.segment(
+                        k,
+                        from,
+                        to,
+                        start,
+                        Duration::from_secs_f32(period),
+                        Ease::InOut,
+                        Repeat::Alternate,
+                    );
+                }
+            } else {
+                shader.hold(2, 1.0);
+                shader.hold(3, 0.0);
+                shader.hold(4, 0.0);
+            }
+            // How far it turns: a change of Turn eases there over the
+            // settle, so the angle moves rather than jumps (#1883).
+            if shader.track(5).to != turn {
+                shader.to(5, turn, Motion::SETTLE, Ease::InOut);
+            }
             rests = rests.max(opacity.rests(now));
             quads.push((image, shader));
         }
@@ -915,6 +1031,9 @@ impl Wash {
             .child(
                 canvas(
                     move |_, window, cx| {
+                        // Not decorative: Reduce Motion stops the drift
+                        // through its amplitude, and the dissolve between
+                        // records still runs, as the Mac's does.
                         for (_, shader) in &quads {
                             shader.attach(false, window, cx);
                         }
@@ -947,7 +1066,7 @@ mod tests {
                 format!("let n = {:?};", FIELD as f32)
                     .replace("let ", if source == WASH.msl { "float " } else { "let " }),
                 format!("* {STRENGTH:?};"),
-                format!("{:?}", Tone::Light.limit()),
+                format!("- 0.5) * {LAB_SPAN:?};"),
             ] {
                 assert!(source.contains(&figure), "{figure} missing");
             }
@@ -985,9 +1104,19 @@ mod tests {
         let red = Sleeve::new([220, 20, 20, 255].repeat(64 * 64).into(), 64, 64).unwrap();
         let field = field(&red);
         assert_eq!(field.dimensions(), (FIELD, FIELD));
-        let [b, _, r, a] = field.get_pixel(FIELD / 2, FIELD / 2).0;
-        assert!(r > 200 && b < 60, "red {r} blue {b}");
-        assert_eq!(a, 255);
+        let [b, a_ch, l, alpha] = field.get_pixel(FIELD / 2, FIELD / 2).0;
+        let lab = [
+            l as f64 / 255.0,
+            (a_ch as f64 / 255.0 - 0.5) * LAB_SPAN,
+            (b as f64 / 255.0 - 0.5) * LAB_SPAN,
+        ];
+        let [r, g, bl] = super::super::accent::oklch::linear_from_lab(lab)
+            .map(super::super::accent::oklch::gamma);
+        assert!(
+            r > 0.75 && g < 0.25 && bl < 0.25,
+            "red {r} green {g} blue {bl}"
+        );
+        assert_eq!(alpha, 255);
     }
 
     fn solid(r: u8, g: u8, b: u8) -> Sleeve {
@@ -1054,6 +1183,47 @@ mod tests {
         let mut channel = vec![1.0; 32 * 32];
         blur(&mut channel, 32);
         assert!(channel.iter().all(|v| (v - 1.0).abs() < 1e-9));
+    }
+
+    fn texture(generation: u64) -> Texture {
+        let frame = image::Frame::new(image::RgbaImage::new(1, 1));
+        Texture {
+            image: Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1))),
+            generation,
+            dark: false,
+            hold: 0,
+        }
+    }
+
+    /// Taking the wash off while a record dissolves in fades what shows from
+    /// where it stands: the record coming in at its part-way opacity, the
+    /// one under it whole, both toward the ground.
+    #[test]
+    fn taken_off_mid_dissolve_it_fades_from_where_it_stands() {
+        let mut wash = Wash::new();
+        wash.install(Some(texture(1)), false);
+        wash.install(Some(texture(2)), true);
+        let now = Instant::now();
+        // Half-way in.
+        if let Some(current) = wash.current.as_mut() {
+            current.opacity.started = Some(now - EASE / 2);
+        }
+        let coming = wash.current.as_ref().unwrap().opacity.at(now);
+        assert!(coming > 0.2 && coming < 0.8);
+
+        wash.install(None, true);
+        let current = wash
+            .current
+            .as_ref()
+            .expect("the record coming in still shows");
+        let previous = wash.previous.as_ref().expect("and the one under it");
+        let then = Instant::now();
+        assert!(
+            (current.opacity.at(then) - coming).abs() < 0.05,
+            "no jump to the newer record"
+        );
+        assert!(previous.opacity.at(then) > 0.95);
+        assert_eq!((current.opacity.to, previous.opacity.to), (0.0, 0.0));
     }
 
     #[test]

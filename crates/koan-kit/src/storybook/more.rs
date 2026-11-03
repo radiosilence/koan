@@ -1,26 +1,28 @@
 //! The storybook's pages for containers and moving parts: collections,
 //! tables and lists, panels and sheets, motion and drag.
 
-use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use crate::components::field::FieldState as InputState;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
-    Align, BarLevels, Collection, CollectionSection, CollectionWidth, Column, CopyButton, CopyText,
-    CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget, EmptyState, FadeIn,
-    FilterField, Form, FormRow, FormSection, Inspector, KoanContextMenu, MenuEntry, Mosaic,
-    NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars, QrCode, Reveal,
-    RowKind, RowList, RowListState, SectionHeader, SectionHeading, ShuffleButton, SplitView,
-    SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid,
-    TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
+    Align, BarLevels, Burst, Collection, CollectionSection, CollectionWidth, Column, CommandBar,
+    CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget,
+    EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector, KoanContextMenu,
+    MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars,
+    Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader, SectionHeading, Sheen,
+    ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel, SuggestionRow,
+    SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text,
+    name_line, plain_text, table_list,
 };
-use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
+use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What the components on these pages hold.
 pub struct State {
     collection: CollectionWidth,
     filter: Entity<InputState>,
+    command: Entity<InputState>,
     rows: RowListState,
     split: Pixels,
     line: usize,
@@ -30,6 +32,11 @@ pub struct State {
     viewing: bool,
     bars: BarLevels,
     qr: QrCode,
+    prism: Prism,
+    confetti: Burst,
+    sweep: Burst,
+    sticker: Burst,
+    glide: Glide,
 }
 
 impl State {
@@ -37,10 +44,11 @@ impl State {
         let rows = RowListState::new();
         rows.reset(LIST.len() * 4, RowKind::Text);
         let bars = BarLevels::new();
-        bars.set([0.7, 0.45, 0.25]);
+        bars.hold([0.7, 0.45, 0.25]);
         Self {
             collection: CollectionWidth::default(),
             filter: cx.new(|cx| InputState::new(window, cx).default_value("low")),
+            command: cx.new(|cx| InputState::new(window, cx).default_value("polar")),
             rows,
             split: px(220.0),
             line: 2,
@@ -50,6 +58,15 @@ impl State {
             viewing: false,
             bars,
             qr: sample_code(),
+            prism: Prism::new(),
+            confetti: Burst::confetti(),
+            sweep: Burst::sweep(),
+            sticker: Burst::sticker(),
+            glide: {
+                let glide = Glide::new();
+                glide.set(0.62, 0.0, std::time::Instant::now());
+                glide
+            },
         }
     }
 }
@@ -144,7 +161,11 @@ impl StoryContent {
                             .flex()
                             .flex_col()
                             .gap(look.space(Space::Xs))
-                            .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
+                            .child(TileArt::new(
+                                ("grid-tile", index),
+                                grid.side,
+                                TileSleeve::Colour(colour),
+                            ))
                             .child(text(
                                 ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
                                 TypeRole::Control,
@@ -220,6 +241,27 @@ impl StoryContent {
             Story::Lists => {
                 let ink = look.palette.ink.hsla();
                 vec![
+                    SectionHeader::new(
+                        "The scrollbar: shown as it scrolls or under the pointer, faded out after a rest",
+                    )
+                    .into_any_element(),
+                    div()
+                        .w(look.spaced(260.0))
+                        .h(look.spaced(160.0))
+                        .border(look.hairline)
+                        .border_color(look.palette.rule.hsla())
+                        .child(crate::components::ScrollArea::new(
+                            "story-scrollbar",
+                            div().flex().flex_col().children((1..=40).map(|n| {
+                                div()
+                                    .px(look.space(Space::M))
+                                    .py(look.space(Space::Xs))
+                                    .text_role(TypeRole::Body, look)
+                                    .text_color(look.palette.ink.hsla())
+                                    .child(format!("Track {n}"))
+                            })),
+                        ))
+                        .into_any_element(),
                     SectionHeader::new("Navigation headings and notes").into_any_element(),
                     div()
                         .w(look.spaced(240.0))
@@ -340,6 +382,11 @@ impl StoryContent {
                     CopyText::new("story-copy-text", "koan.rocks/pair/7KQ2-M9XD")
                         .help("copy the link")
                         .into_any_element(),
+                    SectionHeader::new("Popover panel").into_any_element(),
+                    crate::components::popover_panel(240.0, look)
+                        .child(div().child("Codec: FLAC"))
+                        .child(div().child("Sample rate: 96 kHz"))
+                        .into_any_element(),
                     SectionHeader::new("Filter field and suggestions").into_any_element(),
                     div()
                         .relative()
@@ -377,6 +424,40 @@ impl StoryContent {
                                             .picked(true),
                                         ),
                                 ),
+                        )
+                        .into_any_element(),
+                    SectionHeader::new("Command bar").into_any_element(),
+                    frame(420.0)
+                        .relative()
+                        .child(
+                            CommandBar::new("story-command", &self.more.command)
+                                .section(
+                                    "Records",
+                                    vec![
+                                        SuggestionRow::new("story-command-1", "Polar Bear")
+                                            .detail("Polar Bear")
+                                            .figure("2008")
+                                            .icon(Icon::Album),
+                                        SuggestionRow::new("story-command-2", "Peepers")
+                                            .detail("Polar Bear")
+                                            .figure("2010")
+                                            .icon(Icon::Album)
+                                            .picked(true),
+                                    ],
+                                )
+                                .section(
+                                    "Artists",
+                                    vec![
+                                        SuggestionRow::new("story-command-3", "Polar Bear")
+                                            .icon(Icon::Artist),
+                                    ],
+                                )
+                                .lit(Some(0))
+                                .key("↩", "play")
+                                .key("⌘↩", "play next")
+                                .key("⌥↩", "add to queue")
+                                .key("⇥", "tick")
+                                .key("esc", "clear"),
                         )
                         .into_any_element(),
                     SectionHeader::new("Inspector and synced lines").into_any_element(),
@@ -544,6 +625,139 @@ impl StoryContent {
                                     .on_click(|_, _, _| {}),
                             )
                         })
+                        .into_any_element(),
+                ]
+            }
+            Story::Rainbow => {
+                let prism = self.more.prism.clone();
+                prism.run(true);
+                prism.style(look.dark, false, window.scale_factor());
+                prism.ball_at(56.0, 56.0);
+                let bars = self.more.bars.clone();
+                let side = look.spaced(96.0);
+                let stage = look.spaced(340.0);
+                let middle = point(look.spaced(300.0), stage / 2.0);
+                let fire = |burst: &Burst, label: &'static str, id: &'static str| {
+                    let burst = burst.clone();
+                    crate::components::Button::new(id, crate::components::ButtonKind::Bordered)
+                        .label(label)
+                        .on_click(move |_, window, _| {
+                            burst.fire(middle, window.scale_factor(), false)
+                        })
+                };
+                let beat = {
+                    let prism = prism.clone();
+                    crate::components::Button::new(
+                        "story-beat",
+                        crate::components::ButtonKind::Bordered,
+                    )
+                    .label("beat")
+                    .on_click(move |_, _, _| {
+                        let frame = std::time::Duration::from_millis(16);
+                        prism.hear([0.1, 0.4, 0.5], frame);
+                        prism.hear([1.0, 0.7, 0.9], frame);
+                    })
+                };
+                let overlay =
+                    |quad: AnyElement| div().absolute().top_0().left_0().size_full().child(quad);
+                vec![
+                    SectionHeader::new("The prism over a page").into_any_element(),
+                    frame(340.0)
+                        .relative()
+                        .overflow_hidden()
+                        // The stage is the prism's window: its size, as laid
+                        // out, is what the spots and hearts are placed in.
+                        .child({
+                            let prism = prism.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    prism.window(
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    )
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
+                        .child(overlay(prism.wash().size_full().into_any_element()))
+                        .child(overlay(prism.disco().size_full().into_any_element()))
+                        .child(overlay(prism.party().size_full().into_any_element()))
+                        .child(
+                            div()
+                                .absolute()
+                                .top(look.spaced(24.0))
+                                .right(look.spaced(24.0))
+                                .size(look.spaced(64.0))
+                                .child(prism.ball().size_full()),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .left(look.spaced(24.0))
+                                .bottom(look.spaced(24.0))
+                                .flex()
+                                .gap(look.space(Space::L))
+                                .items_end()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(crate::components::Cover::new(
+                                            CoverArt::Colour(WARM),
+                                            side,
+                                        ))
+                                        .child(Sheen::new("story-sheen")),
+                                )
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(crate::components::Cover::new(
+                                            CoverArt::Colour(COOL),
+                                            side,
+                                        ))
+                                        .child(Sheen::new("story-sheen-brat").brat(true)),
+                                )
+                                .child(
+                                    PlayingBars::new(look.accent.hsla(), move |_, _, _| {
+                                        Some(bars.clone())
+                                    })
+                                    .prism(Some(false)),
+                                ),
+                        )
+                        .child(overlay(
+                            self.more.sweep.element().size_full().into_any_element(),
+                        ))
+                        .child(overlay(
+                            self.more.confetti.element().size_full().into_any_element(),
+                        ))
+                        .child(overlay(
+                            self.more.sticker.element().size_full().into_any_element(),
+                        ))
+                        .into_any_element(),
+                    div()
+                        .flex()
+                        .gap(look.space(Space::M))
+                        .child(beat)
+                        .child(fire(&self.more.confetti, "confetti", "story-confetti"))
+                        .child(fire(&self.more.sweep, "sweep", "story-sweep"))
+                        .child(fire(&self.more.sticker, "sticker", "story-sticker"))
+                        .into_any_element(),
+                    SectionHeader::new("The palette as a gradient").into_any_element(),
+                    div()
+                        .w(look.spaced(420.0))
+                        .h(look.spaced(6.0))
+                        .child(crate::components::PrismFill::new("story-gradient", false))
+                        .into_any_element(),
+                    SectionHeader::new("The seek bar's trail").into_any_element(),
+                    div()
+                        .w(look.spaced(420.0))
+                        .child(
+                            Slider::new("story-trail", 0.62)
+                                .compact()
+                                .glide(&self.more.glide)
+                                .prism(Some(false)),
+                        )
                         .into_any_element(),
                 ]
             }

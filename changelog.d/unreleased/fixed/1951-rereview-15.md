@@ -1,0 +1,1 @@
+- **Playlist order and seeks near the end.** A playlist reorder made while signed out no longer overwrites the account's order at the next sign-in, and a seek near the end of a track no longer reads past its length while the player takes it.

@@ -619,7 +619,18 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         _ => None,
     };
     let (album_id, album_artist_id) = match by_server_id {
-        Some(found) => found,
+        // Found by the server's id rather than by name, so the date is not
+        // merged as `get_or_create_album` merges it: a date the server's
+        // listing gives after the album was made lands here.
+        Some(found) => {
+            if let Some(date) = &date {
+                conn.prepare_cached(
+                    "UPDATE albums SET date = ?1 WHERE id = ?2 AND date IS NOT ?1",
+                )?
+                .execute(params![date, found.0])?;
+            }
+            found
+        }
         None => (
             get_or_create_album(
                 conn,
@@ -946,11 +957,37 @@ pub(crate) const ORIGINAL_DATE: &str = "(SELECT MIN(COALESCE(f.original_date, r.
        LEFT JOIN remote_entries r ON r.track_id = t.id
       WHERE t.album_id = albums.id)";
 
+/// An album's release date as a correlated subquery on `albums`: the one most
+/// of its tracks' sources give, each by its file where the file names one and
+/// its server entry otherwise. NULL when none does.
+pub(crate) const RELEASE_DATE: &str =
+    "(SELECT COALESCE(NULLIF(f.date, ''), NULLIF(r.date, '')) AS v
+       FROM tracks t
+       LEFT JOIN local_files f ON f.track_id = t.id
+       LEFT JOIN remote_entries r ON r.track_id = t.id
+      WHERE t.album_id = albums.id AND v IS NOT NULL
+      GROUP BY v ORDER BY COUNT(*) DESC, v LIMIT 1)";
+
+/// Date every album that has no date and whose tracks' sources name one: the
+/// original release where any source names it, else the release. A sync
+/// derives a track again only when its source changed, so an album an earlier
+/// build left undated is dated here rather than when its tags next change.
+pub fn fill_album_dates(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        &format!(
+            "UPDATE albums SET date = COALESCE({ORIGINAL_DATE}, {RELEASE_DATE})
+              WHERE date IS NULL AND COALESCE({ORIGINAL_DATE}, {RELEASE_DATE}) IS NOT NULL"
+        ),
+        [],
+    )
+}
+
 /// Derive what an album takes from all its tracks' sources again after its
-/// tracks changed: its disc total, its release types, and its date where any
-/// source names the original release. Album-wide, so a reissue whose bonus
-/// tracks carry no original date, or an album reached through the server's
-/// id, is dated the same whichever track derived last.
+/// tracks changed: its disc total, its release types, and its date: the
+/// original release where any source names it, else the date the album holds,
+/// else the release date its sources give. Album-wide, so a reissue whose
+/// bonus tracks carry no original date, or an album reached through the
+/// server's id, is dated the same whichever track derived last.
 pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqlite::Result<()> {
     type Found = (
         Option<i32>,
@@ -963,7 +1000,7 @@ pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqli
     let found: Option<Found> = conn
         .prepare_cached(&format!(
             "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}, date,
-                    {ORIGINAL_DATE}
+                    COALESCE({ORIGINAL_DATE}, date, {RELEASE_DATE})
                FROM albums WHERE id = ?1"
         ))?
         .query_row(params![album], |r| {
@@ -977,10 +1014,9 @@ pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqli
             ))
         })
         .optional()?;
-    let Some((discs, d_discs, types, d_types, date, original)) = found else {
+    let Some((discs, d_discs, types, d_types, date, d_date)) = found else {
         return Ok(());
     };
-    let d_date = original.or_else(|| date.clone());
     if (discs, &types, &date) != (d_discs, &d_types, &d_date) {
         conn.prepare_cached(
             "UPDATE albums SET total_discs = ?1, release_types = ?2, date = ?3 WHERE id = ?4",

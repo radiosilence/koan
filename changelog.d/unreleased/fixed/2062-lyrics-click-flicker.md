@@ -1,0 +1,1 @@
+- **Clicking a lyrics line no longer flickers.** A seek that lands a hair before the line keeps the clicked line sung instead of showing the one before.

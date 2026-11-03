@@ -4,15 +4,16 @@
 //! greatest widths, and a double click puts it back. The width is the
 //! owner's, which keeps it (with the window's bounds, for the sidebar).
 //!
-//! Hidden and shown again, the column slides: its width eases to nothing
-//! and back over `Motion::SETTLE`, its content laid out at full width and
-//! clipped, so nothing in it reflows as it goes. At once under Reduce
-//! Motion.
+//! Hidden and shown, the column's width eases to nothing and back over
+//! `Motion::SETTLE`. Its content is laid out at full width and clipped, so
+//! nothing in it reflows; the page beside it is laid out again at each
+//! frame's width. At once under Reduce Motion. A hidden column draws
+//! nothing from the frame its width reaches nothing.
 
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::child;
 use crate::theme::{Look, Motion};
@@ -76,8 +77,8 @@ impl SplitView {
         self
     }
 
-    /// Whether the leading column shows; it slides in and out as this
-    /// changes, so the owner hands it over whether shown or not.
+    /// Whether the leading column shows; its width eases as this changes,
+    /// so the owner hands it over whether shown or not.
     pub fn shown(mut self, shown: bool) -> Self {
         self.shown = shown;
         self
@@ -106,7 +107,7 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        let open = super::fade(
+        let open = super::ease(
             child(&self.id, "shown"),
             self.shown,
             Motion::SETTLE,
@@ -216,6 +217,7 @@ impl RenderOnce for SplitView {
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
+                    .relative()
                     .child(div().w(width).h_full().child(leading)),
             )
             .child(

@@ -126,6 +126,15 @@ pub trait AudioBackend: Send + Sync {
     /// restarts. Called on a thread of the platform's; it must only send.
     fn on_disconnect(&self, _rebuild: Arc<dyn Fn() + Send + Sync>) {}
 
+    /// Whether `watch_device_sample_rate` is cheap enough for the player's
+    /// own thread, and has to be made there: iOS keeps one watch, for the
+    /// session playing, in a slot of its own that a watch made for an output
+    /// never used would take. Elsewhere it is a call into the audio system,
+    /// which can stall, so it is made on the open thread.
+    fn rate_watch_on_player(&self) -> bool {
+        false
+    }
+
     /// Subscribe to nominal sample rate changes on a device.
     ///
     /// The rate is device-wide and anyone can move it — another app, Audio MIDI

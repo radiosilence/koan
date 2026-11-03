@@ -1,0 +1,1 @@
+- **The terminal UI builds again.** Its remote control leaves the player's DSP command to the device it belongs to.

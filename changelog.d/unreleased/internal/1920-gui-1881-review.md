@@ -1,0 +1,1 @@
+- **Leftovers of the move onto koan-kit tidied.** Doc comments that drifted onto the wrong items, two names shared by a kit type and an app global, and a fallback that could not run; the track lists' number column keeps the width it had before the move at every spacing.

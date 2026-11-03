@@ -11,10 +11,8 @@ pub mod rows;
 
 use std::collections::HashSet;
 
-use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
-// the colour a row part is drawn in, chosen from the theme by the caller.
-use koan_kit::raw::Hsla;
+use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -35,7 +33,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, TypeRole};
+use crate::theme::{self, Hsla, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
 
@@ -89,14 +87,22 @@ struct RowRef {
     heading: bool,
 }
 
-/// Rows dragged within the queue. Named by the layout they were dragged from:
-/// a drop after the queue was sent whole again is ignored rather than applied
-/// to rows that have since moved.
+/// Rows dragged within the queue, by the row the drag began on. What moves
+/// is named by queue item as the drag begins (`QueueView::dragging`), so a
+/// queue sent whole while the drag lasts (a download landing, a library
+/// rescan) still takes the drop.
 #[derive(Clone)]
-struct DraggedRows {
+pub(crate) struct DraggedRows {
     row: usize,
-    whole: u64,
 }
+
+/// The library tracks under the queue rows being dragged, set as the drag
+/// begins for the drop targets outside the queue (a playlist in the sidebar)
+/// that take them. Unlinked items have no library track and are left out.
+#[derive(Default)]
+pub(crate) struct QueueDragTracks(pub Vec<i64>);
+
+impl Global for QueueDragTracks {}
 
 /// What a drag of queue rows shows: the first row's sleeve and how many.
 struct DragPreview(SharedString, Option<i64>);
@@ -107,7 +113,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, window.scale_factor(), cx)),
             None => chip,
         }
     }
@@ -125,6 +131,8 @@ pub struct QueueView {
     /// move from.
     anchor: Option<RowRef>,
     cursor: Option<RowRef>,
+    /// Where the cursor's row was laid out, for the menu key.
+    spot: crate::components::CursorSpot,
     /// The row at the top of the list and its index then, kept as the list
     /// scrolls and as the view draws, so a queue sent whole can be shown from
     /// the same row.
@@ -134,6 +142,8 @@ pub struct QueueView {
     drop_at: Option<usize>,
     /// The row a secondary click landed on, for the list's one context menu.
     menu_row: Option<usize>,
+    /// The queue items a drag of rows carries, named as it began.
+    dragging: Vec<String>,
     /// The navigator's rewinds of the queue already answered.
     rewinds: u32,
     /// Where the rows' links lead.
@@ -148,9 +158,18 @@ pub struct QueueView {
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
-    /// The rest of the queue can be shuffled in place: there is a rest, and
-    /// shuffle play is off (it keeps an order of its own beside the queue).
-    shufflable: bool,
+    /// Why the rest of the queue cannot be shuffled in place now, `None`
+    /// when it can (`dice_refusal`).
+    dice: Option<&'static str>,
+    /// The queue items as of the last edit, which the next is told against.
+    known: HashSet<String>,
+    /// Items moved by a drag here, landing with the next edit.
+    moved: Vec<String>,
+    /// The rows that landed with the last edit, and how many edits have
+    /// landed rows: the rows lift for a moment where they went.
+    landed: HashSet<String>,
+    landing: u64,
+    _settle: Option<Task<()>>,
     _subscriptions: [Subscription; 6],
 }
 
@@ -163,17 +182,21 @@ impl QueueView {
         let subscriptions = [
             cx.observe(&playback, |this, playback, cx| {
                 let now = &playback.read(cx).0;
-                let shufflable = now.queue_shufflable && !now.shuffle;
-                if shufflable != this.shufflable {
-                    this.shufflable = shufflable;
+                let dice = dice_refusal(now);
+                if dice != this.dice {
+                    this.dice = dice;
                     cx.notify();
                 }
+                // The cursor is the playback's: it can move in an update of
+                // its own, after the queue's rows already have.
+                this.follow(cx);
             }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
             cx.observe(&queue, |this, queue, cx| {
                 if queue.read(cx).whole != this.whole {
                     this.lay_out(cx);
+                    this.land(cx);
                 }
                 this.follow(cx);
                 cx.notify();
@@ -203,25 +226,29 @@ impl QueueView {
         });
         let mut view = Self {
             queue,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             list,
             whole: 0,
             selected: HashSet::new(),
             anchor: None,
             cursor: None,
+            spot: Default::default(),
             top: None,
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
+            dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
             following: false,
             followed: None,
             followed_row: None,
-            shufflable: {
-                let now = &cx.global::<Mirror>().playback.read(cx).0;
-                now.queue_shufflable && !now.shuffle
-            },
+            dice: dice_refusal(&cx.global::<Mirror>().playback.read(cx).0),
+            known: HashSet::new(),
+            moved: Vec::new(),
+            landed: HashSet::new(),
+            landing: 0,
+            _settle: None,
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
@@ -230,7 +257,49 @@ impl QueueView {
             crate::mirror::regroup(&view.queue, grouped, cx);
         }
         view.lay_out(cx);
+        view.known = view.queue.read(cx).at.keys().cloned().collect();
         view
+    }
+
+    /// After an edit, the rows that landed: those added (from a drop, a
+    /// menu, another device) and those a drag here moved. A queue new
+    /// throughout, or one restored, is drawn still: nothing landed in it.
+    fn land(&mut self, cx: &mut Context<Self>) {
+        let queue = self.queue.read(cx);
+        let now: HashSet<String> = queue.at.keys().cloned().collect();
+        let mut landed: HashSet<String> = now.difference(&self.known).cloned().collect();
+        if landed.len() == now.len() {
+            landed.clear();
+        }
+        landed.extend(
+            std::mem::take(&mut self.moved)
+                .into_iter()
+                .filter(|id| now.contains(id)),
+        );
+        self.known = now;
+        if landed.is_empty() {
+            return;
+        }
+        self.landed = landed;
+        self.landing += 1;
+        // Let go once the lift has run, so a row scrolled in later is still.
+        self._settle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::theme::Motion::SETTLE)
+                .await;
+            this.update(cx, |this, _| this.landed.clear()).ok();
+        }));
+    }
+
+    /// The landing a row is part of, while its lift runs.
+    fn landed(&self, id: &str) -> Option<u64> {
+        self.landed.contains(id).then_some(self.landing)
+    }
+
+    /// Where row `row` was drawn last frame, in the window; `None` while it
+    /// is off screen. For tools that drive the window headlessly.
+    pub fn row_bounds(&self, row: usize) -> Option<Bounds<Pixels>> {
+        self.list.row_bounds(row)
     }
 
     /// "Group by album": the rows under record headings, or flat.
@@ -377,6 +446,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn select_range(&mut self, to: usize, cx: &App) {
@@ -392,6 +462,7 @@ impl QueueView {
             self.anchor = Some(self.row_ref(to, cx));
         }
         self.cursor = Some(self.row_ref(to, cx));
+        self.spot.moved();
     }
 
     fn toggle(&mut self, row: usize, cx: &App) {
@@ -406,6 +477,7 @@ impl QueueView {
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
+        self.spot.moved();
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
@@ -502,19 +574,23 @@ impl QueueView {
     /// is the end of the queue. The layout the drag began in must still be
     /// the one on screen: the engine puts items whose target it cannot find
     /// at the end of the queue, so a stale target would move them there.
-    fn drop_rows(&mut self, dragged: &DraggedRows, dest: usize, cx: &mut Context<Self>) {
+    fn drop_rows(&mut self, dest: usize, cx: &mut Context<Self>) {
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
-        if dragged.whole != queue.whole || dragged.row >= queue.rows.len() {
+        // What is still queued of what was picked up.
+        let moving: Vec<String> = std::mem::take(&mut self.dragging)
+            .into_iter()
+            .filter(|id| queue.at.contains_key(id))
+            .collect();
+        if moving.is_empty() {
             return;
         }
-        let moving = self.acting_on(dragged.row, cx);
-        let queue = self.queue.read(cx);
         let Some((target, after)) = rows::drop_target(&queue.rows, dest, &moving, &queue.base)
         else {
             return;
         };
+        self.moved = moving.clone();
         command(cx, "move in queue", move |e| {
             e.move_in_queue(moving, target, after)
         });
@@ -523,7 +599,7 @@ impl QueueView {
     /// Queues what was dragged from the library before row `dest`, where
     /// `rows::place` says.
     fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
-        use koan_ffi::Placement;
+        use koan_runtime::Placement;
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
@@ -596,6 +672,12 @@ impl QueueView {
         let insertion = p.accent;
         let p = &p.picked(selected);
         let r = self.rows(cx)[row];
+        // A track's place among the queue's items, headings not counted; a
+        // heading has none.
+        let place = match r {
+            Row::Track { ix, .. } => Some((ix, self.queue.read(cx).items.len())),
+            Row::Heading { .. } => None,
+        };
         // The sleeve first: asking for one can start a fetch, which needs the
         // app, and the rows below only borrow the queue.
         let album = match r {
@@ -609,13 +691,14 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
         });
-        // What a track row reads beyond its item: its heart. A transfer's
-        // progress its availability mark reads each frame it is drawn.
+        // What a track row reads beyond its item: its heart, and its
+        // transfer, whose progress the availability mark's ring glides on
+        // the GPU.
         let mut favourite = None;
         let mut availability = None;
         if let Row::Track { ix, .. } = r {
@@ -631,13 +714,22 @@ impl QueueView {
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
             if self.lib.is_none() && status == EntryStatus::Downloading {
-                transfer = Some(koan_ffi::TransferState::Running);
+                transfer = Some(koan_runtime::TransferState::Running);
             }
             availability =
                 crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
         }
         let feed = self.feed().cloned();
         let queue = self.queue.read(cx);
+        // The first of the rows that landed takes the insertion line into
+        // it: the row above it did not land.
+        let first_landed = row == 0
+            || self
+                .landed(match self.rows(cx)[row - 1] {
+                    Row::Heading { first, .. } => &queue.base[first].queue_item_id,
+                    Row::Track { ix, .. } => &queue.base[ix].queue_item_id,
+                })
+                .is_none();
         let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &queue.items[first..first + len];
@@ -651,8 +743,11 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                 };
+                let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
-                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
+                    TableRow::new(ElementId::Name(id.clone()), RowKind::Heading)
+                        .landed(landed)
+                        .seam(first_landed),
                     &run[0],
                     detail(run),
                     sleeve.unwrap_or_else(|| div().into_any_element()),
@@ -678,7 +773,9 @@ impl QueueView {
                     wide: !queue.disc_records.is_empty(),
                 };
                 let frame = track(
-                    TableRow::new(ElementId::Name(id.clone()), kind),
+                    TableRow::new(ElementId::Name(id.clone()), kind)
+                        .landed(self.landed(&id))
+                        .seam(first_landed),
                     item,
                     grouped,
                     sleeve,
@@ -693,23 +790,36 @@ impl QueueView {
                 (frame, id)
             }
         };
-        let dragged = DraggedRows {
-            row,
-            whole: queue.whole,
-        };
+        let dragged = DraggedRows { row };
         // The insertion line, while a drag in the queue is over this row: above
         // it, or below the last row for the end of the queue.
         let dragging = cx.has_active_drag();
         let line_above = dragging && self.drop_at == Some(row);
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
+        // Whatever is dragged over the row, the insertion line goes above it
+        // in its upper half and below it in its lower.
+        let aim = move |this: &mut Self,
+                        at: Point<Pixels>,
+                        bounds: Bounds<Pixels>,
+                        cx: &mut Context<Self>| {
+            if !bounds.contains(&at) {
+                return;
+            }
+            let at = rows::insertion_point(row, at.y > bounds.center().y);
+            if this.drop_at != Some(at) {
+                this.drop_at = Some(at);
+                cx.notify();
+            }
+        };
         let view = cx.entity();
         let list = self.list.clone();
         row_frame
             .selected(selected)
             .cursor(cursor)
+            .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
-                    .place(row, count)
+                    .when_some(place, |frame, (ix, items)| frame.place(ix, items))
                     .on_reveal(move |_, _| list.reveal_around(row))
             })
             .when(line_above, |d| {
@@ -719,16 +829,8 @@ impl QueueView {
                 d.border_b(INSERTION).border_color(insertion)
             })
             .on_drag_move::<DraggedRows>(cx.listener(
-                move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<DraggedRows>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_mouse_down(
@@ -741,50 +843,43 @@ impl QueueView {
             }))
             .on_drag(dragged, move |dragged, _, _, cx| {
                 let (label, album) = view.update(cx, |this, cx| {
-                    // A new drag starts from no insertion point.
+                    // A new drag starts from no insertion point, carrying
+                    // the queue items under it.
                     this.drop_at = None;
+                    this.dragging = this.acting_on(dragged.row, cx);
                     let queue = this.queue.read(cx);
+                    let tracks = this
+                        .dragging
+                        .iter()
+                        .filter_map(|id| queue.items.get(*queue.at.get(id)?)?.track_id)
+                        .collect();
                     let album = queue
                         .rows
                         .get(dragged.row)
                         .and_then(|row| queue.items.get(row.items().start))
                         .and_then(|item| item.album_id);
-                    (this.drag_label(dragged.row, cx), album)
+                    let label = this.drag_label(dragged.row, cx);
+                    cx.set_global(QueueDragTracks(tracks));
+                    (label, album)
                 });
                 cx.new(|_| DragPreview(label, album))
             })
             .on_drag_move::<PlayableDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
                 this.drop_library(dragged, dest, cx);
             }))
             .on_drag_move::<PlaylistDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
@@ -809,7 +904,9 @@ fn row_menu(
         return menu;
     };
     let ids = this.acting_on(row, cx);
-    let grouped = this.queue.read(cx).grouped;
+    // What was asked for, not what is laid out: a regroup lands on the
+    // background executor, and a second toggle before it would undo the first.
+    let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
@@ -946,7 +1043,7 @@ fn row_menu(
         );
     }
     if !tracks.is_empty() {
-        let sets = vec![koan_ffi::TrackSet::Tracks { ids: tracks }];
+        let sets = vec![koan_runtime::TrackSet::Tracks { ids: tracks }];
         menu = menu.item(
             MenuEntry::new(if record.is_some() {
                 "copy album share link"
@@ -982,7 +1079,7 @@ fn row_menu(
         .item(
             MenuEntry::new("group by album")
                 .icon(Icon::Album)
-                .checked(grouped)
+                .toggled(grouped)
                 .on_click({
                     let view = view.clone();
                     move |_, window, cx| {
@@ -1380,8 +1477,8 @@ impl QueueView {
         cx.notify();
     }
 
-    /// While following, a new playing track is brought into view; with
-    /// nothing playing there is nothing to follow.
+    /// While following, a new playing track is brought into view; with no
+    /// track under the cursor there is nothing to follow.
     fn follow(&mut self, cx: &mut Context<Self>) {
         if !self.following {
             return;
@@ -1394,9 +1491,23 @@ impl QueueView {
                     self.list.reveal(row);
                     self.followed = Some(id);
                     self.followed_row = Some(row);
+                    cx.notify();
                 }
             }
         }
+    }
+}
+
+/// Why the dice cannot shuffle the rest of the queue now, the Mac's
+/// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
+/// queue, and with nothing after the cursor there is nothing to shuffle.
+fn dice_refusal(now: &koan_runtime::NowPlaying) -> Option<&'static str> {
+    if now.shuffle {
+        Some("shuffle play is on: turn it off to shuffle the queue itself")
+    } else if !now.queue_shufflable {
+        Some("nothing after this track to shuffle")
+    } else {
+        None
     }
 }
 
@@ -1426,7 +1537,8 @@ impl QueueView {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
-        let grouped = queue.grouped;
+        // What was asked for, not what is laid out yet.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();
@@ -1468,14 +1580,13 @@ impl QueueView {
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
+                // Refused as the Mac refuses it, and saying why.
                 ToolbarButton::new(
                     "queue-dice",
                     Icon::Reshuffle,
-                    "shuffle the rest of the queue",
+                    self.dice.unwrap_or("shuffle the rest of the queue"),
                 )
-                // As the Mac refuses it: nothing after the cursor, or shuffle
-                // play on, which keeps an order of its own.
-                .disabled(!self.shufflable)
+                .disabled(self.dice.is_some())
                 .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
             .child(
@@ -1502,7 +1613,7 @@ impl QueueView {
 }
 
 /// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
-/// read as "save" is chosen, not each time the toolbar draws.
+/// read when "save" is chosen.
 fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",
@@ -1598,11 +1709,7 @@ impl QueueView {
         count: usize,
         cx: &mut Context<Self>,
     ) {
-        let last = count
-            .checked_sub(1)
-            .and_then(|last| self.list.row_bounds(last))
-            .map(|b| b.bottom());
-        let Some(wanted) = page_drop(page.contains(&at), last, at.y, count) else {
+        let Some(wanted) = drag_over_page(&self.list, page, at, count) else {
             return;
         };
         if self.drop_at != wanted {
@@ -1612,13 +1719,38 @@ impl QueueView {
     }
 }
 
-/// Where a drag over the queue's page, outside its rows, puts the insertion
-/// point: none outside the page, the end below the last row drawn (at
-/// `last`, its bottom edge), and otherwise what the rows said, which is
-/// `None` here.
-fn page_drop(inside: bool, last: Option<Pixels>, y: Pixels, count: usize) -> Option<Option<usize>> {
+/// Where a drag over a page of `count` rows in `list` (the queue's or a
+/// playlist's), outside the rows, puts the insertion point; see
+/// `page_drop`.
+pub(crate) fn drag_over_page(
+    list: &crate::components::RowListState,
+    page: Bounds<Pixels>,
+    at: Point<Pixels>,
+    count: usize,
+) -> Option<Option<usize>> {
+    let first = list.row_bounds(0).filter(|_| count > 0).map(|b| b.top());
+    let last = count
+        .checked_sub(1)
+        .and_then(|last| list.row_bounds(last))
+        .map(|b| b.bottom());
+    page_drop(page.contains(&at), first, last, at.y, count)
+}
+
+/// Where a drag over a page, outside its rows, puts the insertion point:
+/// none outside the page, the start above the first row drawn (`first`,
+/// its top edge), the end below the last (`last`, its bottom edge), and
+/// otherwise what the rows said, which is `None` here.
+fn page_drop(
+    inside: bool,
+    first: Option<Pixels>,
+    last: Option<Pixels>,
+    y: Pixels,
+    count: usize,
+) -> Option<Option<usize>> {
     if !inside {
         Some(None)
+    } else if first.is_some_and(|top| y < top) {
+        Some(Some(0))
     } else if last.is_some_and(|bottom| y > bottom) {
         Some(Some(count))
     } else {
@@ -1714,9 +1846,9 @@ impl Render for QueueView {
                 },
             ))
             // Below the last row: the end of the queue.
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
@@ -1743,7 +1875,7 @@ impl Render for QueueView {
                 .named("queue")
                 .into_any_element()
             }))
-            .koan_context_menu("queue-menu", window, cx, {
+            .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
                 move |menu, window, cx| row_menu(menu, &view, window, cx)
             })
@@ -1754,15 +1886,21 @@ impl Render for QueueView {
 mod tests {
     use super::*;
 
-    /// Below the last row the drop is at the end, whatever row the pointer
-    /// last crossed; outside the page there is none; over the rows, theirs.
+    /// Below the last row the drop is at the end and above the first at the
+    /// start, whatever row the pointer last crossed; outside the page there
+    /// is none; over the rows, theirs.
     #[test]
-    fn the_blank_under_the_rows_is_the_end() {
+    fn the_blank_around_the_rows_is_the_start_or_the_end() {
         let at = |y: f32| Pixels::from(y);
-        assert_eq!(page_drop(true, Some(at(200.)), at(260.), 5), Some(Some(5)));
-        assert_eq!(page_drop(false, Some(at(200.)), at(260.), 5), Some(None));
-        assert_eq!(page_drop(true, Some(at(200.)), at(120.), 5), None);
-        // The last row off screen: the list fills the page, nothing is blank.
-        assert_eq!(page_drop(true, None, at(260.), 5), None);
+        let rows = (Some(at(40.)), Some(at(200.)));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(260.), 5), Some(Some(5)));
+        assert_eq!(page_drop(false, rows.0, rows.1, at(260.), 5), Some(None));
+        assert_eq!(page_drop(true, rows.0, rows.1, at(120.), 5), None);
+        // Above the first row, under the header: the start.
+        assert_eq!(page_drop(true, rows.0, rows.1, at(20.), 5), Some(Some(0)));
+        // The first and last rows off screen: the list fills the page,
+        // nothing is blank.
+        assert_eq!(page_drop(true, None, None, at(260.), 5), None);
+        assert_eq!(page_drop(true, None, None, at(20.), 5), None);
     }
 }

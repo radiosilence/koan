@@ -61,9 +61,14 @@ class PlaylistEdits(private val mirror: EngineMirror) {
     /** Where the playlists sit in the list. This device's alone: a server has nowhere to keep it. */
     fun arrange(playlistIds: List<Long>) = mirror.launch { reorderPlaylists(playlistIds) }
 
-    fun reorder(playlistId: Long, entryIds: List<Long>, failed: () -> Unit) = mirror.launch {
+    /**
+     * Move the entries to just before the entry `before` (the end for null),
+     * among all of the playlist's entries: offline the page lists only those
+     * with a file here, and the rest keep their places.
+     */
+    fun move(playlistId: Long, entryIds: List<Long>, before: Long?, failed: () -> Unit) = mirror.launch {
         try {
-            reorderPlaylist(playlistId, entryIds)
+            movePlaylistEntries(playlistId, entryIds, before)
         } catch (e: Exception) {
             failed()
             throw e

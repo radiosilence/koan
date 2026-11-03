@@ -3,16 +3,14 @@
 //! select toggle and the bar a pick acts through. Drawn in the kōan look:
 //! square, flat, lowercase, one hairline where a region needs one.
 
-use koan_ffi::BrowseChoices;
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's popover, the panel koan-kit's menus are built in.
-use koan_kit::raw::component::popover::Popover;
+use koan_runtime::BrowseChoices;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
 use super::selection::Selection;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::Paint;
 use super::{Lib, actions};
 use crate::components::{
     Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, MenuSeparator, SelectionBar,
@@ -64,6 +62,54 @@ pub fn empty_state(icon: Icon, title: &'static str, detail: &'static str) -> Div
         .items_center()
         .justify_center()
         .child(EmptyState::new(icon, title).detail(detail))
+}
+
+/// What a browser does with the listing its last visit kept, against the
+/// query and the library's version now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kept {
+    /// The same listing: drawn at once, where the last visit left it.
+    Draw,
+    /// The same query over a library that has moved: not drawn, since its
+    /// rows may no longer be the library's; the place is kept for the new
+    /// listing.
+    Wait,
+    /// Another query (a filter changed on another page): neither the rows
+    /// nor the place are this listing's.
+    Forget,
+}
+
+/// See `Kept`. A version not yet known is taken as the same: the engine's
+/// first report is a frame away, and the load it brings checks again.
+pub fn kept<Q: PartialEq>(kept: &(Q, u64), query: &Q, version: Option<u64>) -> Kept {
+    if kept.0 != *query {
+        Kept::Forget
+    } else if version.is_some_and(|v| v != kept.1) {
+        Kept::Wait
+    } else {
+        Kept::Draw
+    }
+}
+
+/// A listing that could not be read, why, and a way to ask again: what a
+/// browser draws in place of "no albums yet" when the library did not answer.
+pub fn failed_state(
+    icon: Icon,
+    why: &str,
+    retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .child(
+            EmptyState::new(icon, "could not read the library")
+                .warning()
+                .detail(why.to_string()),
+        )
+        .child(text_button("retry-listing", "try again").on_click(retry))
 }
 
 /// A text button: an app word in `muted`, `ink` under the pointer.
@@ -142,48 +188,6 @@ impl Render for SearchField {
     }
 }
 
-/// A control that opens a panel: what a popover takes as its trigger.
-#[derive(IntoElement)]
-pub struct Trigger {
-    id: ElementId,
-    label: SharedString,
-    open: bool,
-}
-
-impl Trigger {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            open: false,
-        }
-    }
-}
-
-// gpui-component's focus and click extensions, for the shell's own handling.
-impl koan_kit::raw::base::Selectable for Trigger {
-    fn selected(mut self, selected: bool) -> Self {
-        self.open = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.open
-    }
-}
-
-impl RenderOnce for Trigger {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
-        div()
-            .id(self.id)
-            .cursor_pointer()
-            .typeset(p, Type::Control, if self.open { p.ink } else { p.muted })
-            .hover(|s| s.text_color(p.ink))
-            .child(self.label)
-    }
-}
-
 pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_album_sort();
     let browse = lib.browse.clone();
@@ -206,7 +210,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
                         dismiss(window, cx);
                         browse.update(cx, |b, cx| {
                             // Random again is a new shuffle.
-                            if sort == koan_ffi::AlbumSort::Random && b.album_sort == sort {
+                            if sort == koan_runtime::AlbumSort::Random && b.album_sort == sort {
                                 b.reshuffle(cx);
                             }
                             b.update(cx, |b| b.album_sort = sort);
@@ -221,7 +225,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 /// since a new deal is something tried until one is liked, and a menu makes
 /// each try two clicks.
 pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
-    let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
+    let random = lib.browse.read(cx).effective_album_sort() == koan_runtime::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
         ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again")
@@ -259,10 +263,9 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl IntoElement {
     let active = lib.browse.read(cx).active_filters();
     let panel = panel.clone();
-    Popover::new("filters")
-        .appearance(false)
-        .arrow(false)
-        .trigger(ToolbarButton::new(
+    crate::components::opens_panel(
+        "filters",
+        ToolbarButton::new(
             "filters-trigger",
             Icon::Filters,
             if active > 0 {
@@ -270,8 +273,9 @@ pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl I
             } else {
                 "filters".into()
             },
-        ))
-        .content(move |_, _, _| panel.clone())
+        ),
+        move |_, _, _| panel.clone().into_any_element(),
+    )
 }
 
 /// The browsers' filters, at a fixed 300 points wide: the toggles, then codec
@@ -388,32 +392,33 @@ impl FilterPanel {
         set: fn(&mut Browse, Option<String>),
     ) -> impl IntoElement {
         let browse = self.lib.browse.clone();
-        FormRow::new(label).compact().control(
-            Popover::new(id)
-                .appearance(false)
-                .arrow(false)
-                .trigger(Trigger::new(
+        FormRow::new(label)
+            .compact()
+            .control(crate::components::opens_panel(
+                id,
+                crate::components::TextTrigger::new(
                     SharedString::from(format!("{id}-trigger")),
                     current.clone().unwrap_or_else(|| "any".into()),
-                ))
-                .content(move |_, _, cx| {
+                ),
+                move |dismiss, _, _| {
                     let rows = std::iter::once(None).chain(options.iter().cloned().map(Some));
-                    MenuPanel::new().children(rows.enumerate().map(|(i, option)| {
-                        let browse = browse.clone();
-                        let ticked = option == current;
-                        let row = match &option {
-                            Some(label) => MenuRow::data((id, i), label.clone()),
-                            None => MenuRow::new((id, i), "any"),
-                        };
-                        row.checked(ticked)
-                            .on_click(cx.listener(move |state, _, window, cx| {
+                    MenuPanel::new()
+                        .children(rows.enumerate().map(|(i, option)| {
+                            let (browse, dismiss) = (browse.clone(), dismiss.clone());
+                            let ticked = option == current;
+                            let row = match &option {
+                                Some(label) => MenuRow::data((id, i), label.clone()),
+                                None => MenuRow::new((id, i), "any"),
+                            };
+                            row.checked(ticked).on_click(move |_, window, cx| {
                                 let option = option.clone();
                                 browse.update(cx, |b, cx| b.update(cx, |b| set(b, option)));
-                                state.dismiss(window, cx);
-                            }))
-                    }))
-                }),
-        )
+                                dismiss(window, cx);
+                            })
+                        }))
+                        .into_any_element()
+                },
+            ))
     }
 }
 
@@ -543,40 +548,37 @@ pub fn selection_bar<V: Picking>(
         .verb(
             "sel-next",
             "play next",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Next, cx).detach()),
         )
         .verb_help(
             "sel-queue",
             "add to queue",
             "add the selection to the end of the queue",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()),
         )
-        .element(
-            Popover::new("sel-playlist")
-                .appearance(false)
-                .arrow(false)
-                .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
-                .content(move |_, _, cx| {
-                    if playlists.is_empty() {
-                        return MenuPanel::new()
-                            .child(MenuRow::new("sel-pl-none", "no playlists").disabled(true))
-                            .into_any_element();
-                    }
-                    MenuPanel::new()
-                        .children(playlists.iter().enumerate().map(|(i, (id, name))| {
-                            let (lib, picked, end, id) =
-                                (lib2.clone(), picked2.clone(), end2.clone(), *id);
-                            MenuRow::data(("sel-pl", i), name.clone()).on_click(cx.listener(
-                                move |state, _, window, cx| {
-                                    actions::add_to_playlist(&lib, id, &picked, cx);
-                                    end(cx);
-                                    state.dismiss(window, cx);
-                                },
-                            ))
-                        }))
-                        .into_any_element()
-                }),
-        )
+        .element(crate::components::opens_panel(
+            "sel-playlist",
+            crate::components::TextTrigger::new("sel-playlist-trigger", "add to playlist"),
+            move |dismiss, _, _| {
+                if playlists.is_empty() {
+                    return MenuPanel::new()
+                        .child(MenuRow::new("sel-pl-none", "no playlists").disabled(true))
+                        .into_any_element();
+                }
+                MenuPanel::new()
+                    .children(playlists.iter().enumerate().map(|(i, (id, name))| {
+                        let (lib, picked, end, id) =
+                            (lib2.clone(), picked2.clone(), end2.clone(), *id);
+                        let dismiss = dismiss.clone();
+                        MenuRow::data(("sel-pl", i), name.clone()).on_click(move |_, window, cx| {
+                            actions::add_to_playlist(&lib, id, &picked, cx);
+                            end(cx);
+                            dismiss(window, cx);
+                        })
+                    }))
+                    .into_any_element()
+            },
+        ))
         // As the context menu says it: a pick of favourites only is
         // unfavourited.
         .verb(
@@ -594,21 +596,42 @@ pub fn selection_bar<V: Picking>(
 }
 
 #[cfg(test)]
+mod kept_tests {
+    use super::{Kept, kept};
+
+    #[test]
+    fn a_kept_listing_is_drawn_only_while_it_is_the_listing() {
+        assert_eq!(kept(&("rock", 4), &"rock", Some(4)), Kept::Draw);
+        assert_eq!(
+            kept(&("rock", 4), &"rock", None),
+            Kept::Draw,
+            "not yet known"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"rock", Some(5)),
+            Kept::Wait,
+            "the library moved"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"jazz", Some(4)),
+            Kept::Forget,
+            "another filter"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use core::prelude::v1::test;
 
-    // GPUI's test harness: a window driven with simulated input.
-    use koan_kit::raw::TestAppContext;
+    use koan_kit::app::test::TestAppContext;
 
     /// Typing in the filter field narrows the browsers: what is typed
     /// reaches the browse model they all listen to.
-    // GPUI's test harness: a window driven with simulated input.
-    #[koan_kit::raw::test]
+    #[koan_kit::app::test::test]
     fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-            koan_kit::raw::init(cx);
             crate::theme::init(cx);
         });
         let browse = cx.new(|_| Browse::fresh());

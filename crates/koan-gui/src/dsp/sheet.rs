@@ -90,9 +90,14 @@ impl Sheets {
         }
         let look = Look::of(window, cx);
         let layers = stack.into_iter().enumerate().map(|(depth, sheet)| {
-            let body = match sheet {
-                Sheet::View(view) => view.into_any_element(),
-                Sheet::Confirm(c) => confirm_body(c, this.clone(), &look).into_any_element(),
+            // Named for a screen reader: a question by its title, a view by
+            // the window it belongs to.
+            let (name, body) = match sheet {
+                Sheet::View(view) => (SharedString::from("eq"), view.into_any_element()),
+                Sheet::Confirm(c) => (
+                    c.title.clone(),
+                    confirm_body(c, this.clone(), &look).into_any_element(),
+                ),
             };
             div()
                 .id(("dsp-sheet", depth))
@@ -105,7 +110,7 @@ impl Sheets {
                 .bg(look.veil(0.6))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(panel(&look).child(body))
+                .child(panel(name, &look).child(body))
         });
         Some(
             div()
@@ -142,12 +147,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
         .flex_col()
         .gap(look.space(Space::M))
         .p(look.space(Space::L))
-        .child(
-            div()
-                .text_role(TypeRole::Title, look)
-                .text_color(look.palette.strong.hsla())
-                .child(c.title),
-        )
+        .child(crate::components::title_text(c.title, look))
         .child(
             div()
                 .text_role(TypeRole::Meta, look)
@@ -189,10 +189,15 @@ pub fn section(
             d.child(crate::components::SectionHeader::new(t))
         })
         .children(rows)
-        .when_some(footer, |d, f| d.child(note(f, Tone::Muted, look)))
+        // The section's note stands a step off its rows, as a form's does.
+        .when_some(footer, |d, f| {
+            d.child(note(f, Tone::Muted, look).mt(look.space(Space::S)))
+        })
 }
 
-/// A row a click acts on: what it is, a line beneath, and what trails.
+/// A row a click acts on: what it is, a line beneath, and what trails, lit
+/// under the pointer as the kit's controls are. The fill reaches past the
+/// text by the space it is set in by, so the text lines up with the sheet's.
 pub fn choice_row(
     id: impl Into<koan_kit::app::ElementId>,
     title: impl Into<SharedString>,
@@ -200,29 +205,58 @@ pub fn choice_row(
     trailing: Option<AnyElement>,
     look: &Look,
     on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id.into())
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(look.space(Space::M))
-        .py(look.space(Space::S))
-        .cursor_pointer()
-        .hover(|s| s.bg(look.palette.surface.hsla()))
-        .on_click(on_click)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(
-                    div()
-                        .text_role(TypeRole::Body, look)
-                        .text_color(look.palette.ink.hsla())
-                        .child(title.into()),
-                )
-                .when_some(detail, |d, detail| d.child(note(detail, Tone::Muted, look))),
-        )
-        .children(trailing)
+) -> ChoiceRow {
+    ChoiceRow {
+        id: id.into(),
+        title: title.into(),
+        detail,
+        trailing,
+        look: *look,
+        on_click: Box::new(on_click),
+    }
+}
+
+/// What a choice row runs when it is picked.
+type OnChoose = Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>;
+
+#[derive(IntoElement)]
+pub struct ChoiceRow {
+    id: koan_kit::app::ElementId,
+    title: SharedString,
+    detail: Option<SharedString>,
+    trailing: Option<AnyElement>,
+    look: Look,
+    on_click: OnChoose,
+}
+
+impl RenderOnce for ChoiceRow {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = &self.look;
+        let inset = look.space(Space::S);
+        crate::components::lit_row(self.id, window, cx)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(look.space(Space::M))
+            .py(inset)
+            .px(inset)
+            .mx(-inset)
+            .on_click(self.on_click)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_role(TypeRole::Body, look)
+                            .text_color(look.palette.ink.hsla())
+                            .child(self.title),
+                    )
+                    .when_some(self.detail, |d, detail| {
+                        d.child(note(detail, Tone::Muted, look))
+                    }),
+            )
+            .children(self.trailing)
+    }
 }

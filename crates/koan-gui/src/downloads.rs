@@ -5,17 +5,17 @@
 //! failure keeps its reason.
 //!
 //! The list follows the Transfers slice, which moves a handful of times in a
-//! transfer's life. A running row's bar reads the bytes each frame it is
-//! drawn (`transfers::progress`) and asks for the next one; nothing running,
-//! or the page not on stage, and no frame is asked for. The rate beside it is
-//! the Figures slice's, a few readings a second.
+//! transfer's life. A running row's bar is its transfer's glide
+//! (`transfers::bar`): the share at each reading and the rate the bytes
+//! arrive at, drawn on the GPU between readings with no frame drawn. The rate
+//! beside it is the Figures slice's, about fifteen readings a second.
 //!
 //! Every write says what it changes first: cancelling fails the queue
 //! entries waiting on the track, removing a file deletes it, and clearing
 //! forgets the settled rows.
 
-use koan_ffi::{Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{Transfer, TransferFigure, TransferState};
 
 use crate::components::sheet as ask;
 use crate::components::{
@@ -46,10 +46,10 @@ pub struct DownloadsPage {
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
-    /// What the keys last moved to, for the list to scroll to.
-    revealed: Option<usize>,
     /// How many transfers the list shows, as of the last frame.
     count: usize,
     _subscriptions: [Subscription; 3],
@@ -71,10 +71,10 @@ impl DownloadsPage {
             figures: mirror.figures,
             cache: mirror.cache,
             limit: None,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
-            revealed: None,
             count: 0,
             _limit: cx.spawn(async move |this, cx| {
                 let limit = read.await;
@@ -90,6 +90,8 @@ impl DownloadsPage {
     fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
+            // A limit of nothing keeps only what is playing and next.
+            Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),
             None => format!("{} cached", bytes(used)),
         };
@@ -121,7 +123,7 @@ impl DownloadsPage {
         index: usize,
         t: &Transfer,
         p: &Paint,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = t.track_id;
@@ -153,13 +155,18 @@ impl DownloadsPage {
             (None, false) => format!("{} — {}", t.artist, t.album),
         };
         let bar = (t.state == TransferState::Running).then(|| {
-            // The bytes land between the list's own redraws: read again on
-            // the next frame, for as long as this row is drawn.
-            window.request_animation_frame();
-            ProgressBar::new(("bar", id as u64), crate::transfers::progress(id, cx))
+            let glide = crate::transfers::bar(id, cx);
+            // A download whose size the server never said runs the bar's
+            // indeterminate stretch, as before there were glides.
+            if glide.known() {
+                ProgressBar::new(("bar", id as u64), Some(glide.value())).glide(&glide)
+            } else {
+                ProgressBar::new(("bar", id as u64), None)
+            }
         });
         let row = TableRow::new(("download", id as u64), RowKind::Text)
             .cursor(self.keyed && self.cursor.at == Some(index))
+            .spot(&self.spot)
             .title(
                 div()
                     .text_role(TypeRole::Body, &p.look)
@@ -196,8 +203,7 @@ impl DownloadsPage {
             .on_click(cx.listener(move |this, _, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(index);
-                this.cursor.anchor = Some(index);
+                this.cursor.place(index);
                 Self::open(&this.nav, album, cx);
             }))
             .child(row)
@@ -228,7 +234,7 @@ impl Render for DownloadsPage {
                 .map(|(index, t)| self.row(index, t, &p, window, cx))
                 .collect();
             ScrollArea::items("downloads", rows)
-                .reveal(self.revealed)
+                .follow(&self.spot)
                 .into_any_element()
         };
         crate::library::keys::keyed(
@@ -255,6 +261,10 @@ impl crate::library::keys::KeyedList for DownloadsPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.count
     }
@@ -263,9 +273,8 @@ impl crate::library::keys::KeyedList for DownloadsPage {
 
     fn toggle(&mut self, _: usize, _: &mut Context<Self>) {}
 
-    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
-        self.revealed = Some(ix);
-    }
+    /// The list follows the cursor's spot, told by the keys.
+    fn reveal(&mut self, _: usize, _: &mut Context<Self>) {}
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
         let album = self.transfers.read(cx).0.get(ix).and_then(|t| t.album_id);

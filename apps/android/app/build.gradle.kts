@@ -136,7 +136,7 @@ abstract class KoanFfi @Inject constructor(private val exec: ExecOperations) : D
             commandLine(
                 listOf("cargo", "ndk", "--platform", minSdk.get().toString(), "-o", jniLibs.get().asFile.path) +
                     abis.get().flatMap { listOf("-t", it) } +
-                    listOf("build", "--release", "-p", "koan-ffi"),
+                    listOf("rustc", "--release", "-p", "koan-ffi", "--crate-type", "cdylib"),
             )
         }
         val lib = jniLibs.get().dir(abis.get().first()).file("libkoan_ffi.so").asFile

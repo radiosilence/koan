@@ -44,7 +44,7 @@ final class EngineMirror: Observable {
         queueItemId: nil, entry: nil, format: nil, playlistVersion: 0,
         shuffle: false, repeatMode: .off, undoShuffles: 0, queueShufflable: false,
         sleep: nil, sleepFading: false,
-        startFailure: nil
+        startFailure: nil, outputWait: nil
     )
     private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
     private var _seekableMs: UInt64 = 0

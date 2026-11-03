@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::prelude::FluentBuilder as _;
+
+use gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use super::{
-    Handler, accessible, answers_click, child, fade, fill, focus, mix, pointer, ring, track,
-    transition,
+    Handler, accessible, answers_click, child, fade, fill, focus, pointer, ring, track, transition,
 };
 use crate::theme::{
-    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TOOLBAR_BUTTON, Tone,
-    TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TOOLBAR_BUTTON, Tone, TypeRole,
+    label,
 };
 
 /// A button's weight and shape. The rules for which a screen uses are the
@@ -223,34 +224,26 @@ impl RenderOnce for Button {
         };
         let handle = focus(&self.id, window, cx);
         let answers = super::Answerer::of(&self.id, window, cx);
-        // Text colour fades on the CPU, for the kinds whose text changes;
-        // fills are the GPU's (`transition`).
-        let hover = if kind == ButtonKind::Text {
-            fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx)
-        } else {
-            0.0
-        };
-        let press = if kind == ButtonKind::Link {
-            fade(
-                child(&self.id, "press"),
-                pressed || self.selected,
-                Motion::FAST,
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
-
         let tone = if self.destructive {
             Tone::Bad
         } else {
             self.tone.unwrap_or_else(|| kind.tone())
         };
         let rest = look.text_color(tone);
+        let ink = look.palette.ink.hsla();
+        // Text colour fades through a colour slot, for the kinds whose text
+        // changes; fills are shader quads (`transition`). Both move on the
+        // GPU.
         let color = match kind {
-            ButtonKind::Text => mix(rest, look.palette.ink.hsla(), hover),
-            ButtonKind::Link => mix(rest, look.palette.ink.hsla(), press),
+            ButtonKind::Text => fade(child(&self.id, "hover"), hovered, rest, ink, window, cx),
+            ButtonKind::Link => fade(
+                child(&self.id, "press"),
+                pressed || self.selected,
+                rest,
+                ink,
+                window,
+                cx,
+            ),
             _ => rest,
         };
         let outline = match kind {
@@ -265,15 +258,41 @@ impl RenderOnce for Button {
         let glyph_only = matches!(kind, ButtonKind::Icon | ButtonKind::IconOutlined)
             || (kind == ButtonKind::Toolbar && look.icons && self.icon.is_some());
         let show_glyph = glyph_only || look.icons;
+        // A press is answered by a ring off a glyph alone; a button showing
+        // its word is lifted instead, under the word, never ringed through it.
+        let worded = !glyph_only && self.label.is_some();
+        let answer = match kind.answer() {
+            Some(super::Answer::Ring) if worded => Some(super::Answer::Lift),
+            answer => answer,
+        };
         debug_assert!(
             !glyph_only || self.help.is_some() || self.label.is_some(),
             "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
         );
         let role = kind.role();
+        // Play and pause fold into each other as the state they show moves,
+        // whoever moved it; the glyph is drawn by the program meanwhile.
+        // Only a glyph alone, a toggle's face, or copy turning to its tick
+        // (a copy button is labelled): a labelled button with a transport
+        // glyph (a "Play" header button) shows no state to move.
+        let morphing = self.icon.is_some_and(|icon| {
+            super::answer::morphs(icon) && (glyph_only || matches!(icon, Icon::Copy | Icon::Check))
+        }) && show_glyph;
+        if let Some(icon) = self.icon.filter(|_| morphing) {
+            let mark = super::answer::glyph_mark(icon, None);
+            if let Some(answer) = answers
+                .seen(cx)
+                .and_then(|from| super::answer::glyph_motion(from, mark))
+            {
+                answers.follow(mark, answer, look.accent.hsla(), window, cx);
+            } else {
+                answers.note(mark, cx);
+            }
+        }
 
         // Named by its label, or a glyph's by what its tooltip says it does.
         let name = self.label.clone().or_else(|| self.help.clone());
-        let mut button = accessible(div().id(self.id.clone()), gpui_kit::Role::Button, name)
+        let mut button = accessible(div().id(self.id.clone()), gpui::Role::Button, name)
             .aria_disabled(self.disabled)
             .relative()
             .flex()
@@ -300,9 +319,10 @@ impl RenderOnce for Button {
             button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
-                let answer = kind.answer();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                    if let Some(answer) = answer {
+                    // A glyph that morphs answers as its state lands.
+                    if let Some(answer) = answer.filter(|_| !morphing) {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
@@ -319,24 +339,16 @@ impl RenderOnce for Button {
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );
                 button = button.child(fill(look.palette.hover.hsla(), &press));
             }
             ButtonKind::Toolbar => {
-                let hover = transition(
-                    child(&self.id, "hover-fill"),
-                    hovered,
-                    Motion::FAST,
-                    window,
-                    cx,
-                );
+                let hover = transition(child(&self.id, "hover-fill"), hovered, window, cx);
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );
@@ -347,22 +359,36 @@ impl RenderOnce for Button {
             _ => {}
         }
 
-        let glyph = self
-            .icon
-            .filter(|_| show_glyph)
-            .map(|icon| KoanIcon::new(icon).role(role).color(color));
+        let hidden = answers.glyph_live(cx);
+        let drawn = answers.glyph_layer(
+            px(crate::theme::icons::side(look.points(role))),
+            color,
+            None,
+            window,
+            cx,
+        );
+        let glyph = self.icon.filter(|_| show_glyph).map(|icon| {
+            div()
+                .relative()
+                .child(
+                    div()
+                        .when(hidden, |d| d.invisible())
+                        .child(KoanIcon::new(icon).role(role).color(color)),
+                )
+                .children(drawn)
+        });
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
-        // A ring leaves the glyph and its word, not the hit area around them;
-        // a lift fills the button.
-        let ring_answer = kind.answer() == Some(super::Answer::Ring);
+        // A ring leaves a glyph alone, not the hit area around it; a lift
+        // fills the button under its content, over its fills.
+        let ring_answer = answer == Some(super::Answer::Ring);
         let answered = answers.layer(window, cx);
         let (inner_answer, outer_answer) = if ring_answer {
             (answered, None)
         } else {
             (None, answered)
         };
-        button = button.child(
+        button = button.children(outer_answer).child(
             div()
                 .relative()
                 .flex()
@@ -384,8 +410,6 @@ impl RenderOnce for Button {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));
         }
-        button
-            .children(outer_answer)
-            .children(ring(&handle, &look, window))
+        button.children(ring(&handle, &look, window))
     }
 }

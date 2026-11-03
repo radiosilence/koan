@@ -1,0 +1,1 @@
+- **Library and playlist syncs ask a server four things at a time, everywhere.** The playlist pull fetches the next batch while it stores one, and a cancelled sync never counts an unconfirmed album as deleted.

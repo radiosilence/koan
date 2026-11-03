@@ -1,0 +1,1 @@
+- **The transport's sleep, output, devices and EQ buttons fade back after a hover**, as the other controls do, rather than switching off at once.

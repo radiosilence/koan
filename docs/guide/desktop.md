@@ -36,7 +36,7 @@ On macOS the desktop app's Dock menu shows what is playing, with its heart, and 
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the kōan button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
@@ -46,12 +46,13 @@ The app reads the configuration every kōan front end does, `~/.config/koan/` (o
 
 Settings → Devices → In the background keeps kōan running with its window closed, so your other devices can still see and control this computer: on macOS it moves from the Dock to the menu bar, whose item shows what is playing and opens the window again; on Linux, opening kōan again brings the window back. Open at login asks the system to start kōan when you log in (Login Items on macOS, which may ask for approval in System Settings; an autostart entry on Linux). A computer cannot be woken from another device, so a kōan that has quit is out of reach until it is opened again.
 
-What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. Files an earlier version left in the configuration directory are moved there on the first launch.
+What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. `KOAN_PLACES_DIR` puts all of them in one directory instead (`state/`, `runtime/` and `cache/` inside it), which `just gui-run` and the examples point inside their throwaway configuration, so deleting it deletes them. Files an earlier version left in the configuration directory are moved there on the first launch.
 
 ## Running a build from source
 
 ```bash
-KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui --features runtime-shaders
+dir=$(mktemp -d)
+KOAN_CONFIG_DIR=$dir KOAN_PLACES_DIR=$dir/places cargo run --release -p koan-gui --features runtime-shaders
 ```
 
 On a Mac, `runtime-shaders` has GPUI compile its Metal shaders when the app starts, so the Command Line Tools are enough to build it (`just gui-run` turns it on). Without it the shaders are compiled with the app, which needs Xcode's Metal toolchain; releases are built that way.
@@ -80,7 +81,7 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Remove | Delete or Backspace, or the context menu |
 | Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
 | Undo, redo | ⌘Z, ⇧⌘Z |
-| Follow what's playing | The crosshair in the toolbar; it stays on, keeping the playing track in view, until you scroll |
+| Follow what's playing | The crosshair in the toolbar keeps the playing track in view as the queue plays and changes. It stops when you scroll the queue, jump to its top or end, press the crosshair again, or nothing is left under the cursor |
 
 The queue keeps its place and selection when you visit another page and come back.
 
@@ -100,9 +101,20 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-The field at the top of the sidebar searches the library as you type, ⌘K or `/` reaching it from anywhere. Under it, a panel suggests a few tracks, records and artists; the arrows light one and Return goes to it, while Return with none lit, or the sidebar's Results row, opens every result on a page laid out as the shelves are, its headings opening each browser with the query as its search. Escape or the field's clear mark empties it.
+⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
 
-⇧⌘K (Ctrl+Shift+K on Linux), File → Add Music…, opens the picker: tracks, records or artists by name, several picked with a click, then Add (Return), Add & Play (⌘Return) or Replace Queue (⇧⌘Return), which says how much comes off the queue before it does. A double-click plays the one thing at once.
+| Key | Does |
+|---|---|
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, go to it: a record or an artist to its page, a track to its record's page with the track selected |
+| ↑ ↓ | Light a result, or "All results…" after the last |
+| ⌘Return | Play next |
+| ⌥Return | Add to the queue |
+| ⇧⌘Return | Replace the queue, asking first when it holds anything |
+| Tab, ⇧Tab | Tick or untick the lit result; ⌘Return, ⌥Return and ⇧⌘Return then act on everything ticked |
+| ⇧Return | Every result, from anywhere in the list |
+| Escape | Clear the ticks, then empty the query, then close the box |
+
+Choosing a result never plays it: only ⌘Return, ⌥Return and ⇧⌘Return do. A click on a result does what Return does, and ⌘-click ticks it.
 
 ## Lyrics, track info and artwork
 
@@ -116,7 +128,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 
-Downloads, in the sidebar, lists what is being fetched from your server and what finished or failed, with the cache's size against its limit. A running download shows its rate and a bar; one that has stopped moving says it has stalled, and a failure keeps its reason. Retry fetches a failed track again; cancel stops one, and queue entries waiting on it are skipped until it is retried; remove deletes a downloaded copy, which downloads again when played. Clear finished forgets the settled rows and leaves the files. While any are running, the sidebar's Downloads row counts them. Wherever a track's row says where its file is (the queue, the library, playlists), a download in progress fills a ring as it arrives.
+Downloads, in the sidebar, lists what is being fetched from your server and what finished or failed, with the cache's size against its limit. A running download shows its rate and a bar; one that has stopped moving says it has stalled, and a failure keeps its reason. Retry fetches a failed track again; cancel stops one, and queue entries waiting on it are skipped until it is retried; remove deletes a downloaded copy, which downloads again when played. Clear finished forgets the settled rows and leaves the files; a cancelled download stays listed, since its row is how it is retried. While any are running, the sidebar's Downloads row counts them. Wherever a track's row says where its file is (the queue, the library, playlists), a download in progress fills a ring as it arrives.
 
 ## EQ
 

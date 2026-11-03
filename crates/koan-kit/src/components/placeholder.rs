@@ -12,7 +12,7 @@
 //! into no picture leaves the mark where the spinner was, with nothing
 //! moving.
 
-use gpui_kit::*;
+use gpui::*;
 
 use crate::theme::Look;
 

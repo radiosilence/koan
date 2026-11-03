@@ -195,6 +195,10 @@ final class PlayerModel {
         attempt { try await self.engine.togglePlayPause() }
     }
     func pause() { attempt { try await self.engine.pause() } }
+    /// Ask the output again while it is still opening (`NowPlaying.outputWait`).
+    func retryOutput() { attempt { try await self.engine.retryOutputOpen() } }
+    /// Stop waiting for the output: the system's default instead, or stopped.
+    func cancelOutputWait() { attempt { try await self.engine.cancelOutputOpen() } }
     func resume() {
         guard resolving == nil else { return }
         attempt { try await self.engine.resume() }
@@ -646,18 +650,12 @@ final class PlayerModel {
             : "\(notice.device) couldn't do it: \(notice.detail)"
     }
 
-    /// Whether `destination` (this device for `nil`) can take the music the
-    /// controlled device has: both must play from the same library, and
-    /// there must be something to move.
+    /// Whether `destination` (this device for `nil`) can take the music of
+    /// the device in view: the engine's rule, so every app answers alike.
     func canMoveMusic(to destination: DeviceInfo?) -> Bool {
-        if destination?.id == mirror.target { return false }
-        if destination?.problem != nil { return false }
-        if let source = controlled {
-            guard source.sameLibrary, source.state != .stopped, source.problem == nil else { return false }
-        } else if queue.isEmpty {
-            return false
-        }
-        return destination?.sameLibrary ?? true
+        KoanFFI.canMoveMusic(
+            to: destination, target: mirror.target, controlled: controlled, hasQueue: !queue.isEmpty
+        )
     }
 
     // MARK: - Edit actions

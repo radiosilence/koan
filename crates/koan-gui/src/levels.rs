@@ -30,22 +30,15 @@ use std::time::Instant;
 use futures::StreamExt as _;
 use koan_kit::app::*;
 use koan_kit::components::{
-    BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay, renderer_mark,
+    BarLevels, BarsPlace, PlayingBars, Prism, SHADED, bars_overlay, renderer_mark,
 };
 use parking_lot::Mutex;
+
+use koan_core::audio::viz::{BarHeights, VizLevels};
 
 use crate::engine::engine;
 
 use crate::theme::Hsla;
-
-/// A band below this is room tone: it never sets a ceiling, and silence is
-/// measured against it, so a quiet passage stays flat.
-const QUIETEST: f32 = 0.12;
-/// Seconds a band takes to forget half of a loud passage.
-const FORGET: f32 = 4.0;
-/// The analyser's rate while bars are on screen, where the display does not
-/// say its own.
-const FPS: u8 = 60;
 
 #[derive(Default)]
 struct Registry {
@@ -53,6 +46,8 @@ struct Registry {
     slots: HashMap<u64, (BarsPlace, Hsla)>,
     /// Each slot drawn as a shader, by its levels, and its window.
     shaders: HashMap<u64, (WindowId, BarLevels)>,
+    /// Each window's rainbow prism, while the rainbow is drawn there.
+    prisms: HashMap<WindowId, Prism>,
     /// Windows that do not show: their slots keep nothing running.
     hidden: HashSet<WindowId>,
     /// Rung as a quad slot goes, so the roots paint again without it: a slot
@@ -60,17 +55,11 @@ struct Registry {
     /// that frame has already painted it into. Names the slot's window.
     gone: Option<futures::channel::mpsc::UnboundedSender<WindowId>>,
     next_id: u64,
-    /// How high each bar stands, 0 to 1, low band to high: each band
-    /// against its own recent range, so a record mastered quiet moves as
-    /// much as a loud one.
-    bands: [f32; 3],
-    ceiling: [f32; 3],
+    /// How high each bar stands, 0 to 1, low band to high: koan-core's
+    /// reading of the levels, which the Mac app shares.
+    bars: BarHeights,
     stamp: Option<Instant>,
     following: bool,
-    /// The analyser's rate: the fastest display a bar has been drawn on or
-    /// a window with bars has shown on, so the bars move once per refresh.
-    /// Kept while the analyser parks.
-    fps: u8,
 }
 
 /// What a window's root observes: notified when that window's bars move,
@@ -132,6 +121,16 @@ pub fn install(cx: &mut App) {
         }
     })
     .detach();
+    // A closed window's feed and its hidden mark go with it: every window
+    // opened (Settings, the EQ, About) has an id of its own.
+    let closing = registry.clone();
+    cx.on_window_closed(move |cx, window| {
+        closing.lock().hidden.remove(&window);
+        if cx.has_global::<Levels>() {
+            cx.global_mut::<Levels>().feeds.remove(&window);
+        }
+    })
+    .detach();
     cx.set_global(Levels {
         registry,
         feeds: HashMap::new(),
@@ -141,25 +140,19 @@ pub fn install(cx: &mut App) {
 /// The entity `window`'s root observes to paint its bars again; none where
 /// the app was not installed, as in an offscreen render.
 pub fn feed(window: WindowId, cx: &mut App) -> Option<Entity<Feed>> {
-    cx.try_global::<Levels>()?;
+    let kept = cx.try_global::<Levels>()?.feeds.get(&window).cloned();
+    if kept.is_some() {
+        return kept;
+    }
     let made = cx.new(|_| Feed);
-    let levels = cx.global_mut::<Levels>();
-    Some(levels.feeds.entry(window).or_insert(made).clone())
+    cx.global_mut::<Levels>().feeds.insert(window, made.clone());
+    Some(made)
 }
 
-/// The analyser's rate for the display `window` is on: once per refresh.
-pub fn display_fps(window: &Window, cx: &App) -> u8 {
-    window
-        .refresh_interval(cx)
-        .map(|interval| (1.0 / interval.as_secs_f32()).round().clamp(24.0, 240.0) as u8)
-        .unwrap_or(FPS)
-}
-
-/// `window`, on a display refreshing `fps` times a second, was hidden or
-/// shown: a hidden window's bars keep nothing running, and one showing
-/// again starts them at its display's rate, since it replays its rows
+/// `window` was hidden or shown: a hidden window's bars keep nothing
+/// running, and one showing again starts them, since it replays its rows
 /// rather than drawing them.
-pub fn visibility(window: WindowId, shows: bool, fps: u8, cx: &mut App) {
+pub fn visibility(window: WindowId, shows: bool, cx: &mut App) {
     let Some(levels) = cx.try_global::<Levels>().cloned() else {
         return;
     };
@@ -167,9 +160,31 @@ pub fn visibility(window: WindowId, shows: bool, fps: u8, cx: &mut App) {
         let mut registry = levels.registry.lock();
         if shows {
             registry.hidden.remove(&window);
-            registry.fps = registry.fps.max(fps);
         } else {
             registry.hidden.insert(window);
+        }
+        registry.live()
+    };
+    if live {
+        follow(&levels, cx);
+    }
+}
+
+/// `window`'s rainbow prism, fed the bands while it shows, or none to stop.
+pub fn prism(window: WindowId, prism: Option<Prism>, cx: &mut App) {
+    let Some(levels) = cx.try_global::<Levels>().cloned() else {
+        return;
+    };
+    let live = {
+        let mut registry = levels.registry.lock();
+        match prism {
+            Some(prism) => {
+                prism.hold_bands(registry.bars.heights());
+                registry.prisms.insert(window, prism);
+            }
+            None => {
+                registry.prisms.remove(&window);
+            }
         }
         registry.live()
     };
@@ -225,13 +240,14 @@ pub fn bars(color: Hsla) -> AnyElement {
     if HANDED_OFF.load(Ordering::Relaxed) {
         return renderer_mark(color).into_any_element();
     }
+    let prism = crate::theme::KoanTheme::prism_now();
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {
             let mut registry = levels.registry.lock();
             registry.next_id += 1;
             let bars = BarLevels::new();
-            bars.set(registry.bands);
+            bars.hold(registry.bars.heights());
             SlotState {
                 id: registry.next_id,
                 registry: levels.registry.clone(),
@@ -242,11 +258,8 @@ pub fn bars(color: Hsla) -> AnyElement {
             let state = state.read(cx);
             (state.id, state.levels.clone())
         };
-        let fps = display_fps(window, cx);
-        let faster = {
+        {
             let mut registry = levels.registry.lock();
-            let faster = fps > registry.fps;
-            registry.fps = registry.fps.max(fps);
             if SHADED {
                 registry
                     .shaders
@@ -254,14 +267,12 @@ pub fn bars(color: Hsla) -> AnyElement {
             } else {
                 registry.slots.insert(id, (place, color));
             }
-            faster && registry.following
-        };
-        if faster {
-            engine(cx).set_viz_fps(fps);
         }
         follow(&levels, cx);
         Some(bars)
     })
+    .prism(prism)
+    .into_any_element()
 }
 
 /// Paints this window's bars over everything drawn before it, where they
@@ -274,7 +285,7 @@ pub fn paint(cx: &App) -> impl IntoElement + use<> {
     bars_overlay(move |window| {
         let here = window.window_handle();
         let registry = registry.lock();
-        let bands = registry.bands;
+        let bands = registry.bars.heights();
         for (place, color) in registry.slots.values().filter(|(p, _)| p.window == here) {
             place.paint(window, bands, *color);
         }
@@ -288,13 +299,7 @@ fn follow(levels: &Levels, cx: &mut App) {
     if std::mem::replace(&mut levels.registry.lock().following, true) {
         return;
     }
-    let engine = engine(cx);
-    let fps = {
-        let registry = levels.registry.lock();
-        if registry.fps == 0 { FPS } else { registry.fps }
-    };
-    engine.set_viz_fps(fps);
-    let stream = engine.viz_stream();
+    let stream = engine(cx).viz_keyframes();
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<Vec<WindowId>>();
     cx.background_spawn(async move {
@@ -314,7 +319,11 @@ fn follow(levels: &Levels, cx: &mut App) {
             }
             // Shaders are presented by their own windows as the bands are
             // written; quads need a frame of their windows' roots.
-            if registry.take([heard.low, heard.mid, heard.high]) {
+            if registry.take(VizLevels {
+                low: heard.low,
+                mid: heard.mid,
+                high: heard.high,
+            }) {
                 let windows: Vec<WindowId> = registry
                     .slots
                     .values()
@@ -346,49 +355,40 @@ impl Registry {
             .values()
             .any(|(place, _)| shows(&place.window.window_id()))
             || self.shaders.values().any(|(window, _)| shows(window))
+            || self.prisms.keys().any(shows)
     }
 
     /// A frame from the analyser. Whether the bars moved; the shaders' bands
     /// are written as it is taken.
-    fn take(&mut self, heard: [f32; 3]) -> bool {
+    fn take(&mut self, heard: VizLevels) -> bool {
         let now = Instant::now();
         // Clamped: a machine that slept owes the bars nothing.
         let elapsed = self
             .stamp
             .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
         self.stamp = Some(now);
-        let hold = 0.5_f32.powf(elapsed / FORGET);
-        let mut next = self.bands;
-        for band in 0..3 {
-            self.ceiling[band] = heard[band].max((self.ceiling[band] * hold).max(QUIETEST));
-            next[band] = (heard[band] / self.ceiling[band]).min(1.0);
+        let Some(next) = self.bars.take(heard, now) else {
+            return false;
+        };
+        // Glided to over the gap between the last two frames, so it is
+        // reached about as the next arrives; the first frame lands.
+        let over = std::time::Duration::from_secs_f32(elapsed);
+        for (_, bars) in self.shaders.values() {
+            bars.glide(next, over);
         }
-        let moved = next != self.bands;
-        self.bands = next;
-        if moved {
-            for (_, bars) in self.shaders.values() {
-                bars.set(next);
-            }
+        for prism in self.prisms.values() {
+            prism.hear(next, over);
         }
-        moved
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BarLevels, QUIETEST, Registry, WindowId};
+    use super::{BarLevels, Registry, VizLevels, WindowId};
 
-    #[test]
-    fn a_band_is_measured_against_its_own_recent_loudest() {
-        let mut registry = Registry::default();
-        registry.take([0.5, 0.2, 0.1]);
-        assert_eq!(registry.bands[0], 1.0);
-        assert_eq!(registry.bands[1], 1.0);
-        // Below room tone: measured against it, never normalised up.
-        assert!((registry.bands[2] - 0.1 / QUIETEST).abs() < 1e-6);
-        assert!(!registry.take([0.5, 0.2, 0.1]));
-        registry.take([0.25, 0.2, 0.1]);
-        assert!((registry.bands[0] - 0.5).abs() < 0.01);
+    fn heard(low: f32, mid: f32, high: f32) -> VizLevels {
+        VizLevels { low, mid, high }
     }
 
     #[test]
@@ -413,9 +413,9 @@ mod tests {
         registry
             .shaders
             .insert(1, (WindowId::from(1), levels.clone()));
-        assert!(registry.take([0.5, 0.2, 0.1]));
-        assert_eq!(levels.band(0), 1.0);
-        registry.take([0.25, 0.2, 0.1]);
-        assert!((levels.band(0) - 0.5).abs() < 0.01);
+        assert!(registry.take(heard(0.5, 0.2, 0.1)));
+        assert_eq!(levels.target(0), 1.0);
+        registry.take(heard(0.25, 0.2, 0.1));
+        assert!((levels.target(0) - 0.5).abs() < 0.01);
     }
 }

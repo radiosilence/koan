@@ -37,6 +37,12 @@ pub enum DbError {
     /// was written. The ids are the ones missing.
     #[error("{} of these tracks are no longer in the library", .0.len())]
     MissingTracks(Vec<i64>),
+    /// A playlist edit placed entries before one the playlist no longer
+    /// holds (another device removed it since the page was drawn), so
+    /// nothing was written: landing them anywhere else would be a place
+    /// nobody chose.
+    #[error("the playlist has changed: the place to put them is gone")]
+    MissingEntry(i64),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.

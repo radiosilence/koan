@@ -8,7 +8,6 @@ use crate::remote::client::{
     SubsonicAlbum, SubsonicAlbumFull, SubsonicArtist, SubsonicClient, SubsonicError, SubsonicSong,
 };
 
-use rayon::prelude::*;
 use rusqlite::params;
 use thiserror::Error;
 
@@ -245,9 +244,10 @@ pub struct SyncProgress {
 /// Albums and songs per list request. 500 is the most `getAlbumList2` allows.
 const PAGE_SIZE: u32 = 500;
 
-/// Song pages in flight at once during a sync. The walk is bound by
-/// round trips, not bandwidth; four hides most of a mobile link's latency
-/// without asking much of the server.
+/// Song pages in flight at once during a sync. Each is a 500-song query, far
+/// heavier for the server than the single records [`super::lanes::LANES`]
+/// counts; four hides most of a mobile link's latency without asking much of
+/// the server.
 const FETCH_LANES: usize = 4;
 
 /// Attempts at one song page before it counts as failed.
@@ -345,8 +345,8 @@ pub fn sync_library(
         total: None,
     });
 
-    // Albums this library holds that the listing left out are asked about one
-    // by one; see `confirm_missing_albums`. One the server still answers for
+    // Albums this library holds that the listing left out are asked about,
+    // a few at a time; see `confirm_missing_albums`. One the server still answers for
     // means the album listing came up short — an album deleted mid-walk shifts
     // the next page — and the songs of an album nobody listed were never
     // fetched, so nothing can be concluded about its tracks this time.
@@ -381,6 +381,15 @@ pub fn sync_library(
     }
 
     result.finishing.vanished = step.elapsed();
+
+    // An album first written from a song alone — one added to the server
+    // after the listing was read — had no date, and a later sync leaves its
+    // unchanged tracks alone.
+    match queries::fill_album_dates(&db.conn) {
+        Ok(0) => {}
+        Ok(n) => log::info!("{n} undated albums dated from their tracks"),
+        Err(e) => log::warn!("failed to date undated albums: {e}"),
+    }
 
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
@@ -441,41 +450,39 @@ fn confirm_missing_albums(
     if missing.is_empty() {
         return;
     }
-    // Each answer is a round trip, so several are asked at once: a server
-    // that deleted a few hundred records answers in a few seconds rather
-    // than a few hundred round trips.
-    let next = parking_lot::Mutex::new(missing.into_iter());
-    let kept = parking_lot::Mutex::new(Vec::new());
-    std::thread::scope(|scope| {
-        for _ in 0..CONFIRMING {
-            scope.spawn(|| {
-                loop {
-                    if cancel.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let Some(id) = next.lock().next() else { return };
-                    match client.get_album(&id) {
-                        Err(SubsonicError::Api { code: 70, .. }) => {}
-                        Ok(_) => {
-                            log::info!("album {id} was missing from the listing but still exists");
-                            kept.lock().push(id);
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "could not confirm album {id} was deleted ({e}); keeping it"
-                            );
-                            kept.lock().push(id);
-                        }
-                    }
-                }
-            });
-        }
-    });
-    live.extend(kept.into_inner());
+    // Each answer is a round trip, so several are asked at once, in the
+    // lanes one server gets: a server that deleted a few hundred records
+    // answers in a few seconds rather than a few hundred round trips.
+    let kept = still_held(&missing, cancel, |id| client.get_album(id).map(|_| ()));
+    live.extend(kept);
 }
 
-/// How many albums the listing left out are asked about at once.
-const CONFIRMING: usize = 8;
+/// Which of `missing` the server still answers for, asking about each in
+/// lanes. Only "not found" confirms a deletion: any other failure keeps the
+/// album, and so does one left unasked because the sync was cancelled.
+fn still_held(
+    missing: &[String],
+    cancel: &AtomicBool,
+    get_album: impl Fn(&str) -> Result<(), SubsonicError> + Sync,
+) -> Vec<String> {
+    let answers = super::lanes::in_lanes(missing, cancel, |id| get_album(id));
+    missing
+        .iter()
+        .zip(answers)
+        .filter_map(|(id, answer)| match answer {
+            Some(Err(SubsonicError::Api { code: 70, .. })) => None,
+            Some(Ok(())) => {
+                log::info!("album {id} was missing from the listing but still exists");
+                Some(id.clone())
+            }
+            Some(Err(e)) => {
+                log::warn!("could not confirm album {id} was deleted ({e}); keeping it");
+                Some(id.clone())
+            }
+            None => Some(id.clone()),
+        })
+        .collect()
+}
 
 /// Every album on the server, once each.
 fn list_albums(
@@ -711,17 +718,21 @@ fn sync_by_album(
     for batch in albums.chunks(ALBUM_BATCH) {
         check(cancel)?;
         let failures = AtomicUsize::new(0);
-        let fetched: Vec<SubsonicAlbumFull> = batch
-            .par_iter()
-            .filter_map(|album| match client.get_album(&album.id) {
-                Ok(full) => Some(full),
-                Err(e) => {
-                    log::warn!("failed to fetch album {}: {}", album.id, e);
-                    failures.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
-            })
-            .collect();
+        // In the lanes one server gets, not the shared pool a library scan
+        // uses: these wait on the network.
+        let fetched: Vec<SubsonicAlbumFull> =
+            super::lanes::in_lanes(batch, cancel, |album| client.get_album(&album.id))
+                .into_iter()
+                .zip(batch)
+                .filter_map(|(answer, album)| match answer? {
+                    Ok(full) => Some(full),
+                    Err(e) => {
+                        log::warn!("failed to fetch album {}: {}", album.id, e);
+                        failures.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                })
+                .collect();
         result.albums_failed += failures.into_inner();
         result.albums_synced += fetched.len();
 
@@ -886,6 +897,56 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// More albums than lanes: each is asked once, "not found" confirms a
+    /// deletion, and every other answer keeps the album.
+    #[test]
+    fn missing_albums_are_confirmed_in_lanes_and_kept_unless_not_found() {
+        let missing: Vec<String> = (0..12).map(|i| format!("al-{i}")).collect();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let kept = still_held(&missing, &AtomicBool::new(false), |id| {
+            asked.lock().unwrap().push(id.to_owned());
+            let n: usize = id[3..].parse().unwrap();
+            match n % 3 {
+                0 => Err(SubsonicError::Api {
+                    code: 70,
+                    message: "not found".into(),
+                }),
+                1 => Ok(()),
+                _ => Err(SubsonicError::BadResponse),
+            }
+        });
+        let mut asked = asked.into_inner().unwrap();
+        asked.sort();
+        let mut all = missing.clone();
+        all.sort();
+        assert_eq!(asked, all, "each asked once");
+        let expected: Vec<String> = (0..12)
+            .filter(|n| n % 3 != 0)
+            .map(|n| format!("al-{n}"))
+            .collect();
+        assert_eq!(kept, expected, "in the order held");
+    }
+
+    /// A cancel mid-flight asks nothing more, and nothing unasked counts as
+    /// deleted.
+    #[test]
+    fn a_cancelled_confirmation_keeps_what_it_did_not_ask() {
+        let missing: Vec<String> = (0..40).map(|i| format!("al-{i}")).collect();
+        let cancel = AtomicBool::new(false);
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let kept = still_held(&missing, &cancel, |_| {
+            asked.fetch_add(1, Ordering::SeqCst);
+            cancel.store(true, Ordering::SeqCst);
+            Err(SubsonicError::Api {
+                code: 70,
+                message: "not found".into(),
+            })
+        });
+        let asked = asked.into_inner();
+        assert!(asked < missing.len(), "asked all {asked} after the cancel");
+        assert_eq!(kept.len(), missing.len() - asked, "the unasked are kept");
+    }
+
     // --- Sync → DB integration tests ---
 
     use crate::db::connection::Database;
@@ -942,6 +1003,154 @@ mod tests {
         assert_eq!(positive(Some(0)), None);
         assert_eq!(positive(Some(16)), Some(16));
         assert_eq!(positive(None), None);
+    }
+
+    /// Albums as a server's `getAlbum` sends them, written as a sync writes
+    /// them, each with one song.
+    fn write_server_albums(db: &Database, albums: &[serde_json::Value]) {
+        let client = SubsonicClient::new("http://localhost:4533", "u", "p");
+        let albums: Vec<SubsonicAlbumFull> = albums
+            .iter()
+            .map(|a| serde_json::from_value(a.clone()).unwrap())
+            .collect();
+        let mut result = SyncResult::default();
+        write_albums(db, &client, &albums, &mut result, &mut HashSet::new()).unwrap();
+        assert_eq!(result.tracks_failed, 0);
+    }
+
+    fn server_album(id: &str, name: &str, dates: serde_json::Value) -> serde_json::Value {
+        let mut album = serde_json::json!({
+            "id": id,
+            "name": name,
+            "artist": "Pink Floyd",
+            "artistId": "ar-floyd",
+            "song": [{"id": format!("s-{id}"), "title": format!("{name} 1"), "albumId": id,
+                      "track": 1, "suffix": "flac"}],
+        });
+        album
+            .as_object_mut()
+            .unwrap()
+            .extend(dates.as_object().unwrap().clone());
+        album
+    }
+
+    fn album_dates(db: &Database) -> Vec<(String, Option<String>)> {
+        let artist: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM artists WHERE name = 'Pink Floyd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        queries::albums_for_artist(&db.conn, artist)
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.title, a.date))
+            .collect()
+    }
+
+    /// An album is dated by its original release where the server names it,
+    /// by its year otherwise, and an artist's records come in that order.
+    #[test]
+    fn a_synced_album_is_dated_by_its_original_release() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[
+                // A reissue: released 2016, first released 1971.
+                server_album(
+                    "al-meddle",
+                    "Meddle",
+                    serde_json::json!({"year": 2016,
+                        "originalReleaseDate": {"year": 1971, "month": 10, "day": 30}}),
+                ),
+                // Only an original date.
+                server_album(
+                    "al-piper",
+                    "Piper",
+                    serde_json::json!({"originalReleaseDate": {"year": 1967}}),
+                ),
+                // Only a release date, given in full.
+                server_album(
+                    "al-wall",
+                    "The Wall",
+                    serde_json::json!({"year": 1979,
+                        "releaseDate": {"year": 1979, "month": 11, "day": 30}}),
+                ),
+                server_album(
+                    "al-ahm",
+                    "Atom Heart Mother",
+                    serde_json::json!({"year": 1970}),
+                ),
+            ],
+        );
+        assert_eq!(
+            album_dates(&db),
+            vec![
+                ("Piper".into(), Some("1967".into())),
+                ("Atom Heart Mother".into(), Some("1970".into())),
+                ("Meddle".into(), Some("1971-10-30".into())),
+                ("The Wall".into(), Some("1979".into())),
+            ]
+        );
+    }
+
+    /// A song whose album the listing lacked — one added to the server
+    /// mid-sync — is written without a date. The next sync's listing names
+    /// the year, and the album found by the server's id takes it.
+    #[test]
+    fn an_album_first_written_without_a_year_takes_the_next_syncs() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[server_album("al-wall", "The Wall", serde_json::json!({}))],
+        );
+        assert_eq!(album_dates(&db), vec![("The Wall".into(), None)]);
+
+        write_server_albums(
+            &db,
+            &[server_album(
+                "al-wall",
+                "The Wall",
+                serde_json::json!({"year": 1979}),
+            )],
+        );
+        assert_eq!(
+            album_dates(&db),
+            vec![("The Wall".into(), Some("1979".into()))]
+        );
+    }
+
+    /// A library an earlier build left with an undated album whose tracks are
+    /// dated is filled without the tracks changing.
+    #[test]
+    fn an_undated_album_with_dated_tracks_is_filled() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[
+                server_album("al-wall", "The Wall", serde_json::json!({"year": 1979})),
+                server_album(
+                    "al-meddle",
+                    "Meddle",
+                    serde_json::json!({"year": 2016,
+                        "originalReleaseDate": {"year": 1971, "month": 10, "day": 30}}),
+                ),
+            ],
+        );
+        db.conn
+            .execute("UPDATE albums SET date = NULL", [])
+            .unwrap();
+        assert_eq!(queries::fill_album_dates(&db.conn).unwrap(), 2);
+        assert_eq!(
+            album_dates(&db),
+            vec![
+                ("Meddle".into(), Some("1971-10-30".into())),
+                ("The Wall".into(), Some("1979".into())),
+            ]
+        );
+        assert_eq!(queries::fill_album_dates(&db.conn).unwrap(), 0);
     }
 
     /// The album row is created through its tracks, so it only ever sees what

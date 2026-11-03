@@ -4779,10 +4779,13 @@ fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
         .ok_or_else(|| SubsonicError::not_found("Playlist"))
 }
 
+/// How many covers `koanCovers` reads ahead of the frame being sent.
+const COVERS_AHEAD: usize = 4;
+
 /// `koanCovers`: the covers of many records at one size, answered from what
 /// the cover cache holds (the warm keeps every album at 300 and 600), as one
 /// stream of frames in the order the ids were given. A record whose cover is
-/// not kept, or an id that is not an album's, is answered `NOT_HELD`, and the
+/// not kept, or an id that is neither an album's nor a track's, is answered `NOT_HELD`, and the
 /// client asks `getCoverArt` for it; nothing here opens a music file or
 /// decodes an image, so a library's covers cost the server file reads alone.
 /// See docs/reference/protocol/server-extensions.md#koancovers.
@@ -4802,11 +4805,29 @@ async fn koan_covers(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
             return Err(SubsonicError::bad_param("id"));
         }
         held.covers.forget_evicted(&db.conn);
-        Ok(ids
+        // A record by its own id, or by one of its tracks': a client that
+        // synced songs alone knows a record's tracks, and a track's cover is
+        // its record's, as `getCoverArt` answers it.
+        let kinds: Vec<(String, Option<EntityKind>, i64)> = ids
             .into_iter()
-            .map(|raw| {
-                let album = match resolve_entity(&db, &raw) {
-                    Ok((Some(EntityKind::Album), id)) => Some(id),
+            .map(|raw| match resolve_entity(&db, &raw) {
+                Ok((kind, id)) => (raw, kind, id),
+                Err(_) => (raw, None, 0),
+            })
+            .collect();
+        let tracks: Vec<i64> = kinds
+            .iter()
+            .filter(|(_, kind, _)| *kind == Some(EntityKind::Song))
+            .map(|(_, _, id)| *id)
+            .collect();
+        let records = queries::album_ids_for_tracks(&db.conn, &tracks)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(kinds
+            .into_iter()
+            .map(|(raw, kind, id)| {
+                let album = match kind {
+                    Some(EntityKind::Album) => Some(id),
+                    Some(EntityKind::Song) => records.get(&id).copied(),
                     _ => None,
                 };
                 (raw, album)
@@ -4818,30 +4839,32 @@ async fn koan_covers(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
         Ok(resolved) => resolved,
         Err(e) => return SubsonicResponse::error(json, &e),
     };
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
-    tokio::task::spawn_blocking(move || {
-        use koan_core::remote::covers::{BulkCover, frame};
-        for (raw, album) in resolved {
-            let kept = album.and_then(|id| state.covers.album_cover_kept(id, size));
-            let bytes = match &kept {
-                Some(Some(cover)) => frame(&raw, BulkCover::Cover(cover)),
-                Some(None) => frame(&raw, BulkCover::None),
-                None => frame(&raw, BulkCover::NotHeld),
-            };
-            // The client went: nothing more to read.
-            if tx
-                .blocking_send(Ok(axum::body::Bytes::from(bytes)))
-                .is_err()
-            {
-                break;
+    // Frames are made as the body is read, each cover read on the blocking
+    // pool, `COVERS_AHEAD` ahead of the one being sent so the next is ready
+    // when the socket takes it: a client reading slowly holds no more than
+    // those, and one that goes stops the reads.
+    use futures_util::StreamExt as _;
+    let frames = futures_util::stream::iter(resolved)
+        .map(move |(raw, album)| {
+            let state = state.clone();
+            async move {
+                let bytes = tokio::task::spawn_blocking(move || {
+                    use koan_core::remote::covers::{BulkCover, frame};
+                    match album.and_then(|id| state.covers.album_cover_kept(id, size)) {
+                        Some(Some(cover)) => frame(&raw, BulkCover::Cover(&cover)),
+                        Some(None) => frame(&raw, BulkCover::None),
+                        None => frame(&raw, BulkCover::NotHeld),
+                    }
+                })
+                .await
+                .map_err(std::io::Error::other)?;
+                Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes))
             }
-        }
-    });
+        })
+        .buffered(COVERS_AHEAD);
     Response::builder()
         .header(header::CONTENT_TYPE, koan_core::remote::covers::BULK_TYPE)
-        .body(axum::body::Body::from_stream(
-            tokio_stream::wrappers::ReceiverStream::new(rx),
-        ))
+        .body(axum::body::Body::from_stream(frames))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -11155,150 +11178,7 @@ mod tests {
         }
     }
 
-    /// What the cover preload costs one cover at a time, six at a time and
-    /// through `koanCovers`, against this server on a port with 20 ms added
-    /// to every answer, as across the internet, for a library of a thousand
-    /// albums whose 600 px covers are made. Run by hand:
-    /// `cargo test -p koan-server --release --lib preload_timings -- --ignored --nocapture`.
-    #[tokio::test(flavor = "multi_thread")]
-    #[ignore]
-    async fn preload_timings() {
-        const ALBUMS: usize = 1000;
-        const LATENCY: std::time::Duration = std::time::Duration::from_millis(20);
-        let (state, dir) = test_state();
-        // A photograph's worth of detail, so the JPEG is a sleeve's size.
-        let mut jpeg = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
-            .encode_image(&image::RgbImage::from_fn(600, 600, |x, y| {
-                let n = x.wrapping_mul(2654435761) ^ y.wrapping_mul(40503);
-                image::Rgb([(n >> 3) as u8, (n >> 11) as u8, (n >> 19) as u8])
-            }))
-            .unwrap();
-        let db = Database::open(state.pool.path()).unwrap();
-        let mut ids = Vec::new();
-        for i in 0..ALBUMS {
-            let album = dir.path().join(format!("Album {i}"));
-            std::fs::create_dir_all(&album).unwrap();
-            let track = album.join("01.flac");
-            std::fs::write(&track, b"no tags here").unwrap();
-            std::fs::write(album.join("folder.jpg"), &jpeg).unwrap();
-            queries::upsert_track(
-                &db.conn,
-                &track_meta(track.to_str().unwrap(), "Song", &format!("Album {i}"), 1),
-            )
-            .unwrap();
-            let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
-                .unwrap()
-                .unwrap();
-            let album_id = queries::get_track_row(&db.conn, track_id)
-                .unwrap()
-                .unwrap()
-                .album_id
-                .unwrap();
-            ids.push(format!("al-{album_id}"));
-        }
-        let app = build_test_router(state);
-        // Made once, as the warm makes them.
-        for id in &ids {
-            let made = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(format!(
-                            "/rest/getCoverArt?{}&id={id}&size=600",
-                            auth_query("")
-                        ))
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            axum::body::to_bytes(made.into_body(), usize::MAX)
-                .await
-                .unwrap();
-        }
-        let slow = app.layer(axum::middleware::from_fn(
-            |req: axum::extract::Request, next: axum::middleware::Next| async move {
-                tokio::time::sleep(LATENCY).await;
-                next.run(req).await
-            },
-        ));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(listener, slow).await.unwrap() });
-        let report = tokio::task::spawn_blocking(move || {
-            use koan_core::remote::client::SubsonicClient;
-            let client = SubsonicClient::new(&url, "testuser", "testpass");
-            let rate = |n: usize, took: std::time::Duration| n as f64 / took.as_secs_f64();
-            let mut report = Vec::new();
-            // One at a time, as before: a tenth of the library, which says
-            // the rate.
-            let started = std::time::Instant::now();
-            let tenth = &ids[..ALBUMS / 10];
-            let mut bytes = 0;
-            for id in tenth {
-                bytes += client
-                    .get_cover_art_background(id, Some(600))
-                    .unwrap()
-                    .len();
-            }
-            let took = started.elapsed();
-            report.push(format!(
-                "one at a time: {} in {took:.2?} ({:.0} a second, {} KB each)",
-                tenth.len(),
-                rate(tenth.len(), took),
-                bytes / tenth.len() / 1024
-            ));
-            // Six at a time.
-            let started = std::time::Instant::now();
-            let next = parking_lot::Mutex::new(ids.iter());
-            std::thread::scope(|scope| {
-                for _ in 0..6 {
-                    scope.spawn(|| {
-                        loop {
-                            // Taken and let go before the request: held through it,
-                            // the workers would ask one at a time.
-                            let taken = next.lock().next();
-                            let Some(id) = taken else { break };
-                            client.get_cover_art_background(id, Some(600)).unwrap();
-                        }
-                    });
-                }
-            });
-            let took = started.elapsed();
-            report.push(format!(
-                "six at a time: {ALBUMS} in {took:.2?} ({:.0} a second)",
-                rate(ALBUMS, took)
-            ));
-            // koanCovers, two hundred to a request.
-            let started = std::time::Instant::now();
-            let mut covers = 0;
-            for chunk in ids.chunks(koan_core::remote::covers::BULK_MAX) {
-                client
-                    .get_covers(chunk, 600, &mut |_, cover| {
-                        if matches!(cover, koan_core::remote::covers::BulkCover::Cover(_)) {
-                            covers += 1;
-                        }
-                    })
-                    .unwrap();
-            }
-            let took = started.elapsed();
-            report.push(format!(
-                "koanCovers: {covers} of {ALBUMS} in {took:.2?} ({:.0} a second)",
-                rate(covers, took)
-            ));
-            report
-        })
-        .await
-        .unwrap();
-        for line in report {
-            println!("preload timings: {line}");
-        }
-    }
-
-    /// `koanCovers` answers from the covers already made: not held before
-    /// any has been asked for, then the cover `getCoverArt` made, and an id
-    /// it cannot place as not held, every id in the order asked.
+    /// `koanCovers` answers the covers it has made, in the order asked.
     #[tokio::test]
     async fn test_bulk_covers_answer_what_is_made() {
         use koan_core::remote::covers::{BulkCover, read_frame};
@@ -11389,8 +11269,8 @@ mod tests {
         assert_eq!(after[1].1, BulkCover::NotHeld);
         assert_eq!(
             after[2].1,
-            BulkCover::NotHeld,
-            "a track's cover is not an album's entry"
+            BulkCover::Cover(made.to_vec()),
+            "a track's id is answered with its record's cover, which is what the preload sends"
         );
     }
 
@@ -11882,6 +11762,57 @@ mod tests {
         assert_eq!(
             entry["line"],
             serde_json::json!([{"value": "One"}, {"value": "Two"}])
+        );
+    }
+
+    /// An album's year is its original release's where its tags name one, and
+    /// its release's otherwise, whole dates included; `byYear` lists them in
+    /// that order.
+    #[tokio::test]
+    async fn an_albums_year_is_its_original_release() {
+        let (state, _dir) = test_state();
+        let db = Database::open(state.pool.path()).unwrap();
+        for (i, (album, date, original)) in [
+            ("Meddle", Some("2016"), Some("1971-10-30")),
+            ("Piper", None, Some("1967")),
+            ("The Wall", Some("1979-11-30"), None),
+            ("Ummagumma", Some("1969"), None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut meta = track_meta(&format!("/music/{i}.flac"), "Song", album, 1);
+            meta.date = date.map(Into::into);
+            meta.original_date = original.map(Into::into);
+            queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        let r = json_of(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/getAlbumList2?{}&type=byYear&fromYear=1900&toYear=2100",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        let years: Vec<(String, i64)> = r["albumList2"]["album"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["name"].as_str().unwrap().to_string(),
+                    a["year"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            years,
+            vec![
+                ("Piper".into(), 1967),
+                ("Ummagumma".into(), 1969),
+                ("Meddle".into(), 1971),
+                ("The Wall".into(), 1979),
+            ]
         );
     }
 

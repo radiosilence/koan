@@ -1,0 +1,1 @@
+- **koan-kit draws its own text field.** Fields are built on GPUI's input handler instead of gpui-kit's input: input methods compose in place, the caret and deletion follow whole characters and Unicode words, a screen reader reads and sets the value, and Organise's pattern field colours its fields and functions.
