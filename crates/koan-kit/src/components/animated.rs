@@ -178,6 +178,7 @@ impl Animated {
             self.rebase();
             self.put(k, Track::hold(value));
         });
+        self.wake();
     }
 
     /// Track `k` moving from where it stands now to `to` over `length`: a
@@ -189,6 +190,7 @@ impl Animated {
         self.0
             .uniforms
             .publish(|| self.to_unpublished(k, to, length, ease));
+        self.wake();
     }
 
     fn to_unpublished(&self, k: usize, to: f32, length: Duration, ease: Ease) {
@@ -243,6 +245,7 @@ impl Animated {
         self.0
             .uniforms
             .publish(|| self.segment_unpublished(k, from, to, start, length, ease, repeat));
+        self.wake();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -305,8 +308,9 @@ impl Animated {
         } else {
             track
         };
+        // The caller wakes the window once its publish has closed, so the
+        // refresh never meets the block still being written.
         self.0.uniforms.set_track(k, track);
-        self.wake();
     }
 
     /// `color` into the four uniforms from `index`, as red, green, blue and
