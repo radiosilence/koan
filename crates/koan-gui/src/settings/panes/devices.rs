@@ -736,8 +736,12 @@ fn background(
             Toggle::new("keep-running", label, settings.devices_keep_running)
                 .on_change(move |on, _, cx| {
                     let on = *on;
-                    model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_keep_running = on));
-                    residency::apply(on, cx);
+                    // Applied once it is in the file: a write that fails
+                    // leaves kōan as the file says.
+                    model.update(cx, |m, cx| {
+                        m.edit(cx, move |s| s.devices_keep_running = on);
+                        m.when_written(cx, move |_, cx| residency::apply(on, cx));
+                    });
                 })
                 .into_any_element(),
         );

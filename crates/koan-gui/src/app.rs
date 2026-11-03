@@ -129,7 +129,10 @@ pub fn start(
         // app starts then. Otherwise someone opened kōan and wants it.
         let keep = settings.settings().await.devices_keep_running;
         let background = keep && crate::platform::residency::launched_at_login();
-        cx.update(|cx| open(saved, !background, cx));
+        cx.update(|cx| {
+            crate::platform::residency::adopt(keep, cx);
+            open(saved, !background, cx)
+        });
     })
     .detach();
 }
@@ -233,7 +236,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
         open_window(saved, cx);
     } else {
         log::info!("opened at login; staying in the menu bar");
-        crate::platform::residency::window_closing(cx);
+        crate::platform::residency::settle_dock(cx);
     }
     // `--settings` opens Settings beside the window, for checking it
     // without a keyboard.
@@ -257,7 +260,6 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             // written now.
             window.on_window_should_close(cx, |window, cx| {
                 window_state::write(window.window_bounds());
-                crate::platform::residency::window_closing(cx);
                 true
             });
             let shell = cx.new(|cx| Shell::new(window, cx));

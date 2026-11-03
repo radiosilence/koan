@@ -57,6 +57,9 @@ pub fn init(engine: &std::sync::Arc<koan_ffi::KoanEngine>, cx: &mut App) {
     cx.set_global(Residency::default());
     set(false, cx);
     read_login(cx);
+    // Whether kōan sits in the Dock follows its windows: kept running with
+    // none open, it leaves for the menu bar, whichever window closed last.
+    cx.on_window_closed(|cx, _| settle_dock(cx)).detach();
     let engine = engine.clone();
     cx.spawn(async move |cx| {
         let keep = engine.settings().await.devices_keep_running;
@@ -79,6 +82,7 @@ pub fn apply(keep: bool, cx: &mut App) {
     if !keep && crate::app::main_window(cx).is_none() {
         let _ = crate::app::show_window(cx);
     }
+    settle_dock(cx);
 }
 
 /// The quit rule and the menu bar item for `keep`.
@@ -101,12 +105,36 @@ fn set(keep: bool, cx: &mut App) {
     }
 }
 
-/// The main window is closing: kept running, kōan leaves the Dock and the
-/// app switcher for the menu bar.
-pub fn window_closing(cx: &mut App) {
-    if keep_running(cx) {
-        log::info!("window closed; staying in the menu bar");
+/// What launching read of `devices.keep_running`, applied at once: the
+/// launch decides by it, and what this module read for itself may not have
+/// landed yet, so both go by the one value.
+pub fn adopt(keep: bool, cx: &mut App) {
+    if cx.has_global::<Residency>() {
+        set(keep, cx);
+    }
+}
+
+/// What the configuration file says now, read again by Settings: turned off
+/// elsewhere (the terminal UI, an edit by hand) while the main window is
+/// closed, the main window opens, as from the toggle, so closing Settings
+/// does not quit kōan with nothing to bring back.
+pub fn follow_file(keep: bool, cx: &mut App) {
+    if !cx.has_global::<Residency>() || keep_running(cx) == keep {
+        return;
+    }
+    apply(keep, cx);
+}
+
+/// In the Dock and the app switcher while any of kōan's windows is open
+/// (the main window, Settings, EQ), or while it is not kept running; kept
+/// running with none, the menu bar only.
+pub fn settle_dock(cx: &mut App) {
+    let windows = !cx.windows().is_empty();
+    if keep_running(cx) && !windows {
+        log::info!("no window open; staying in the menu bar");
         set_in_dock(false);
+    } else if windows {
+        set_in_dock(true);
     }
 }
 
