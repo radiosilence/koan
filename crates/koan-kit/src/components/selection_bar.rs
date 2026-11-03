@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind, Handler, RowMetrics};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole};
+use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
 /// The count in `meta`, `ink`, leading; the verbs trailing, `Text` buttons
 /// or anything drawn as one (a menu's trigger), then "done". On `bg` with a
@@ -60,7 +60,7 @@ impl RenderOnce for SelectionBar {
             .justify_between()
             .px(RowMetrics::page_margin(&look))
             .py(look.space(Space::M))
-            .border_t(HAIRLINE)
+            .border_t(look.hairline)
             .border_color(look.palette.rule.hsla())
             .bg(look.palette.bg.hsla())
             .child(

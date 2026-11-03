@@ -5625,6 +5625,7 @@ impl KoanEngine {
                     // A handful of rows, compared whole: published only when a
                     // renderer comes, goes, or the one playing changes.
                     out.publish(StateSlice::Renderers {
+                        local_network_blocked: koan_core::upnp::discovery::local_network_blocked(),
                         renderers: koan_core::upnp::discovery::renderers()
                             .into_iter()
                             .map(|r| RendererInfo {

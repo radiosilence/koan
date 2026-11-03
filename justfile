@@ -1939,7 +1939,63 @@ gui-run *ARGS:
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
     # Ctrl-C quits the app as ⌘Q does; it saves what quitting saves.
-    cargo run --profile gui-dev -p koan-gui --features runtime-shaders -- {{ARGS}}
+    if [ "$(uname -s)" != Darwin ]; then
+        cargo run --profile gui-dev -p koan-gui --features runtime-shaders -- {{ARGS}}
+        exit 0
+    fi
+    # On macOS, launched as an app of its own rather than as a child of the
+    # terminal. A binary started from a terminal has the terminal's Local
+    # Network permission, which a terminal declaring no reason for it never
+    # gets: every SSDP and Bonjour packet is refused, and no renderer or
+    # nearby koan appears. The bundle declares the reason, so macOS asks.
+    cargo build --profile gui-dev -p koan-gui --features runtime-shaders
+    # An ASCII name, so the path matches itself however a tool normalises
+    # the ō: `pkill -f` below did not find "kōan dev.app".
+    app="$PWD/target/gui-dev/koan dev.app"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
+    # A new file, never the signed one rewritten in place: macOS keeps a
+    # binary's signature by its file and kills a launch that no longer
+    # matches it.
+    rm -f "$app/Contents/MacOS/koan-gui"
+    cp "${CARGO_TARGET_DIR:-target}/gui-dev/koan-gui" "$app/Contents/MacOS/koan-gui"
+    cat > "$app/Contents/Info.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>CFBundleExecutable</key><string>koan-gui</string>
+        <key>CFBundleIdentifier</key><string>{{gui_id}}.dev</string>
+        <key>CFBundleName</key><string>kōan dev</string>
+        <key>CFBundleIconFile</key><string>AppIcon</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>LSMinimumSystemVersion</key><string>{{gui_macos}}</string>
+        <key>NSHighResolutionCapable</key><true/>
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
+    </dict>
+    </plist>
+    PLIST
+    # The development identity keeps the grant across rebuilds; signed ad
+    # hoc, each build is a new app to macOS and is asked again.
+    id="${KOAN_SIGN_IDENTITY:-}"
+    if [ -z "$id" ] && security find-identity -v -p codesigning | grep -q "koan development"; then
+        id="koan development"
+    fi
+    codesign --force --sign "${id:--}" "$app" 2>/dev/null
+    # An app started by `open` runs from /, and has none of this shell's
+    # variables but those handed to it: every KOAN_ and RUST_ one, the
+    # configuration directory made absolute.
+    mkdir -p "$KOAN_CONFIG_DIR"
+    export KOAN_CONFIG_DIR="$(cd "$KOAN_CONFIG_DIR" && pwd)"
+    envs=()
+    while read -r name; do
+        envs+=(--env "$name=${!name}")
+    done < <(compgen -e | grep -E '^(KOAN_|RUST_)')
+    tty=$(tty 2>/dev/null) || tty=/dev/null
+    # Ctrl-C reaches `open`, not the app: handed on, it quits as ⌘Q does.
+    trap 'pkill -INT -f "$app/Contents/MacOS/koan-gui" || true' INT
+    open -W -n "${envs[@]}" --stdout "$tty" --stderr "$tty" "$app" --args {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
 # on Linux an AppImage and a .deb, all under target/gui.

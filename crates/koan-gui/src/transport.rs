@@ -292,6 +292,7 @@ impl Transport {
     fn output_view(&self, cx: &App) -> OutputView {
         let devices = &self.devices.read(cx).0;
         OutputView {
+            blocked: self.renderers.read(cx).0.blocked,
             outputs: self.outputs.read(cx).0.clone(),
             problem: self
                 .renderers
@@ -470,6 +471,8 @@ struct OutputView {
     processed: Option<String>,
     /// The device controlled, by name.
     controlled: Option<String>,
+    /// macOS refused the last search for renderers the local network.
+    blocked: bool,
 }
 
 /// Where the device in view plays, as the Mac's output picker lists it: the
@@ -487,10 +490,13 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         ));
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
-        entry.checked(chosen).on_click(move |_, _, cx| {
-            let choice = choice.clone();
-            command(cx, "select output", move |e| e.select_output(choice));
-        })
+        entry
+            .checked(chosen)
+            .stays_open()
+            .on_click(move |_, _, cx| {
+                let choice = choice.clone();
+                command(cx, "select output", move |e| e.select_output(choice));
+            })
     };
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
@@ -582,6 +588,9 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
             playing = Some(renderer.name.clone());
         }
     }
+    if here && view.blocked && outputs.renderers.is_empty() {
+        menu = menu.note(blocked_note());
+    }
     let Some(name) = playing else {
         return menu;
     };
@@ -615,6 +624,19 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         });
     }
     menu
+}
+
+/// Why no network speaker shows while macOS keeps the app off the local
+/// network: whom to allow, which for a binary started from a terminal is the
+/// terminal, since the permission is the app's that started it.
+fn blocked_note() -> String {
+    let bundled = std::env::current_exe()
+        .is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"));
+    if bundled {
+        "macOS isn't letting kōan on the local network, so no network speaker can be found. Allow it in System Settings › Privacy & Security › Local Network.".to_owned()
+    } else {
+        "macOS isn't letting kōan on the local network, so no network speaker can be found. Started outside its app, it has the permission of the app that started it: allow that app in System Settings › Privacy & Security › Local Network, or run kōan from its bundle.".to_owned()
+    }
 }
 
 /// A stable small number for an id string, for an element id.
