@@ -510,12 +510,10 @@ impl AlbumGrid {
         let revision = self.selection.revision();
         let entity = cx.entity();
         let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
-            entity
-                .update(cx, |this, cx| {
-                    this.selection.end();
-                    cx.notify();
-                })
-                .ok();
+            entity.update(cx, |this, cx| {
+                this.selection.end();
+                cx.notify();
+            })
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
