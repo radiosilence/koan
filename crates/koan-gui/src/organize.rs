@@ -14,8 +14,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 use koan_kit::app::*;
+use koan_runtime::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 
 use crate::components::sheet as ask;
 use crate::components::{
@@ -59,6 +59,11 @@ pub struct OrganizeSheet {
     error: Option<String>,
     /// Bumped per preview, so a slow plan cannot land on a newer one.
     generation: u64,
+    /// A plan is being generated: the read pool runs it to the end even
+    /// when it is no longer wanted, so one runs at a time, and the pattern
+    /// typed meanwhile goes next (`stale`).
+    generating: bool,
+    stale: bool,
     _preview: Option<Task<()>>,
     _settle: Option<Task<()>>,
     /// The move under way. Its own task, so no preview replaces it.
@@ -112,7 +117,8 @@ impl OrganizeSheet {
                     Ok(selection) => this.selection = Some(selection),
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
-                // Setting the field previews, through its subscription.
+                // Setting the field says nothing to its subscription: the
+                // preview is asked for here.
                 this.draft.update(cx, |s, cx| s.set_value(text, window, cx));
                 this.preview(cx);
             })
@@ -135,6 +141,8 @@ impl OrganizeSheet {
             running: false,
             error: None,
             generation: 0,
+            generating: false,
+            stale: false,
             _preview: None,
             _settle: None,
             _run: None,
@@ -172,18 +180,7 @@ impl OrganizeSheet {
             cx.notify();
             return;
         }
-        let quick = selection.clone().generate(pattern.clone(), base.clone());
-        self._preview = Some(cx.spawn(async move |this, cx| {
-            let plan = quick.await;
-            this.update(cx, |this, cx| {
-                // Not over the disk's answer, should that have come first.
-                if this.generation == generation && !this.checked {
-                    this.plan = Some(plan);
-                    cx.notify();
-                }
-            })
-            .ok();
-        }));
+        self.generate(selection.clone(), pattern.clone(), base.clone(), cx);
         let ancillary = self.move_ancillary;
         self._settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;
@@ -193,6 +190,46 @@ impl OrganizeSheet {
                     this.plan = Some(plan);
                     this.checked = true;
                     cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The plan without the disk, as typed. One at a time: typing faster
+    /// than plans are made generates only the newest pattern next.
+    fn generate(
+        &mut self,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generating {
+            self.stale = true;
+            return;
+        }
+        self.generating = true;
+        let generation = self.generation;
+        let quick = selection.generate(pattern, base);
+        self._preview = Some(cx.spawn(async move |this, cx| {
+            let plan = quick.await;
+            this.update(cx, |this, cx| {
+                this.generating = false;
+                // Not over the disk's answer, should that have come first.
+                if this.generation == generation && !this.checked {
+                    this.plan = Some(plan);
+                    cx.notify();
+                }
+                if std::mem::take(&mut this.stale)
+                    && !this.running
+                    && !this.checked
+                    && let (Some(selection), Some(base)) = (this.selection.clone(), this.base())
+                {
+                    let pattern = this.pattern(cx);
+                    if !pattern.is_empty() {
+                        this.generate(selection, pattern, base, cx);
+                    }
                 }
             })
             .ok();
@@ -229,6 +266,9 @@ impl OrganizeSheet {
         self.chosen = Some(index);
         let text = pattern.pattern.clone();
         self.draft.update(cx, |s, cx| s.set_value(text, window, cx));
+        // Setting the field emits no change: without this the plan shown,
+        // and the one confirmed, would be the last pattern's.
+        self.preview(cx);
     }
 
     /// The typed pattern differs from the named one chosen, or none is.
@@ -313,6 +353,7 @@ impl OrganizeSheet {
             );
         }
         let (pattern, ids) = (self.pattern(cx), self.track_ids.clone());
+        let ancillary = self.move_ancillary;
         let sheet = cx.entity().downgrade();
         ask::confirm(
             ask::Confirm {
@@ -330,11 +371,16 @@ impl OrganizeSheet {
             cx,
             move |cx| {
                 let Some(sheet) = sheet.upgrade() else { return };
-                let run = engine(cx).organize_execute(
-                    pattern.clone(),
-                    Some(ids.clone()),
-                    Some(base.clone()),
-                );
+                // The move reads whether ancillary files go with it from the
+                // configuration: the choice previewed is written first.
+                let engine = engine(cx);
+                let set = engine.clone().set_organize_moves_ancillary(ancillary);
+                let execute =
+                    engine.organize_execute(pattern.clone(), Some(ids.clone()), Some(base.clone()));
+                let run = async move {
+                    set.await?;
+                    execute.await
+                };
                 // Escape leaves the sheet while files move, as its cancel
                 // is disabled: dropping it would stop the move part way.
                 ask::hold(true, cx);
@@ -457,7 +503,10 @@ impl Render for OrganizeSheet {
 
         let mut names: Vec<String> = self.patterns.iter().map(|p| p.name.clone()).collect();
         names.push("typed here".into());
-        let chosen = Some(self.chosen.unwrap_or(names.len() - 1));
+        // A named pattern edited is no longer that pattern: the picker says
+        // it is typed here, and names it again if the text comes back.
+        let named = self.chosen.filter(|_| !self.modified(cx));
+        let chosen = Some(named.unwrap_or(names.len() - 1));
         let picker = Picker::keeps_case("organize-pattern", names, chosen)
             .disabled(running)
             .on_change(cx.listener(|this, index: &usize, window, cx| {

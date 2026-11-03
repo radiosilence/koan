@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, Spinner, TextField, Tooltip};
 use crate::theme::{Look, Space, Tone, TypeRole, label};
-use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, KoanError};
 
 use crate::settings::Ctx;
 use crate::settings::form::{day, item, section, text};
@@ -294,9 +294,11 @@ impl Render for Keys {
                     &look,
                 ));
             }
-            None if self.error.is_none() => {
-                rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element())
-            }
+            None if self.error.is_none() => rows.push(
+                Spinner::new(look.font_size(TypeRole::Body))
+                    .announced("keys-loading", "loading keys")
+                    .into_any_element(),
+            ),
             None => {}
         }
         let (header, about) = match self.kind {

@@ -14,8 +14,8 @@
 //! entries waiting on the track, removing a file deletes it, and clearing
 //! forgets the settled rows.
 
-use koan_ffi::{Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{Transfer, TransferFigure, TransferState};
 
 use crate::components::sheet as ask;
 use crate::components::{
@@ -90,6 +90,8 @@ impl DownloadsPage {
     fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
+            // A limit of nothing keeps only what is playing and next.
+            Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),
             None => format!("{} cached", bytes(used)),
         };

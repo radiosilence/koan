@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
-use koan_ffi::Placement;
 use koan_kit::app::*;
+use koan_runtime::Placement;
 
 use super::Lib;
 use super::drag::{Playable, sources};
@@ -110,26 +110,17 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
 
 /// The tracks `items` name, in order, each once: what a verb over records
 /// and artists acts on.
-pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
-    let mut ids = Vec::new();
-    for item in items {
-        let found = match item {
-            Playable::Track(id) => Ok(vec![id]),
-            Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
-            Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
-        };
-        match found {
-            Ok(found) => {
-                for id in found {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
-            }
-            Err(e) => log::warn!("tracks of a pick: {e}"),
+pub async fn track_ids_of(engine: Arc<koan_runtime::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
+    // One read for the whole pick, as the queue resolves it.
+    let found = match engine.track_ids_of(super::drag::sources(&items)).await {
+        Ok(found) => found,
+        Err(e) => {
+            log::warn!("tracks of a pick: {e}");
+            return Vec::new();
         }
-    }
-    ids
+    };
+    let mut seen = std::collections::HashSet::with_capacity(found.len());
+    found.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
 /// What a pick is called in a question about it.
@@ -186,7 +177,7 @@ pub fn remove_downloads(lib: &Lib, items: &[Playable], window: &mut Window, cx: 
 /// The question before removing downloads, and the removal: shared by the
 /// library's menus and the queue's.
 pub fn ask_remove_downloads(
-    engine: Arc<koan_ffi::KoanEngine>,
+    engine: Arc<koan_runtime::KoanEngine>,
     title: String,
     ids: Vec<i64>,
     window: &mut Window,
@@ -276,15 +267,17 @@ pub fn mark<V: Menus>(
 
 /// The list's one context menu, over whatever its rows marked. A right
 /// click on the list clears the mark first, in the capture phase, so one on
-/// empty space acts on nothing.
+/// empty space acts on nothing. `spot` is the page's keyboard cursor, which
+/// the page passes as it renders: reading the page from here would read it
+/// while it is being updated.
 pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
     element: E,
     view: WeakEntity<V>,
+    spot: Option<crate::components::CursorSpot>,
     window: &mut Window,
     cx: &mut App,
 ) -> E {
     let clear = view.clone();
-    let spot = view.upgrade().and_then(|page| page.read(cx).cursor_spot());
     element
         .capture_any_mouse_down(super::listen(
             clear,
@@ -376,12 +369,18 @@ pub fn menu(
             .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
     );
     // Moving the pick's files where a pattern puts them, previewed first.
-    let (organise_lib, organise_items) = (lib.clone(), items.clone());
-    menu = menu.separator().item(
-        MenuEntry::new("organise…")
-            .icon(Icon::Organize)
-            .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
-    );
+    let (organise_lib, organise_items, organise_after) =
+        (lib.clone(), items.clone(), after.clone());
+    menu =
+        menu.separator()
+            .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click(
+                move |_, window, cx| {
+                    organise(&organise_lib, &organise_items, window, cx);
+                    if let Some(after) = &organise_after {
+                        after(cx);
+                    }
+                },
+            ));
     // A remote library's files on this device: fetched now, or let go.
     let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
     let (drop_lib, drop_items) = (lib.clone(), items.clone());
@@ -492,8 +491,8 @@ pub fn playlist_submenu(
 /// out. Said either way on the app's notice line, since a link copied in
 /// silence, or not at all, looks the same as a click that missed.
 pub fn copy_share_link(
-    engine: Arc<koan_ffi::KoanEngine>,
-    sets: Vec<koan_ffi::TrackSet>,
+    engine: Arc<koan_runtime::KoanEngine>,
+    sets: Vec<koan_runtime::TrackSet>,
     name: Option<String>,
     cx: &mut App,
 ) {

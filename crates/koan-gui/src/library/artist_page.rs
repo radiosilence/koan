@@ -17,8 +17,8 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 use koan_kit::app::*;
+use koan_runtime::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{ListAlignment, ListOffset, ListState, list};
 
@@ -289,7 +289,7 @@ impl ArtistPage {
             // In the release's own words; the heading puts them in the
             // theme's case.
             items.push(Item::Heading(
-                koan_ffi::release_section_title(section).into(),
+                koan_runtime::release_section_title(section).into(),
                 Heading::Section(section),
             ));
             rows(&mut items, false, start, len);
@@ -348,7 +348,7 @@ impl ArtistPage {
                 }
             }
             Item::Track(i) => Anchored::Track(record.appearances.get(*i)?.id),
-            Item::About => return None,
+            Item::About => Anchored::About,
         };
         Some(Anchor {
             at,
@@ -378,6 +378,7 @@ impl ArtistPage {
             (Item::Track(i), Anchored::Track(id)) => {
                 record.appearances.get(*i).is_some_and(|t| t.id == id)
             }
+            (Item::About, Anchored::About) => true,
             _ => false,
         });
         match item_ix {
@@ -466,7 +467,9 @@ impl ArtistPage {
             }
         }
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
+        self.lib
+            .covers
+            .update(cx, |c, cx| c.request(owner, ranked, cx));
     }
 
     fn pick(&mut self) -> Option<PlayableDrag> {
@@ -598,7 +601,7 @@ impl ArtistPage {
                             == Some(record.albums.len() + record.features.len() + index))
                     .then(|| self.spot.clone()),
                     place: Some((index, record.appearances.len())),
-                    reveal: None,
+                    reveal: p.a11y.then(|| rows::Reveal::List(self.list.clone(), ix)),
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -676,14 +679,8 @@ impl ArtistPage {
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }
-        // Inside the page's margin already: only the grid's share of the
-        // spare width is added.
-        div()
-            .flex()
-            .gap(grid.gap)
-            .pl(grid.inset - grid.margin)
-            .h(grid.row)
-            .children(tiles)
+        // Inside the page's margin already, which is the grid's inset.
+        div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
 
     fn header(
@@ -887,6 +884,26 @@ impl actions::Menus for ArtistPage {
 }
 
 impl TileHost for ArtistPage {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
+        let Some(r) = &self.record else { return };
+        let Some(at) = r
+            .albums
+            .iter()
+            .chain(&r.features)
+            .position(|record| record.id == album)
+        else {
+            return;
+        };
+        if let Some((item, _)) = self
+            .lines()
+            .into_iter()
+            .find(|(_, range)| range.contains(&at))
+        {
+            crate::components::reveal_around_list(&self.list, item);
+            cx.notify();
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -1159,6 +1176,7 @@ impl Render for ArtistPage {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )

@@ -2,13 +2,14 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Seven crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Eight crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
-- **koan-ffi** — library crate, built as a staticlib (Apple) or cdylib (Android) by the native apps' builds (`cargo rustc --crate-type`). uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
-- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI through koan-kit. Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Links koan-ffi as a plain Rust library and drives `KoanEngine` as the Mac app does. Draws only the kōan look, from koan-kit. The library pages are `src/library/`. Not published.
+- **koan-runtime** — library crate. `KoanEngine`, the facade every app drives: the offload lanes, the state stream and its slices, queue patches, settings, DSP, devices, sharing, and the records it speaks in. Plain Rust, no uniffi. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published.
+- **koan-ffi** — library crate, built as a staticlib (Apple) or cdylib (Android) by the native apps' builds (`cargo rustc --crate-type`). The uniffi bindings over koan-runtime for Swift and Kotlin, and nothing else: each record, enum and error re-declared for `uniffi::remote` (checked field for field against koan-runtime's), the objects wrapping koan-runtime's and delegating, bridges for the traits the apps implement, and Android's JNI glue. It stays a crate of its own because uniffi names every symbol after the crate that exports it. Not published.
+- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI through koan-kit. Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Depends on koan-runtime as plain Rust and drives `KoanEngine` as the Mac app does. Draws only the kōan look, from koan-kit. The library pages are `src/library/`. Not published.
 - **koan-kit** — the design system the GUI app is built from: the theme (`src/theme/`: tokens, Geist Mono, the icon set, the record accent, the wash) and the components (`src/components/`). Knows nothing of the engine; `cargo run -p koan-kit` opens its storybook of every component. koan-gui reaches GPUI only through it: pages are written in `koan_kit::app` (the app model and `div`), and anything else is a named `koan_kit::raw` import with a comment saying why, which `just gui-theme-leaks` counts and enforces. Design: `docs/design/koan-kit.md`. Not published.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
@@ -18,7 +19,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-gui depends on koan-ffi, as a Rust library, and on koan-kit, and nothing else depends on it; koan-kit depends on neither the engine nor kōan's data. Native clients import koan-core through koan-ffi. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-ffi, so the Mac app could share it.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-runtime embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-ffi depends only on koan-runtime, and nothing but the native apps' bindings depends on koan-ffi; koan-gui depends on koan-runtime and koan-kit, and nothing else depends on it; koan-kit depends on neither the engine nor kōan's data. Native clients reach koan-core through koan-ffi, the GUI through koan-runtime. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-runtime, with its binding in koan-ffi, so the Mac app could share it.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -266,7 +267,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `enqueue.rs` | `enqueue_playlist()` — build PlaylistItems from track IDs, submit downloads |
 | `remote_bridge.rs` | Remote control: mirrors a koan server's now-playing and queue into the TUI over GraphQL and sends its commands there. No local playback |
 
-### koan-ffi (`crates/koan-ffi/src/`)
+### koan-runtime (`crates/koan-runtime/src/`)
 
 | Module | What |
 |--------|------|
@@ -275,7 +276,11 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `state.rs` | The engine's state as slices, and one cursor per client. Whole snapshots, batched at a tick, cut by rate of change |
 | `queue_slice.rs` | The queue as clients are sent it: whole on an edit, and between edits a patch of the rows whose status moved |
 | `serve.rs` | Sharing this device's library: koan-server's `ApiServer` on the engine's player, the first account, and the loopback client the account settings administer it through while it runs |
-| `types.rs` | uniffi records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …) and the conversions |
+| `types.rs` | Records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …): owned, concrete fields, as the bindings need them, and the conversions |
+
+### koan-ffi (`crates/koan-ffi/src/`)
+
+`lib.rs` is the whole of it: koan-runtime's records, enums and errors re-declared under `#[uniffi::remote(...)]`, the objects (`KoanEngine`, `StateStream`, `VizStream`, `BarHeights`, `OrganizeSelection`) wrapping koan-runtime's with exports that delegate, the traits the apps implement (`ProgressReporter`, `PushAttester`, the audio session and output hosts, `NearbyHost`, `MulticastHost`) with bridges into koan-runtime's, and the free functions. A change to the facade's surface is made in koan-runtime and repeated here: the compiler checks a remote record against its original, and the delegating method is one line. `android.rs` is the JNI glue. `uniffi.toml` names the Kotlin package.
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
 
@@ -299,7 +304,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `artwork.rs` | The artwork viewer over the window, opened by a record page's sleeve and the transport's cover; decoded at the size drawn by the shared sleeve cache; a click or Escape closes it |
 | `links.rs` | Names that lead to their pages: a record's title, each credited artist. The queue and the transport draw with it |
 | `transport.rs` | The transport bar, its names linked to their pages, and the seek slider, whose anchor is handed to the slider's `Glide` so the GPU moves the fill each present, and whose times follow the engine's whole seconds (`ClockStream`), with no timer of its own; the control, output, sleep and EQ menus. The output menu searches for renderers as it opens and refills as they answer |
-| `devices.rs` | Play on: the control menu (this device, the account's and the network's), move here, and what became of a move; `can_move_music` in koan-ffi decides where music can go |
+| `devices.rs` | Play on: the control menu (this device, the account's and the network's), move here, and what became of a move; `can_move_music` in koan-runtime decides where music can go |
 | `tv_wake.rs` | Pairing an Apple TV to be woken from the account's devices, as the Mac's `TvWake`: the TV shows a code, this device types it; "stop waking" in Play on undoes it |
 | `server_banner.rs` | The line across the top of every page while the server cannot be used (`ServerStanding`), redrawn only when the standing changes; Sign In opens Settings on the server |
 | `organize.rs` | Organise: the sheet over the window for a pick's files, a pattern previewed as typed (`OrganizeSelection::generate`) and checked against the disk once typing rests, every destination listed, a confirmation with the counts before `organize_execute` |
@@ -334,7 +339,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `dsp/profile.rs`, `dsp/bands.rs` | A profile's sheet: the graph in a frame over the cached `ProfileBody` (role and targets, layers and groups, channels, keeping an edit) and the dense band table, whose rows save a figure only when its text changed and chain their saves |
 | `dsp/manage.rs`, `dsp/stage.rs`, `dsp/flows.rs` | Manage EQ and recently deleted; choosing a stage's correction or EQ, a new EQ; AutoEQ, measurements and splitting a baked EQ |
 | `dsp/window.rs`, `dsp/sheet.rs`, `dsp/menu.rs` | The one EQ window (Playback → EQ…, ⌥⌘E); the stack of sheets over the EQ pages, where a confirmation says what a change will do; the choice menus for device, preset, band type and target |
-| `examples/eq.rs` | The EQ page against a real engine on a throwaway configuration: offscreen to a PNG, in a window, or `--measure` for a drag's frame times |
+| `examples/eq.rs` | The EQ page against a real engine on a throwaway configuration: offscreen to a PNG (a profile with `--profile`, a sheet with `--sheet manage|autoeq|measure|role`, the text size from `KOAN_APPEARANCE__TEXT_SIZE`), in a window, or `--measure` for a drag's frame times |
 | `library/activity.rs` | The Library menu's tasks (rescan, force rescan, rebuild the index, sync) and the rows at the sidebar's foot showing each one running: progress from a `ProgressReporter` for scans started here and from the `Tasks` and `Sync` slices otherwise; scans can be stopped |
 | `library/actions.rs` | What can be done with playable things from any library page: the context menu, the selection bar's verbs, a click on a sleeve; `Arrivals`, what the sidebar's queue and playlist rows answer |
 | `library/chrome.rs`, `library/controls.rs` | What the pages share around their content (header with count and actions, filter panel, sort menus, select toggle, the pick's bar); the page's controls in the window's toolbar slot |
@@ -373,7 +378,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 |--------|------|
 | `platform/about.rs` | About kōan (the standard panel on macOS, a window elsewhere), and the name and icon a build outside a bundle gives itself on macOS. The build is the commit, from `build.rs`, or `KOAN_BUILD` |
 | `platform/dock.rs` | The Dock's menu on macOS, rebuilt from the Playback and Devices slices only when what it shows changes |
-| `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit; the engine refuses a save that would replace a session not yet read back (`SessionGate` in koan-ffi) |
+| `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit; the engine refuses a save that would replace a session not yet read back (`SessionGate` in koan-runtime) |
 | `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
 | `platform/menus.rs` | The app's menus, in the Mac app's order, described once (`menus`): macOS's menu bar (`set`), and on Linux, which has no global menu bar, the same menus drawn in the window behind the toolbar's kōan button (`in_window`), each item with its keys |
 | `platform/residency.rs` | Keeping running with the window closed (`devices.keep_running`): the quit rule, leaving the Dock for the menu bar on macOS, reopening the window; opening at login, asked of the system (`SMAppService` on macOS, an XDG autostart entry on Linux) |
@@ -388,7 +393,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 
 The workspace's `vendor/` holds patched copies of GPUI (`[patch.crates-io]` in the root `Cargo.toml`): its macOS and Linux backends, so an idle window stops waking at every display refresh (#1609), its core and renderers, for shader quads whose uniforms are read at present (#1641), and gpui-kit's gpui-base, whose text caret is such a quad so its blink redraws nothing (#1786); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
 
-`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
+`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-runtime) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 
 ### apps/macos (`apps/macos/Sources/`)
 

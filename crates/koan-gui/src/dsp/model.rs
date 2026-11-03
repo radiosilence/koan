@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use koan_ffi::{
+use koan_kit::app::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
+use koan_runtime::{
     AutoEqEntry, AutoEqMaker, AutoEqOffer, ConnectionInfo, DspBand, DspBandBounds, DspEdited,
     DspImportPlan, DspImportSummary, DspOverview, DspPoint, DspProfileSummary, DspRole,
     DspTuningEntry, KoanEngine, KoanError,
 };
-use koan_kit::app::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 
 use crate::mirror::{Mirror, Slice};
 
@@ -93,6 +93,9 @@ pub struct Dsp {
     pub pending_import: Option<PendingImport>,
     pub needs_rate: Option<NeedsRate>,
     pub autoeq_results: Vec<AutoEqEntry>,
+    /// Why the last AutoEQ search failed, which is not the same as finding
+    /// nothing.
+    pub autoeq_failed: Option<SharedString>,
     pub autoeq_makers: Vec<AutoEqMaker>,
     /// Moves with every AutoEQ search, so one that returns after a newer one
     /// began is dropped.
@@ -122,7 +125,7 @@ pub struct Dsp {
     /// The output this device plays through and the outputs it has, as the
     /// mirror last said: the overview is of the device that resolves to, and
     /// with the system's default chosen, plugging in a DAC moves it.
-    output: Option<(koan_ffi::OutputChoice, Vec<String>)>,
+    output: Option<(koan_runtime::OutputChoice, Vec<String>)>,
     /// The extensions the signed-in server lists, and whether it is out
     /// of reach.
     extensions: Vec<String>,
@@ -144,10 +147,11 @@ impl Dsp {
                 pending_import: None,
                 needs_rate: None,
                 autoeq_results: Vec::new(),
+                autoeq_failed: None,
                 autoeq_makers: Vec::new(),
                 autoeq_search: 0,
                 _autoeq: None,
-                bounds: koan_ffi::dsp_band_bounds(),
+                bounds: koan_runtime::dsp_band_bounds(),
                 version: 0,
                 reads: 0,
                 applied: 0,
@@ -535,6 +539,7 @@ impl Dsp {
         if trimmed.is_empty() {
             self._autoeq = None;
             self.autoeq_results.clear();
+            self.autoeq_failed = None;
             cx.notify();
             return;
         }
@@ -549,8 +554,14 @@ impl Dsp {
                     return;
                 }
                 match found {
-                    Ok(found) => dsp.autoeq_results = found,
-                    Err(e) => dsp.last_error = Some(describe(&e)),
+                    Ok(found) => {
+                        dsp.autoeq_results = found;
+                        dsp.autoeq_failed = None;
+                    }
+                    Err(e) => {
+                        dsp.autoeq_results.clear();
+                        dsp.autoeq_failed = Some(describe(&e));
+                    }
                 }
                 cx.notify();
             })

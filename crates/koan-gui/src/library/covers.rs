@@ -24,9 +24,9 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
-use koan_ffi::KoanEngine;
 use koan_kit::app::image::{RenderImage, Rgba};
 use koan_kit::app::*;
+use koan_runtime::KoanEngine;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
@@ -51,8 +51,10 @@ const RETAIN: usize = 32 * 1024 * 1024;
 /// in which a bitmap drawn is never dropped (see `trim`).
 const RELEASE_AFTER: Duration = Duration::from_millis(600);
 
-/// Calls to `admit` this close together are one frame's.
-const FRAME: Duration = Duration::from_millis(4);
+/// How long a decoded sleeve no list asks for is kept staged: a key at the
+/// edge of a fling's reach ahead drops out and back in from frame to frame,
+/// and dropping it at once would decode it again each time.
+const STAGED_GRACE: Duration = Duration::from_millis(500);
 
 /// Draw sizes are rounded up to a multiple of this, so a window being resized
 /// does not decode every tile again at each pixel.
@@ -192,7 +194,9 @@ struct Queue {
     fetches_allowed: bool,
     /// How many fetches may run at once: twice the covers on screen, so
     /// what is shown and where the scroll is heading are fetched together,
-    /// up to `MAX_FETCHES`. Falls as covers land and the screen fills.
+    /// up to `MAX_FETCHES`, and at least a window's start of what is asked,
+    /// so covers asked for off any page still come several at a time. Falls
+    /// as covers land and the screen fills.
     limit: usize,
     /// The congestion window: how many fetches the server is answering
     /// promptly, grown and cut by `observe` as TCP's is. Zero until the first
@@ -201,6 +205,11 @@ struct Queue {
     /// When the window was last cut, so a burst of failures or late answers
     /// from one round trip cuts it once.
     last_cut: Option<Instant>,
+    /// The server's usual time to answer: the first answer, then a moving
+    /// average of those in time. What `late` measures against, so a server
+    /// slow but steady (a small board resizing each cover) is not taken for
+    /// a congested one.
+    usual: Option<Duration>,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
     /// afresh, over whatever file it had.
@@ -253,10 +262,16 @@ impl Queue {
     /// Calls off what must give way, and returns how many places that frees:
     /// every fetch for a record no longer asked for, and, while covers on
     /// screen wait for a place, fetches for records only ahead of the scroll,
-    /// the least urgent first. A fetch for where a flick will land is left to
-    /// finish: it is a cover about to be on screen, and calling it off on
-    /// every re-aim of a fling would ask for it again and again.
+    /// the least urgent first, then those for where a flick will land. Those
+    /// go last: each is a cover about to be on screen, and calling it off on
+    /// every re-aim of a fling would ask for it again and again; but covers
+    /// on screen come first.
     fn give_way(&mut self) -> usize {
+        // Nothing in flight, nothing to call off: every scroll frame with a
+        // warm cache ends here.
+        if self.fetching.is_empty() {
+            return 0;
+        }
         // Each record's most urgent request, once: a record shown at two
         // sizes is one fetch and one cover waiting.
         let mut urgency: HashMap<Art, Priority> = HashMap::with_capacity(self.wanted.len());
@@ -286,21 +301,23 @@ impl Queue {
             .allowed()
             .saturating_sub(self.fetching.len() - called_off.len());
         if visible_waiting > free {
-            let mut ahead: Vec<(Art, f32)> = self
+            // Least urgent first: what is only ahead, the farthest first,
+            // then the landing spot, the farthest first.
+            let mut yielding: Vec<(Art, bool, f32)> = self
                 .fetching
                 .iter()
                 .filter_map(|art| match urgency.get(art) {
-                    Some(Priority::Ahead(d)) => Some((*art, *d)),
+                    Some(Priority::Ahead(d)) => Some((*art, false, *d)),
+                    Some(Priority::Landing(d)) => Some((*art, true, *d)),
                     _ => None,
                 })
                 .collect();
-            // Least urgent first: the farthest ahead.
-            ahead.sort_by(|a, b| b.1.total_cmp(&a.1));
+            yielding.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.total_cmp(&a.2)));
             called_off.extend(
-                ahead
+                yielding
                     .into_iter()
                     .take(visible_waiting - free)
-                    .map(|(art, _)| art),
+                    .map(|(art, _, _)| art),
             );
         }
         for art in &called_off {
@@ -327,26 +344,38 @@ impl Queue {
     /// per round trip, but only while it is what holds fetches back: grown
     /// while the screen asks for fewer, it would climb untested and let a
     /// fast scroll send hundreds at once. A failure, or an answer slower than
-    /// `LATE`, halves it, once per `SETTLE`: a server that slows and stays
-    /// slow is cut every round trip until it answers in time. Answers quick
+    /// `late` (`LATE`, or `LATE_FACTOR` times the server's usual time where
+    /// that is longer), halves it, once per round trip: an answer to a fetch `sent`
+    /// before the last cut was asked at the old window, and neither cuts it
+    /// again nor grows it back. A server that slows and stays slow is cut
+    /// every round trip until it answers in time. Answers quick
     /// and slow alike within `LATE` never cut it, since a server answers a
     /// cover it keeps in milliseconds and one it reads off a disk in hundreds,
     /// in runs as long as the grid's order makes them. Returns whether the
     /// window grew by a whole place, which wakes one more fetcher.
-    fn observe(&mut self, took: Duration, ok: bool) -> bool {
+    fn observe(&mut self, took: Duration, sent: Instant, ok: bool) -> bool {
         let before = self.allowed();
         if self.window == 0.0 {
             self.window = WINDOW_START as f64;
         }
-        if !ok || took > LATE {
-            if self.last_cut.is_none_or(|at| at.elapsed() > SETTLE) {
-                self.cut(format_args!(
-                    "a fetch {} after {} ms",
-                    if ok { "answered" } else { "failed" },
-                    took.as_millis()
-                ));
-            }
+        if self.last_cut.is_some_and(|at| sent <= at) {
             return false;
+        }
+        // The first answer is the server's usual time until others say more.
+        let first = ok && self.usual.is_none();
+        if first {
+            self.usual = Some(took);
+        }
+        if !ok || took > self.late() {
+            self.cut(format_args!(
+                "a fetch {} after {} ms",
+                if ok { "answered" } else { "failed" },
+                took.as_millis()
+            ));
+            return false;
+        }
+        if !first && let Some(usual) = self.usual {
+            self.usual = Some(usual.mul_f64(7.0 / 8.0) + took.mul_f64(1.0 / 8.0));
         }
         // This answer's place included: every place the window allows was
         // taken.
@@ -356,19 +385,29 @@ impl Queue {
         self.allowed() > before
     }
 
+    /// How slow an answer is to count as the server struggling.
+    fn late(&self) -> Duration {
+        self.usual
+            .map_or(LATE, |usual| usual.mul_f64(LATE_FACTOR).max(LATE))
+    }
+
     fn cut(&mut self, why: std::fmt::Arguments) {
         self.window = (self.window / 2.0).max(WINDOW_MIN as f64);
         self.last_cut = Some(Instant::now());
         log::debug!("covers: {why}; window now {}", self.window as usize);
     }
 
-    /// A fetch done: its place is freed, unless it was called off and the
-    /// record has been started again since.
-    fn finish(&mut self, art: Art, ticket: u64) {
-        if self.cancels.get(&art).is_some_and(|(t, _)| *t == ticket) {
+    /// A fetch done: its place is freed, unless it was called off (its place
+    /// freed then) and the record has been started again since. Returns
+    /// whether it still held its place: one called off that finished anyway
+    /// tells nothing about the window it was not counted in.
+    fn finish(&mut self, art: Art, ticket: u64) -> bool {
+        let held = self.cancels.get(&art).is_some_and(|(t, _)| *t == ticket);
+        if held {
             self.cancels.remove(&art);
             self.fetching.remove(&art);
         }
+        held
     }
 
     fn next_fetch(&self) -> Option<Art> {
@@ -422,12 +461,11 @@ const WINDOW_START: usize = 16;
 /// fetch before it ends.
 const FETCHER_IDLE: Duration = Duration::from_secs(30);
 const WINDOW_MIN: usize = 8;
-/// An answer slower than this is the server struggling, not a cover read
-/// off a disk: the window is cut for it as for a failure.
+/// An answer slower than this, and than `LATE_FACTOR` times the server's
+/// usual time, is the server struggling, not a cover read off a disk: the
+/// window is cut for it as for a failure.
 const LATE: Duration = Duration::from_secs(2);
-/// The least time between two cuts: about a round trip, so the answers of
-/// one round trip cut the window once.
-const SETTLE: Duration = Duration::from_millis(500);
+const LATE_FACTOR: f64 = 4.0;
 
 enum Done {
     Decoded {
@@ -458,11 +496,14 @@ pub struct Covers {
     /// walk of every bitmap.
     sizes: HashMap<Art, SmallVec<[u32; 4]>>,
     memory_bytes: usize,
-    /// Decoded, not yet in memory: admitted a few a frame (`admit`).
-    staged: HashMap<Key, (Arc<RenderImage>, u64)>,
-    /// This frame's uploads so far, and when the frame began: every list and
-    /// page drawn in one frame shares one budget (`admit`).
-    uploaded: (Instant, usize),
+    /// Decoded, not yet in memory: admitted a few a frame (`admit`), with
+    /// its generation and when it was staged.
+    staged: HashMap<Key, (Arc<RenderImage>, u64, Instant)>,
+    /// A trim is waiting for bitmaps drawn a moment ago to become droppable.
+    trim_waiting: bool,
+    /// This frame's uploads so far, and which window's frame it is: every
+    /// list and page drawn in one frame shares one budget (`admit`).
+    uploaded: (Option<(WindowId, u64)>, usize),
     /// Each record's colour, kept once known: what its tile shows while its
     /// sleeve waits for the atlas, or after it is evicted. A few bytes each.
     colours: HashMap<Art, Hsla>,
@@ -544,7 +585,8 @@ impl Covers {
             sizes: HashMap::new(),
             memory_bytes: 0,
             staged: HashMap::new(),
-            uploaded: (Instant::now(), 0),
+            trim_waiting: false,
+            uploaded: (None, 0),
             colours: HashMap::new(),
             requests: HashMap::new(),
             evictions_seq: 0,
@@ -584,6 +626,11 @@ impl Covers {
         }
     }
 
+    /// The bytes of the bitmaps held, for the benches.
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+
     pub fn is_absent(&self, art: Art) -> bool {
         self.shared.queue.lock().absent.contains(&art)
     }
@@ -597,8 +644,15 @@ impl Covers {
     /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
     /// longer asks for is not started on its account. A record that comes on
     /// screen after a failed fetch is tried again. Never notifies, so it can
-    /// be called while drawing.
-    pub fn request(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
+    /// be called while drawing. Asking for less (a scroll come to rest) trims
+    /// memory back to the smaller budget once nothing can be drawing what
+    /// went.
+    pub fn request(
+        &mut self,
+        owner: EntityId,
+        ranked: impl IntoIterator<Item = (Key, Priority)>,
+        cx: &mut Context<Self>,
+    ) {
         // A key ranked twice keeps its most urgent ranking.
         let mut wanted: HashMap<Key, Priority> = HashMap::new();
         for (key, priority) in ranked {
@@ -628,8 +682,16 @@ impl Covers {
                 queue.failed.remove(&art);
             }
         }
+        let shrank = previous.is_some_and(|prev| wanted.len() < prev.len());
         self.requests.insert(owner, wanted);
         self.publish();
+        if shrank
+            && !self.trim_waiting
+            && self.memory_bytes > RETAIN
+            && self.memory_bytes > Self::budget(&self.asked())
+        {
+            self.trim_later(cx);
+        }
     }
 
     /// A list or page going away: nothing it asked for is wanted on its
@@ -644,7 +706,7 @@ impl Covers {
                 cx.background_executor().timer(RELEASE_AFTER).await;
                 this.update(cx, |covers, cx| {
                     let asked = covers.asked();
-                    covers.drop_stale_staged(&asked);
+                    covers.drop_stale_staged(&asked, Duration::ZERO);
                     covers.trim(None, cx);
                 })
                 .ok();
@@ -682,7 +744,9 @@ impl Covers {
         }
         queue.failed.clear();
         let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+        let threads = queue.limit;
         drop(queue);
+        self.grow_fetchers(threads);
         self.shared.wake(fetches, 0);
     }
 
@@ -739,11 +803,17 @@ impl Covers {
             .keys()
             .filter(|k| !queue.wanted.contains_key(k) && queue.decodable(k))
             .count();
-        let shown = wanted
+        let pending = wanted
             .iter()
-            .filter(|(k, p)| **p == Priority::Visible && !queue.on_disk.contains(&k.art))
-            .count();
-        queue.limit = (shown * 2).clamp(1, MAX_FETCHES);
+            .filter(|(k, _)| !queue.on_disk.contains(&k.art));
+        let (shown, asked) = pending.fold((0, 0), |(shown, asked), (_, p)| {
+            (shown + usize::from(*p == Priority::Visible), asked + 1)
+        });
+        // Twice what is on screen; and with nothing on screen (the sidebar's
+        // faces, no page up) a window's start of what is asked.
+        queue.limit = (shown * 2)
+            .max(asked.min(WINDOW_START))
+            .clamp(1, MAX_FETCHES);
         queue.set_wanted(wanted);
         // The abandoned still hold threads while they finish: enough more
         // that the limit's worth run beside them, under the ceiling.
@@ -785,7 +855,7 @@ impl Covers {
                 }
                 drop(queue);
                 self.colours.insert(key.art, colour);
-                self.staged.insert(key, (image, generation));
+                self.staged.insert(key, (image, generation, Instant::now()));
             }
             Done::Absent => {}
         }
@@ -806,10 +876,18 @@ impl Covers {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.staged.is_empty() {
+            // A fling's reach ahead has ended: what it held is trimmed once
+            // nothing drew it a moment ago.
+            if !self.trim_waiting
+                && self.memory_bytes > RETAIN
+                && self.memory_bytes > Self::budget(&self.asked())
+            {
+                self.trim_later(cx);
+            }
             return false;
         }
         let asked = self.asked();
-        self.drop_stale_staged(&asked);
+        self.drop_stale_staged(&asked, STAGED_GRACE);
         if self.staged.is_empty() {
             return false;
         }
@@ -826,12 +904,12 @@ impl Covers {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
-        let now = Instant::now();
-        let recent = now - Duration::from_millis(500);
-        // One budget a frame, however many lists admit in it: a call within
-        // a few milliseconds of the last is the same frame's.
-        if now.duration_since(self.uploaded.0) > FRAME {
-            self.uploaded = (now, 0);
+        // One budget a frame, however many lists admit in it.
+        let frame = window
+            .as_deref()
+            .map(|w| (w.window_handle().window_id(), w.frame_number()));
+        if frame.is_none() || frame != self.uploaded.0 {
+            self.uploaded = (frame, 0);
         }
         let mut spent = self.uploaded.1;
         let fresh = spent == 0;
@@ -839,7 +917,7 @@ impl Covers {
             if (!fresh || spent > 0) && spent >= budget {
                 break;
             }
-            let Some((image, generation)) = self.staged.remove(&key) else {
+            let Some((image, generation, _)) = self.staged.remove(&key) else {
                 continue;
             };
             if current != generation {
@@ -863,8 +941,8 @@ impl Covers {
             }
             self.memory_bytes += bytes;
             // Its other sizes stood in while this one decoded; those nobody
-            // asks for, nothing holds and nothing drew in the last moment go
-            // now (see `trim`).
+            // asks for and nothing holds go now. One drawn a moment ago is
+            // not drawn again: this frame's paint finds this size.
             let stand_ins: SmallVec<[u32; 4]> = self.sizes[&key.art]
                 .iter()
                 .copied()
@@ -878,7 +956,7 @@ impl Covers {
                         && self
                             .memory
                             .get(&other)
-                            .is_some_and(|h| h.used < recent && Arc::strong_count(&h.image) == 1)
+                            .is_some_and(|h| Arc::strong_count(&h.image) == 1)
                 })
                 .collect();
             for px in stand_ins {
@@ -892,14 +970,16 @@ impl Covers {
         !self.staged.is_empty()
     }
 
-    /// Decoded for a list that has since scrolled past or gone: dropped
-    /// rather than held, and decoded again if it is asked for again.
-    fn drop_stale_staged(&mut self, asked: &HashMap<Key, Priority>) {
+    /// Decoded for a list that has since scrolled past or gone, longer ago
+    /// than `grace`: dropped rather than held, and decoded again if it is
+    /// asked for again.
+    fn drop_stale_staged(&mut self, asked: &HashMap<Key, Priority>, grace: Duration) {
+        let now = Instant::now();
         let stale: Vec<Key> = self
             .staged
-            .keys()
-            .filter(|k| !asked.contains_key(k))
-            .copied()
+            .iter()
+            .filter(|(k, (_, _, at))| !asked.contains_key(k) && now.duration_since(*at) >= grace)
+            .map(|(k, _)| *k)
             .collect();
         if !stale.is_empty() {
             let mut queue = self.shared.queue.lock();
@@ -943,10 +1023,15 @@ impl Covers {
             Some(Priority::Landing(_)) => 2.0,
             Some(Priority::Visible) => 3.0,
         };
+        let mut young = false;
         let mut candidates: Vec<(Key, f32, Instant)> = self
             .memory
             .iter()
-            .filter(|(_, h)| h.used < recent && Arc::strong_count(&h.image) == 1)
+            .filter(|(_, h)| Arc::strong_count(&h.image) == 1)
+            .filter(|(_, h)| {
+                young |= h.used >= recent;
+                h.used < recent
+            })
             .map(|(k, h)| (*k, rank(k), h.used))
             .collect();
         candidates.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.2.cmp(&b.2)));
@@ -962,6 +1047,31 @@ impl Covers {
         for key in dropped {
             queue.decoded.remove(&key);
         }
+        drop(queue);
+        if young && self.memory_bytes > target {
+            self.trim_later(cx);
+        }
+    }
+
+    /// Trims once the bitmaps drawn a moment ago can be dropped, outside any
+    /// window's update. One at a time; nothing is scheduled while nothing is
+    /// over budget, so an idle grid does no work.
+    fn trim_later(&mut self, cx: &mut Context<Self>) {
+        if self.trim_waiting {
+            return;
+        }
+        self.trim_waiting = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RELEASE_AFTER).await;
+            this.update(cx, |covers, cx| {
+                covers.trim_waiting = false;
+                let asked = covers.asked();
+                covers.drop_stale_staged(&asked, STAGED_GRACE);
+                covers.trim(None, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Forget what the library has deleted since last asked: its files, its
@@ -1079,11 +1189,13 @@ impl Covers {
         }
         queue.fetches_allowed = true;
         let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+        let threads = queue.limit;
         drop(queue);
+        self.grow_fetchers(threads);
         self.shared.wake(fetches, 0);
     }
 
-    fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
+    fn evict(&mut self, gone: koan_runtime::ArtEvictions, cx: &mut Context<Self>) {
         // The mark is older than what the library keeps, or another
         // database's: any cover here may be another record's now.
         if gone.purge {
@@ -1118,32 +1230,40 @@ impl Covers {
         }
         if !arts.is_empty() {
             let (dir, shared, arts) = (self.dir.clone(), self.shared.clone(), arts.clone());
-            cx.background_executor()
-                .spawn(async move {
-                    let disk = shared.disk.lock();
-                    for art in &arts {
-                        std::fs::remove_file(dir.join(art.filename())).ok();
-                    }
-                    drop(disk);
-                    let mut queue = shared.queue.lock();
-                    for art in &arts {
-                        if let Some(n) = queue.evicting.get_mut(art) {
-                            *n -= 1;
-                            if *n == 0 {
-                                queue.evicting.remove(art);
-                            }
+            let unlinked = cx.background_executor().spawn(async move {
+                let disk = shared.disk.lock();
+                for art in &arts {
+                    std::fs::remove_file(dir.join(art.filename())).ok();
+                }
+                drop(disk);
+                let mut queue = shared.queue.lock();
+                for art in &arts {
+                    if let Some(n) = queue.evicting.get_mut(art) {
+                        *n -= 1;
+                        if *n == 0 {
+                            queue.evicting.remove(art);
                         }
                     }
-                    // What is on screen under those ids is the new record's.
-                    let fetches = queue
-                        .wanted
-                        .keys()
-                        .filter(|k| arts.contains(&k.art) && queue.fetchable(k))
-                        .count();
-                    drop(queue);
-                    shared.wake(fetches, 0);
+                }
+                // What is on screen under those ids is the new record's.
+                queue
+                    .wanted
+                    .keys()
+                    .filter(|k| arts.contains(&k.art) && queue.fetchable(k))
+                    .count()
+            });
+            // Fetch threads idle long enough have ended: as many as the limit
+            // again, as a publish would.
+            cx.spawn(async move |this, cx| {
+                let fetches = unlinked.await;
+                this.update(cx, |covers, _| {
+                    let threads = covers.shared.queue.lock().limit;
+                    covers.grow_fetchers(threads);
+                    covers.shared.wake(fetches, 0);
                 })
-                .detach();
+                .ok();
+            })
+            .detach();
         }
         self.staged.retain(|k, _| !arts.contains(&k.art));
         for art in &arts {
@@ -1323,6 +1443,9 @@ fn fetch_lane(
                     continue;
                 }
             };
+        // The server's time, not the disk's: a rename waiting on an
+        // eviction is no sign of a congested server.
+        let took = started.elapsed();
         // Written beside its final name and renamed only while the record
         // is still the one fetched. An eviction after the check unlinks the
         // file once the rename is done, and moves the generation, so the
@@ -1345,8 +1468,8 @@ fn fetch_lane(
             renamed
         });
         let mut queue = shared.queue.lock();
-        queue.finish(art, ticket);
-        let grew = queue.observe(started.elapsed(), fetched.is_ok());
+        let held = queue.finish(art, ticket);
+        let grew = held && queue.observe(took, started, fetched.is_ok());
         let current = queue.generation(art) == generation;
         let mut absent = false;
         match fetched {
@@ -1601,7 +1724,7 @@ mod tests {
         for i in 0..2000 {
             q.fetching = (0..q.allowed() as i64 - 1).map(Art::Album).collect();
             let took = if (i / 200) % 2 == 0 { 40 } else { 900 };
-            q.observe(Duration::from_millis(took), true);
+            q.observe(Duration::from_millis(took), Instant::now(), true);
         }
         assert!(q.allowed() > WINDOW_START * 2, "{}", q.allowed());
     }
@@ -1617,7 +1740,7 @@ mod tests {
         };
         for _ in 0..5000 {
             q.fetching = (0..3).map(Art::Album).collect();
-            q.observe(Duration::from_millis(50), true);
+            q.observe(Duration::from_millis(50), Instant::now(), true);
         }
         assert_eq!(q.window as usize, WINDOW_START);
     }
@@ -1633,32 +1756,34 @@ mod tests {
         };
         for _ in 0..2000 {
             q.fetching = (0..q.window as i64).map(Art::Album).collect();
-            q.observe(Duration::from_millis(100), true);
+            q.observe(Duration::from_millis(100), Instant::now(), true);
         }
         let grown = q.allowed();
         assert!(grown > WINDOW_START, "{grown}");
-        q.observe(Duration::from_millis(2500), true);
+        // Both sent before the cut the first makes.
+        let sent = Instant::now();
+        q.observe(Duration::from_millis(2500), sent, true);
         assert_eq!(q.allowed(), grown / 2, "cut at once");
-        q.observe(Duration::from_millis(2500), true);
+        q.observe(Duration::from_millis(2500), sent, true);
         assert_eq!(q.allowed(), grown / 2, "once per round trip");
         for _ in 0..20 {
             q.last_cut = None;
-            q.observe(Duration::from_millis(2500), true);
+            q.observe(Duration::from_millis(2500), Instant::now(), true);
         }
         assert_eq!(q.allowed(), WINDOW_MIN);
         q.window = 64.0;
         q.last_cut = None;
-        q.observe(Duration::from_secs(30), false);
+        q.observe(Duration::from_secs(30), Instant::now(), false);
         assert_eq!(q.allowed(), 32);
         q.limit = 3;
         assert_eq!(q.allowed(), 3);
     }
 
     /// Covers on screen waiting call off fetches for records only ahead of
-    /// the scroll, never those for where a flick lands, and a record shown at
+    /// the scroll before those for where a flick lands, and a record shown at
     /// two sizes counts once.
     #[test]
-    fn the_landing_spot_is_not_called_off() {
+    fn the_landing_spot_is_called_off_last() {
         let mut q = Queue {
             fetches_allowed: true,
             limit: 4,
@@ -1688,6 +1813,52 @@ mod tests {
         for id in 1..=3 {
             assert!(q.fetching.contains(&Art::Album(id)));
         }
+        // A screen of covers waiting: what is ahead goes, then the landing
+        // spot, the farthest first.
+        for id in 20..22 {
+            q.want(key(id, 64), Priority::Visible);
+        }
+        assert_eq!(q.give_way(), 2);
+        assert_eq!(
+            q.fetching,
+            [Art::Album(1)].into_iter().collect::<HashSet<_>>()
+        );
+    }
+
+    /// A fetch called off that answers anyway leaves the window alone: its
+    /// place was freed when it was called off.
+    #[test]
+    fn a_fetch_called_off_tells_nothing() {
+        let mut q = Queue::default();
+        let art = Art::Album(1);
+        let (cancel, _) = futures_channel::oneshot::channel();
+        q.fetching.insert(art);
+        q.cancels.insert(art, (7, cancel));
+        assert!(q.finish(art, 7));
+        let (cancel, _) = futures_channel::oneshot::channel();
+        q.fetching.insert(art);
+        q.cancels.insert(art, (8, cancel));
+        assert!(!q.finish(art, 7), "started again since");
+        assert!(q.fetching.contains(&art));
+    }
+
+    /// A server that is slow but steady keeps its window: late is measured
+    /// against its usual time, not a fixed one. A sudden slowdown past that
+    /// still cuts it.
+    #[test]
+    fn a_slow_steady_server_is_not_cut() {
+        let mut q = Queue {
+            limit: 512,
+            ..Queue::default()
+        };
+        for _ in 0..500 {
+            q.fetching = (0..q.window.max(1.0) as i64).map(Art::Album).collect();
+            q.observe(Duration::from_millis(3000), Instant::now(), true);
+        }
+        assert!(q.allowed() > WINDOW_START, "{}", q.allowed());
+        let grown = q.allowed();
+        q.observe(Duration::from_secs(20), Instant::now(), true);
+        assert_eq!(q.allowed(), grown / 2);
     }
 
     /// After a fling every place is held by fetches for covers off screen,

@@ -11,7 +11,7 @@ pub struct Code(QrCode);
 impl Code {
     /// The engine's code for `text`.
     pub fn new(text: &str) -> Option<Code> {
-        let code = koan_ffi::qr_code(text.to_owned())?;
+        let code = koan_runtime::qr_code(text.to_owned())?;
         Some(Code(QrCode::new(&code.dark, code.width as usize)))
     }
 

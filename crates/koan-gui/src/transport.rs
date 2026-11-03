@@ -5,10 +5,10 @@
 
 use std::time::{Duration, Instant};
 
-use koan_ffi::{
+use koan_kit::app::*;
+use koan_runtime::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
-use koan_kit::app::*;
 
 use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
@@ -40,6 +40,8 @@ pub struct Transport {
     /// The device controlled, to name it while it has not said what it
     /// plays through.
     devices: Entity<Slice<Devices>>,
+    /// What the control button shows of the devices, last drawn.
+    controlled_shown: ControlledShown,
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
@@ -47,6 +49,8 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: CoverArt,
+    /// The display's scale as of the last frame, which sizes the sleeve.
+    scale: f32,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -160,14 +164,20 @@ impl Transport {
                 cx.observe(&mirror.renderers, |this, _, cx| this.refill_output(cx)),
                 // The control button names the device controlled, and its
                 // menu follows the devices while it is open.
-                cx.observe(&mirror.devices, |this, _, cx| {
+                cx.observe(&mirror.devices, |this, devices, cx| {
                     if let Some(menu) = this.menus.menu(Menu::Devices).cloned() {
                         let view = crate::devices::ControlView::read(cx);
                         menu.update(cx, |menu, cx| {
                             menu.refill(cx, |menu, _| crate::devices::control_menu(menu, &view))
                         });
                     }
-                    cx.notify();
+                    // Other devices report their playheads through this
+                    // slice; the bar redraws only when what it shows moves.
+                    let shown = controlled_shown(&devices.read(cx).0);
+                    if shown != this.controlled_shown {
+                        this.controlled_shown = shown;
+                        cx.notify();
+                    }
                 }),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
@@ -180,7 +190,7 @@ impl Transport {
                             .entry
                             .as_ref()
                             .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, cx).is_some() {
+                        if covers::image(album, COVER, this.scale, cx).is_some() {
                             cx.notify();
                         }
                     }
@@ -206,9 +216,11 @@ impl Transport {
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
+            controlled_shown: controlled_shown(&mirror.devices.read(cx).0),
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
+            scale: 2.0,
             eq: None,
             eq_profile: None,
             eq_library: mirror.library.read(cx).version,
@@ -359,7 +371,7 @@ impl Transport {
         let view = &self.devices.read(cx).0;
         let away = matches!(
             view.target_reach,
-            Some(koan_ffi::DeviceReach::OutOfReach { .. })
+            Some(koan_runtime::DeviceReach::OutOfReach { .. })
         );
         let name = view.target.as_ref().map(|t| {
             view.devices
@@ -474,7 +486,7 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
 /// whenever one of them moves while it is open.
 struct OutputView {
     /// `None` while the device controlled has not said what it plays through.
-    outputs: Option<koan_ffi::OutputsInfo>,
+    outputs: Option<koan_runtime::OutputsInfo>,
     /// Why the renderer played to skipped its last track, until one plays.
     problem: Option<String>,
     /// The EQ profile the stream playing goes through.
@@ -492,13 +504,17 @@ struct OutputView {
 /// has its EQ button, in the accent while an EQ is in force there. Under the
 /// renderer in use, its own volume and what it is sent.
 fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
-    let menu = menu.min_width(ThemeMenu::PICKER_WIDTH);
+    let menu = menu.width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
-        let name = view.controlled.as_deref().unwrap_or("That device");
-        return menu.note(format!(
-            "{name} has not said what it plays through. It may need updating."
-        ));
+        // This device's own outputs are on their way; another device that
+        // never says is one from before outputs were reported.
+        return menu.note(match view.controlled.as_deref() {
+            Some(name) => {
+                format!("{name} has not said what it plays through. It may need updating.")
+            }
+            None => "This device's outputs are still being read.".to_owned(),
+        });
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry
@@ -516,7 +532,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
             crate::dsp::window::open(Some(id.clone()), cx);
         })
     };
-    let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
+    let preset = |o: &koan_runtime::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
         (Some(preset), false) => preset.clone(),
         (None, true) => "unsaved".into(),
@@ -745,12 +761,16 @@ fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<D
     } else {
         gap
     };
+    // A glyph's reach can pass its neighbour's at small gaps: each item
+    // blocks the ones drawn before it, so a press in the overlap goes to
+    // one item, never two.
     base.flex()
         .items_center()
         .justify_center()
         .h(theme::HIT)
         .px(reach)
         .mx(-reach)
+        .occlude()
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
 }
@@ -782,7 +802,8 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
+        self.scale = window.scale_factor();
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, self.scale, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -1440,6 +1461,24 @@ impl Render for Seek {
             .items_center()
             .child(div().w_full().child(slider))
     }
+}
+
+/// What the control button draws from the devices: the device controlled,
+/// how it can be reached, and its name.
+type ControlledShown = (
+    Option<String>,
+    Option<koan_runtime::DeviceReach>,
+    Option<String>,
+);
+
+fn controlled_shown(view: &Devices) -> ControlledShown {
+    let name = view.target.as_ref().and_then(|t| {
+        view.devices
+            .iter()
+            .find(|d| &d.id == t)
+            .map(|d| d.name.clone())
+    });
+    (view.target.clone(), view.target_reach.clone(), name)
 }
 
 #[cfg(test)]

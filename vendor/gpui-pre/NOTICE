@@ -1,0 +1,5 @@
+gpui-pre 0.3.10, modified
+
+This is a copy of the gpui-pre 0.3.10 crate as published on crates.io (Zed's GPUI, https://github.com/zed-industries/zed), licensed under the Apache License 2.0 (LICENSE-APACHE), with changes made by the kōan project (https://github.com/radiosilence/koan). Each change is marked with a `KOAN:` comment; vendor/patches/gpui-pre.patch in that repository is the whole of it.
+
+The accessibility replay for reused views (src/view.rs, src/window.rs, src/window/a11y.rs, src/window/a11y/debug.rs) is the Wormhole project's change to gpui-pre 0.3.9 (https://github.com/wormhole-terminal/gpui-pre, commit 7b47af1, "view: a reused view keeps its accessibility nodes and action listeners"), modified by the Wormhole project and licensed under the Apache License 2.0.

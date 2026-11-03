@@ -6,9 +6,9 @@
 
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_ffi::{ConnectedInfo, ServerQueue};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{ConnectedInfo, ServerQueue};
 
 use super::server::host;
 use crate::settings::Ctx;
@@ -54,7 +54,7 @@ impl DevicesPane {
                 |pane, state, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
                         let typed = state.read(cx).value().to_string();
-                        let shown = koan_ffi::format_pair_code(typed.clone());
+                        let shown = koan_runtime::format_pair_code(typed.clone());
                         if shown != typed {
                             state.update(cx, |s, cx| s.set_value(shown, window, cx));
                         }
@@ -142,6 +142,7 @@ impl DevicesPane {
                     let (signed, declined) = (device.clone(), device.clone());
                     let who = username.clone();
                     let sheet = Sheet::new(format!("Sign in {device}?"))
+                        .about(typed.clone())
                         .message(format!(
                             "{origin}\n\nIt will be signed in as {username} on {host_name}. Allow only a device you are setting up yourself: anyone can give a device any name."
                         ))
@@ -716,7 +717,7 @@ impl Render for DevicesPane {
 /// Staying reachable with the window closed, as the Mac's "In the
 /// background": kept running, and opening at login, which the system owns.
 fn background(
-    settings: &koan_ffi::Settings,
+    settings: &koan_runtime::Settings,
     model: &Entity<crate::settings::model::SettingsModel>,
     look: &Look,
     cx: &App,

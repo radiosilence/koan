@@ -10,7 +10,7 @@ use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
 };
 
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
     Stopped,
     Playing,
@@ -27,7 +27,7 @@ impl From<PlaybackState> for PlayState {
     }
 }
 
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryStatus {
     Queued,
     Playing,
@@ -51,7 +51,7 @@ impl From<QueueEntryStatus> for EntryStatus {
 }
 
 /// This device and the account's play queue on the server.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServerQueue {
     /// This device keeps its queue there.
     pub on: bool,
@@ -61,7 +61,7 @@ pub struct ServerQueue {
     pub saved_by: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Artist {
     pub id: i64,
     pub name: String,
@@ -86,7 +86,7 @@ impl From<ArtistRow> for Artist {
 /// artist, or the plain text joining two names. A credit's parts, in order,
 /// read as the credit does, or as its artists joined by commas where a name
 /// could not be found in it. See `koan_core::helpers::credit_parts`.
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CreditPart {
     pub text: String,
     pub artist_id: Option<i64>,
@@ -129,7 +129,7 @@ impl From<helpers::RowCredits> for Credits {
 /// A row's place among the records of a list. See
 /// `koan_core::helpers::RunRole`: a heading goes above each `Opens` row,
 /// drawn from that row's record.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RunRole {
     Alone,
     Single,
@@ -159,7 +159,7 @@ pub(crate) fn credit_parts(
         .collect()
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Album {
     pub id: i64,
     pub title: String,
@@ -187,7 +187,7 @@ pub struct Album {
 
 /// The sections of an artist's page, in page order. Titled by
 /// `release_section_title`.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReleaseSection {
     Albums,
     EpsAndSingles,
@@ -221,7 +221,7 @@ impl From<ReleaseSection> for helpers::ReleaseSection {
 }
 
 /// Of a record's tracks, how many can play here.
-#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AlbumOnDevice {
     pub have: u32,
     pub total: u32,
@@ -256,7 +256,7 @@ impl Album {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Track {
     pub id: i64,
     pub title: String,
@@ -299,7 +299,7 @@ pub struct Track {
 
 /// Everything known about one track, for an info view: the track as lists
 /// show it, what each of its sources says, and the ReplayGain in its file.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct TrackDetails {
     pub track: Track,
     pub uid: Option<String>,
@@ -310,14 +310,14 @@ pub struct TrackDetails {
 }
 
 /// One source of a track, as a list of what it says, empty values left out.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct TrackSource {
     /// `"file"` or `"server"`.
     pub kind: String,
     pub fields: Vec<InfoField>,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct InfoField {
     pub name: String,
     pub value: String,
@@ -345,7 +345,7 @@ impl From<queries::TrackMeta> for TrackSource {
 }
 
 /// What was played lately, each once and newest first by its latest play.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RecentlyPlayed {
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
@@ -354,7 +354,7 @@ pub struct RecentlyPlayed {
 
 /// What the Apple TV's Top Shelf shows: the records played lately and the
 /// favourite records, in the order their shelf pages list them.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct TopShelf {
     pub recent: Vec<TopShelfRecord>,
     pub favourites: Vec<TopShelfRecord>,
@@ -362,14 +362,14 @@ pub struct TopShelf {
 
 /// A record on the Top Shelf, with the uid its link names it by: the shelf is
 /// read while koan is not running, and a row id may by then be another row's.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct TopShelfRecord {
     pub album: Album,
     pub uid: String,
 }
 
 /// Which shelf: see `koan_core::shelves::Shelf`.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum ShelfKind {
     Favourites,
     Recent,
@@ -378,7 +378,7 @@ pub enum ShelfKind {
 }
 
 /// The first few of each kind on a shelf, and how many there are in all.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ShelfSummary {
     pub artists: Vec<Artist>,
     pub artist_total: u64,
@@ -389,7 +389,7 @@ pub struct ShelfSummary {
 }
 
 /// One play, with the track it played.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PlayHistoryEntry {
     /// Identifies this play, not the track — the same track played twice is
     /// two entries with two ids.
@@ -441,7 +441,7 @@ impl Track {
 
 /// Audio format of the track on the wire right now — what the DAC is actually
 /// being fed, as opposed to what the database claims.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StreamFormat {
     pub codec: String,
     pub sample_rate: u32,
@@ -464,7 +464,7 @@ pub struct StreamFormat {
 }
 
 /// The output device's DSP profile, while one is running.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspInfo {
     pub profile: String,
     pub eq: bool,
@@ -503,7 +503,7 @@ impl StreamFormat {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NowPlaying {
     pub state: PlayState,
     /// Waiting for the track under the cursor to arrive. With `Stopped` it
@@ -538,7 +538,7 @@ pub struct NowPlaying {
 
 /// A sleep timer to set: stop after a while, or at the end of the track or
 /// record playing.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SleepTimer {
     After { minutes: u32 },
     EndOfTrack,
@@ -557,7 +557,7 @@ impl From<SleepTimer> for koan_core::player::state::SleepTimer {
 
 /// A sleep timer that is set. A time rather than what is left, so a client
 /// counts down for itself.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SleepState {
     /// Milliseconds since the Unix epoch.
     At {
@@ -579,7 +579,7 @@ impl From<koan_core::player::state::Sleep> for SleepState {
 }
 
 /// What follows a track at its end.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
     Off,
     /// The last track runs on into the first.
@@ -609,7 +609,7 @@ impl From<RepeatMode> for koan_core::player::state::Repeat {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueueItem {
     pub queue_item_id: String,
     pub track_id: Option<i64>,
@@ -664,7 +664,7 @@ pub struct QueueItem {
 ///
 /// Identified by its track: a track is fetched once, however many queue entries
 /// want it, and a queue row finds its transfer by the track it plays.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Transfer {
     pub track_id: i64,
     /// The record it belongs to, so a record's tile can say it is downloading.
@@ -686,7 +686,7 @@ pub struct Transfer {
 /// The volatile half of a `Transfer`, split out so the two travel at their own
 /// rates. Serves both the figure on a queue row and the row on the downloads
 /// page — one reading of one fact, so they cannot disagree.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TransferFigure {
     pub track_id: i64,
     /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
@@ -699,7 +699,7 @@ pub struct TransferFigure {
     pub bytes_per_second: u64,
 }
 
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferState {
     Queued,
     Running,
@@ -868,7 +868,7 @@ impl QueueItem {
 ///
 /// The page wants both and wants them together, so they are one call: one hop
 /// across the boundary, one connection out of the pool, one lock taken.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct AlbumPage {
     pub album: Option<Album>,
     pub tracks: Vec<Track>,
@@ -879,14 +879,14 @@ pub struct AlbumPage {
 /// `skipped` is the point of this being a record rather than a bare string: a
 /// selection mixing local-only files with server-backed ones produces a link
 /// that is partial, and the UI has to be able to say so.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Share {
     pub url: String,
     pub shared: u32,
     pub skipped: u32,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Stats {
     pub total_tracks: i64,
     pub local_tracks: i64,
@@ -909,7 +909,7 @@ impl From<LibraryStats> for Stats {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Device {
     pub name: String,
     pub sample_rates: Vec<f64>,
@@ -920,19 +920,19 @@ pub struct Device {
 
 /// Cover art as raw bytes. The GraphQL surface base64s this because JSON has to;
 /// across FFI it stays binary.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct CoverArt {
     pub data: Vec<u8>,
     pub mime: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct LyricLine {
     pub time_secs: f64,
     pub text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Lyrics {
     pub content: String,
     /// LRC with timestamps, as opposed to a plain text dump.
@@ -968,7 +968,7 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Playlist {
     pub id: i64,
     pub name: String,
@@ -1021,7 +1021,7 @@ impl From<queries::PlaylistRow> for Playlist {
 /// is still that thing, and saying so is what makes following legible — you can
 /// see why an edit to the playlist moved something in the queue, and you can
 /// see the moment it stops.
-#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum QueueLock {
     Playlist { playlist: Playlist },
     Album { album: Album },
@@ -1032,7 +1032,7 @@ pub enum QueueLock {
 /// `entry_id` is the entry's own, not the track's: it is what a queue item
 /// remembers, so a client can tell which of two copies of a song is the one
 /// playing. Named so that a list of them cannot be read as track ids.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PlaylistEntry {
     pub entry_id: i64,
     pub track: Track,
@@ -1041,7 +1041,7 @@ pub struct PlaylistEntry {
 }
 
 /// What writing a playlist out to a file managed.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PlaylistExport {
     pub written: u32,
     /// Tracks with no file on this machine — a playlist file is a list of
@@ -1049,7 +1049,7 @@ pub struct PlaylistExport {
     pub skipped: u32,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ScanSummary {
     pub added: u32,
     pub updated: u32,
@@ -1058,7 +1058,7 @@ pub struct ScanSummary {
     pub errors: Vec<String>,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SyncSummary {
     pub artists: u32,
     pub albums: u32,
@@ -1075,7 +1075,7 @@ pub struct SyncSummary {
 }
 
 /// Which part of a remote sync is running.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncPhase {
     /// Paging through the server's album list. `done` counts albums.
     Albums,
@@ -1089,7 +1089,7 @@ pub enum SyncPhase {
 
 /// How far fetching covers ahead has got: records done of those found
 /// without one.
-#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoverPreload {
     pub done: u64,
     pub total: u64,
@@ -1106,7 +1106,7 @@ impl From<koan_core::remote::covers::Preload> for CoverPreload {
 
 /// How far a remote sync has got. `total` is absent where the server gives no
 /// way to know it in advance.
-#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncProgress {
     pub phase: SyncPhase,
     pub done: u64,
@@ -1130,7 +1130,7 @@ impl From<koan_core::remote::sync::SyncProgress> for SyncProgress {
 }
 
 /// A named pattern from `[organize.patterns]`.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OrganizePattern {
     pub name: String,
     pub pattern: String,
@@ -1139,7 +1139,7 @@ pub struct OrganizePattern {
 }
 
 /// What the pattern means for one file.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanOutcome {
     /// Will be moved, or was.
     Move,
@@ -1154,7 +1154,7 @@ pub enum PlanOutcome {
 
 /// One file's row in the plan: where it is, where the pattern puts it, and
 /// whether that can happen.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OrganizeEntry {
     /// `None` for a file the library holds no row for.
     pub track_id: Option<i64>,
@@ -1174,7 +1174,7 @@ pub struct OrganizeEntry {
 ///
 /// Preview and execute answer in the same shape, so the table the user
 /// confirmed is the table that reports what happened.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OrganizePlan {
     pub entries: Vec<OrganizeEntry>,
     pub moved_count: u32,
@@ -1235,7 +1235,7 @@ impl OrganizePlan {
 }
 
 /// What importing files from outside the library produced.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ImportSummary {
     /// Library rows for the imported files, in walk order — what the caller
     /// queues.
@@ -1247,7 +1247,7 @@ pub struct ImportSummary {
 
 /// An artist beyond the library: the opening of their Wikipedia article and
 /// whether there is a photograph to ask for.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ArtistInfo {
     pub bio: Option<String>,
     /// The article the biography opens, for reading on and for credit.
@@ -1270,7 +1270,7 @@ impl From<koan_core::artist_info::ArtistInfo> for ArtistInfo {
 
 /// Sort orders the library browser offers. Applied by the database, because a
 /// listing that is read a page at a time has to be ordered before it is cut.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlbumSort {
     /// Newest first. What a library browser should open on — the thing you
     /// just added is the thing you want.
@@ -1299,7 +1299,7 @@ pub enum AlbumSort {
 /// Narrowing the album and artist browsers by what the records are. The web
 /// UI's filters, applied by the same queries: an artist passes when any of
 /// their albums does.
-#[derive(uniffi::Record, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BrowseFilter {
     pub favourites: bool,
     /// Only what was played in the last `koan_core::shelves::RECENT_DAYS`:
@@ -1395,14 +1395,14 @@ impl From<koan_core::browse::TrackSort> for TrackBrowseSort {
 
 /// What the codec and genre filters offer: the codecs records are in, most
 /// common first, and the genres most records carry.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BrowseChoices {
     pub codecs: Vec<String>,
     pub genres: Vec<String>,
 }
 
 /// How the track browser orders the library.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackBrowseSort {
     /// Artist, then record, disc and track: the library as it would be shelved.
     Artist,
@@ -1419,13 +1419,13 @@ pub enum TrackBrowseSort {
 }
 
 /// A page of the track browser, and how many tracks pass its filters in all.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct TrackListing {
     pub tracks: Vec<Track>,
     pub total: u64,
 }
 
-#[derive(uniffi::Error, Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum KoanError {
     #[error("database: {message}")]
     Database { message: String },
@@ -1452,7 +1452,7 @@ pub enum KoanError {
 }
 
 /// What to offer the output in use about AutoEQ.
-#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AutoEqOffer {
     /// Its profile: the name says which headphone it is.
     Profile { entry: AutoEqEntry },
@@ -1461,7 +1461,7 @@ pub enum AutoEqOffer {
 }
 
 /// A measurement on a squig.link site.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SquigHit {
     /// Brand, model and variant, as a profile would be named.
     pub name: String,
@@ -1504,7 +1504,7 @@ impl From<koan_core::audio::dsp::squig::Hit> for SquigHit {
 }
 
 /// What a measurement is of: a kind of headphone, or a speaker.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspEarKind {
     InEar,
     OverEar,
@@ -1533,7 +1533,7 @@ impl From<DspEarKind> for koan_core::audio::dsp::targets::Ear {
 
 /// What a measurement is read as: `note` to show, and whether it is a
 /// speaker's, corrected to Flat.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspMeasurementReading {
     pub note: String,
     pub speaker: bool,
@@ -1549,7 +1549,7 @@ impl From<koan_core::audio::dsp::profiles::MeasurementReading> for DspMeasuremen
 }
 
 /// A headphone target a correction can be moved to.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspTargetOption {
     /// What `dspChooseTarget` takes.
     pub id: String,
@@ -1562,7 +1562,7 @@ pub struct DspTargetOption {
 
 /// What importing a selection of files did: the profiles it made or added
 /// to, and each file it refused, with why.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspImportSummary {
     pub imported: Vec<String>,
     pub refused: Vec<DspImportRefusal>,
@@ -1574,7 +1574,7 @@ pub struct DspImportSummary {
 }
 
 /// What importing a selection will do, shown before it is done.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspImportPlan {
     /// A group of presets, one playing at a time, rather than one profile
     /// combined from them all.
@@ -1585,14 +1585,14 @@ pub struct DspImportPlan {
     pub name: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspImportRefusal {
     pub file: String,
     pub reason: String,
 }
 
 /// The target a correction was made for, the one chosen, and the others.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspTargets {
     /// None for a correction built from a measurement, which is made for
     /// `chosen`.
@@ -1614,7 +1614,7 @@ impl From<koan_core::audio::dsp::profiles::TargetChoice> for DspTargetOption {
 }
 
 /// A maker in AutoEQ's index.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutoEqMaker {
     pub name: String,
     /// How many results it has, sources counted apart.
@@ -1622,7 +1622,7 @@ pub struct AutoEqMaker {
 }
 
 /// A headphone's result in AutoEQ's index.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutoEqEntry {
     pub name: String,
     /// Who measured it, and on which rig where they used several: what tells
@@ -1643,7 +1643,7 @@ impl From<&koan_core::audio::dsp::autoeq::Entry> for AutoEqEntry {
 }
 
 /// The DSP profiles, and which the current output plays through.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DspOverview {
     /// Off bypasses every profile.
     pub enabled: bool,
@@ -1684,12 +1684,11 @@ pub struct DspOverview {
     pub filters_only: bool,
     /// The correction aims at a target and the EQs that play meet it
     /// without conversion, so the chain is drawn as matched.
-    #[uniffi(default = false)]
     pub matched: bool,
 }
 
 /// What a device is set to, for a menu of presets.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspOutputState {
     pub device: String,
     /// The preset it was set from.
@@ -1701,7 +1700,7 @@ pub struct DspOutputState {
 }
 
 /// One EQ of an output's tuning.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspTuningEntry {
     pub name: String,
     /// Switched off, it stays in the tuning and plays nothing.
@@ -1709,7 +1708,7 @@ pub struct DspTuningEntry {
 }
 
 /// How an EQ of the tuning meets the correction ahead of it.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspEqJoin {
     /// The target it was made against, by name.
     pub made_for: Option<String>,
@@ -1726,7 +1725,7 @@ pub struct DspEqJoin {
 }
 
 /// A target by id and name.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspTargetName {
     pub id: String,
     pub name: String,
@@ -1734,13 +1733,13 @@ pub struct DspTargetName {
 
 /// What a tuning adds on a correction, said to be made against `target`
 /// (none for not saying), in dB on the response grid.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspMadeAgainstPreview {
     pub target: Option<String>,
     pub db: Vec<f64>,
 }
 
-#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DspJoin {
     /// Made against the target the correction aims at.
     Matched,
@@ -1766,7 +1765,7 @@ impl From<koan_core::audio::dsp::profiles::Join> for DspJoin {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DspProfileSummary {
     pub name: String,
     pub devices: Vec<String>,
@@ -1807,7 +1806,7 @@ pub struct DspProfileSummary {
 }
 
 /// What a profile is for. A chain corrects a headphone once.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspRole {
     /// Brings a headphone to a target, neutral.
     Correction,
@@ -1839,13 +1838,13 @@ impl From<DspRole> for koan_core::config::DspRole {
 }
 
 /// A curve on `DspResponse.freqs`, in dB.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspCurve {
     pub db: Vec<f64>,
 }
 
 /// A layer of a stack, as it plays alone.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspLayerCurve {
     pub name: String,
     pub on: bool,
@@ -1854,7 +1853,7 @@ pub struct DspLayerCurve {
 
 /// What a profile does to the sound, computed from the filters the DSP
 /// runs, for drawing.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspResponse {
     pub freqs: Vec<f64>,
     /// Everything it plays.
@@ -1913,14 +1912,14 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
 }
 
 /// A profile played as part of a stack.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspLayerInfo {
     pub profile: String,
     pub on: bool,
 }
 
 /// Everything in one profile, for its page in Settings.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DspProfileDetail {
     pub name: String,
     pub devices: Vec<String>,
@@ -1980,7 +1979,7 @@ pub struct DspProfileDetail {
 }
 
 /// How an EQ of bands lays them over the two channels.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspChannelLayout {
     /// A list of bands for each channel, rather than one for both.
     pub stereo: bool,
@@ -1989,7 +1988,7 @@ pub struct DspChannelLayout {
 }
 
 /// Where a new EQ of bands starts.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspStarter {
     Flat,
     BassBoost,
@@ -2009,7 +2008,7 @@ impl From<DspStarter> for koan_core::audio::dsp::profiles::Starter {
 }
 
 /// One of a profile's filters, in the order they run.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspBand {
     /// A band — `peaking`, `low_shelf`, `high_shelf`, `low_pass`,
     /// `high_pass`, `notch`, `band_pass`, `all_pass`, `gain`, or one of the
@@ -2029,13 +2028,13 @@ pub struct DspBand {
     pub curve: Vec<DspPoint>,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspMixOutput {
     /// `(channel, linear gain)` summed into this output. Empty is silence.
     pub sources: Vec<DspMixSource>,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspMixSource {
     pub channel: u16,
     pub gain: f64,
@@ -2043,13 +2042,13 @@ pub struct DspMixSource {
 
 /// A copy saved from an edit: its name, and whether it took the original's
 /// place in the device's tuning.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DspSavedCopy {
     pub name: String,
     pub placed: bool,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspPoint {
     pub hz: f64,
     pub db: f64,
@@ -2133,7 +2132,7 @@ impl DspBand {
 
 /// The ranges a band edited by hand is held to, and the band types that can
 /// be chosen, from `koan_core::audio::dsp::edit`.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspBandBounds {
     pub hz_min: f64,
     pub hz_max: f64,
@@ -2145,7 +2144,7 @@ pub struct DspBandBounds {
     pub kinds: Vec<DspBandKind>,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DspBandKind {
     /// Its name in the config, as `DspBand::kind` holds it.
     pub id: String,
@@ -2158,7 +2157,7 @@ pub struct DspBandKind {
 }
 
 /// What an edit naming the filter it last saw did.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum DspEdited {
     /// Saved: the filter as stored, which the next edit of it names, and
     /// whether that changed it.
@@ -2182,7 +2181,7 @@ impl From<koan_core::audio::dsp::profiles::Edited> for DspEdited {
 }
 
 /// How much of a graphic curve a stroke pulls.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspBrush {
     Point,
     Narrow,
@@ -2200,7 +2199,7 @@ impl From<DspBrush> for koan_core::audio::dsp::edit::Brush {
 }
 
 /// The one thing an EQ's page offers on a device.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspDeviceAction {
     StopCorrecting,
     MoveToFilters,
@@ -2222,7 +2221,7 @@ impl From<koan_core::audio::dsp::profiles::DeviceAction> for DspDeviceAction {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DspImpulse {
     pub file: String,
     pub rate: u32,
@@ -2381,7 +2380,7 @@ pub(crate) fn year_of(date: &str) -> Option<i32> {
 }
 
 /// How the app is drawn: see `docs/design/koan-theme.md`.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Appearance {
     /// The kōan theme, rather than the platform's look.
     pub koan: bool,
@@ -2409,7 +2408,7 @@ pub struct Appearance {
 /// configuration at once, and a single read keeps it consistent with itself.
 /// The remote password is deliberately absent — it lives in config.local.toml
 /// and is written through `sign_in_remote`, never read back.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Settings {
     /// Folders and how many tracks each accounts for — a folder is easier to
     /// judge by what it contributed than by its path.
@@ -2473,14 +2472,14 @@ pub struct Settings {
 }
 
 /// A scanned folder, and what it contributed.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct LibraryFolder {
     pub path: String,
     pub tracks: u64,
 }
 
 /// What a library rebuild removed.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RebuildSummary {
     pub tracks: u64,
     pub albums: u64,
@@ -2488,7 +2487,7 @@ pub struct RebuildSummary {
 }
 
 /// What clearing the download cache removed.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct CacheCleared {
     pub files: u64,
     pub bytes: u64,
@@ -2496,7 +2495,7 @@ pub struct CacheCleared {
 
 /// The spectrum reduced to three numbers, for indicators that move with the
 /// music without drawing it.
-#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VizLevels {
     pub low: f32,
     pub mid: f32,
@@ -2514,7 +2513,7 @@ impl From<koan_core::audio::viz::VizLevels> for VizLevels {
 }
 
 /// See `KoanEngine::art_evictions`.
-#[derive(uniffi::Record, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ArtEvictions {
     /// Pass back as `after` next time.
     pub seq: i64,
@@ -2529,7 +2528,7 @@ pub struct ArtEvictions {
 /// An account on a server, as one link. What a tapped invite carries and what
 /// an admin sends: `link` for koan, and the password for any other Subsonic
 /// app when the account was just made or given a new one.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Invite {
     pub server: String,
     pub username: String,
@@ -2549,7 +2548,7 @@ pub struct Invite {
 
 /// A QR code's modules, `width` to a side, row by row from the top left; a
 /// dark module is `true`. No quiet zone: the drawing adds its own margin.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct QrCode {
     pub width: u32,
     pub dark: Vec<bool>,
@@ -2557,7 +2556,7 @@ pub struct QrCode {
 
 /// A pairing this device opened: the code to show, and the link that
 /// approves it.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PairingCode {
     pub id: String,
     /// `XXXX-XXXX`.
@@ -2567,7 +2566,7 @@ pub struct PairingCode {
 
 /// The account's ListenBrainz connection, as its koan server reports it.
 /// The token stays on the server.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScrobblingConnection {
     /// The ListenBrainz account the plays go to.
     pub account: String,
@@ -2579,7 +2578,7 @@ pub struct ScrobblingConnection {
 
 /// A device waiting to be signed in, as the server describes it to an
 /// approver.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PairingInfo {
     pub device: String,
     /// The id the device links with, which its entry among the account's
@@ -2594,7 +2593,7 @@ pub struct PairingInfo {
 }
 
 /// A pairing link: which server another device is waiting on, and its id.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PairingLink {
     pub server: String,
     pub id: String,
@@ -2617,7 +2616,7 @@ impl From<koan_core::invite::Invite> for Invite {
     }
 }
 
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountRole {
     /// Listens.
     Readonly,
@@ -2646,7 +2645,7 @@ impl AccountRole {
 }
 
 /// Where assistants connect to the signed-in server.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Assistants {
     /// The server's MCP endpoint, to paste into an assistant.
     pub mcp_url: String,
@@ -2656,7 +2655,7 @@ pub struct Assistants {
 
 /// One of the signed-in account's API keys. Never the key: only its hash is
 /// kept on the server.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ApiKeyInfo {
     pub id: i64,
     pub name: String,
@@ -2668,14 +2667,14 @@ pub struct ApiKeyInfo {
 }
 
 /// A key just made: the one time it is seen.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct NewApiKey {
     pub name: String,
     pub key: String,
 }
 
 /// An EQ deleted in the last thirty days, which the server keeps a copy of.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DeletedDsp {
     pub uid: String,
     pub name: String,
@@ -2685,7 +2684,7 @@ pub struct DeletedDsp {
 
 /// One of the signed-in account's app passwords, for Subsonic apps that sign
 /// in only with a token. Never the password.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct AppPasswordInfo {
     pub id: i64,
     pub name: String,
@@ -2695,20 +2694,20 @@ pub struct AppPasswordInfo {
 }
 
 /// An app password just made: the one time it is seen.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct NewAppPassword {
     pub name: String,
     pub password: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ServerAccount {
     pub username: String,
     pub role: AccountRole,
 }
 
 /// How moving the music went.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MoveResult {
     /// Tracks left behind because only the device they were on has them.
     pub left_out: u32,
@@ -2725,7 +2724,7 @@ pub struct MoveResult {
 
 /// A command to another device that did not simply arrive: queued for one
 /// asleep, or not taken. What the app says, since the device's state cannot.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommandNotice {
     /// Counts up, so the same notice twice is still news.
     pub seq: u64,
@@ -2744,7 +2743,7 @@ pub struct CommandNotice {
 
 /// How the device being controlled can be reached: see
 /// `koan_core::remote::devices::Reach`.
-#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceReach {
     Connected,
     Reconnecting,
@@ -2771,7 +2770,7 @@ impl From<koan_core::remote::devices::Reach> for DeviceReach {
 
 /// Another device koan can play on: one on the same account, or one on the
 /// local network.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
@@ -2830,7 +2829,7 @@ pub struct DeviceInfo {
 
 /// A UPnP renderer on the network: an amplifier or streamer that plays a
 /// file it is handed a URL to.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RendererInfo {
     pub udn: String,
     pub name: String,
@@ -2845,7 +2844,7 @@ pub struct RendererInfo {
 
 /// What the device in view plays through: this one's outputs, or those of the
 /// device it controls, as that device published them.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OutputsInfo {
     /// The device they belong to, by name, when it is another one.
     pub owner: Option<String>,
@@ -2862,7 +2861,7 @@ pub struct OutputsInfo {
 }
 
 /// One output: an audio device by name, or a renderer by UDN.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OutputInfo {
     pub id: String,
     pub name: String,
@@ -2879,7 +2878,7 @@ pub struct OutputInfo {
 }
 
 /// An output to play through.
-#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OutputChoice {
     /// The system's default output.
     Default,
@@ -2936,7 +2935,7 @@ impl OutputsInfo {
 }
 
 /// The renderer this koan is playing to in place of its own output.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RendererOutput {
     pub udn: String,
     pub name: String,
@@ -2948,7 +2947,7 @@ pub struct RendererOutput {
 
 /// What the server this app signs in to turned out to be, and what it and
 /// this device offer. Settings shows it.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConnectionInfo {
     /// The server this device signs in to, while it has an account there.
     pub signed_in_to: Option<String>,
@@ -3009,7 +3008,7 @@ pub struct ConnectionInfo {
 }
 
 /// See `koan_core::helpers::ServerStanding`.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerStanding {
     Fine,
     SignedOut,
@@ -3029,7 +3028,7 @@ impl From<helpers::ServerStanding> for ServerStanding {
 }
 
 /// A device disconnected from Settings and held off.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HeldInfo {
     /// What `allow_held` takes.
     pub addr: String,
@@ -3038,7 +3037,7 @@ pub struct HeldInfo {
 }
 
 /// A connection to this device or from it.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConnectedInfo {
     /// What `end_connection` takes: only a connection on the network to this
     /// device has one.
@@ -3060,14 +3059,14 @@ pub struct ConnectedInfo {
 }
 
 /// A server another device on this network announced it is signed in to.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NearbyServer {
     pub url: String,
     /// The devices that announced it, by name.
     pub devices: Vec<String>,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServerExtension {
     pub name: String,
     pub versions: Vec<i64>,
@@ -3077,7 +3076,7 @@ pub struct ServerExtension {
 /// album's, an artist's or a playlist's tracks on the command lane, in turn
 /// with every other command, so a client never waits on that read before its
 /// command takes its place.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum TrackSet {
     Tracks { ids: Vec<i64> },
     Album { id: i64 },
@@ -3087,7 +3086,7 @@ pub enum TrackSet {
 
 /// Where in the queue tracks go. `Next` and `AppendAndPlay` are read against
 /// the queue as the player applies them, never against a client's copy.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum Placement {
     /// Replace the queue and play from `start_at` (the first track by
     /// default), or `shuffled` into a random order from its top, with shuffle

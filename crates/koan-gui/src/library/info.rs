@@ -2,8 +2,8 @@
 //! sources says it: the file's tags, the server's entry, the ReplayGain, and
 //! the library's own ids. Dense, for reading a value off.
 
-use koan_ffi::{InfoField, TrackDetails};
 use koan_kit::app::*;
+use koan_runtime::{InfoField, TrackDetails};
 
 use super::{Dismiss, Lib};
 use crate::components::sheet as ask;
@@ -80,6 +80,13 @@ impl Render for TrackInfo {
                         "file"
                     };
                     body = body.child(group(kind, &source.fields));
+                }
+                // A server's track played here is kept on disk with no file
+                // source of its own: where the copy is.
+                if let Some(path) = &d.track.path
+                    && d.sources.iter().all(|s| s.kind == "server")
+                {
+                    body = body.child(DetailGroup::new("on this device").row("path", path.clone()));
                 }
                 if !d.replay_gain.is_empty() {
                     body = body.child(group("replaygain", &d.replay_gain));

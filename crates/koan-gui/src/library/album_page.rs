@@ -6,8 +6,8 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use koan_ffi::{Album, Track};
 use koan_kit::app::*;
+use koan_runtime::{Album, Track};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 
@@ -242,7 +242,22 @@ impl AlbumPage {
         let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
+                // A heading to a screen reader, carrying the reveal on to the
+                // tracks below it as their rows do.
+                let scroll = self.scroll.clone();
+                let count = self.lines.len();
+                let list_view = cx.entity_id();
                 return div()
+                    .id(("disc", i))
+                    .role(a11y::Role::Heading)
+                    .aria_label(title.clone())
+                    .aria_level(3)
+                    .when(p.a11y, |d| {
+                        d.on_a11y_action(a11y::AccessibleAction::ScrollIntoView, move |_, _, cx| {
+                            Reveal::Uniform(scroll.clone(), i, count).run();
+                            cx.notify(list_view);
+                        })
+                    })
                     .w_full()
                     .h(height)
                     .flex()
@@ -297,8 +312,8 @@ impl AlbumPage {
         let side = RowMetrics::header_art(&p.look);
         let key = Key::new(Art::Album(self.album_id), side, window.scale_factor());
         let owner = cx.entity_id();
-        let sleeve = self.lib.covers.update(cx, |c: &mut Covers, _| {
-            c.request(owner, [(key, Priority::Visible)]);
+        let sleeve = self.lib.covers.update(cx, |c: &mut Covers, cx| {
+            c.request(owner, [(key, Priority::Visible)], cx);
             c.sleeve(key)
         });
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
@@ -522,9 +537,10 @@ impl Render for AlbumPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(crate::components::Spinner::new(
-                    p.look.font_size(crate::theme::TypeRole::Body),
-                ))
+                .child(
+                    crate::components::Spinner::new(p.look.font_size(crate::theme::TypeRole::Body))
+                        .announced("record-loading", "loading the record"),
+                )
                 .into_any_element(),
             _ => div().into_any_element(),
         };
@@ -535,6 +551,7 @@ impl Render for AlbumPage {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )

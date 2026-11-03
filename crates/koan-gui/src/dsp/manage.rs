@@ -6,9 +6,9 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use koan_ffi::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};
@@ -380,10 +380,12 @@ impl ManageEq {
             Some(problem) => note(problem.clone(), Tone::Bad, &look),
             None => {
                 let used = if p.used_on.is_empty() {
-                    "Not used".to_owned()
+                    "not used".to_owned()
                 } else {
+                    // A part of a line that starts with the bands, so in
+                    // the line's case.
                     format!(
-                        "Used on {}",
+                        "used on {}",
                         joined(&p.used_on.iter().map(|d| dsp.label(d)).collect::<Vec<_>>())
                     )
                 };

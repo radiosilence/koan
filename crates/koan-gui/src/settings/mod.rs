@@ -17,8 +17,8 @@ mod sheet;
 use std::sync::Arc;
 
 use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
-use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, KoanEngine};
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -138,6 +138,13 @@ pub enum Incoming {
 /// invite signs in (asking first where it would replace an account), and a
 /// pairing asks whether to sign the device in.
 pub fn answer(link: Incoming, cx: &mut App) {
+    // A link that launched the app arrives before the settings are read:
+    // answered then, it would be answered as signed out.
+    let model = cx.global::<Settings>().model.clone();
+    if model.read(cx).settings().is_none() {
+        model.update(cx, |m, cx| m.when_loaded(cx, move |cx| answer(link, cx)));
+        return;
+    }
     open(cx);
     let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
@@ -160,6 +167,66 @@ pub fn open_server(cx: &mut App) {
             view.update(cx, |settings, cx| settings.choose(Tab::Server, window, cx))
         })
         .ok();
+}
+
+/// Whether two addresses name one server: scheme and host compared without
+/// regard to case, a scheme's default port the same as none, and a trailing
+/// slash ignored.
+fn same_server(a: &str, b: &str) -> bool {
+    fn parts(url: &str) -> Option<(String, String, u16, String)> {
+        let (scheme, rest) = url.trim().split_once("://")?;
+        let scheme = scheme.to_ascii_lowercase();
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let default = match scheme.as_str() {
+            "https" => 443,
+            "http" => 80,
+            _ => return None,
+        };
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((host, port)) if !port.contains(']') => (host, port.parse().ok()?),
+            _ => (authority, default),
+        };
+        Some((
+            scheme,
+            host.to_ascii_lowercase(),
+            port,
+            path.trim_end_matches('/').to_owned(),
+        ))
+    }
+    parts(a).is_some_and(|a| parts(b).is_some_and(|b| a == b))
+}
+
+/// Whether `url` reaches this device's own server: its port, at an address
+/// that is this machine or on its network (loopback, private, link-local,
+/// the tailnet's, or a `.local` name).
+fn on_this_device(url: &str, port: u16) -> bool {
+    let Some((_, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let Some((host, at)) = authority.rsplit_once(':') else {
+        return false;
+    };
+    if at.parse::<u16>().ok() != Some(port) {
+        return false;
+    }
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                // The tailnet's addresses.
+                || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
+        }
+        Ok(std::net::IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+        }
+        Err(_) => {
+            let host = host.to_ascii_lowercase();
+            host == "localhost" || host.ends_with(".local")
+        }
+    }
 }
 
 /// What every pane reads, handed to each as it is made.
@@ -223,6 +290,7 @@ impl SettingsWindow {
                 if window.is_window_active() {
                     this.ctx.model.update(cx, |model, cx| model.reload(cx));
                     crate::platform::residency::read_login(cx);
+                    this.forget_settled_pairs(window, cx);
                 }
             }),
             cx.on_release(|_, cx| {
@@ -381,25 +449,70 @@ impl SettingsWindow {
                 // Approving signs the device in to the account here, so the
                 // link must name this device's server: the one signed in to,
                 // or this device while it shares its library.
-                let sharing = self.ctx.sharing.read(cx).serving.is_some();
-                let ours = self.ctx.model.read(cx).settings().is_some_and(|s| {
-                    s.remote_signed_in && s.remote_url.trim_end_matches('/') == server
-                });
-                if !sharing && !ours {
-                    let host = panes::server::host(&server);
-                    self.ctx.model.update(cx, |m, cx| {
-                        m.report(
-                            format!("A device is asking to sign in to {host}, which kōan is not signed in to. Approve it on {host}'s own pair page instead."),
-                            cx,
-                        )
-                    });
+                let (sharing_on, serving, signed_in, named) = {
+                    let sharing = self.ctx.sharing.read(cx);
+                    let settings = self.ctx.model.read(cx).settings();
+                    let serving = sharing.serving.is_some()
+                        && settings.is_some_and(|s| {
+                            let status = sharing.status.as_ref();
+                            let known = [
+                                status.and_then(|st| st.current.as_deref()),
+                                status.and_then(|st| st.fallback.as_deref()),
+                                status.and_then(|st| st.funnel.as_deref()),
+                                Some(s.share_url.as_str()),
+                            ];
+                            known
+                                .into_iter()
+                                .flatten()
+                                .any(|url| same_server(url, &server))
+                                || on_this_device(&server, s.share_port)
+                        });
+                    let signed_in = settings.filter(|s| s.remote_signed_in);
+                    let named = signed_in.is_some_and(|s| same_server(&s.remote_url, &server));
+                    (
+                        sharing.serving.is_some(),
+                        serving,
+                        signed_in.is_some(),
+                        named,
+                    )
+                };
+                if serving || named {
+                    self.approve(id, window, cx);
                     return;
                 }
-                self.choose(Tab::Devices, window, cx);
-                if let Ok(pane) = self.pane.view().downcast::<panes::devices::DevicesPane>() {
-                    pane.update(cx, |pane, cx| pane.approve_pair(id, window, cx));
+                let host = panes::server::host(&server);
+                let foreign = format!(
+                    "A device is asking to sign in to {host}, which kōan is not signed in to. Approve it on {host}'s own pair page instead."
+                );
+                if !signed_in || sharing_on {
+                    self.ctx.model.update(cx, |m, cx| m.report(foreign, cx));
+                    return;
                 }
+                // The server signed in to under another of its names (its
+                // address on the network, a public one): it knows the
+                // pairings waiting on it.
+                let engine = self.ctx.model.read(cx).engine().clone();
+                let model = self.ctx.model.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    let found = engine.pairing_info(id.clone()).await.is_ok();
+                    this.update_in(cx, |this, window, cx| {
+                        if found {
+                            this.approve(id, window, cx);
+                        } else {
+                            model.update(cx, |m, cx| m.report(foreign, cx));
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
             }
+        }
+    }
+
+    fn approve(&mut self, id: String, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
+        self.choose(Tab::Devices, window, cx);
+        if let Ok(pane) = self.pane.view().downcast::<panes::devices::DevicesPane>() {
+            pane.update(cx, |pane, cx| pane.approve_pair(id, window, cx));
         }
     }
 
@@ -456,6 +569,36 @@ impl Render for SettingsWindow {
 }
 
 impl SettingsWindow {
+    /// Pairings asked about here that were answered elsewhere (another
+    /// window, the web UI, a phone) are no longer waiting: their questions go,
+    /// and quitting does not decline them. Asked of the server when the
+    /// window comes to the front, as the file is read again then.
+    fn forget_settled_pairs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (model, sheets) = (self.ctx.model.clone(), self.ctx.sheets.clone());
+        let (engine, pairs) = {
+            let m = model.read(cx);
+            (m.engine().clone(), m.waiting_pairs.clone())
+        };
+        for pair in pairs {
+            let (engine, model, sheets) = (engine.clone(), model.clone(), sheets.clone());
+            cx.spawn_in(window, async move |_, cx| {
+                // No such pairing: approved, declined or lapsed.
+                let settled = matches!(
+                    engine.pairing_info(pair.clone()).await,
+                    Err(koan_runtime::KoanError::BadArgument { .. })
+                );
+                if settled {
+                    cx.update(|window, cx| {
+                        model.update(cx, |m, _| m.waiting_pairs.retain(|p| *p != pair));
+                        sheets.update(cx, |s, cx| s.withdraw(&pair, window, cx));
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }
+    }
+
     /// The strip along the top, on the window's ground: the window's own
     /// buttons sit in it on macOS. It moves the window, and where the
     /// compositor leaves decorations to the app (GNOME on Wayland), it holds
@@ -522,4 +665,45 @@ fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
         (None, None) => (SharedString::default(), Tone::Muted, None),
     };
     crate::components::StatusLine::new(text, tone, icon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_server_under_its_spellings() {
+        assert!(same_server(
+            "https://Music.Example.com/",
+            "https://music.example.com"
+        ));
+        assert!(same_server(
+            "https://music.example.com:443",
+            "https://music.example.com/"
+        ));
+        assert!(same_server("http://10.0.0.2:4533", "http://10.0.0.2:4533/"));
+        assert!(!same_server(
+            "http://music.example.com",
+            "https://music.example.com"
+        ));
+        assert!(!same_server(
+            "https://music.example.com",
+            "https://evil.example.com"
+        ));
+        assert!(!same_server(
+            "https://a.example.com:8443",
+            "https://a.example.com"
+        ));
+    }
+
+    #[test]
+    fn this_device_is_its_port_on_its_network() {
+        assert!(on_this_device("http://192.168.1.20:4533", 4533));
+        assert!(on_this_device("http://studio.local:4533/", 4533));
+        assert!(on_this_device("http://100.101.1.2:4533", 4533));
+        assert!(on_this_device("http://[fe80::1]:4533", 4533));
+        assert!(!on_this_device("http://192.168.1.20:4534", 4533));
+        assert!(!on_this_device("https://music.example.com:4533", 4533));
+        assert!(!on_this_device("http://8.8.8.8:4533", 4533));
+    }
 }

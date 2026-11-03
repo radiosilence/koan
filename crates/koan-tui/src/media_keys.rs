@@ -129,7 +129,7 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Stop).ok();
                 }
                 MediaControlEvent::SetPosition(MediaPosition(pos)) => {
-                    tx.send(PlayerCommand::Seek(pos.as_millis() as u64)).ok();
+                    seek(&shown, &tx, pos.as_millis() as u64);
                 }
                 MediaControlEvent::SeekBy(direction, duration) => {
                     let current = shown.read().position_ms();
@@ -138,7 +138,7 @@ impl MediaKeyHandler {
                         SeekDirection::Forward => current.saturating_add(delta),
                         SeekDirection::Backward => current.saturating_sub(delta),
                     };
-                    tx.send(PlayerCommand::Seek(target)).ok();
+                    seek(&shown, &tx, target);
                 }
                 MediaControlEvent::Seek(direction) => {
                     let current = shown.read().position_ms();
@@ -146,7 +146,7 @@ impl MediaKeyHandler {
                         SeekDirection::Forward => current.saturating_add(SEEK_STEP_MS),
                         SeekDirection::Backward => current.saturating_sub(SEEK_STEP_MS),
                     };
-                    tx.send(PlayerCommand::Seek(target)).ok();
+                    seek(&shown, &tx, target);
                 }
                 MediaControlEvent::Quit => {
                     local.request_quit();
@@ -263,4 +263,18 @@ impl Drop for MediaKeyHandler {
 /// The temp file Now Playing's cover is written to, one per process.
 fn cover_path() -> PathBuf {
     std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()))
+}
+
+/// A seek from the system's controls, landed on the bar at once as the
+/// keys' are (`request_seek`), and given back if it never reaches the player.
+fn seek(
+    shown: &parking_lot::RwLock<Arc<SharedPlayerState>>,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+    position_ms: u64,
+) {
+    let state = shown.read().clone();
+    state.request_seek(position_ms);
+    if tx.send(PlayerCommand::Seek(position_ms)).is_err() {
+        state.seek_taken(position_ms);
+    }
 }

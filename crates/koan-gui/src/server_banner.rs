@@ -6,8 +6,8 @@
 //! A view of its own: the Connection slice moves with every device that
 //! comes and goes, and this redraws only when the standing does.
 
-use koan_ffi::ServerStanding;
 use koan_kit::app::*;
+use koan_runtime::ServerStanding;
 
 use crate::components::Banner;
 use crate::mirror::Mirror;
@@ -21,7 +21,7 @@ pub struct ServerBanner {
 impl ServerBanner {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let connection = cx.global::<Mirror>().connection.clone();
-        let standing = |c: &Entity<crate::mirror::Slice<Option<koan_ffi::ConnectionInfo>>>,
+        let standing = |c: &Entity<crate::mirror::Slice<Option<koan_runtime::ConnectionInfo>>>,
                         cx: &App| {
             c.read(cx)
                 .0

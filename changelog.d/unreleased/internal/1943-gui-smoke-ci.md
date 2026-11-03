@@ -1,0 +1,1 @@
+- **CI runs the GUI smoke run.** On macOS, whenever the desktop app changes, as a required check.
