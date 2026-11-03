@@ -1,0 +1,1 @@
+- **A second launch says when its hand-off was lost.** When the running kōan GUI app does not take the files and request to come forward in time, the launch logs it rather than exiting silently, and an interrupted wait is retried.

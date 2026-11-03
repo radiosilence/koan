@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use futures::StreamExt as _;
 use koan_ffi::Playlist;
 use koan_kit::app::*;
 
@@ -48,6 +49,9 @@ pub struct Sidebar {
     /// The faces not yet in memory at the last render: a sleeve landing
     /// redraws the sidebar only when it is one of these.
     pending: std::collections::HashSet<Key>,
+    /// The faces held at the last render: one evicted or trimmed since is a
+    /// texture gone from under the cached view, which draws again.
+    held: std::collections::HashSet<Key>,
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
@@ -57,6 +61,9 @@ pub struct Sidebar {
     /// Reorders made here: a read of the playlists that one overtook is
     /// read again rather than putting the old order back.
     reorders: u64,
+    /// Reorders written and not yet answered: a read until then may predate
+    /// the write, and the answer reads again.
+    writing: u32,
     /// The search field at the sidebar's head, once the library is open,
     /// and whether it holds a query, which lists the results page.
     search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
@@ -84,9 +91,11 @@ impl Sidebar {
             loading: None,
             covers: None,
             pending: Default::default(),
+            held: Default::default(),
             importing: 0,
             drop_playlist: None,
             reorders: 0,
+            writing: 0,
             search: None,
             searching: false,
             focus: cx.focus_handle().tab_stop(true),
@@ -153,7 +162,9 @@ impl Sidebar {
             [
                 cx.observe(&covers, |this, covers, cx| {
                     let covers = covers.read(cx);
-                    if this.pending.iter().any(|key| covers.has(*key)) {
+                    if this.pending.iter().any(|key| covers.has(*key))
+                        || this.held.iter().any(|key| !covers.has(*key))
+                    {
                         cx.notify();
                     }
                 }),
@@ -170,19 +181,26 @@ impl Sidebar {
     /// Asks for the playlists again, with the records on each one's sleeve;
     /// a newer ask replaces one in flight.
     fn reload(&mut self, cx: &mut Context<Self>) {
+        /// How many playlists' sleeves are read at once.
+        const SLEEVE_READS: usize = 8;
         let engine = engine(cx);
         let reorders = self.reorders;
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
-                    // Every playlist's sleeve read together, not one after
-                    // another.
-                    let read = futures::future::join_all(playlists.iter().map(|playlist| {
+                    // The sleeves read a few at a time, in order: each read
+                    // takes a thread and a connection of the engine's.
+                    let read: Vec<_> = futures::stream::iter(playlists.iter().map(|playlist| {
                         let (engine, id) = (engine.clone(), playlist.id);
                         async move { (id, engine.playlist_cover_album_ids(id).await) }
                     }))
+                    .buffered(SLEEVE_READS)
+                    .collect()
                     .await;
                     this.update(cx, |this, cx| {
+                        if this.writing > 0 {
+                            return;
+                        }
                         if this.reorders != reorders {
                             this.reload(cx);
                             return;
@@ -245,7 +263,21 @@ impl Sidebar {
         let at = if from < at { at - 1 } else { at }.min(self.playlists.len());
         self.playlists.insert(at, moved);
         let ids: Vec<i64> = self.playlists.iter().map(|p| p.id).collect();
-        command(cx, "reorder playlists", move |e| e.reorder_playlists(ids));
+        self.writing += 1;
+        let write = engine(cx).reorder_playlists(ids);
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = write.await {
+                log::warn!("reorder playlists: {e}");
+            }
+            this.update(cx, |this, cx| {
+                this.writing -= 1;
+                if this.writing == 0 {
+                    this.reload(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 }
@@ -530,9 +562,12 @@ impl Render for Sidebar {
                             } else {
                                 "This playlist is read-only, and can't be added to".into()
                             };
-                            let refused = why.clone();
-                            row.on_drop(move |_: &PlayableDrag, _, cx| {
-                                crate::notice::show(refused.clone(), Tone::Muted, cx)
+                            let (refused, id) = (why.clone(), playlist.id);
+                            row.on_drop(move |dragged: &PlayableDrag, _, cx| {
+                                // Its own tracks let go over it add nothing.
+                                if !dragged.is_from(id) {
+                                    crate::notice::show(refused.clone(), Tone::Muted, cx)
+                                }
                             })
                             .on_drop(
                                 move |_: &ExternalPaths, _, cx| {
@@ -720,7 +755,7 @@ impl Sidebar {
             .collect();
         // Below whatever a page shows: the sidebar's faces are small and
         // there are few, but a page's sleeves on screen come first.
-        let (sleeves, more, pending) = covers.update(cx, |c, cx| {
+        let (sleeves, more, faces) = covers.update(cx, |c, cx| {
             c.request(
                 owner,
                 keys.iter()
@@ -732,15 +767,10 @@ impl Sidebar {
                 .iter()
                 .map(|keys| keys.iter().map(|key| c.sleeve(*key)).collect())
                 .collect();
-            let pending = keys
-                .iter()
-                .flatten()
-                .filter(|k| !c.has(**k))
-                .copied()
-                .collect();
-            (sleeves, more, pending)
+            let faces = keys.iter().flatten().copied().partition(|k| c.has(*k));
+            (sleeves, more, faces)
         });
-        self.pending = pending;
+        (self.held, self.pending) = faces;
         if more {
             window.request_animation_frame();
         }

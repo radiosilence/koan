@@ -32,7 +32,7 @@ On macOS the desktop app's Dock menu shows what is playing, with its heart, and 
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the kōan button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
@@ -76,7 +76,7 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Remove | Delete or Backspace, or the context menu |
 | Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
 | Undo, redo | ⌘Z, ⇧⌘Z |
-| Follow what's playing | The crosshair in the toolbar; it stays on, keeping the playing track in view, until you scroll |
+| Follow what's playing | The crosshair in the toolbar keeps the playing track in view as the queue plays and changes. It stops when you scroll the queue, jump to its top or end, press the crosshair again, or nothing is left under the cursor |
 
 The queue keeps its place and selection when you visit another page and come back.
 

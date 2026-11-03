@@ -24,7 +24,10 @@ use crate::components::{
     ToolbarMenu, ToolbarSelection,
 };
 use crate::engine::command;
+// Delete and Backspace come through the shortcut table, which holds them
+// back behind a menu and gives Edit → Delete to the page in front.
 use crate::mirror::Mirror;
+use crate::platform::actions::Delete;
 use crate::theme::Icon;
 
 /// One line of the list: a day's heading, or a play by its index.
@@ -67,6 +70,13 @@ pub struct HistoryPage {
     entries: Vec<PlayHistoryEntry>,
     lines: Vec<Line>,
     loaded: bool,
+    /// Moves with each read that lands, for the pick's cache.
+    reads: u64,
+    /// Why the last read failed, shown while nothing has been read.
+    failed: Option<SharedString>,
+    /// The pick as a drag, made once per pick rather than per row and frame,
+    /// with what it was made from.
+    pick: Option<(u64, PlayableDrag)>,
     list: RowListState,
     /// Picked plays, by entry id.
     selected: HashSet<i64>,
@@ -106,6 +116,9 @@ impl HistoryPage {
             entries: Vec::new(),
             lines: Vec::new(),
             loaded: false,
+            reads: 0,
+            failed: None,
+            pick: None,
             list: RowListState::new(),
             selected: HashSet::new(),
             menu: None,
@@ -132,6 +145,11 @@ impl HistoryPage {
                 Ok(entries) => entries,
                 Err(e) => {
                     log::warn!("history: {e}");
+                    this.update(cx, |this, cx| {
+                        this.failed = Some(e.to_string().into());
+                        cx.notify();
+                    })
+                    .ok();
                     return;
                 }
             };
@@ -149,19 +167,74 @@ impl HistoryPage {
                     entries.iter().map(|e| e.id).collect()
                 };
                 this.cursor.relocate(&ids(&this.entries), &ids(&entries));
+                // The scroll stays on the play at the top, or the heading
+                // above it, wherever new plays put it.
                 let top = this.list.top();
+                let held = this.held_play(top.item_ix);
                 this.entries = entries;
                 this.lines = lines;
                 this.loaded = true;
+                this.failed = None;
+                this.reads += 1;
                 this.list.reset(this.lines.len(), RowKind::Art);
+                let item_ix = held
+                    .and_then(|(id, above)| {
+                        let line = this.lines.iter().position(
+                            |l| matches!(l, Line::Play { ix, .. } if this.entries[*ix].id == id),
+                        )?;
+                        Some(line.saturating_sub(above))
+                    })
+                    .unwrap_or(top.item_ix);
                 this.list.scroll_to(crate::components::RowOffset {
-                    item_ix: top.item_ix.min(this.lines.len().saturating_sub(1)),
+                    item_ix: item_ix.min(this.lines.len().saturating_sub(1)),
                     offset_in_item: top.offset_in_item,
                 });
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// The play at line `line`, or under the heading there, and how many
+    /// lines above it the line is.
+    fn held_play(&self, line: usize) -> Option<(i64, usize)> {
+        self.lines
+            .iter()
+            .skip(line)
+            .enumerate()
+            .find_map(|(above, l)| match l {
+                Line::Play { ix, .. } => Some((self.entries[*ix].id, above)),
+                Line::Day(_) => None,
+            })
+    }
+
+    /// The pick as one drag, made again only when the pick or the plays
+    /// change.
+    fn pick_drag(&mut self) -> PlayableDrag {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hasher = BuildHasherDefault::<DefaultHasher>::default();
+        let print = self
+            .selected
+            .iter()
+            .fold(self.reads ^ self.selected.len() as u64, |acc, id| {
+                acc ^ hasher.hash_one(id)
+            });
+        if let Some((at, drag)) = &self.pick
+            && *at == print
+        {
+            return drag.clone();
+        }
+        let picked: Vec<Playable> = self
+            .picked()
+            .iter()
+            .map(|e| Playable::Track(e.track.id))
+            .collect();
+        let drag = PlayableDrag::new(
+            &picked,
+            chrome::count(picked.len() as u64, "track", "tracks"),
+        );
+        self.pick = Some((print, drag.clone()));
+        drag
     }
 
     /// The picked plays, newest first.
@@ -217,21 +290,41 @@ impl HistoryPage {
         );
     }
 
-    fn forget_picked(&mut self, _: &Forget, window: &mut Window, cx: &mut Context<Self>) {
+    fn forget_picked(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         let plays = described(&self.picked());
         self.ask_forget(plays, window, cx);
     }
 
-    fn ask_clear(&self, window: &mut Window, cx: &mut App) {
-        let n = self.entries.len() as u64;
+    /// Clearing forgets every play, whatever the filter shows: under a
+    /// filter the whole history is counted first, so the question says what
+    /// the answer does.
+    fn ask_clear(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lib.browse.read(cx).search().is_none() {
+            Self::confirm_clear(self.entries.len() as u64, window, cx);
+            return;
+        }
+        let read = self.lib.engine.clone().play_history(None);
+        cx.spawn_in(window, async move |_, cx| match read.await {
+            Ok(all) => {
+                cx.update(|window, cx| Self::confirm_clear(all.len() as u64, window, cx))
+                    .ok();
+            }
+            Err(e) => log::warn!("history: {e}"),
+        })
+        .detach();
+    }
+
+    fn confirm_clear(n: u64, window: &mut Window, cx: &mut App) {
         confirm(
             Confirm {
                 title: "clear history".into(),
                 verb: "clear".into(),
                 destructive: true,
                 lines: vec![
+                    // So far: plays arriving from other devices before the
+                    // answer are forgotten with the rest.
                     format!(
-                        "Every play is forgotten: {}.",
+                        "Every play is forgotten: {} so far. Signed in to a kōan server, on every device too.",
                         chrome::count(n, "play", "plays")
                     )
                     .into(),
@@ -284,10 +377,21 @@ impl HistoryPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match self.lines.get(i).cloned() {
-            Some(Line::Day(day)) => div()
-                .px(crate::components::RowMetrics::page_margin(&p.look))
-                .child(SectionHeading::new(day.as_ref()))
-                .into_any_element(),
+            Some(Line::Day(day)) => {
+                let list = self.list.clone();
+                let heading = SectionHeading::new(day.as_ref());
+                // A reader moving through the plays goes through each day's
+                // heading too, so the heading carries the reveal on.
+                let heading = if p.a11y {
+                    heading.on_reveal(move |_, _| Reveal::Rows(list.clone(), i).run())
+                } else {
+                    heading
+                };
+                div()
+                    .px(crate::components::RowMetrics::page_margin(&p.look))
+                    .child(heading)
+                    .into_any_element()
+            }
             Some(Line::Play { ix, time }) => {
                 let entry = &self.entries[ix];
                 let track = entry.track.clone();
@@ -295,15 +399,7 @@ impl HistoryPage {
                 let elsewhere = entry.source != "local";
                 let item = Playable::Track(track.id);
                 let drag = if selected && self.selected.len() > 1 {
-                    let picked: Vec<Playable> = self
-                        .picked()
-                        .iter()
-                        .map(|e| Playable::Track(e.track.id))
-                        .collect();
-                    PlayableDrag::new(
-                        &picked,
-                        chrome::count(picked.len() as u64, "track", "tracks"),
-                    )
+                    self.pick_drag()
                 } else {
                     PlayableDrag::new(&[item], track.title.clone()).with_sleeve(track.album_id)
                 };
@@ -410,16 +506,6 @@ impl super::keys::KeyedList for HistoryPage {
     }
 }
 
-koan_kit::app::actions!(history, [Forget]);
-
-/// The page's keys: Delete and Backspace forget the picked plays.
-pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("backspace", Forget, Some("History")),
-        KeyBinding::new("delete", Forget, Some("History")),
-    ]);
-}
-
 /// Plays with how a question names them: title and artist.
 fn described(plays: &[&PlayHistoryEntry]) -> Vec<(i64, String)> {
     plays
@@ -524,7 +610,9 @@ impl HistoryPage {
                 )
                 .spacer();
         }
-        let empty = self.entries.is_empty();
+        // Clearing is the whole history's, so a filter matching nothing
+        // does not take it away.
+        let empty = self.entries.is_empty() && self.lib.browse.read(cx).search().is_none();
         group
             .child(self.search.clone())
             .child(ToolbarMenu::new(
@@ -561,7 +649,12 @@ impl Render for HistoryPage {
             "plays",
         ));
         let body = if !self.loaded {
-            div().into_any_element()
+            match &self.failed {
+                Some(why) => EmptyState::new(Icon::History, "couldn't read history")
+                    .detail(why.clone())
+                    .into_any_element(),
+                None => div().into_any_element(),
+            }
         } else if self.entries.is_empty() {
             EmptyState::new(
                 Icon::History,
@@ -708,7 +801,12 @@ mod tests {
             path: None,
             is_favourite: false,
         };
-        let now = Local::now().timestamp();
+        // Midday today: a second before is still today whenever the test runs.
+        let now = Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .and_then(|t| t.and_local_timezone(Local).single())
+            .map_or_else(|| Local::now().timestamp(), |t| t.timestamp());
         let entry = |id, played_at| PlayHistoryEntry {
             id,
             track: track(id),

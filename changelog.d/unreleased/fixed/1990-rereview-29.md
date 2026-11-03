@@ -1,0 +1,1 @@
+- **The queue's dice says why it is off.** In the kōan GUI app the greyed shuffle-the-rest button says whether shuffle play is on or nothing follows the current track; a smart playlist's sidebar row no longer refuses its own tracks let go over it; and the sidebar reads playlist sleeves a few at a time rather than all at once.

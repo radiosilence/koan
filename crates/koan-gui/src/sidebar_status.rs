@@ -32,13 +32,6 @@ impl SidebarStatus {
             _subscriptions: vec![
                 cx.observe(&mirror.library, |this, _, cx| this.read(cx)),
                 cx.observe(&mirror.cache, |this, _, cx| this.read(cx)),
-                // Read once a scan or sync ends, if the library moved under it.
-                cx.observe(&mirror.tasks, |this, _, cx| {
-                    if this.stale && !this.reading {
-                        this.stale = false;
-                        this.read(cx);
-                    }
-                }),
                 cx.observe(&mirror.connection, |_, _, cx| cx.notify()),
                 cx.observe(&sharing, |_, _, cx| cx.notify()),
             ],
@@ -47,12 +40,10 @@ impl SidebarStatus {
         status
     }
 
-    /// Counts the library again: one read at a time, and none while a scan
-    /// or sync is moving it, which bumps the library every batch; the
-    /// figures are read once that ends.
+    /// Counts the library again, one read at a time: a scan or sync moves
+    /// the library every batch, and changes meanwhile are read once, after.
     fn read(&mut self, cx: &mut Context<Self>) {
-        let tasks = cx.global::<Mirror>().tasks.read(cx).0;
-        if self.reading || tasks.scanning || tasks.syncing {
+        if self.reading {
             self.stale = true;
             return;
         }

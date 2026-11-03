@@ -804,7 +804,7 @@ impl actions::Menus for AlbumGrid {
 }
 
 impl TileHost for AlbumGrid {
-    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
         if let (Some(grid), Some(ix)) = (
             self.grid,
             self.records.iter().position(|record| record.id == album),
@@ -815,6 +815,9 @@ impl TileHost for AlbumGrid {
                 ix / columns,
                 self.records.len().div_ceil(columns),
             );
+            // A scroll handle asks for no frame: drawn again so the next row
+            // of tiles reaches the accessibility tree on an idle window.
+            cx.notify();
         }
     }
 
@@ -999,6 +1002,7 @@ impl Render for AlbumGrid {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
