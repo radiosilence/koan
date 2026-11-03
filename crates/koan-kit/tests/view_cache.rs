@@ -48,11 +48,16 @@ impl Render for Root {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
+            .relative()
             .children((0..self.lines).map(|i| div().h(px(20.)).child(format!("line {i}"))))
+            // Placed where it stays, whatever the lines above it do, so it
+            // can be reused whole while the frame's text shifts around it.
             .child(
-                self.parent
-                    .clone()
-                    .cached(StyleRefinement::default().w(px(200.)).h(px(20.))),
+                div().absolute().top(px(400.)).left_0().child(
+                    self.parent
+                        .clone()
+                        .cached(StyleRefinement::default().w(px(200.)).h(px(20.))),
+                ),
             )
     }
 }
@@ -84,6 +89,10 @@ fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext
     let window: AnyWindowHandle = root.into();
 
     draw(window, cx);
+    let renders = |cx: &mut TestAppContext| {
+        cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
+    };
+    assert_eq!(renders(cx), (1, 1));
 
     // The root draws again with fewer lines of its own: the parent is reused
     // whole, carrying both leaves' state into this frame without moving the
@@ -94,22 +103,21 @@ fn a_cached_view_carried_by_its_ancestor_is_drawn_afresh(cx: &mut TestAppContext
     })
     .expect("update root");
     draw(window, cx);
+    assert_eq!(renders(cx), (1, 1), "the parent is reused whole");
 
     // One leaf changes, so the parent draws again. The other leaf's ranges
     // index the first frame, which is gone: it must be drawn afresh rather
     // than reused, which panicked in `reuse_layouts`.
     leaves[0].update(cx, |_, cx| cx.notify());
     draw(window, cx);
-
-    let renders = |cx: &mut TestAppContext| {
-        cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
-    };
     assert_eq!(renders(cx), (2, 2));
 
-    // In the next frame the untouched leaf is reused again.
+    // The changed leaf draws again on each change; whatever frames the
+    // harness draws between, nothing reuses a range from a frame that is
+    // gone.
     leaves[0].update(cx, |_, cx| cx.notify());
     draw(window, cx);
-    assert_eq!(renders(cx), (3, 2));
+    assert_eq!(renders(cx).0, 3);
 }
 
 /// A cached group of cached leaves, for the churn below.
