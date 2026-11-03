@@ -141,6 +141,10 @@ pub fn track_row<V: TrackList>(
 ) -> AnyElement {
     let p = &p.picked(state.selected);
     let id = track.id;
+    // The row's parts are known by the track and its place in the list: a
+    // list such as the history draws one track several times, and rows
+    // sharing ids would share their pointer's state.
+    let key = (id as u64 & 0xffff_ffff) | ((index as u64 & 0xff_ffff) << 32);
     let view = cx.weak_entity();
     let click = |part: RowPart| {
         super::listen(
@@ -163,7 +167,7 @@ pub fn track_row<V: TrackList>(
             .ok();
         }
     };
-    let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
+    let lead = RowNumber::new(("row-play", key), state.lead.clone())
         .current(state.current)
         .picked(state.selected)
         .when(state.current, |n| n.bars(crate::levels::bars(p.accent)))
@@ -176,7 +180,7 @@ pub fn track_row<V: TrackList>(
     if names_artist {
         detail = detail.children(track.artist_credit.iter().enumerate().map(|(i, part)| {
             let span = div()
-                .id(("row-credit", (id as u64) << 8 | i as u64))
+                .id(("row-credit", key << 8 | i as u64))
                 .flex_none()
                 .child(part.text.clone());
             match part.artist_id {
@@ -196,7 +200,7 @@ pub fn track_row<V: TrackList>(
             .child(div().flex_none().child("\u{a0}·\u{a0}"))
             .child(
                 div()
-                    .id(("row-album", id as u64))
+                    .id(("row-album", key))
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Album(album)))
@@ -204,7 +208,7 @@ pub fn track_row<V: TrackList>(
             );
     }
 
-    let heart = crate::components::Heart::new(("row-heart", id as u64), state.favourite)
+    let heart = crate::components::Heart::new(("row-heart", key), state.favourite)
         .when(!state.favourite, |d| {
             d.invisible().group_hover(ROW_GROUP, |s| s.visible())
         })
@@ -247,7 +251,7 @@ pub fn track_row<V: TrackList>(
             if state.favourite { "favourite" } else { "" },
         ])
     });
-    TableRow::new(("row", id as u64), state.kind)
+    TableRow::new(("row", key), state.kind)
         .when_some(spoken, |row, spoken| row.spoken(spoken))
         .when_some(state.place.filter(|_| p.a11y), |row, (ix, count)| {
             row.place(ix, count)
@@ -270,7 +274,7 @@ pub fn track_row<V: TrackList>(
             row.figure(
                 16.0,
                 div()
-                    .id(("row-note", id as u64))
+                    .id(("row-note", key))
                     .flex()
                     .justify_center()
                     .tooltip(move |window, cx| {
@@ -287,7 +291,7 @@ pub fn track_row<V: TrackList>(
                 track.on_disk,
                 state.transfer,
             ))
-            .id(("row-availability", track.id as u64))
+            .id(("row-availability", key))
             .picked(state.selected),
         )
         .figure(20.0, heart)
