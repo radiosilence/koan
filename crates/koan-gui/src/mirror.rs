@@ -550,5 +550,11 @@ mod tests {
             spent[spent.len() / 2],
             spent[spent.len() - 1]
         );
+        // Copying the rows took about 9 ms here in a debug build; handing
+        // them off takes microseconds.
+        assert!(
+            spent[spent.len() / 2] < std::time::Duration::from_millis(1),
+            "the main thread copied the queue"
+        );
     }
 }

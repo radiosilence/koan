@@ -1,0 +1,1 @@
+- **Grouping a long queue in the desktop app.** Turning record headings on or off in a queue of tens of thousands of tracks no longer holds up the window while the queue is copied.
