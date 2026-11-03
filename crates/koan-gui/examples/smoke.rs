@@ -1,7 +1,8 @@
 //! A smoke run of the app as it is used: the real engine against a
 //! throwaway library, playing, the pointer moving over every page while the
 //! window redraws, the wheel scrolling it, and the page changing under the
-//! pointer. Exits non-zero on a panic anywhere in the process, which is what
+//! pointer, with the rainbow on for the pages. Exits non-zero on a panic
+//! anywhere in the process, which is what
 //! it is for: crashes that only drawing, hovering and playing reach.
 //!
 //! Headless, as `walk` is: no window is shown and nothing on the screen is
@@ -88,6 +89,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         "queue: {frames} frames over {:.0?} while playing",
         start.elapsed()
     );
+
+    // The rainbow on for the pages, in front, its burst fired: the prism and
+    // the burst run only while it is drawn.
+    cx.update(|cx| {
+        koan_gui::rainbow::set_active(true, cx);
+        koan_gui::rainbow::toggle(cx);
+        koan_gui::rainbow::celebrate(cx);
+    });
 
     // Every page, each swept and scrolled, then changed under the pointer.
     for (name, route) in &pages {
