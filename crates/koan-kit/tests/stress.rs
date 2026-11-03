@@ -2,8 +2,10 @@
 //! shader uniforms while a presenter reads them, storms of retargets, the
 //! clocks over long uptimes and a moving present lead, hover storms over many
 //! controls, the accent retargeted faster than it can settle, and Reduce
-//! Motion turned on mid-animation. Each runs in this binary of its own, since
-//! some move the process's present lead; those take `CLOCK` first.
+//! Motion turned on mid-animation. The tests take `CLOCK` and run one at a
+//! time, since they count the slot table every test shares. Those that move
+//! the present lead are in `clock.rs`: the present clock never runs back, so
+//! a lead moved here would leave every other test's clock ahead.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +22,8 @@ use koan_kit::components::{
 use koan_kit::theme::{self, Accent, Icon, KoanTheme, Look, Motion};
 use parking_lot::Mutex;
 
-/// Held by the tests that move the present lead or count the slot table,
-/// which every test in the binary shares.
+/// Held by every test: the slot table and the accent's slots are the
+/// process's.
 static CLOCK: Mutex<()> = Mutex::new(());
 
 /// A small generator, so a failure replays.
@@ -125,6 +127,7 @@ fn the_slot_table_survives_many_threads_and_frees_what_they_drop() {
 
 #[test]
 fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
+    let _clock = CLOCK.lock();
     let uniforms = Arc::new(ShaderUniforms::new());
     uniforms.set_origin(Instant::now());
     let slots: Arc<Vec<ColorSlot>> = Arc::new(
@@ -208,6 +211,7 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
 
 #[test]
 fn a_storm_of_retargets_stays_finite_and_comes_to_rest() {
+    let _clock = CLOCK.lock();
     let animated = Animated::new();
     let mut rng = Rng(42);
     for i in 0..20_000 {
@@ -258,6 +262,7 @@ fn a_storm_of_retargets_stays_finite_and_comes_to_rest() {
 
 #[test]
 fn a_month_of_uptime_rebases_without_a_jump() {
+    let _clock = CLOCK.lock();
     let animated = Animated::new();
     animated.set_origin(Instant::now() - Duration::from_secs(30 * 24 * 3600));
     animated.segment(
@@ -289,84 +294,6 @@ fn a_month_of_uptime_rebases_without_a_jump() {
         animated.track(1).start.abs() < 60.0,
         "a repeat re-anchors near now"
     );
-}
-
-#[test]
-fn colour_slots_rebase_mid_move_without_a_jump() {
-    let _clock = CLOCK.lock();
-    let slot = ColorSlot::claim(Rgba {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    })
-    .expect("a slot");
-    let long = Track {
-        from: 0.0,
-        to: 1.0,
-        start: 0.0,
-        length: 2.0 * 3600.0,
-        curve: TrackCurve::Linear,
-        repeat: TrackRepeat::Once,
-    };
-    slot.to(
-        Rgba {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        },
-        long,
-    );
-    // An hour and a half on, as the present clock reckons it: the next write
-    // to the table moves its origin.
-    set_present_lead(Duration::from_secs(5400));
-    let before = slot.at(present_now());
-    let other = ColorSlot::claim(Rgba::default()).expect("a slot");
-    other.to(
-        Rgba {
-            r: 0.5,
-            g: 0.5,
-            b: 0.5,
-            a: 1.0,
-        },
-        Track::hold(1.0),
-    );
-    let after = slot.at(present_now());
-    set_present_lead(Duration::ZERO);
-    assert!(
-        (before.r - 0.75).abs() < 0.01,
-        "three quarters through: {before:?}"
-    );
-    assert!(
-        (before.r - after.r).abs() < 1e-3,
-        "{before:?} then {after:?}"
-    );
-    assert!(slot.moving(present_now() + Duration::from_secs(5400)));
-}
-
-#[test]
-fn the_present_clock_never_runs_backwards_while_the_lead_moves() {
-    let _clock = CLOCK.lock();
-    let moving = Arc::new(AtomicBool::new(true));
-    let leader = {
-        let moving = moving.clone();
-        std::thread::spawn(move || {
-            let mut rng = Rng(3);
-            while moving.load(Ordering::Relaxed) {
-                set_present_lead(Duration::from_micros(rng.below(25_000) as u64));
-            }
-        })
-    };
-    let mut last = present_now();
-    for _ in 0..200_000 {
-        let now = present_now();
-        assert!(now >= last, "the present clock ran backwards");
-        last = now;
-    }
-    moving.store(false, Ordering::Relaxed);
-    leader.join().unwrap();
-    set_present_lead(Duration::ZERO);
 }
 
 /// Forty toolbar buttons, each fading its glyph out over `Motion::LEAVE`
@@ -445,6 +372,7 @@ fn accent(rng: &mut Rng) -> Accent {
 
 #[gpui_kit::test]
 fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestAppContext) {
+    let _clock = CLOCK.lock();
     cx.update(|cx| {
         gpui_kit::init(cx);
         theme::init(cx);
@@ -478,6 +406,7 @@ fn the_accent_retargeted_faster_than_it_settles_lands_on_the_last(cx: &mut TestA
 
 #[gpui_kit::test]
 fn reduce_motion_mid_settle_lands_the_accent(cx: &mut TestAppContext) {
+    let _clock = CLOCK.lock();
     cx.update(|cx| {
         gpui_kit::init(cx);
         theme::init(cx);
@@ -527,6 +456,7 @@ impl Render for Quad {
 
 #[gpui_kit::test]
 fn reduce_motion_toggled_mid_animation_lands_and_lifts(cx: &mut TestAppContext) {
+    let _clock = CLOCK.lock();
     cx.update(|cx| {
         gpui_kit::init(cx);
         theme::init(cx);
@@ -577,6 +507,7 @@ fn reduce_motion_toggled_mid_animation_lands_and_lifts(cx: &mut TestAppContext) 
 /// clock is shifted once, not once per writer.
 #[test]
 fn two_writers_publish_whole_tracks_and_rebase_once() {
+    let _clock = CLOCK.lock();
     for round in 0..20 {
         let animated = Animated::new();
         animated.set_origin(Instant::now() - Duration::from_secs(2 * 3600 + round));
