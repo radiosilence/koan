@@ -7004,7 +7004,7 @@ mod tests {
     #[test]
     fn stopping_while_the_output_opens_keeps_it_for_the_next_play() {
         let backend = GatedBackend::new(&["Built-in"]);
-        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let (mut player, ids, dir) = opening_player(&backend, 1);
         let state = player.shared_state.clone();
 
         player.process_command(PlayerCommand::Play(ids[0]));
@@ -7016,7 +7016,15 @@ mod tests {
         take_opened(&mut player);
         assert!(player.session().is_none(), "the stop held");
         assert!(player.prepared.is_some(), "kept");
-        player.process_command(PlayerCommand::Play(ids[0]));
+        // Stop empties the queue: the same file queued again.
+        let path = dir.path().join("0.wav");
+        let item = PlaylistItem {
+            path,
+            ..make_item("again")
+        };
+        let again = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        player.process_command(PlayerCommand::Play(again));
         assert!(player.session().is_some(), "started on the kept output");
         assert_eq!(backend.made.lock().unwrap().len(), 1);
         player.process_command(PlayerCommand::Stop);
