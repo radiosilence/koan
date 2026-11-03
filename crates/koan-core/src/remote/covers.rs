@@ -130,14 +130,39 @@ pub fn directory(cfg: &Config) -> PathBuf {
     cfg.cache_dir().join("artwork")
 }
 
-/// A cover's file for `id` at `bucket`, on the configured server. Ids are
-/// the server's own and may be row numbers another server reuses, so the
-/// file is named by a digest of the server and the id together. Bucket 0 is
-/// the record's miss: the server had no cover for it.
+/// A cover's file for `id` at `bucket`, on the configured server.
 fn file(cfg: &Config, id: &str, bucket: u32) -> PathBuf {
-    let server = cfg.remote.url.trim_end_matches('/');
+    file_on(cfg, &cfg.remote.url, id, bucket)
+}
+
+/// A cover's file for `id` at `bucket` on `server`. Ids are the server's own
+/// and may be row numbers another server reuses, so the file is named by a
+/// digest of the server and the id together. Bucket 0 is the record's miss:
+/// the server had no cover for it.
+fn file_on(cfg: &Config, server: &str, id: &str, bucket: u32) -> PathBuf {
+    let server = server.trim_end_matches('/');
     let digest = md5::compute(format!("{server}\0{id}").as_bytes());
     directory(cfg).join(format!("{digest:x}-{bucket}"))
+}
+
+/// A miss's file name ends so: trimming one frees nothing and forgets that
+/// the server has no cover.
+const MISS_SUFFIX: &str = "-0";
+
+/// How long a kept cover goes unread before a read marks it as used again:
+/// often enough to order the trimming, rarely enough to cost nothing.
+const USED_AGAIN: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Marks the kept file at `path` as used now, so trimming takes it last.
+fn used(path: &Path) {
+    let stale = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|at| at.elapsed().ok())
+        .is_some_and(|age| age >= USED_AGAIN);
+    if stale && let Ok(file) = std::fs::File::options().write(true).open(path) {
+        file.set_modified(std::time::SystemTime::now()).ok();
+    }
 }
 
 /// The bucket a miss is kept under.
@@ -152,10 +177,28 @@ pub fn kept(cfg: &Config, id: &str, size: Option<u32>) -> Option<Vec<u8>> {
         .into_iter()
         .filter(|b| *b >= wanted)
         .find_map(|b| {
-            std::fs::read(file(cfg, id, b))
-                .ok()
-                .filter(|d| !d.is_empty())
+            let path = file(cfg, id, b);
+            let data = std::fs::read(&path).ok().filter(|d| !d.is_empty())?;
+            used(&path);
+            Some(data)
         })
+}
+
+/// Forgets what is kept for `id` on the configured server, every size and a
+/// miss: an app found the bytes it was given unusable, and the next ask goes
+/// to the server.
+pub fn discard(cfg: &Config, id: &str) {
+    let mut freed = 0;
+    for bucket in std::iter::once(MISS).chain(crate::remote::client::COVER_SIZES) {
+        let path = file(cfg, id, bucket);
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        if std::fs::remove_file(&path).is_ok() {
+            freed += size;
+        }
+    }
+    if freed > 0 {
+        crate::helpers::cache_shrank(freed);
+    }
 }
 
 /// Whether the preload has nothing to ask about `id`: a cover is kept at
@@ -198,14 +241,21 @@ pub fn forget(cfg: &Config) {
     }
 }
 
-/// Keeps `data` as `id`'s cover at `size`. Written beside its name and
-/// renamed, so a reader never sees half a file.
+/// Keeps `data` as `id`'s cover at `size`, from the configured server.
 pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
+    keep_on(cfg, &cfg.remote.url, id, size, data, true);
+}
+
+/// Keeps `data` as `id`'s cover at `size`, from `server`. Written beside its
+/// name and renamed, so a reader never sees half a file. A file it replaces
+/// is counted out of the cache as this one is counted in. `signal` rings the
+/// change signal for the new size; the preload's progress rings it instead.
+fn keep_on(cfg: &Config, server: &str, id: &str, size: Option<u32>, data: &[u8], signal: bool) {
     let Some(size) = size else { return };
     if data.is_empty() {
         return;
     }
-    let path = file(cfg, id, cover_bucket(size));
+    let path = file_on(cfg, server, id, cover_bucket(size));
     if let Some(dir) = path.parent()
         && let Err(e) = std::fs::create_dir_all(dir)
     {
@@ -213,9 +263,10 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
         return;
     }
     let tmp = path.with_extension("part");
+    let replaced = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, &path));
     match written {
-        Ok(()) => crate::helpers::cache_grew(data.len() as u64),
+        Ok(()) => crate::helpers::cache_resized(data.len() as u64, replaced, signal),
         Err(e) => {
             std::fs::remove_file(&tmp).ok();
             log::warn!("artwork {}: {e}", path.display());
@@ -224,10 +275,12 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
 }
 
 /// `keep`, on the store's own writer thread, for a caller on an async runtime
-/// or a page's lane that should not wait on the disk.
-pub fn keep_later(id: String, size: Option<u32>, data: Vec<u8>) {
-    /// A cover to keep: its id, the size asked for and its bytes.
-    type Keeping = (String, Option<u32>, Vec<u8>);
+/// or a page's lane that should not wait on the disk. `server` is the one the
+/// cover was fetched from, read when the request was made: the configured
+/// one may have changed by the time it is written.
+pub fn keep_later(server: String, id: String, size: Option<u32>, data: Vec<u8>) {
+    /// A cover to keep: its server, its id, the size asked for and its bytes.
+    type Keeping = (String, String, Option<u32>, Vec<u8>);
     static WRITER: std::sync::OnceLock<crossbeam_channel::Sender<Keeping>> =
         std::sync::OnceLock::new();
     let writer = WRITER.get_or_init(|| {
@@ -235,14 +288,14 @@ pub fn keep_later(id: String, size: Option<u32>, data: Vec<u8>) {
         std::thread::Builder::new()
             .name("koan-cover-store".into())
             .spawn(move || {
-                for (id, size, data) in rx {
-                    keep(&Config::cached(), &id, size, &data);
+                for (server, id, size, data) in rx {
+                    keep_on(&Config::cached(), &server, &id, size, &data, true);
                 }
             })
             .ok();
         tx
     });
-    writer.send((id, size, data)).ok();
+    writer.send((server, id, size, data)).ok();
 }
 
 /// `id`'s cover at `size`: kept, or fetched through `client` and kept.
@@ -260,8 +313,8 @@ pub fn cover(
     Ok(data)
 }
 
-/// The kept covers, oldest first by when they were last written, with their
-/// sizes.
+/// The kept covers, least recently used first (written, or read after
+/// `USED_AGAIN`), with their sizes.
 fn kept_files(cfg: &Config) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
     let mut files: Vec<_> = std::fs::read_dir(directory(cfg))
         .into_iter()
@@ -282,11 +335,18 @@ pub fn bytes(cfg: &Config) -> u64 {
     kept_files(cfg).iter().map(|(_, size, _)| size).sum()
 }
 
-/// Removes kept covers, oldest first, until `over` bytes are gone or none is
-/// left. Returns the bytes freed.
+/// Removes kept covers, least recently used first, until `over` bytes are
+/// gone or none is left. Misses stay: they free nothing. Returns the bytes
+/// freed.
 pub fn trim(cfg: &Config, over: u64) -> u64 {
     let mut freed = 0;
-    for (path, size, _) in kept_files(cfg) {
+    let covers = kept_files(cfg).into_iter().filter(|(path, _, _)| {
+        !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(MISS_SUFFIX))
+    });
+    for (path, size, _) in covers {
         if freed >= over {
             break;
         }
@@ -464,10 +524,12 @@ enum Halt {
 /// Whether the pass may fetch one more cover from `client` now. Asked
 /// after every frame, so it reads atomics and the cached configuration
 /// alone.
-fn may_fetch(client: &SubsonicClient) -> Result<(), Halt> {
+fn may_fetch(client: &SubsonicClient, server: &str) -> Result<(), Halt> {
     let cfg = Config::cached();
     let enabled = cfg.remote.enabled && cfg.remote.preload_covers;
-    if !allowed(enabled, !client.outage().is_down()) {
+    // Signed in somewhere else since the pass began: its covers are another
+    // server's, and the next pass is the new one's.
+    if !allowed(enabled, !client.outage().is_down()) || cfg.remote.url != server {
         return Err(Halt::NotNow);
     }
     // Never into the room downloads need: past it, keeping one more cover
@@ -516,7 +578,9 @@ fn pass() -> bool {
     set_progress(Some(Preload { done: 0, total }));
     let bulk = crate::remote::profile::probed(client.auth())
         .is_some_and(|p| p.offers(crate::remote::profile::COVERS));
-    let may = || may_fetch(&client);
+    let server = cfg.remote.url.clone();
+    let may = || may_fetch(&client, &server);
+    let ranked = missing.clone();
     let go_on = || may().is_ok();
     let (one_by_one, halted) = if bulk {
         let mut fetch =
@@ -526,7 +590,8 @@ fn pass() -> bool {
         (missing, None)
     };
     let in_bulk_done = done.load(Ordering::Relaxed);
-    let halted = halted.or_else(|| one_at_a_time(&client, &cfg, one_by_one, &tick));
+    let halted = halted.or_else(|| one_at_a_time(&client, &cfg, &server, one_by_one, &tick));
+    age_by_rank(&cfg, &ranked);
     let fetched = done.load(Ordering::Relaxed);
     let took = started.elapsed().as_secs_f64();
     log::info!(
@@ -545,6 +610,27 @@ fn pass() -> bool {
     // Decided by why it halted, not by sampling quiet now: the app may have
     // woken again while the pass wound down, and the re-run would be lost.
     matches!(halted, Some(Halt::NotNow))
+}
+
+/// Stamps the covers a pass kept so the newest records' are the last
+/// trimmed: the pass fetches them first, so by write time they would be the
+/// first to go. Each record's file is dated a millisecond before the one
+/// ranked above it, all before the pass began, so a cover a page fetched
+/// meanwhile, or reads later, outlasts them.
+fn age_by_rank(cfg: &Config, ranked: &[String]) {
+    let Some(start) = std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(60))
+    else {
+        return;
+    };
+    for (rank, id) in ranked.iter().enumerate() {
+        let path = file(cfg, id, cover_bucket(PRELOAD_SIZE));
+        let Some(at) = start.checked_sub(std::time::Duration::from_millis(rank as u64)) else {
+            break;
+        };
+        if let Ok(file) = std::fs::File::options().write(true).open(&path) {
+            file.set_modified(at).ok();
+        }
+    }
 }
 
 /// How many chunks in a row may fail before the pass gives up on
@@ -595,7 +681,7 @@ fn in_bulk(
                 if unanswered.remove(id.as_str()) {
                     match cover {
                         BulkCover::Cover(data) => {
-                            keep(cfg, &id, Some(PRELOAD_SIZE), &data);
+                            keep_on(cfg, &cfg.remote.url, &id, Some(PRELOAD_SIZE), &data, false);
                             tick();
                         }
                         BulkCover::None => {
@@ -668,6 +754,7 @@ fn in_bulk(
 fn one_at_a_time(
     client: &SubsonicClient,
     cfg: &Config,
+    server: &str,
     ids: Vec<String>,
     tick: &(dyn Fn() + Sync),
 ) -> Option<Halt> {
@@ -683,7 +770,7 @@ fn one_at_a_time(
                     if halted.lock().is_some() {
                         return;
                     }
-                    if let Err(halt) = may_fetch(client) {
+                    if let Err(halt) = may_fetch(client, server) {
                         halted.lock().get_or_insert(halt);
                         return;
                     }
@@ -692,10 +779,10 @@ fn one_at_a_time(
                     };
                     // Waits for no page's cover in flight and a background
                     // slot; ends early when the pass may not go on.
-                    let go_on = || may_fetch(client).is_ok();
+                    let go_on = || may_fetch(client, server).is_ok();
                     match client.get_cover_art_background(&id, Some(PRELOAD_SIZE), &go_on) {
                         Ok(data) if data.is_empty() => keep_miss(cfg, &id),
-                        Ok(data) => keep(cfg, &id, Some(PRELOAD_SIZE), &data),
+                        Ok(data) => keep_on(cfg, server, &id, Some(PRELOAD_SIZE), &data, false),
                         // The server says it has no such cover: remembered,
                         // so the next pass does not ask again. Any other
                         // refusal (a restart, a proxy's 502, a lapsed
@@ -781,6 +868,60 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
+    /// A cover fetched before a switch is kept under the server it came
+    /// from, never the next one's.
+    #[test]
+    fn a_cover_is_kept_under_the_server_it_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = config(dir.path());
+        old.remote.url = "https://old.example".into();
+        let mut new = old.clone();
+        new.remote.url = "https://new.example".into();
+        keep_on(
+            &new,
+            "https://old.example",
+            "al-1",
+            Some(600),
+            &[1, 2],
+            true,
+        );
+        assert_eq!(kept(&old, "al-1", Some(600)), Some(vec![1, 2]));
+        assert_eq!(kept(&new, "al-1", Some(600)), None);
+    }
+
+    /// Trimming takes the least recently used first, and the preload's
+    /// stamps put the newest records last; a miss frees nothing and stays.
+    #[test]
+    fn trimming_takes_the_oldest_records_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let ranked: Vec<String> = ["al-new", "al-mid", "al-old"].map(String::from).into();
+        // Written in the preload's order: the newest record first.
+        for id in &ranked {
+            keep(&cfg, id, Some(PRELOAD_SIZE), &[0; 10]);
+        }
+        keep_miss(&cfg, "al-none");
+        age_by_rank(&cfg, &ranked);
+        assert_eq!(trim(&cfg, 10), 10);
+        assert!(!settled(&cfg, "al-old"), "the oldest record's went first");
+        assert!(settled(&cfg, "al-new") && settled(&cfg, "al-mid"));
+        assert_eq!(trim(&cfg, 100), 20);
+        assert!(settled(&cfg, "al-none"), "the miss stays");
+    }
+
+    /// A replaced cover counts once.
+    #[test]
+    fn a_replaced_cover_counts_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        keep(&cfg, "al-1", Some(600), &[0; 10]);
+        keep(&cfg, "al-1", Some(600), &[0; 30]);
+        assert_eq!(bytes(&cfg), 30);
+        discard(&cfg, "al-1");
+        assert_eq!(bytes(&cfg), 0);
+        assert_eq!(kept(&cfg, "al-1", Some(600)), None);
+    }
+
     fn ids(n: usize) -> Vec<String> {
         (0..n).map(|i| format!("al-{i}")).collect()
     }
@@ -790,7 +931,7 @@ mod tests {
     #[test]
     fn a_cut_stream_is_asked_again_for_the_rest() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut asked: Vec<Vec<String>> = Vec::new();
         let (rest, halted) = {
             let mut fetch = |ask: &[String], each: &mut Each| {
@@ -816,7 +957,7 @@ mod tests {
     #[test]
     fn a_bulk_answer_stops_between_frames() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let read = std::cell::Cell::new(0);
         let mut fetch = |ask: &[String], each: &mut Each| {
             for id in ask {
@@ -846,7 +987,7 @@ mod tests {
     #[test]
     fn koan_covers_failing_falls_back_to_one_by_one() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = config(&dir);
+        let cfg = config(dir.path());
         let mut calls = 0;
         let all = ids(BULK_MAX * (BULK_FAILURES + 2));
         let (rest, halted) = {

@@ -587,7 +587,7 @@ fn trim_cache(inner: &Inner, now: bool) {
     };
     match crate::db::pool::shared().get() {
         Ok(db) => {
-            if crate::helpers::evict_cache(&db, &cfg, &keep, false) > 0 {
+            if crate::helpers::evict_cache(&db, &cfg, &keep, false).downloads > 0 {
                 // Played entries pointed at the files just removed. Pending
                 // again, they are fetched when the window comes back to them.
                 inner.state.reset_items_with_missing_files();
