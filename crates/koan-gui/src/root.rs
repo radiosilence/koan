@@ -28,7 +28,7 @@ const SAMPLE: u32 = 128;
 
 /// The mirror ball's side, and where it hangs: under the toolbar, in the
 /// window's top right corner, in points.
-const MIRROR_BALL: f32 = 48.0;
+const MIRROR_BALL: f32 = 72.0;
 const MIRROR_BALL_TOP: f32 = 56.0;
 const MIRROR_BALL_RIGHT: f32 = 18.0;
 
@@ -184,6 +184,11 @@ impl WindowRoot {
 
     /// Settings changed the record's colours or the tint: the wash follows.
     fn restyle(&mut self, playback: &Entity<Playback>, cx: &mut Context<Self>) {
+        // Reduce Motion or Low Power may have moved: the prism's layers come
+        // or go with them.
+        if self.rainbow {
+            cx.notify();
+        }
         let theme = cx.global::<KoanTheme>();
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
         if wash_tint != self.wash_tint {
@@ -298,10 +303,16 @@ impl Render for WindowRoot {
         self.viewport = window.viewport_size();
         self.scale = window.scale_factor();
         let fill = || StyleRefinement::default().size_full();
-        let prism = (self.rainbow && SHADED).then(|| {
+        // Nothing of it under Reduce Motion: every layer moves, and a still
+        // frame of strobing spots is no calmer.
+        let prism = (self.rainbow && SHADED && KoanTheme::motion_allowed(cx)).then(|| {
             let look = theme::Look::of(window, cx);
             let brat = crate::rainbow::Painted::now() == Some(true);
             self.prism.style(look.dark, brat, self.scale);
+            self.prism.ball_at(
+                MIRROR_BALL_RIGHT + MIRROR_BALL / 2.0,
+                MIRROR_BALL_TOP + MIRROR_BALL / 2.0,
+            );
             look
         });
         let layer = |quad: AnyElement| div().absolute().size_full().child(quad);
@@ -326,7 +337,8 @@ impl Render for WindowRoot {
             )
             .when_some(prism, |root, look| {
                 let side = look.spaced(MIRROR_BALL);
-                root.child(layer(self.prism.pulse().size_full().into_any_element()))
+                root.child(layer(self.prism.disco().size_full().into_any_element()))
+                    .child(layer(self.prism.pulse().size_full().into_any_element()))
                     .child(
                         div()
                             .absolute()

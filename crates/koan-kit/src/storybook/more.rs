@@ -564,6 +564,7 @@ impl StoryContent {
                 let prism = self.more.prism.clone();
                 prism.run(true);
                 prism.style(look.dark, false, window.scale_factor());
+                prism.ball_at(56.0, 56.0);
                 let bars = self.more.bars.clone();
                 let side = look.spaced(96.0);
                 let stage = look.spaced(340.0);
@@ -596,6 +597,7 @@ impl StoryContent {
                         .relative()
                         .overflow_hidden()
                         .child(overlay(prism.wash().size_full().into_any_element()))
+                        .child(overlay(prism.disco().size_full().into_any_element()))
                         .child(overlay(prism.pulse().size_full().into_any_element()))
                         .child(
                             div()
