@@ -40,6 +40,8 @@ pub struct Transport {
     /// The device controlled, to name it while it has not said what it
     /// plays through.
     devices: Entity<Slice<Devices>>,
+    /// What the control button shows of the devices, last drawn.
+    controlled_shown: ControlledShown,
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
@@ -160,14 +162,20 @@ impl Transport {
                 cx.observe(&mirror.renderers, |this, _, cx| this.refill_output(cx)),
                 // The control button names the device controlled, and its
                 // menu follows the devices while it is open.
-                cx.observe(&mirror.devices, |this, _, cx| {
+                cx.observe(&mirror.devices, |this, devices, cx| {
                     if let Some(menu) = this.menus.menu(Menu::Devices).cloned() {
                         let view = crate::devices::ControlView::read(cx);
                         menu.update(cx, |menu, cx| {
                             menu.refill(cx, |menu, _| crate::devices::control_menu(menu, &view))
                         });
                     }
-                    cx.notify();
+                    // Other devices report their playheads through this
+                    // slice; the bar redraws only when what it shows moves.
+                    let shown = controlled_shown(&devices.read(cx).0);
+                    if shown != this.controlled_shown {
+                        this.controlled_shown = shown;
+                        cx.notify();
+                    }
                 }),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
@@ -206,6 +214,7 @@ impl Transport {
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
+            controlled_shown: controlled_shown(&mirror.devices.read(cx).0),
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
@@ -495,10 +504,14 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     let menu = menu.min_width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
-        let name = view.controlled.as_deref().unwrap_or("That device");
-        return menu.note(format!(
-            "{name} has not said what it plays through. It may need updating."
-        ));
+        // This device's own outputs are on their way; another device that
+        // never says is one from before outputs were reported.
+        return menu.note(match view.controlled.as_deref() {
+            Some(name) => {
+                format!("{name} has not said what it plays through. It may need updating.")
+            }
+            None => "This device's outputs are still being read.".to_owned(),
+        });
     };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry
@@ -1490,4 +1503,22 @@ mod tests {
         let heard = Some((TRACK - 100, now - Duration::from_millis(400)));
         assert_eq!(shown_position(TRACK - 50, heard, true, now, TRACK), TRACK);
     }
+}
+
+/// What the control button draws from the devices: the device controlled,
+/// how it can be reached, and its name.
+type ControlledShown = (
+    Option<String>,
+    Option<koan_ffi::DeviceReach>,
+    Option<String>,
+);
+
+fn controlled_shown(view: &Devices) -> ControlledShown {
+    let name = view.target.as_ref().and_then(|t| {
+        view.devices
+            .iter()
+            .find(|d| &d.id == t)
+            .map(|d| d.name.clone())
+    });
+    (view.target.clone(), view.target_reach.clone(), name)
 }
