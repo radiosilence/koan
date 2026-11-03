@@ -177,7 +177,7 @@ Many records' covers in one request, for a client keeping a library's covers on 
 | 4 | the cover's length, big-endian; 0 unless it is a cover |
 | that many | the cover, JPEG |
 
-A cover is answered only where the server holds it ready at that size; it warms every album at 300 and 600. Anything else, an id that is not an album's, one it does not know, or an album whose cover it has not made, is `2`, and the client asks `getCoverArt` for it as before. A client reads a kind it does not know as `2`, so later kinds can be added. A refusal (sign-in, too many ids, none) is the usual `subsonic-response` document instead of the stream.
+A cover is answered only where the server holds it ready at that size; it warms every album at 300 and 600. Anything else, an id that is not an album's, one it does not know, or an album whose cover it has not made, is `2`, and the client asks `getCoverArt` for it as before. A client reads a kind it does not know as `2`, so later kinds can be added. A client refuses a frame claiming a cover over 32 MB, and asks one by one for every id the stream did not answer, however it ended. A refusal (sign-in, too many ids, none) is the usual `subsonic-response` document instead of the stream.
 
 kōan's apps use it for the cover preload when the server lists it, two hundred ids at a time, and fetch the rest, or every cover from a server without it, six at a time with `getCoverArt`.
 

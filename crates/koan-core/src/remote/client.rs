@@ -526,7 +526,10 @@ impl SubsonicClient {
         let mut form: Vec<(String, String)> = self.auth_params()?.into_iter().collect();
         form.push(("size".into(), cover_bucket(size).to_string()));
         form.extend(ids.iter().map(|id| ("id".into(), id.clone())));
-        let mut resp = self.http().post(&url).form(&form).send()?;
+        // The downloads' client: it gives up on a stall, not on a whole
+        // answer that takes a while, which two hundred covers over a phone's
+        // connection may.
+        let mut resp = self.downloader().post(&url).form(&form).send()?;
         let status = resp.status();
         if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(SubsonicError::Unavailable(status.as_u16()));

@@ -37,6 +37,9 @@ pub const BULK_MAX: usize = 200;
 /// `koanCovers`' content type: a stream of frames (`frame`), not Subsonic's
 /// XML or JSON, which a refusal still is.
 pub const BULK_TYPE: &str = "application/vnd.koan.covers";
+/// The largest cover a frame may carry: far past any 1200 px JPEG, so a
+/// broken or hostile length cannot make a client allocate gigabytes.
+pub const BULK_COVER_MAX: usize = 32 * 1024 * 1024;
 
 /// One record's answer in a `koanCovers` stream.
 #[derive(Debug, PartialEq, Eq)]
@@ -90,6 +93,12 @@ pub fn read_frame(
     let mut head = [0u8; 5];
     from.read_exact(&mut head)?;
     let size = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+    if size > BULK_COVER_MAX {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("a cover of {size} bytes"),
+        ));
+    }
     let mut data = vec![0u8; size];
     from.read_exact(&mut data)?;
     let id = String::from_utf8_lossy(&id).into_owned();
@@ -507,33 +516,43 @@ fn in_bulk(
     let mut chunks = ids.chunks(BULK_MAX);
     for chunk in chunks.by_ref() {
         if let Err(halt) = may_fetch() {
+            rest.extend(chunk.iter().cloned());
             rest.extend(chunks.flatten().cloned());
             return (rest, Some(halt));
         }
         crate::remote::client::wait_for_idle_covers();
-        let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| match cover {
-            BulkCover::Cover(data) => {
-                keep(cfg, &id, Some(PRELOAD_SIZE), &data);
-                tick();
+        // Each id asked is answered once; a frame for anything else, or
+        // a second for the same id, is ignored.
+        let mut unanswered: std::collections::HashSet<&str> =
+            chunk.iter().map(String::as_str).collect();
+        let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| {
+            if !unanswered.remove(id.as_str()) {
+                return;
             }
-            BulkCover::None => {
-                keep_miss(cfg, &id);
-                tick();
+            match cover {
+                BulkCover::Cover(data) => {
+                    keep(cfg, &id, Some(PRELOAD_SIZE), &data);
+                    tick();
+                }
+                BulkCover::None => {
+                    keep_miss(cfg, &id);
+                    tick();
+                }
+                BulkCover::NotHeld => rest.push(id),
             }
-            BulkCover::NotHeld => rest.push(id),
         });
-        if let Err(e) = answered {
-            // What it did not answer is fetched one by one, which says for
-            // itself whether the server is there.
-            log::info!("cover preload: koanCovers failed ({e}); fetching one by one");
-            let answered: std::collections::HashSet<&str> =
-                rest.iter().map(String::as_str).collect();
-            let unanswered: Vec<String> = chunk
+        // What the stream did not answer, whether it failed or ended early
+        // (a server task that stopped, a body cut between frames), is
+        // fetched one by one, which says for itself whether the server is
+        // there.
+        rest.extend(
+            chunk
                 .iter()
-                .filter(|id| !answered.contains(id.as_str()) && !settled(cfg, id))
-                .cloned()
-                .collect();
-            rest.extend(unanswered);
+                .filter(|id| unanswered.contains(id.as_str()))
+                .cloned(),
+        );
+        if let Err(e) = answered {
+            log::info!("cover preload: koanCovers failed ({e}); fetching one by one");
             rest.extend(chunks.flatten().cloned());
             return (rest, None);
         }
@@ -745,6 +764,12 @@ mod tests {
             err.is_some(),
             "a stream cut inside a frame is an error, not its end"
         );
+        // A length past any cover is refused before anything is allocated.
+        let mut huge = frame("al-5", BulkCover::None);
+        let at = 2 + 4 + 1;
+        huge[at..at + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        let err = read_frame(&mut &huge[..]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     fn config(dir: &Path) -> Config {
