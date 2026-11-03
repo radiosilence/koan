@@ -76,7 +76,7 @@ impl TransportMetrics {
     /// the outline, as tall as `HIT` where there is room and never reaching
     /// above the rule or into the seek row, so a click in it never seeks.
     pub fn centre_rows(look: &Look) -> CentreRows {
-        let inner = Self::HEIGHT - crate::theme::HAIRLINE;
+        let inner = Self::HEIGHT - look.hairline;
         let outline = super::ButtonKind::IconOutlined.glyph_side(look);
         let gap = look.spaced(Self::STACK_GAP);
         let row = look.spaced(Self::SEEK_ROW);
@@ -238,9 +238,6 @@ impl RowMetrics {
         look.space(Space::Xs)
     }
 
-    /// A page's margin on every side, and what a row's content is inset by
-    /// so it lines up under the page's header. One figure, so the page's
-    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     /// A lead column wide enough for the longest number in a list of
     /// `count` rows, measured in the face the numbers are drawn in (`meta`):
     /// two digits at least.
@@ -253,9 +250,12 @@ impl RowMetrics {
             .advance(face, size, '0')
             .map(|size| size.width)
             .unwrap_or(size * 0.6);
-        digit * digits + look.spaced(4.0)
+        digit * digits + px(4.0)
     }
 
+    /// A page's margin on every side, and what a row's content is inset by
+    /// so it lines up under the page's header. One figure, so the page's
+    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     pub fn page_margin(look: &Look) -> Pixels {
         Self::page_margin_on(&look.scale)
     }

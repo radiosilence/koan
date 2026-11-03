@@ -1,0 +1,1 @@
+- **The accent turns with the wash.** In the kōan GUI app a new record's accent moves over the wash's two-second dissolve, on the same curve and mixed in OKLab, and is drawn by the GPU with no frames from the app.

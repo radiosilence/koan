@@ -285,7 +285,12 @@ impl Motion {
     /// leaves, a toggle or a selection let go. Barely seen, so leaving is
     /// not a hard cut; a state coming on shows at once.
     pub const LEAVE: Duration = Duration::from_millis(130);
-    /// The accent arriving with a record.
+    /// A record arriving: the wash dissolving into its field and the accent
+    /// turning to its colour, together and on the same curve
+    /// (`ease_in_out`). Long enough that the room is seen to have changed
+    /// without being caught changing.
+    pub const DISSOLVE: Duration = Duration::from_secs(2);
+    /// A control's answer, a panel sliding.
     pub const SETTLE: Duration = Duration::from_millis(250);
     /// A sleeve arriving where its record's colour stood, as the Mac's grid
     /// fades one in.

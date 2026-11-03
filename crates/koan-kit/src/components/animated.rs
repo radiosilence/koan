@@ -1,32 +1,34 @@
 //! Animation the GPU draws: an element whose pixels come from a fragment
-//! program, moved by values the app writes from any thread or by the clock,
-//! with no GPUI frame drawn while it moves.
+//! program, moved by keyframes the app writes from any thread, with no GPUI
+//! frame drawn while it moves.
 //!
 //! A page declares one with `AnimatedQuad::new(&PROGRAM, &animated)` and
-//! keeps the `Animated` handle, writing into it what moves the drawing: the
-//! levels of the playing bars, a download's progress, the anchor of a seek
-//! bar's playhead. Each frame is presented with the values as they are then;
-//! the page and the views around it are not drawn again.
+//! keeps the `Animated` handle, writing into it what moves the drawing when
+//! the data changes: the levels of the playing bars, a download's progress,
+//! the anchor of a seek bar's playhead. A plain value is a uniform (`set`); a
+//! moving one is a track (`to`, `segment`, `hold`): from, to, start, length
+//! and curve, which the program reads at present time (`koan_track`), so the
+//! page and the views around it are not drawn again while it moves.
 //!
 //! What the kit takes care of:
-//! - **The frame loop.** Driven by values, a change wakes the window to
-//!   present once (`Animated::set`); nothing runs between changes. Driven by
-//!   the clock (`Animated::run`), the window presents every refresh while it
-//!   runs, and `time` in the program counts from the origin set. A
-//!   transition runs for its length and stops by itself (`run_for`).
-//! - **Parking.** A window with nothing changing or running parks, as an
-//!   idle window does. A hidden or occluded window is not woken, and a quad
-//!   off screen is not in the scene, so it costs nothing.
-//! - **Reduce Motion.** A `decorative` quad's clock stops while the person
-//!   has asked for less motion; its values still show as they change.
+//! - **The frame loop.** A change wakes the window to present; a track
+//!   presents at the display's rate while it moves and once more as it
+//!   lands, then the window parks. `run` keeps the clock going for a drawing
+//!   that moves with `time` itself (the prism).
+//! - **Parking.** A window with nothing changing or moving parks, as an idle
+//!   window does. A hidden or occluded window is not woken, and a quad off
+//!   screen is not in the scene, so it costs nothing.
+//! - **Reduce Motion.** A `decorative` quad's tracks stand at their ends
+//!   while the person has asked for less motion; its values still show as
+//!   they change.
+//! - **Long uptime.** Track times are seconds from an origin that moves to
+//!   now every hour, so f32 keeps its precision.
 //!
 //! Programs are MSL and WGSL source of one `shade` function (GPUI's
 //! `ShaderProgram`), given the pixel's position and the quad's size in
-//! device pixels, `time`, sixteen uniforms and an optional image, and
-//! returning the pixel's straight-alpha colour. A `prepare` function may work
-//! out per present, on the CPU, what every pixel would otherwise compute
-//! alike. Where the renderer draws no shaders (`SHADED` is false), a page
-//! draws its fallback itself.
+//! device pixels, `time`, the uniforms and tracks, and an optional image,
+//! and returning the pixel's straight-alpha colour. Where the renderer draws
+//! no shaders (`SHADED` is false), a page draws its fallback itself.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,7 +86,27 @@ struct Inner {
     still: AtomicBool,
 }
 
+/// An `Animated` held without keeping it alive: a clock that follows
+/// another's running for as long as its quad is drawn.
+#[derive(Clone)]
+pub struct WeakAnimated(std::sync::Weak<Inner>);
+
+impl WeakAnimated {
+    pub fn upgrade(&self) -> Option<Animated> {
+        self.0.upgrade().map(Animated)
+    }
+
+    /// Whether it is the handle `animated` was taken from.
+    pub fn is(&self, animated: &Animated) -> bool {
+        std::sync::Weak::ptr_eq(&self.0, &Arc::downgrade(&animated.0))
+    }
+}
+
 impl Animated {
+    pub fn downgrade(&self) -> WeakAnimated {
+        WeakAnimated(Arc::downgrade(&self.0))
+    }
+
     pub fn new() -> Self {
         let animated = Self::default();
         animated.0.uniforms.set_origin(Instant::now());
@@ -247,6 +269,15 @@ impl Animated {
         self.wake();
     }
 
+    /// `color` into the four uniforms from `index`, as red, green, blue and
+    /// alpha. A colour naming a colour slot (the accent) is read from the
+    /// slot at each present, so it moves in the program with no frame drawn.
+    pub fn set_color(&self, index: usize, color: Hsla) {
+        if self.0.uniforms.set_color(index, color) {
+            self.wake();
+        }
+    }
+
     /// Uniforms from `start` on.
     pub fn set_all(&self, start: usize, values: &[f32]) {
         let mut changed = false;
@@ -381,7 +412,7 @@ fn anchored(mut track: Track, now: f32) -> Track {
     track
 }
 
-fn curve(ease: Ease) -> TrackCurve {
+pub(crate) fn curve(ease: Ease) -> TrackCurve {
     match ease {
         Ease::Linear => TrackCurve::Linear,
         Ease::InOut => TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),

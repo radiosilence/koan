@@ -1,0 +1,1 @@
+- **The sidebar's search field opens the search box and shows its query.** It was a text field whose suggestions could no longer appear, and which reopened the box whenever Tab landed on it; it is now a button over the query. The results page shows its usual previews while the search box is open, rather than the box's longer lists.

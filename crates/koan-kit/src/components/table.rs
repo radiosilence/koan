@@ -53,6 +53,7 @@ pub struct TableRow {
     spoken: Option<SharedString>,
     place: Option<(usize, usize)>,
     reveal: Option<Handler<()>>,
+    landed: Option<u64>,
 }
 
 impl TableRow {
@@ -69,7 +70,18 @@ impl TableRow {
             spoken: None,
             place: None,
             reveal: None,
+            landed: None,
         }
+    }
+
+    /// The row has just landed where it is (dropped there, moved there,
+    /// added from elsewhere), the `landing`th time its list has had rows
+    /// land: its ground lifts to the accent and settles back, under its
+    /// text, so the eye finds where the rows went. Drawn new, it answers
+    /// too, since arriving is the news.
+    pub fn landed(mut self, landing: Option<u64>) -> Self {
+        self.landed = landing;
+        self
     }
 
     /// The row as one node for a screen reader, read as `name` (the title,
@@ -334,9 +346,16 @@ impl RenderOnce for TableRow {
                 .child(cell.content)
         };
         let heading = self.kind == RowKind::Heading;
+        let mut base = self.base;
+        let lift = self.landed.and_then(|landing| {
+            let id = base.interactivity().element_id.clone()?;
+            let answers = super::Answerer::of(&id, window, cx);
+            answers.announce(landing, super::Answer::Lift, look.accent.hsla(), window, cx);
+            answers.layer(window, cx)
+        });
         let base = match self.spoken {
             Some(name) => super::accessible(
-                self.base,
+                base,
                 if heading {
                     gpui_kit::Role::Heading
                 } else {
@@ -349,7 +368,7 @@ impl RenderOnce for TableRow {
             .when_some(self.place, |row, (ix, count)| {
                 row.aria_position_in_set(ix + 1).aria_size_of_set(count)
             }),
-            None => self.base,
+            None => base,
         };
         let base = match self.reveal {
             Some(reveal) => base.on_a11y_action(
@@ -368,6 +387,7 @@ impl RenderOnce for TableRow {
             .py(RowMetrics::padding(&look))
             .gap(RowMetrics::column_gap(&look))
             .when(self.selected, |d| d.bg(p.selection.hsla()))
+            .children(lift)
             // With more contrast, a picked row is outlined as well as filled:
             // a fill alone can sit close to the ground.
             .children((self.selected && look.contrast).then(|| {

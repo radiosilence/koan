@@ -651,8 +651,15 @@ impl ClockStream {
             Some(anchor) if anchor.playing => {
                 let now = std::time::Instant::now();
                 let wait = 1000 - anchor.reckoning(now) % 1000;
+                // No Tokio reactor drives this future (GPUI's executor and
+                // Swift's both poll it), so the wait is a thread's sleep.
+                let (woke, waited) = tokio::sync::oneshot::channel();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(wait));
+                    let _ = woke.send(());
+                });
                 tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_millis(wait)) => {
+                    _ = waited => {
                         Some(anchor.reckoning(std::time::Instant::now()))
                     }
                     moved = moves.changed() => {

@@ -181,8 +181,6 @@ pub struct SettingsWindow {
     /// account is an admin's, and so whether there is a People tab at all.
     people: Option<Entity<panes::people::People>>,
     people_for: Option<String>,
-    /// Pressed on the strip along the top, to move the window on the next
-    /// move: a click alone is not a drag.
     _people: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -215,9 +213,11 @@ impl SettingsWindow {
             }),
             // The CLI and the TUI write the same file; coming back to this
             // window is the moment to notice they did.
+            // The system's settings can turn the login item off the same way.
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.ctx.model.update(cx, |model, cx| model.reload(cx));
+                    crate::platform::residency::read_login(cx);
                 }
             }),
             cx.on_release(|_, cx| {
@@ -301,7 +301,8 @@ impl SettingsWindow {
             && cx
                 .global::<Settings>()
                 .window
-                .is_some_and(|h| h.window_id() == window.window_handle().window_id());
+                .as_ref()
+                .is_some_and(|h| h.0.window_id() == window.window_handle().window_id());
         let unseen = if live {
             self.ctx
                 .model

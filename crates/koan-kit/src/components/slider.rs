@@ -32,8 +32,9 @@ pub struct Slider {
     reach: Option<Glide>,
     /// What it sets, for a screen reader: "seek", "volume".
     name: Option<SharedString>,
-    /// A gliding fill drawn as the rainbow appearance's trail.
-    prism: bool,
+    /// A gliding fill drawn as the rainbow appearance's trail, in brat's
+    /// palette when `Some(true)`.
+    prism: Option<bool>,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
@@ -99,13 +100,7 @@ impl Glide {
             _ => 0.0,
         };
         self.0.set_all(0, &[0.0, (value + rate).min(1.0)]);
-        if rate > 0.0 && value < 1.0 {
-            let length = Duration::from_secs_f32((1.0 - value) / rate);
-            self.0
-                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
-        } else {
-            self.0.hold(0, value);
-        }
+        self.run(next);
         if offset != 0.0 {
             self.0
                 .segment(1, offset, 0.0, now, SETTLE, Ease::InOut, Repeat::Once);
@@ -115,14 +110,37 @@ impl Glide {
         self.0.hold(2, 0.0);
     }
 
-    /// The value comes to rest where it stands: nothing presents for it
-    /// until it is set again.
+    /// Track 0 running from `anchor` at its rate to the end, or held there.
+    fn run(&self, (value, rate, since): (f32, f32, Instant)) {
+        if rate > 0.0 && value < 1.0 {
+            let length = Duration::from_secs_f32((1.0 - value) / rate);
+            self.0
+                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
+        } else {
+            self.0.hold(0, value);
+        }
+    }
+
+    /// Not moving, the value comes to rest where it stands: nothing presents
+    /// for it. Moving again, it runs on from the anchor it was last set to,
+    /// so a window hidden and shown again, which sets the same anchor, does
+    /// not leave it standing.
     pub fn set_moving(&self, moving: bool) {
-        if !moving {
+        if moving {
+            let anchor = *self.1.lock();
+            if let Some(anchor) = anchor {
+                self.run(anchor);
+            }
+        } else {
             let now = Animated::now();
             self.0.hold(0, self.0.at(0, now));
             self.0.hold(1, 0.0);
         }
+    }
+
+    /// Whether a value has been set since the last `set_unknown`.
+    pub fn known(&self) -> bool {
+        self.1.lock().is_some()
     }
 
     /// No value to show, as a download whose size is unknown: a ring turns
@@ -150,8 +168,7 @@ impl Glide {
     fn style(&self, look: &Style) {
         self.0.set_all(2, &[look.fill, look.thumb, look.inset]);
         for (i, color) in [look.fill_color, look.thumb_color].into_iter().enumerate() {
-            let rgba = color.to_rgb();
-            self.0.set_all(8 + i * 4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            self.0.set_color(8 + i * 4, color);
         }
     }
 }
@@ -243,13 +260,13 @@ impl Slider {
             on_commit: None,
             glide: None,
             reach: None,
-            prism: false,
+            prism: None,
         }
     }
 
     /// With a `glide`, the fill as a rainbow trail running back from the
     /// playhead: the hidden rainbow appearance's seek bar.
-    pub fn prism(mut self, prism: bool) -> Self {
+    pub fn prism(mut self, prism: Option<bool>) -> Self {
         self.prism = prism;
         self
     }
@@ -500,11 +517,12 @@ impl RenderOnce for Slider {
             })
             .when_some(glide, |rail, glide| {
                 let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
-                let program = if prism {
+                let program = if prism.is_some() {
                     &super::prism::PRISM_GLIDE
                 } else {
                     &GLIDE
                 };
+                let brat = prism == Some(true);
                 rail.child(
                     canvas(
                         move |_, window, cx| {
@@ -516,6 +534,7 @@ impl RenderOnce for Slider {
                                 fill_color,
                                 thumb_color,
                             });
+                            glide.0.set(5, brat as u8 as f32);
                             glide.0.attach(false, window, cx);
                             glide
                         },
@@ -615,6 +634,28 @@ mod tests {
     };
 
     use super::*;
+
+    /// A glide brought to rest (a window hidden) and set the same anchor
+    /// again as it shows runs on from it, rather than standing where it
+    /// stopped.
+    #[test]
+    fn a_glide_at_rest_runs_on_when_moving_again() {
+        let glide = Glide::new();
+        let since = Animated::now();
+        glide.set(0.25, 0.01, since);
+        glide.set_moving(false);
+        let later = Animated::now() + Duration::from_secs(10);
+        let held = glide.0.at(0, later);
+        glide.set(0.25, 0.01, since);
+        glide.set_moving(true);
+        assert!(
+            glide.0.at(0, later) > held + 0.05,
+            "it moves on from its anchor"
+        );
+        assert!(glide.known());
+        glide.set_unknown();
+        assert!(!glide.known());
+    }
 
     struct Owner {
         value: f32,

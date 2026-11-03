@@ -71,7 +71,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let side = min(size.x, size.y);
     let stroke = side * 0.125;
     let d = position - size * 0.5;
@@ -192,10 +192,10 @@ impl RenderOnce for ProgressRing {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
         if let Some(glide) = self.glide.filter(|_| SHADED) {
-            let color = self.color.to_rgb();
+            let color = self.color;
             return canvas(
                 move |_, window, cx| {
-                    glide.0.set_all(8, &[color.r, color.g, color.b, color.a]);
+                    glide.0.set_color(8, color);
                     glide.0.attach(false, window, cx);
                     glide
                 },

@@ -2266,6 +2266,7 @@ impl WgpuRendererCore {
             slot_generation: 0,
             size: extent,
             layers: drawn,
+            moving: Vec::new(),
         };
         Ok(())
     }

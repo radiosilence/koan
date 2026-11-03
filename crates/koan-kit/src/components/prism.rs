@@ -18,6 +18,7 @@
 //! beat fades out with nothing more written. Bursts keep their time on a
 //! track too, held at their end once played.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use gpui_kit::*;
@@ -105,7 +106,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + koan_track(u, 0, time));
     float3 colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[4]);
     float glow = 0.5 + 0.5 * sin(v * 3.14159);
-    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2, time)) + pulse * 0.18;
+    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2, time)) + pulse * 0.06;
     if (u[5] < 0.5) {
         colour = mix(colour, float3(1.0), 0.35);
     }
@@ -130,7 +131,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     var colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[1].x);
     let glow = 0.5 + 0.5 * sin(v * 3.14159);
     let base = select(0.30, 0.42, u[1].y > 0.5);
-    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2u, time)) + pulse * 0.18;
+    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2u, time)) + pulse * 0.06;
     if (u[1].y < 0.5) {
         colour = mix(colour, vec3<f32>(1.0), 0.35);
     }
@@ -287,7 +288,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
 /// The slider's fill as a rainbow trail running back from the playhead,
 /// with a glint at its head: `GLIDE`'s uniforms, the fill's colour giving
-/// only its opacity.
+/// only its opacity, and 5 brat's palette.
 pub(crate) static PRISM_GLIDE: ShaderProgram = ShaderProgram {
     name: "koan-prism-glide",
     msl: concat!(
@@ -305,7 +306,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         return float4(0.0);
     }
     float cover = clamp(end - x + 0.5, 0.0, 1.0);
-    float3 colour = koan_prism(x / max(width, 1.0) * 0.9 - time * 0.12, 0.0);
+    float3 colour = koan_prism(x / max(width, 1.0) * 0.9 - time * 0.12, u[5]);
     float glint = exp(-max(end - x, 0.0) / max(u[2] * 4.0, 1.0));
     return float4(mix(colour, float3(1.0), glint * 0.6), u[11] * cover);
 }
@@ -326,7 +327,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         return vec4<f32>(0.0);
     }
     let cover = clamp(end - x + 0.5, 0.0, 1.0);
-    let colour = koan_prism(x / max(width, 1.0) * 0.9 - time * 0.12, 0.0);
+    let colour = koan_prism(x / max(width, 1.0) * 0.9 - time * 0.12, u[1].y);
     let glint = exp(-max(end - x, 0.0) / max(u[0].z * 4.0, 1.0));
     return vec4<f32>(mix(colour, vec3<f32>(1.0), glint * 0.6), u[2].w * cover);
 }
@@ -491,7 +492,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float gloss = pow(band, 10.0);
     float3 colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0]), float3(1.0, 0.75, 0.88), 0.25), float3(1.0), gloss);
     float alpha = clamp(band * u[1] + gloss * 0.6, 0.0, 1.0);
-    if (u[2] > 0.5 && fract(time / 5.0) < 0.035) {
+    if (u[2] > 0.5 && u[15] > 0.5 && fract(time / 5.0) < 0.035) {
         float slice = floor(position.y / max(size.y / 6.0, 1.0));
         float h = koan_prism_hash(float2(slice, floor(time / 5.0)));
         if (h > 0.45) {
@@ -513,7 +514,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let gloss = pow(band, 10.0);
     var colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0].x), vec3<f32>(1.0, 0.75, 0.88), 0.25), vec3<f32>(1.0), gloss);
     var alpha = clamp(band * u[0].y + gloss * 0.6, 0.0, 1.0);
-    if (u[0].z > 0.5 && fract(time / 5.0) < 0.035) {
+    if (u[0].z > 0.5 && u[3].w > 0.5 && fract(time / 5.0) < 0.035) {
         let slice = floor(position.y / max(size.y / 6.0, 1.0));
         let h = koan_prism_hash(vec2<f32>(slice, floor(time / 5.0)));
         if (h > 0.45) {
@@ -530,7 +531,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
 /// Over the page: the mirror ball's spots wheeling across the window,
 /// stage beams sweeping up from its foot, stars twinkling, glitter falling,
-/// and a flash on the beat held to a sixth of the window's light. Uniforms
+/// and a flash on the beat. Uniforms
 /// as every `Prism` program's, and 11, 12 where the ball hangs: points in
 /// from the right and down from the top.
 static DISCO: ShaderProgram = ShaderProgram {
@@ -555,16 +556,25 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float alpha = 0.0;
     // The mirror ball's spots, wheeling across the window from it.
     float2 ball = float2(size.x - u[11] * s, u[12] * s);
+    // Each spot's place and size from its index by the golden ratio's
+    // fractions, with no trigonometry to find them; a pixel outside a spot
+    // goes on to the next before any colour is worked out.
+    float lift = 0.22 + 0.25 * beat + 0.15 * koan_track(u, 2, time);
+    float swell = 1.0 + 0.6 * beat;
     for (int i = 0; i < 48; i++) {
         float fi = float(i);
-        float h1 = koan_prism_hash(float2(fi, 3.7));
-        float h2 = koan_prism_hash(float2(7.1, fi));
+        float h1 = fract(fi * 0.6180340 + 0.31);
+        float h2 = fract(fi * 0.7548777 + 0.57);
+        float radius = s * (10.0 + 14.0 * h1) * swell;
         float angle = h1 * 6.2831853 + spin * (0.6 + 0.4 * h2);
         float2 at = ball + float2(cos(angle), sin(angle) * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
-        float radius = s * (10.0 + 14.0 * h1) * (1.0 + 0.6 * beat);
-        float spot = 1.0 - smoothstep(radius * 0.4, radius, distance(position, at));
+        float d = distance(position, at);
+        if (d >= radius) {
+            continue;
+        }
+        float spot = 1.0 - smoothstep(radius * 0.4, radius, d);
         float3 c = mix(float3(1.0), koan_prism(h1 + time * 0.1, u[4]), 0.55);
-        koan_disco_blend(colour, alpha, c, spot * (0.22 + 0.25 * beat + 0.15 * koan_track(u, 2, time)));
+        koan_disco_blend(colour, alpha, c, spot * lift);
     }
     // Stage beams sweeping up from the foot of the window.
     for (int i = 0; i < 4; i++) {
@@ -604,9 +614,9 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float glint = (1.0 - smoothstep(0.0, s * 1.6, d)) * (0.5 + 0.5 * sin(time * 20.0 + hc * 50.0));
         koan_disco_blend(colour, alpha, mix(float3(1.0), koan_prism(hc + time * 0.2, u[4]), 0.4), glint * 0.8);
     }
-    // The beat's flash over the whole window, held to a sixth. Beats come
-    // at most three a second (`Prism::hear`).
-    koan_disco_blend(colour, alpha, koan_prism(time * 0.3, u[4]) * 0.5 + 0.5, beat * 0.16);
+    // The beat's flash over the whole window. Beats come at most three a
+    // second (`Prism::hear`), WCAG's limit for flashing.
+    koan_disco_blend(colour, alpha, koan_prism(time * 0.3, u[4]) * 0.5 + 0.5, beat * 0.10);
     return float4(colour, clamp(alpha * u[6], 0.0, 0.85));
 }
 "#
@@ -622,16 +632,22 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;
     let ball = vec2<f32>(size.x - u[2].w * s, u[3].x * s);
+    let lift = 0.22 + 0.25 * beat + 0.15 * koan_track(u, 2u, time);
+    let swell = 1.0 + 0.6 * beat;
     for (var i = 0; i < 48; i++) {
         let fi = f32(i);
-        let h1 = koan_prism_hash(vec2<f32>(fi, 3.7));
-        let h2 = koan_prism_hash(vec2<f32>(7.1, fi));
+        let h1 = fract(fi * 0.6180340 + 0.31);
+        let h2 = fract(fi * 0.7548777 + 0.57);
+        let radius = s * (10.0 + 14.0 * h1) * swell;
         let angle = h1 * 6.2831853 + spin * (0.6 + 0.4 * h2);
         let at = ball + vec2<f32>(cos(angle), sin(angle) * 0.6 + 0.35) * far * (0.15 + 0.85 * h2);
-        let radius = s * (10.0 + 14.0 * h1) * (1.0 + 0.6 * beat);
-        let spot = 1.0 - smoothstep(radius * 0.4, radius, distance(position, at));
+        let d = distance(position, at);
+        if (d >= radius) {
+            continue;
+        }
+        let spot = 1.0 - smoothstep(radius * 0.4, radius, d);
         let c = mix(vec3<f32>(1.0), koan_prism(h1 + time * 0.1, u[1].x), 0.55);
-        let a = spot * (0.22 + 0.25 * beat + 0.15 * koan_track(u, 2u, time));
+        let a = spot * lift;
         if (a > 0.0) {
             colour = mix(colour, c, a / max(alpha + a, 1e-4));
             alpha = max(alpha, a);
@@ -684,7 +700,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             alpha = max(alpha, a);
         }
     }
-    let flash = beat * 0.16;
+    let flash = beat * 0.10;
     if (flash > 0.0) {
         colour = mix(colour, koan_prism(time * 0.3, u[1].x) * 0.5 + 0.5, flash / max(alpha + flash, 1e-4));
         alpha = max(alpha, flash);
@@ -1064,6 +1080,46 @@ pub struct Prism {
     animated: Animated,
     /// When the last beat landed, to keep beats a third of a second apart.
     last_beat: Arc<Mutex<Option<Instant>>>,
+    /// Whether its clock runs, and the clocks that run with it: the sheens
+    /// and gradients drawn in its window.
+    running: Arc<std::sync::atomic::AtomicBool>,
+    followers: Arc<Mutex<Vec<super::WeakAnimated>>>,
+}
+
+/// The uniform a follower of a prism is told in whether the clock runs: a
+/// sheen's glitch shows only then, so one stopped mid-blink as the music
+/// pauses does not stay over the title.
+const FOLLOWING: usize = 15;
+
+/// Each window's prism, for the sheens and gradients drawn in it to run
+/// with: registered by the window's root while the rainbow is drawn.
+#[derive(Default)]
+pub struct Prisms(HashMap<WindowId, Prism>);
+
+impl Global for Prisms {}
+
+impl Prisms {
+    /// `prism` is `window`'s, or with `None` the window has none.
+    pub fn set(window: WindowId, prism: Option<Prism>, cx: &mut App) {
+        let prisms = cx.default_global::<Prisms>();
+        match prism {
+            Some(prism) => prisms.0.insert(window, prism),
+            None => prisms.0.remove(&window),
+        };
+    }
+
+    /// Runs `animated` with the clock of the prism of the window being
+    /// drawn, or stands it still where the window has none; whether it runs.
+    fn follow(animated: &Animated, window: &Window, cx: &App) -> bool {
+        let id = window.window_handle().window_id();
+        match cx.try_global::<Prisms>().and_then(|p| p.0.get(&id)) {
+            Some(prism) => prism.follow(animated),
+            None => {
+                animated.run(false);
+                false
+            }
+        }
+    }
 }
 
 impl Default for Prism {
@@ -1080,7 +1136,22 @@ impl Prism {
         Self {
             animated,
             last_beat: Arc::default(),
+            running: Arc::default(),
+            followers: Arc::default(),
         }
+    }
+
+    /// `animated` runs and stops with this prism's clock while it lasts;
+    /// whether the clock runs now.
+    fn follow(&self, animated: &Animated) -> bool {
+        let mut followers = self.followers.lock();
+        if !followers.iter().any(|f| f.is(animated)) {
+            followers.push(animated.downgrade());
+        }
+        let running = self.running.load(std::sync::atomic::Ordering::Relaxed);
+        animated.run(running);
+        animated.set(FOLLOWING, running as u8 as f32);
+        running
     }
 
     /// A frame from the analyser: the three bands, each 0 to 1. A low band
@@ -1107,6 +1178,13 @@ impl Prism {
         }
     }
 
+    /// The window's one flash gate, which its bursts share (`Burst::sharing`):
+    /// a beat and a burst, however they fall, start at most three times a
+    /// second between them.
+    pub fn gate(&self) -> FlashGate {
+        FlashGate(self.last_beat.clone())
+    }
+
     /// The bands standing where they are, for a prism newly fed.
     pub fn hold_bands(&self, bands: [f32; 3]) {
         for (i, band) in bands.into_iter().enumerate() {
@@ -1127,6 +1205,16 @@ impl Prism {
     pub fn run(&self, running: bool) {
         self.animated.set(8, running as u8 as f32);
         self.animated.run(running);
+        self.running
+            .store(running, std::sync::atomic::Ordering::Relaxed);
+        self.followers.lock().retain(|f| match f.upgrade() {
+            Some(animated) => {
+                animated.run(running);
+                animated.set(FOLLOWING, running as u8 as f32);
+                true
+            }
+            None => false,
+        });
     }
 
     /// The layer over the wash, under the page.
@@ -1176,14 +1264,29 @@ pub struct Burst {
     animated: Animated,
     program: &'static ShaderProgram,
     length: Duration,
+    /// When a flash last started in its window: the gate it shares with the
+    /// window's prism and other bursts (`sharing`).
+    fired: Arc<Mutex<Option<Instant>>>,
 }
 
+/// The time the last flash started, shared by a window's prism and bursts.
+#[derive(Clone, Default)]
+pub struct FlashGate(Arc<Mutex<Option<Instant>>>);
+
 impl Burst {
+    /// Shares `gate` with the window's prism, so its throws and the beat's
+    /// flashes keep one gap between them.
+    pub fn sharing(mut self, gate: &FlashGate) -> Self {
+        self.fired = gate.0.clone();
+        self
+    }
+
     pub fn confetti() -> Self {
         Self {
             animated: spent(),
             program: &CONFETTI,
             length: Duration::from_millis(1800),
+            fired: Default::default(),
         }
     }
 
@@ -1194,6 +1297,7 @@ impl Burst {
             animated: spent(),
             program: &STICKER,
             length: Duration::from_millis(2600),
+            fired: Default::default(),
         }
     }
 
@@ -1202,13 +1306,51 @@ impl Burst {
             animated: spent(),
             program: &SWEEP,
             length: Duration::from_millis(1300),
+            fired: Default::default(),
         }
     }
 
     /// Throws it from `at`, in the window's coordinates, scaled `scale`
     /// device pixels to a point. Nothing is thrown under Reduce Motion: the
-    /// quad is decorative, so its clock does not start.
+    /// quad is decorative, so its clock does not start. A throw within
+    /// `MIN_BEAT_GAP` of the last flash its gate saw, a beat or a burst, is
+    /// dropped, so flashes start at most three times a second.
     pub fn fire(&self, at: Point<Pixels>, scale: f32, brat: bool) {
+        if self.opens_gate() {
+            self.throw(at, scale, brat);
+        }
+    }
+
+    /// Throws it from `at` and `other` from `other_at` as one start: two
+    /// bursts landing together are one flash, so the gate is asked once and
+    /// either both fly or neither does. The confetti and the sticker as the
+    /// appearance comes out.
+    pub fn fire_with(
+        &self,
+        at: Point<Pixels>,
+        other: &Burst,
+        other_at: Point<Pixels>,
+        scale: f32,
+        brat: bool,
+    ) {
+        if self.opens_gate() {
+            self.throw(at, scale, brat);
+            other.throw(other_at, scale, brat);
+        }
+    }
+
+    /// Whether a flash may start now, and if so, that one did.
+    fn opens_gate(&self) -> bool {
+        let now = Animated::now();
+        let mut fired = self.fired.lock();
+        if fired.is_some_and(|last| now.saturating_duration_since(last) < MIN_BEAT_GAP) {
+            return false;
+        }
+        *fired = Some(now);
+        true
+    }
+
+    fn throw(&self, at: Point<Pixels>, scale: f32, brat: bool) {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos() % 997);
@@ -1235,6 +1377,16 @@ impl Burst {
             Ease::Linear,
             Repeat::Once,
         );
+    }
+
+    /// How long it flies once fired.
+    pub fn length(&self) -> Duration {
+        self.length
+    }
+
+    /// Fired and still flying: mounted only then.
+    pub fn live(&self) -> bool {
+        self.animated.moving()
     }
 
     /// The quad, laid out over the whole window.
@@ -1284,28 +1436,43 @@ impl Sheen {
 
 impl RenderOnce for Sheen {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Under Reduce Motion nothing is drawn: a band standing still, or a
+        // glitch caught mid-blink over a title, is no calmer than one moving.
+        if !crate::theme::KoanTheme::motion_allowed(cx) {
+            return div().into_any_element();
+        }
         let animated = window
             .use_keyed_state(self.id, cx, |_, _| {
                 let animated = Animated::new();
                 animated.set_origin(Instant::now());
-                animated.run(true);
                 animated
             })
             .read(cx)
             .clone();
+        // Moving only while its window's prism runs: playing, in front and
+        // shown. A still sheen holds no glitch: one caught mid-blink as the
+        // music pauses would stay over the title (`FOLLOWING`, which the
+        // prism writes as it stops, and this as it draws).
+        let running = Prisms::follow(&animated, window, cx);
         animated.set_all(
             0,
             &[
                 self.brat as u8 as f32,
                 self.strength,
-                self.glitch as u8 as f32,
+                (self.glitch && running) as u8 as f32,
             ],
         );
-        div().absolute().top_0().left_0().size_full().child(
-            AnimatedQuad::new(&SHEEN, &animated)
-                .decorative()
-                .size_full(),
-        )
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                AnimatedQuad::new(&SHEEN, &animated)
+                    .decorative()
+                    .size_full(),
+            )
+            .into_any_element()
     }
 }
 
@@ -1333,14 +1500,79 @@ impl RenderOnce for PrismFill {
             .use_keyed_state(self.id, cx, |_, _| {
                 let animated = Animated::new();
                 animated.set_origin(Instant::now());
-                animated.run(true);
                 animated
             })
             .read(cx)
             .clone();
+        // Moving only while its window's prism runs; still, the gradient
+        // stands where it was, as under Reduce Motion.
+        Prisms::follow(&animated, window, cx);
         animated.set(0, self.brat as u8 as f32);
         AnimatedQuad::new(&GRADIENT, &animated)
             .decorative()
             .size_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A burst thrown again inside `MIN_BEAT_GAP` is dropped: holding Next
+    /// through a shuffled queue sweeps at most three times a second. Bursts
+    /// sharing a prism's gate hold off each other and the beat.
+    #[test]
+    fn a_burst_starts_at_most_three_times_a_second() {
+        let sweep = Burst::sweep();
+        let at = Point::new(px(10.), px(10.));
+        sweep.fire(at, 2.0, false);
+        let first = sweep.animated.track(0);
+        std::thread::sleep(Duration::from_millis(20));
+        sweep.clone().fire(at, 2.0, false);
+        assert_eq!(
+            sweep.animated.track(0),
+            first,
+            "a throw inside the gap is dropped"
+        );
+        let prism = Prism::new();
+        let (confetti, sticker) = (
+            Burst::confetti().sharing(&prism.gate()),
+            Burst::sticker().sharing(&prism.gate()),
+        );
+        confetti.fire(at, 2.0, false);
+        let before = sticker.animated.track(0);
+        sticker.fire(at, 2.0, false);
+        assert_eq!(
+            sticker.animated.track(0),
+            before,
+            "one gate for the window's flashes"
+        );
+    }
+
+    /// The appearance coming out throws the confetti and the sticker as one
+    /// start on the window's gate: both fly, where two throws in a row would
+    /// drop the second.
+    #[test]
+    fn a_coming_out_throws_both() {
+        let prism = Prism::new();
+        let (confetti, sticker) = (
+            Burst::confetti().sharing(&prism.gate()),
+            Burst::sticker().sharing(&prism.gate()),
+        );
+        let at = Point::new(px(10.), px(10.));
+        let (spent_confetti, spent_sticker) =
+            (confetti.animated.track(0), sticker.animated.track(0));
+        confetti.fire_with(at, &sticker, at, 2.0, false);
+        assert_ne!(
+            confetti.animated.track(0),
+            spent_confetti,
+            "the confetti flies"
+        );
+        assert_ne!(
+            sticker.animated.track(0),
+            spent_sticker,
+            "the sticker flies"
+        );
+        assert!(confetti.live() && sticker.live());
     }
 }

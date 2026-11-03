@@ -4,12 +4,11 @@
 //! and the repeat; play it on a sample at the display's rate, scrub it, see
 //! its curve, and copy the call that makes it.
 
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
-
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::StoryContent;
 use crate::components::{

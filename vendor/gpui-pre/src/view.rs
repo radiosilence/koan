@@ -8,6 +8,7 @@ use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
+use std::mem;
 use std::{
     any::{TypeId, type_name},
     fmt,
@@ -564,11 +565,7 @@ fn prepaint_view(
                     return (None, element_state);
                 }
 
-                // KOAN: a view drawn again leaves the cached views inside it
-                // to their own keys: one that is neither dirty nor moved is
-                // reused, so a change redraws its own view and its ancestors
-                // and nothing beside them. Only a refresh of the window draws
-                // everything again.
+                let refreshing = mem::replace(&mut window.refreshing, true);
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
@@ -578,6 +575,7 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
+                window.refreshing = refreshing;
 
                 (
                     Some(element),
@@ -637,9 +635,9 @@ fn paint_view(
                     // actually painted, and output replayed under a different opacity is
                     // redrawn on the next frame.
                     if let Some(element) = element {
-                        // KOAN: as in prepaint, the cached views inside are
-                        // left to their own keys.
+                        let refreshing = mem::replace(&mut window.refreshing, true);
                         element.paint(window, cx);
+                        window.refreshing = refreshing;
                         element_state.cache_key.opacity = opacity;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
