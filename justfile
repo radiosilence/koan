@@ -1920,6 +1920,38 @@ gui_out := "target/gui"
 # it has been run on, as the SwiftUI app's.
 gui_macos := "26.0"
 
+# What both of the desktop app's bundles declare beyond their names, shared
+# by `gui-run`'s dev bundle and `gui-bundle`'s, as the SwiftUI app declares
+# it. Without the local network reason macOS drops the app's SSDP and Bonjour
+# traffic without asking, so no renderer or nearby koan appears; without the
+# `koan` scheme an invite or a pairing link never reaches the app. The
+# playable type is the SwiftUI app's, which exports it; this app only names
+# it. The SwiftUI app's accent colour comes from its asset catalogue, which
+# this app has none of: it draws its own.
+gui_plist_keys := '''
+        <key>NSHighResolutionCapable</key><true/>
+        <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
+        <key>CFBundleURLTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleURLName</key><string>cc.blit.koan.desktop.link</string>
+                <key>CFBundleURLSchemes</key><array><string>koan</string></array>
+            </dict>
+        </array>
+        <key>UTImportedTypeDeclarations</key>
+        <array>
+            <dict>
+                <key>UTTypeIdentifier</key><string>cc.blit.koan.playable</string>
+                <key>UTTypeDescription</key><string>koan playable</string>
+                <key>UTTypeConformsTo</key>
+                <array><string>public.data</string></array>
+                <key>UTTypeTagSpecification</key><dict/>
+            </dict>
+        </array>
+'''
+
 # Build the desktop app in release.
 gui-build:
     #!/usr/bin/env bash
@@ -1970,9 +2002,7 @@ gui-run *ARGS:
         <key>CFBundleIconFile</key><string>AppIcon</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>LSMinimumSystemVersion</key><string>{{gui_macos}}</string>
-        <key>NSHighResolutionCapable</key><true/>
-        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
+    {{gui_plist_keys}}
     </dict>
     </plist>
     PLIST
@@ -2037,12 +2067,7 @@ _gui-macos:
         <key>CFBundleIconFile</key><string>AppIcon</string>
         <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
         <key>LSMinimumSystemVersion</key><string>{{gui_macos}}</string>
-        <key>NSHighResolutionCapable</key><true/>
-        <!-- As the SwiftUI app's: without a reason, macOS drops the app's SSDP
-             and Bonjour traffic without asking, and no renderer or nearby
-             koan appears. -->
-        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
+    {{gui_plist_keys}}
     </dict>
     </plist>
     PLIST
