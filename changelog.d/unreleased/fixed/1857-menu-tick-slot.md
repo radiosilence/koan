@@ -1,0 +1,1 @@
+- **Play on menu.** The controlled device's tick and the others' "move here" share one column at the right edge, and ticks in the app's menus are in the accent colour.

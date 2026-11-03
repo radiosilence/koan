@@ -120,9 +120,9 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
         .stays_open()
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
-        this = this.action(
-            Icon::Move,
-            "move here: bring what the other device is playing back here",
+        this = this.text_action(
+            "move here",
+            "bring what the other device is playing back here",
             |_, _, cx| move_music(None, cx),
         );
     }
@@ -217,10 +217,10 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
         }
         if view.can_move(Some(device)) {
             let to = device.id.clone();
-            entry = entry.action(
-                Icon::Move,
+            entry = entry.text_action(
+                "move here",
                 format!(
-                    "move here: send what is playing to {}, and control it there",
+                    "send what is playing to {}, and control it there",
                     device.name
                 ),
                 move |_, _, cx| move_music(Some(to.clone()), cx),
