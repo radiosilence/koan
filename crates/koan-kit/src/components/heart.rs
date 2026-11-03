@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Answer, Answerer, Handler};
-use crate::theme::{Icon, KoanIcon, Look, Tone, TypeRole};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 
 #[derive(IntoElement)]
 pub struct Heart {
@@ -85,14 +85,29 @@ impl RenderOnce for Heart {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let accent = look.accent.hsla();
-        let glyph = if self.on {
-            KoanIcon::new(Icon::Favourited)
-                .role(self.role)
-                .color(accent)
+        // The accent where it reads as text against the ground, `ink`
+        // where it does not: a heart is text-sized.
+        let color = if self.on {
+            look.text_color(Tone::Accent)
         } else {
-            KoanIcon::new(Icon::Favourite)
-                .role(self.role)
-                .color(look.color(self.rest))
+            look.color(self.rest)
+        };
+        let glyph = if look.icons {
+            KoanIcon::new(if self.on {
+                Icon::Favourited
+            } else {
+                Icon::Favourite
+            })
+            .role(self.role)
+            .color(color)
+            .into_any_element()
+        } else {
+            // The look hides icons: the heart as a character.
+            div()
+                .text_role(self.role, &look)
+                .text_color(color)
+                .child(if self.on { "\u{2665}" } else { "\u{2661}" })
+                .into_any_element()
         };
         let on = self.on;
         let answers = Answerer::of(&self.id, window, cx);

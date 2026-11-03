@@ -19,7 +19,7 @@ use std::time::Duration;
 use koan_ffi::{KoanEngine, ShelfKind, ShelfSummary};
 use koan_kit::app::*;
 
-use crate::navigator::{Navigator, Route};
+use crate::navigator::{Listing, Navigator, Route, Shelf};
 
 const SETTLE: Duration = Duration::from_millis(90);
 
@@ -213,8 +213,13 @@ impl Search {
         self.generation += 1;
         self._task = None;
         self.results = None;
+        // The search's own pages go with it: its "see all" listings read the
+        // query, which is gone.
         self.navigator.update(cx, |nav, cx| {
             nav.forget(Route::Search);
+            for listing in [Listing::Albums, Listing::Artists, Listing::Tracks] {
+                nav.forget(Route::Shelved(Shelf::Search, listing));
+            }
             cx.notify();
         });
         cx.notify();
