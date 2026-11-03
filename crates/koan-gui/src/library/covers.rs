@@ -1464,14 +1464,14 @@ enum Failure {
 /// average colour for the field drawn while it waits for the atlas.
 fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
     // A file small enough to be served as it is keeps its EXIF orientation.
-    let mut decoder = image::ImageReader::new(std::io::Cursor::new(data))
+    let mut decoder = ::image::ImageReader::new(std::io::Cursor::new(data))
         .with_guessed_format()
         .ok()?
         .into_decoder()
         .ok()?;
-    let orientation = image::ImageDecoder::orientation(&mut decoder)
-        .unwrap_or(image::metadata::Orientation::NoTransforms);
-    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    let orientation = ::image::ImageDecoder::orientation(&mut decoder)
+        .unwrap_or(::image::metadata::Orientation::NoTransforms);
+    let mut image = ::image::DynamicImage::from_decoder(decoder).ok()?;
     image.apply_orientation(orientation);
     let (w, h) = (image.width(), image.height());
     if w == 0 || h == 0 {
@@ -1511,7 +1511,10 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
     for pixel in rgba.pixels_mut() {
         pixel.0.swap(0, 2);
     }
-    Some((RenderImage::new(smallvec![image::Frame::new(rgba)]), colour))
+    Some((
+        RenderImage::new(smallvec![::image::Frame::new(rgba)]),
+        colour,
+    ))
 }
 
 #[cfg(test)]
@@ -1561,10 +1564,10 @@ mod tests {
     #[test]
     fn decode_fills_the_square_and_swaps_to_bgra() {
         let mut data = Vec::new();
-        image::RgbImage::from_pixel(400, 200, image::Rgb([255, 0, 0]))
+        ::image::RgbImage::from_pixel(400, 200, ::image::Rgb([255, 0, 0]))
             .write_to(
                 &mut std::io::Cursor::new(&mut data),
-                image::ImageFormat::Png,
+                ::image::ImageFormat::Png,
             )
             .unwrap();
         let (image, colour) = decode(&data, 100).unwrap();

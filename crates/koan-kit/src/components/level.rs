@@ -3,10 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
-    App, AppContext as _, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window,
-    div,
-};
+use gpui_kit::{App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window, div};
 
 use super::{Handler, Slider, child};
 use crate::theme::{Icon, KoanIcon, Look, Space, Tone};

@@ -301,7 +301,8 @@ impl SettingsWindow {
             && cx
                 .global::<Settings>()
                 .window
-                .is_some_and(|h| h.window_id() == window.window_handle().window_id());
+                .as_ref()
+                .is_some_and(|h| h.0.window_id() == window.window_handle().window_id());
         let unseen = if live {
             self.ctx
                 .model
