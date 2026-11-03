@@ -480,12 +480,13 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
                 .update_window(handle, |_, window, _| window.request_present())
                 .is_err()
             {
-                break;
+                cx.update(|cx| {
+                    cx.default_global::<Wakers>().0.remove(&id);
+                });
+                return;
             }
         }
-        cx.update(|cx| {
-            cx.default_global::<Wakers>().0.remove(&id);
-        });
+        // The sender went with the app's globals, and the app with them.
     })
     .detach();
     cx.default_global::<Wakers>().0.insert(id, waker.clone());

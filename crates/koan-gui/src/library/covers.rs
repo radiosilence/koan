@@ -584,6 +584,11 @@ impl Covers {
         }
     }
 
+    /// The bytes of the bitmaps held, for the benches.
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+
     pub fn is_absent(&self, art: Art) -> bool {
         self.shared.queue.lock().absent.contains(&art)
     }
