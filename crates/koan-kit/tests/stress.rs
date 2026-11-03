@@ -580,11 +580,11 @@ impl Render for Observer {
     }
 }
 
-/// The rainbow retargets the accent every step, before each turn lands:
-/// what reads the accent on the CPU hears of every retarget, not only of a
-/// landing that never comes.
+/// The accent turns on the GPU: a retarget, the rainbow's every step
+/// included, draws no view again, not even one observing the accent, since
+/// what it draws names the slots.
 #[gpui_kit::test]
-fn every_retarget_reaches_the_accents_observers(cx: &mut TestAppContext) {
+fn a_retarget_redraws_no_view(cx: &mut TestAppContext) {
     let _clock = CLOCK.lock();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -598,15 +598,18 @@ fn every_retarget_reaches_the_accents_observers(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let mut rng = Rng(9);
+    let before = renders.load(Ordering::Relaxed);
     for _ in 0..5 {
-        let before = renders.load(Ordering::Relaxed);
         cx.update(|_, cx| KoanTheme::set_accent(accent(&mut rng), true, cx));
         cx.run_until_parked();
-        assert!(
-            renders.load(Ordering::Relaxed) > before,
-            "a retarget before the landing went unheard"
-        );
     }
+    cx.executor().advance_clock(Motion::DISSOLVE * 2);
+    cx.run_until_parked();
+    assert_eq!(
+        renders.load(Ordering::Relaxed),
+        before,
+        "a retarget drew the view again"
+    );
 }
 
 /// A writer that panics mid-publish (on a background thread, say) leaves the
