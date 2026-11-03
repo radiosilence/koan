@@ -16,6 +16,7 @@ pub struct Segmented {
     id: ElementId,
     options: Vec<SharedString>,
     selected: usize,
+    name: Option<SharedString>,
     on_change: Option<Handler<usize>>,
 }
 
@@ -29,8 +30,16 @@ impl Segmented {
             id: id.into(),
             options: options.into_iter().map(label).collect(),
             selected,
+            name: None,
             on_change: None,
         }
+    }
+
+    /// What it chooses, for a screen reader: "sign in with". Its id, read
+    /// as words, otherwise.
+    pub fn named(mut self, name: impl AsRef<str>) -> Self {
+        self.name = Some(label(name));
+        self
     }
 
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
@@ -46,7 +55,8 @@ impl RenderOnce for Segmented {
         let selected = self.selected;
         let count = self.options.len();
         let accent = look.accent.hsla();
-        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, None)
+        let name = self.name.clone().or_else(|| super::spoken_id(&self.id));
+        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, name)
             .relative()
             .flex()
             .items_center()

@@ -3,9 +3,9 @@
 
 use crate::components::{Button, ButtonKind, CopyText, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_ffi::{InviteTo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{InviteTo, Settings};
 
 use super::link::LinkDevice;
 use super::server::ServerPane;
@@ -35,7 +35,7 @@ impl ShareForm {
                      cx: &mut Context<ServerPane>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder(placeholder)
+                    .placeholder(crate::theme::label(placeholder))
                     .masked(secret)
             })
         };

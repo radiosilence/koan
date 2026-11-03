@@ -1,0 +1,1 @@
+- **koan-runtime.** The engine's facade moves out of koan-ffi into a crate of its own, which the desktop app links as plain Rust; koan-ffi is now only the Swift and Kotlin bindings over it, which are unchanged.

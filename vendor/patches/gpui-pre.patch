@@ -189,6 +189,17 @@ index 4d7754f..7fd20e0 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git b/NOTICE b/NOTICE
+new file mode 100644
+index 0000000..51c3bc3
+--- /dev/null
++++ b/NOTICE
+@@ -0,0 +1,5 @@
++gpui-pre 0.3.10, modified
++
++This is a copy of the gpui-pre 0.3.10 crate as published on crates.io (Zed's GPUI, https://github.com/zed-industries/zed), licensed under the Apache License 2.0 (LICENSE-APACHE), with changes made by the kōan project (https://github.com/radiosilence/koan). Each change is marked with a `KOAN:` comment; vendor/patches/gpui-pre.patch in that repository is the whole of it.
++
++The accessibility replay for reused views (src/view.rs, src/window.rs, src/window/a11y.rs, src/window/a11y/debug.rs) is the Wormhole project's change to gpui-pre 0.3.9 (https://github.com/wormhole-terminal/gpui-pre, commit 7b47af1, "view: a reused view keeps its accessibility nodes and action listeners"), modified by the Wormhole project and licensed under the Apache License 2.0.
 diff --git a/src/color.rs b/src/color.rs
 index 3bd893f..e757f27 100644
 --- a/src/color.rs
@@ -559,7 +570,7 @@ index 0000000..7651cfc
 +    })
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 9b34aa2..877a0d7 100644
+index 9b34aa2..b8734be 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
 @@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
@@ -609,6 +620,60 @@ index 9b34aa2..877a0d7 100644
          if let Some(value) = self.aria.numeric_value {
              node.set_numeric_value(value);
          }
+@@ -3832,6 +3858,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
+                         window,
+                         cx,
+                     ) {
++                        // KOAN: (#1814) as for a hover, the element's own view draws
++                        // again, in case it is cached.
++                        cx.notify(current_view);
+                         long_press_tooltip_active.set(true);
+                         window.prevent_default();
+                         cx.stop_propagation();
+@@ -3933,6 +3962,17 @@ fn handle_tooltip_mouse_move(
+         }
+     };
+ 
++    // KOAN: what the pointer did to the tooltip, as it changes (#1814).
++    match action {
++        Action::None => {}
++        Action::CancelShow => log::debug!("tooltip: cancel show, view {current_view:?}"),
++        Action::ScheduleShow => log::debug!(
++            "tooltip: schedule show, view {current_view:?}, mouse {:?}, keyboard last {}",
++            window.mouse_position(),
++            window.last_input_was_keyboard()
++        ),
++        Action::CheckVisible => log::debug!("tooltip: check visible, view {current_view:?}"),
++    }
+     match action {
+         Action::None => {}
+         Action::CancelShow => {
+@@ -3950,7 +3990,7 @@ fn handle_tooltip_mouse_move(
+                         return;
+                     };
+                     cx.update(|window, cx| {
+-                        show_tooltip(
++                        let shown = show_tooltip(
+                             &active_tooltip,
+                             &build_tooltip,
+                             &check_is_hovered_during_prepaint,
+@@ -3958,6 +3998,16 @@ fn handle_tooltip_mouse_move(
+                             window,
+                             cx,
+                         );
++                        // KOAN: the delay passed (#1814).
++                        log::debug!(
++                            "tooltip: delay passed, view {current_view:?}, built {shown}, still over {}",
++                            check_is_hovered_during_prepaint(window)
++                        );
++                        // KOAN: a refresh replays a cached view's last
++                        // prepaint, made before the tooltip was active, so
++                        // the tooltip of an element in one never showed. Its
++                        // own view draws again and asks for it.
++                        cx.notify(current_view);
+                     })
+                     .ok();
+                 }
 diff --git a/src/gpui.rs b/src/gpui.rs
 index 5b31a35..8068a26 100644
 --- a/src/gpui.rs
@@ -632,10 +697,22 @@ index 5b31a35..8068a26 100644
  pub use spring::*;
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index a4116aa..1fc3fbd 100644
+index a4116aa..83e10f2 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,41 @@ pub struct Scene {
+@@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+ #[expect(missing_docs)]
+ pub type DrawOrder = u32;
+ 
++// KOAN: the largest layer group texture made to the group's size, in device
++// pixels: wgpu's default limit, under Metal's. A larger group takes the
++// window's size (#1878).
++const MAX_GROUP_EXTENT: f32 = 8192.0;
++
+ /// A boolean stored as a `u32` so that GPU-facing structs contain no
+ /// compiler-inserted padding bytes, which would be undefined behavior to
+ /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
+@@ -50,6 +55,42 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -655,11 +732,12 @@ index a4116aa..1fc3fbd 100644
 +    // KOAN: what was painted inside each layer group, as a scene of its own
 +    // that a renderer draws into a texture for its shader to compose (#1859).
 +    pub layer_groups: Vec<Scene>,
++    // KOAN: where each group's content lies, when its texture is the size
++    // of the shader composing it and its content is moved to its origin;
++    // `None` for one drawn the window's size, as a group holding paths is
++    // (their intermediate texture is the window's) (#1878).
++    pub layer_group_frames: Vec<Option<Bounds<ScaledPixels>>>,
 +    group_stack: Vec<usize>,
-+    /// Shaders painted inside each open group, held to be drawn after it at
-+    /// their own place: a group is drawn once per frame, and a shader in it
-+    /// would stand still in its texture.
-+    group_shaders: Vec<Vec<Primitive>>,
 +}
 +
 +/// A scene split where its shaders are drawn (#1641).
@@ -677,14 +755,14 @@ index a4116aa..1fc3fbd 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +101,57 @@ impl Scene {
+@@ -66,6 +107,146 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
 +        self.shaders.clear(); // KOAN: shader quads (#1641).
 +        self.layer_groups.clear(); // KOAN: #1859.
++        self.layer_group_frames.clear(); // KOAN: #1878.
 +        self.group_stack.clear();
-+        self.group_shaders.clear();
 +        self.color_slots.clear(); // KOAN: #1859.
 +    }
 +
@@ -723,32 +801,117 @@ index a4116aa..1fc3fbd 100644
 +    // refresh (#1641).
 +    pub fn has_live_shaders(&self) -> bool {
 +        self.shaders.iter().any(|shader| shader.uniforms.is_live())
++            // KOAN: and in a layer group (#1878).
++            || self.layer_groups.iter().any(Scene::has_live_shaders)
++    }
++
++    // KOAN: whether group `group`, held from an earlier present, is drawn
++    // again at this one, as `compose_frame` decides for its layers (#1878):
++    // while a shader in it is live or a colour slot it draws with moves, once
++    // more after they stop so the last value lands, when the slot table was
++    // written since (a held write, as under Reduce Motion), and when a group
++    // nested in it was drawn again. `was_moving` is the group's from the last
++    // present, updated here; `redrawn` holds the groups drawn this present.
++    pub fn layer_group_stale(
++        &self,
++        group: usize,
++        at: std::time::Instant,
++        slots_written: bool,
++        was_moving: &mut bool,
++        redrawn: &[bool],
++    ) -> bool {
++        let Some(group) = self.layer_groups.get(group) else {
++            return false;
++        };
++        let moving = group.shaders.iter().any(|shader| shader.uniforms.is_live())
++            || group.color_slots_moving(at);
++        let landing = std::mem::replace(was_moving, moving);
++        moving
++            || landing
++            || (slots_written && !group.color_slots.is_empty())
++            || group.shaders.iter().any(|shader| {
++                shader
++                    .group
++                    .is_some_and(|nested| redrawn.get(nested).copied().unwrap_or(false))
++            })
++    }
++
++    // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
++    // group's content to its texture's origin (#1878).
++    pub fn offset(&mut self, dx: ScaledPixels, dy: ScaledPixels) {
++        let by = |b: &mut Bounds<ScaledPixels>| {
++            b.origin.x += dx;
++            b.origin.y += dy;
++        };
++        for quad in &mut self.quads {
++            by(&mut quad.bounds);
++            by(&mut quad.content_mask.bounds);
++        }
++        for shadow in &mut self.shadows {
++            by(&mut shadow.bounds);
++            by(&mut shadow.content_mask.bounds);
++            by(&mut shadow.element_bounds);
++        }
++        for underline in &mut self.underlines {
++            by(&mut underline.bounds);
++            by(&mut underline.content_mask.bounds);
++        }
++        for sprite in &mut self.monochrome_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for sprite in &mut self.subpixel_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for sprite in &mut self.polychrome_sprites {
++            by(&mut sprite.bounds);
++            by(&mut sprite.content_mask.bounds);
++        }
++        for surface in &mut self.surfaces {
++            by(&mut surface.bounds);
++            by(&mut surface.content_mask.bounds);
++        }
++        for shader in &mut self.shaders {
++            by(&mut shader.bounds);
++            by(&mut shader.content_mask.bounds);
++        }
++        for path in &mut self.paths {
++            by(&mut path.bounds);
++            by(&mut path.content_mask.bounds);
++            for vertex in &mut path.vertices {
++                vertex.xy_position.x += dx;
++                vertex.xy_position.y += dy;
++                by(&mut vertex.content_mask.bounds);
++            }
++        }
 +    }
 +
 +    // KOAN: whether this refresh should present again: a live shader moved
 +    // or moves with time (#1641). Asks every shader, so each one's change is
 +    // taken once.
 +    pub fn take_shader_present(&self) -> bool {
++        let groups = self
++            .layer_groups
++            .iter()
++            .fold(false, |any, group| group.take_shader_present() | any);
 +        self.shaders
 +            .iter()
 +            .fold(false, |any, shader| shader.uniforms.take_present() | any)
++            | groups
      }
  
      pub fn len(&self) -> usize {
-@@ -86,6 +172,20 @@ impl Scene {
+@@ -86,6 +267,16 @@ impl Scene {
  
      pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
          let mut primitive = primitive.into();
 +        // KOAN: painted inside a layer group: into its scene, recorded here
-+        // so a cached view replays it (#1859).
++        // so a cached view replays it (#1859). Shaders too: a group holding
++        // one is drawn again at each present, so it moves and is clipped
++        // with the group (#1878).
 +        if let Some(&group) = self.group_stack.last() {
-+            if matches!(primitive, Primitive::Shader(_)) {
-+                if let Some(held) = self.group_shaders.last_mut() {
-+                    held.push(primitive.clone());
-+                }
-+            } else {
-+                self.layer_groups[group].insert_primitive(primitive.clone());
-+            }
++            self.layer_groups[group].insert_primitive(primitive.clone());
 +            self.paint_operations
 +                .push(PaintOperation::Primitive(primitive));
 +            return;
@@ -756,7 +919,7 @@ index a4116aa..1fc3fbd 100644
          let clipped_bounds = primitive
              .bounds()
              .intersect(&primitive.content_mask().bounds);
-@@ -133,17 +233,58 @@ impl Scene {
+@@ -133,17 +324,71 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -775,8 +938,8 @@ index a4116aa..1fc3fbd 100644
 +    pub fn push_group(&mut self) -> usize {
 +        let group = self.layer_groups.len();
 +        self.layer_groups.push(Scene::default());
++        self.layer_group_frames.push(None);
 +        self.group_stack.push(group);
-+        self.group_shaders.push(Vec::new());
 +        self.paint_operations.push(PaintOperation::StartGroup);
 +        group
 +    }
@@ -787,18 +950,31 @@ index a4116aa..1fc3fbd 100644
 +        let Some(group) = self.group_stack.pop() else {
 +            return;
 +        };
-+        let held = self.group_shaders.pop().unwrap_or_default();
 +        shader.group = Some(group);
 +        self.paint_operations
 +            .push(PaintOperation::EndGroup(shader.clone()));
-+        // Into the enclosing group's scene, or this one, then the shaders
-+        // painted inside it over it. Their operations are already recorded
-+        // (the EndGroup's and each where it was painted): not twice.
++        // The texture is the visible part of the group's bounds, its content
++        // at its origin, unless it holds paths or would pass the largest
++        // texture a device is sure to make (#1878). Content outside the mask
++        // is clipped by its own masks already.
++        let frame = shader.bounds.intersect(&shader.content_mask.bounds);
++        let local = self.layer_groups[group].paths.is_empty()
++            && frame.size.width.0 <= MAX_GROUP_EXTENT
++            && frame.size.height.0 <= MAX_GROUP_EXTENT;
++        let origin = if local {
++            frame.origin
++        } else {
++            Point::default()
++        };
++        shader.group_inset = point(
++            ScaledPixels(shader.bounds.origin.x.0 - origin.x.0),
++            ScaledPixels(shader.bounds.origin.y.0 - origin.y.0),
++        );
++        self.layer_group_frames[group] = local.then_some(frame);
++        // Into the enclosing group's scene, or this one. Its operation is
++        // already recorded, as the EndGroup's: not twice.
 +        let ops = self.paint_operations.len();
 +        self.insert_primitive(shader);
-+        for primitive in held {
-+            self.insert_primitive(primitive);
-+        }
 +        self.paint_operations.truncate(ops);
 +    }
 +
@@ -815,7 +991,7 @@ index a4116aa..1fc3fbd 100644
              }
          }
      }
-@@ -160,6 +301,180 @@ impl Scene {
+@@ -160,6 +405,197 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -832,10 +1008,22 @@ index a4116aa..1fc3fbd 100644
 +        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 +        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 +        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
-+        // KOAN: each group drawn whole into its texture (#1859).
-+        for group in &mut self.layer_groups {
++        // KOAN: each group drawn whole into its texture (#1859), moved to
++        // its texture's origin where it is the group's size (#1878); the
++        // colour slots its content draws with are this scene's too, so a
++        // fade inside a group presents.
++        for (group, frame) in self.layer_groups.iter_mut().zip(&self.layer_group_frames) {
++            if let Some(frame) = frame {
++                group.offset(
++                    ScaledPixels(-frame.origin.x.0),
++                    ScaledPixels(-frame.origin.y.0),
++                );
++            }
 +            group.finish();
 +            group.shader_layers = None;
++        }
++        for group in &self.layer_groups {
++            self.color_slots.extend(&group.color_slots);
 +        }
 +        self.shader_layers = self.plan_shader_layers().map(Box::new);
 +    }
@@ -929,7 +1117,8 @@ index a4116aa..1fc3fbd 100644
 +            }
 +            (after, before)
 +        };
-+        let placed: Vec<(usize, usize)> = drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
++        let placed: Vec<(usize, usize)> =
++            drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
 +        // A primitive also follows every earlier one it overlaps, so a menu's
 +        // text stays over the menu's ground wherever each is placed. Only
 +        // what sits above the lowest layer anything was placed in can raise
@@ -983,7 +1172,11 @@ index a4116aa..1fc3fbd 100644
 +            polychrome_sprites => PolychromeSprite,
 +            surfaces => Surface
 +        );
-+        for (path, layer) in self.paths.iter().zip(&layers_by_kind[PrimitiveKind::Path as usize]) {
++        for (path, layer) in self
++            .paths
++            .iter()
++            .zip(&layers_by_kind[PrimitiveKind::Path as usize])
++        {
 +            let paths = &mut layers[*layer].paths;
 +            let mut path = path.clone();
 +            path.id = PathId(paths.len());
@@ -996,7 +1189,7 @@ index a4116aa..1fc3fbd 100644
      }
  
      #[cfg_attr(
-@@ -187,6 +502,8 @@ impl Scene {
+@@ -187,6 +623,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -1005,7 +1198,7 @@ index a4116aa..1fc3fbd 100644
          }
      }
  }
-@@ -209,12 +526,17 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +647,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -1023,7 +1216,7 @@ index a4116aa..1fc3fbd 100644
  }
  
  #[derive(Clone)]
-@@ -228,6 +550,7 @@ pub enum Primitive {
+@@ -228,6 +671,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -1031,7 +1224,7 @@ index a4116aa..1fc3fbd 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +565,7 @@ impl Primitive {
+@@ -242,6 +686,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -1039,7 +1232,7 @@ index a4116aa..1fc3fbd 100644
          }
      }
  
-@@ -255,6 +579,7 @@ impl Primitive {
+@@ -255,6 +700,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -1047,7 +1240,7 @@ index a4116aa..1fc3fbd 100644
          }
      }
  }
-@@ -283,6 +608,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +729,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -1057,7 +1250,7 @@ index a4116aa..1fc3fbd 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +644,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +765,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -1069,7 +1262,7 @@ index a4116aa..1fc3fbd 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +794,40 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +915,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
@@ -1110,7 +1303,7 @@ index a4116aa..1fc3fbd 100644
          }
      }
  }
-@@ -493,6 +860,14 @@ pub enum PrimitiveBatch {
+@@ -493,6 +981,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -1125,7 +1318,7 @@ index a4116aa..1fc3fbd 100644
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +900,10 @@ impl PrimitiveBatch {
+@@ -525,6 +1021,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -1136,12 +1329,17 @@ index a4116aa..1fc3fbd 100644
          }
      }
  }
+@@ -947,3 +1447,4 @@ impl PathVertex<Pixels> {
+         }
+     }
+ }
++
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..dc3fff8
+index 0000000..6870d25
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,744 @@
+@@ -0,0 +1,832 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -1156,7 +1354,7 @@ index 0000000..dc3fff8
 +use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering};
 +use std::time::Instant;
 +
-+use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Primitive, ScaledPixels};
++use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Hsla, Point, Primitive, ScaledPixels};
 +
 +/// How many plain floats a shader's uniform block holds, written by the app
 +/// when they change: colours, sizes, flags.
@@ -1780,6 +1978,44 @@ index 0000000..dc3fff8
 +        values
 +    }
 +
++    // KOAN: (#1741) `time` grows from the origin for as long as a quad is
++    // drawn, and an f32 of days is coarser than a frame.
++    /// What the program is handed at `now`: `time` and every track's start
++    /// as seconds from the last whole hour of `time`, and a repeating
++    /// track's start moved up to its latest whole cycle, all worked out in
++    /// f64. The program reckons the same motion, to the frame, however long
++    /// the quad has been drawn; nothing stored changes, so writers on other
++    /// threads never see a base move under them. A program reading `time`
++    /// alone sees it fall back by an hour once an hour.
++    pub fn present_at(&self, now: Instant) -> (f32, [f32; SHADER_UNIFORMS]) {
++        const BASE: f64 = 3600.0;
++        let mut values = self.snapshot_at(now);
++        let t = (since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9;
++        let base = (t / BASE).floor() * BASE;
++        if base == 0.0 {
++            return (t as f32, values);
++        }
++        for k in 0..SHADER_TRACKS {
++            let at = SHADER_PLAIN + k * TRACK_FLOATS;
++            let mut track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            if track.length <= 0.0 {
++                continue;
++            }
++            let mut start = track.start as f64;
++            let period = match track.repeat {
++                TrackRepeat::Once => 0.0,
++                TrackRepeat::Loop => track.length as f64,
++                TrackRepeat::Alternate => 2.0 * track.length as f64,
++            };
++            if period > 0.0 && start < t {
++                start += ((t - start) / period).floor() * period;
++            }
++            track.start = (start - base) as f32;
++            values[at..at + TRACK_FLOATS].copy_from_slice(&track.encode());
++        }
++        ((t - base) as f32, values)
++    }
++
 +    /// Whether a track is moving at `now`.
 +    pub fn tracks_moving(&self, now: Instant) -> bool {
 +        let until = self.moving_until.load(Ordering::Relaxed);
@@ -1801,6 +2037,12 @@ index 0000000..dc3fff8
 +    // painted inside `Window::paint_layer_group`, drawn into a texture of
 +    // its own (#1859).
 +    pub group: Option<usize>,
++    // KOAN: where the shader's origin sits in its group's texture: the
++    // texture is the visible part of the shader's bounds, its content moved
++    // to the texture's origin, or the window's size, its content where it was
++    // painted. Taken when the group closes, so an enclosing group moving the
++    // shader leaves it as it is (#1878).
++    pub group_inset: Point<ScaledPixels>,
 +}
 +
 +impl From<PaintShader> for Primitive {
@@ -1840,8 +2082,8 @@ index 0000000..dc3fff8
 +
 +impl ShaderInstance {
 +    pub fn of(shader: &PaintShader, now: Instant) -> Self {
-+        let time = shader.uniforms.time_at(now);
-+        let mut uniforms = shader.uniforms.snapshot_at(now);
++        // KOAN: time and tracks from a recent base (#1741).
++        let (time, mut uniforms) = shader.uniforms.present_at(now);
 +        if let Some(prepare) = shader.program.prepare {
 +            prepare(&mut uniforms, time);
 +        }
@@ -1853,8 +2095,8 @@ index 0000000..dc3fff8
 +            clip: rect(&shader.content_mask.bounds),
 +            uniforms,
 +            time: [time, 0.0, 0.0, 0.0],
-+            // A group's texture is the window's size, its content where it
-+            // was painted: the tile is the quad's own bounds.
++            // A group's texture holds the quad's bounds from its inset
++            // (#1878).
 +            tile: match (&shader.image, shader.group) {
 +                (Some(tile), _) => {
 +                    let b = tile.bounds;
@@ -1865,9 +2107,53 @@ index 0000000..dc3fff8
 +                        b.size.height.0 as f32,
 +                    ]
 +                }
-+                (None, Some(_)) => rect(&shader.bounds),
++                (None, Some(_)) => [
++                    shader.group_inset.x.0,
++                    shader.group_inset.y.0,
++                    shader.bounds.size.width.0,
++                    shader.bounds.size.height.0,
++                ],
 +                (None, None) => [0.0; 4],
 +            },
++        }
++    }
++}
++
++// KOAN: (#1741).
++#[cfg(test)]
++mod present_tests {
++    use super::*;
++    use std::time::Duration;
++
++    /// Three days on, a loop drawn since the origin is handed to the program
++    /// at the phase f64 reckons, within a millisecond's motion.
++    #[test]
++    fn a_quad_drawn_for_days_is_reckoned_to_the_frame() {
++        let uniforms = ShaderUniforms::new();
++        let origin = Instant::now();
++        uniforms.set_origin(origin);
++        uniforms.set_track(
++            0,
++            Track {
++                from: 0.0,
++                to: 1.0,
++                start: 0.0,
++                length: 1.0,
++                curve: TrackCurve::Linear,
++                repeat: TrackRepeat::Loop,
++            },
++        );
++        for offset in [0.25, 0.5, 0.75] {
++            let now = origin + Duration::from_secs_f64(3.0 * 86_400.0 + offset);
++            let (time, values) = uniforms.present_at(now);
++            let at = SHADER_PLAIN;
++            let track = Track::decode(&values[at..at + TRACK_FLOATS]);
++            let drawn = track.at(time);
++            assert!(
++                (drawn - offset as f32).abs() < 1e-3,
++                "{offset}s into a cycle drew {drawn}"
++            );
++            assert!((0.0..3600.0).contains(&time), "time {time} kept its base");
 +        }
 +    }
 +}
@@ -1886,11 +2172,505 @@ index 0000000..dc3fff8
 +        }
 +    }
 +}
+diff --git a/src/view.rs b/src/view.rs
+index b613805..f09b60b 100644
+--- a/src/view.rs
++++ b/src/view.rs
+@@ -2,13 +2,12 @@ use crate::{
+     AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
+     Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
+     LayoutId, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Size, Style,
+-    StyleRefinement, TextStyle, WeakEntity,
++    StyleRefinement, TextStyle, WeakEntity, window::a11y::CapturedA11y,
+ };
+ use crate::{Empty, Window};
+ use anyhow::Result;
+ use collections::FxHashSet;
+ use refineable::Refineable;
+-use std::mem;
+ use std::{
+     any::{TypeId, type_name},
+     fmt,
+@@ -322,9 +321,18 @@ impl<V: View> IntoElement for ViewElement<V> {
+ 
+ struct ViewElementState {
+     prepaint_range: Range<PrepaintStateIndex>,
++    // KOAN: the draws `prepaint_range` and `paint_range` were recorded in.
++    // A cached ancestor reused whole carries this state into the next frame
++    // without moving the ranges, which then point into a frame that is gone.
++    prepaint_frame: u64,
++    paint_frame: u64,
+     paint_range: Range<PaintIndex>,
+     cache_key: ViewElementCacheKey,
+     accessed_entities: FxHashSet<EntityId>,
++    /// The accessibility nodes the prepaint added, when it ran while the tree was being built.
++    /// A frame that builds the tree can only reuse the view if it has them: the tree starts
++    /// empty in every frame and the reused prepaint doesn't run.
++    a11y: Option<CapturedA11y>,
+ }
+ 
+ struct ViewElementCacheKey {
+@@ -554,19 +562,39 @@ fn prepaint_view(
+                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                     && !window.dirty_views.contains(&entity_id)
+                     && !window.refreshing
++                    // KOAN: reused only from the frame just drawn, the one
++                    // its ranges index into.
++                    && element_state.prepaint_frame + 1 == window.frames_drawn
++                    && element_state.paint_frame + 1 == window.frames_drawn
++                    // KOAN: (#1899) after Wormhole's gpui-pre patch: a view
++                    // reused while the accessibility tree is built adds the
++                    // nodes it recorded, so it needs to have recorded them.
++                    && (element_state.a11y.is_some() || !window.a11y.is_active())
+                 {
+                     let prepaint_start = window.prepaint_index();
+                     window.reuse_prepaint(element_state.prepaint_range.clone());
++                    if window.a11y.is_active()
++                        && let Some(a11y) = &element_state.a11y
++                    {
++                        let focus = window.focus;
++                        window.a11y.replay(a11y, focus);
++                    }
+                     cx.entities
+                         .extend_accessed(&element_state.accessed_entities);
+                     let prepaint_end = window.prepaint_index();
+                     element_state.prepaint_range = prepaint_start..prepaint_end;
++                    element_state.prepaint_frame = window.frames_drawn;
+ 
+                     return (None, element_state);
+                 }
+ 
+-                let refreshing = mem::replace(&mut window.refreshing, true);
++                // KOAN: a view drawn again leaves the cached views inside it
++                // to their own keys: one that is neither dirty nor moved is
++                // reused, so a change redraws its own view and its ancestors
++                // and nothing beside them. Only a refresh of the window draws
++                // everything again.
+                 let prepaint_start = window.prepaint_index();
++                let a11y_mark = window.a11y.is_active().then(|| window.a11y.mark());
+                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                     let mut element = render(window, cx);
+                     element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
+@@ -575,13 +603,16 @@ fn prepaint_view(
+                 });
+ 
+                 let prepaint_end = window.prepaint_index();
+-                window.refreshing = refreshing;
++                let a11y = a11y_mark.map(|mark| window.a11y.capture(&mark));
+ 
+                 (
+                     Some(element),
+                     ViewElementState {
+                         accessed_entities,
++                        a11y,
+                         prepaint_range: prepaint_start..prepaint_end,
++                        prepaint_frame: window.frames_drawn,
++                        paint_frame: 0,
+                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                         cache_key: ViewElementCacheKey {
+                             bounds,
+@@ -635,19 +666,25 @@ fn paint_view(
+                     // actually painted, and output replayed under a different opacity is
+                     // redrawn on the next frame.
+                     if let Some(element) = element {
+-                        let refreshing = mem::replace(&mut window.refreshing, true);
++                        // KOAN: as in prepaint, the cached views inside are
++                        // left to their own keys.
+                         element.paint(window, cx);
+-                        window.refreshing = refreshing;
+                         element_state.cache_key.opacity = opacity;
+                     } else {
+                         window.reuse_paint(element_state.paint_range.clone());
+                         if element_state.cache_key.opacity.to_bits() != opacity.to_bits() {
+                             window.request_animation_frame();
+                         }
++                        if window.a11y.is_active()
++                            && let Some(a11y) = &element_state.a11y
++                        {
++                            window.a11y.reuse_action_listeners(a11y);
++                        }
+                     }
+ 
+                     let paint_end = window.paint_index();
+                     element_state.paint_range = paint_start..paint_end;
++                    element_state.paint_frame = window.frames_drawn; // KOAN: as prepaint_frame.
+ 
+                     ((), element_state)
+                 },
+@@ -669,3 +706,355 @@ fn paint_component(
+         element.as_mut().unwrap().paint(window, cx);
+     });
+ }
++
++#[cfg(test)]
++mod tests {
++    use std::{cell::Cell, rc::Rc};
++
++    use accesskit::{Action, ActionRequest, NodeId, Role, TreeId, TreeUpdate};
++
++    use crate::{
++        AnyWindowHandle, AppContext as _, Context, FocusHandle, InteractiveElement as _,
++        IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, StyleRefinement,
++        Styled as _, TestAppContext, Window, deferred, div, px,
++    };
++
++    /// The cached view: a button with an action listener, and a row of two more nodes. With a
++    /// popup it also holds a deferred element (as a popover does) with a button of its own.
++    struct Inner {
++        renders: Rc<Cell<usize>>,
++        clicks: Rc<Cell<usize>>,
++        focus: FocusHandle,
++        popup: Option<Popup>,
++    }
++
++    struct Popup {
++        clicks: Rc<Cell<usize>>,
++        focus: FocusHandle,
++    }
++
++    impl Render for Inner {
++        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
++            self.renders.set(self.renders.get() + 1);
++            let clicks = self.clicks.clone();
++            let popup = self.popup.as_ref().map(|popup| {
++                let clicks = popup.clicks.clone();
++                deferred(
++                    div().id("popup").role(Role::Menu).size(px(40.)).child(
++                        div()
++                            .id("popup-button")
++                            .role(Role::MenuItem)
++                            .aria_label("Popup")
++                            .track_focus(&popup.focus)
++                            .on_a11y_action(Action::Click, move |_, _, _| {
++                                clicks.set(clicks.get() + 1)
++                            })
++                            .size(px(20.)),
++                    ),
++                )
++                .with_priority(1)
++            });
++            let mut root = div()
++                .id("inner")
++                .role(Role::Group)
++                .size(px(100.))
++                .child(
++                    div()
++                        .id("button")
++                        .role(Role::Button)
++                        .aria_label("Go")
++                        .track_focus(&self.focus)
++                        .on_a11y_action(Action::Click, move |_, _, _| clicks.set(clicks.get() + 1))
++                        .size(px(20.)),
++                )
++                .child(div().id("label").role(Role::Label).size(px(20.)));
++            if let Some(popup) = popup {
++                root = root.child(popup);
++            }
++            root
++        }
++    }
++
++    struct Outer {
++        inner: crate::Entity<Inner>,
++    }
++
++    impl Render for Outer {
++        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
++            div().id("outer").role(Role::Toolbar).size_full().child(
++                self.inner
++                    .clone()
++                    .cached(StyleRefinement::default().size(px(100.))),
++            )
++        }
++    }
++
++    fn tree(window: &Window) -> TreeUpdate {
++        window.last_a11y_tree_update().expect("a tree was built")
++    }
++
++    /// The ids of the nodes in `tree`, sorted, with each node's children.
++    fn shape(tree: &TreeUpdate) -> Vec<(NodeId, Vec<NodeId>)> {
++        let mut shape: Vec<_> = tree
++            .nodes
++            .iter()
++            .map(|(id, node)| (*id, node.children().to_vec()))
++            .collect();
++        shape.sort_by_key(|(id, _)| id.0);
++        shape
++    }
++
++    fn node_with_role(tree: &TreeUpdate, role: Role) -> NodeId {
++        tree.nodes
++            .iter()
++            .find(|(_, node)| node.role() == role)
++            .map(|(id, _)| *id)
++            .expect("a node with the role")
++    }
++
++    fn node_with_label(tree: &TreeUpdate, label: &str) -> NodeId {
++        tree.nodes
++            .iter()
++            .find(|(_, node)| node.label() == Some(label))
++            .map(|(id, _)| *id)
++            .expect("a node with the label")
++    }
++
++    struct Fixture {
++        window: AnyWindowHandle,
++        renders: Rc<Cell<usize>>,
++        clicks: Rc<Cell<usize>>,
++        popup_clicks: Rc<Cell<usize>>,
++        inner: crate::Entity<Inner>,
++    }
++
++    impl Fixture {
++        fn new(cx: &mut TestAppContext) -> Self {
++            Self::build(cx, false)
++        }
++
++        fn with_popup(cx: &mut TestAppContext) -> Self {
++            Self::build(cx, true)
++        }
++
++        fn build(cx: &mut TestAppContext, with_popup: bool) -> Self {
++            let renders = Rc::new(Cell::new(0));
++            let clicks = Rc::new(Cell::new(0));
++            let popup_clicks = Rc::new(Cell::new(0));
++            let inner = cx.new(|cx| Inner {
++                renders: renders.clone(),
++                clicks: clicks.clone(),
++                focus: cx.focus_handle(),
++                popup: with_popup.then(|| Popup {
++                    clicks: popup_clicks.clone(),
++                    focus: cx.focus_handle(),
++                }),
++            });
++            let window = cx
++                .add_window({
++                    let inner = inner.clone();
++                    |_, _| Outer { inner }
++                })
++                .into();
++            // Adding the window drew it once, without the tree.
++            renders.set(0);
++            Self {
++                window,
++                renders,
++                clicks,
++                popup_clicks,
++                inner,
++            }
++        }
++
++        /// Draw a frame; the tree it sent, if it built one.
++        fn draw(&self, cx: &mut TestAppContext) -> Option<TreeUpdate> {
++            cx.update_window(self.window, |_, window, cx| {
++                window.draw(cx).clear(cx);
++                window.is_a11y_active().then(|| tree(window))
++            })
++            .expect("draw")
++        }
++
++        fn simulate_tree(&self, cx: &mut TestAppContext, active: bool) {
++            cx.update_window(self.window, |_, window, _| {
++                window.simulate_a11y_active(active)
++            })
++            .expect("simulate");
++        }
++
++        fn click(&self, cx: &mut TestAppContext, node: NodeId) {
++            cx.update_window(self.window, |_, window, cx| {
++                window.simulate_a11y_action(
++                    ActionRequest {
++                        action: Action::Click,
++                        target_tree: TreeId::ROOT,
++                        target_node: node,
++                        data: None,
++                    },
++                    cx,
++                )
++            })
++            .expect("click");
++        }
++    }
++
++    #[gpui::test]
++    fn a_reused_view_keeps_its_a11y_nodes(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        fixture.simulate_tree(cx, true);
++
++        let first = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        let shape_first = shape(&first);
++        let button = node_with_role(&first, Role::Button);
++        let outer = node_with_role(&first, Role::Toolbar);
++        let group = node_with_role(&first, Role::Group);
++        assert!(
++            first
++                .nodes
++                .iter()
++                .any(|(id, node)| *id == outer && node.children() == [group]),
++            "the cached view's top node is a child of the node it sits in"
++        );
++
++        // Nothing changed: the view's prepaint is replayed, not run, and the tree is whole.
++        let second = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1, "the view was reused");
++        assert_eq!(shape(&second), shape_first);
++
++        // A reused frame keeps the view's action listeners, frame after frame.
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 1);
++        let third = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        assert_eq!(shape(&third), shape_first);
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 2);
++
++        // Notified, the view renders again and the tree is the same.
++        fixture.inner.update(cx, |_, cx| cx.notify());
++        let fourth = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 2);
++        assert_eq!(shape(&fourth), shape_first);
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 3);
++    }
++
++    #[gpui::test]
++    fn a_view_prepainted_without_the_tree_is_rendered_when_it_is_built(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        let button;
++        {
++            fixture.simulate_tree(cx, true);
++            let first = fixture.draw(cx).expect("a tree");
++            button = node_with_role(&first, Role::Button);
++        }
++
++        // Frames without the tree reuse the view as before.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        assert_eq!(fixture.renders.get(), 1);
++        fixture.inner.update(cx, |_, cx| cx.notify());
++        assert!(fixture.draw(cx).is_none());
++        assert_eq!(fixture.renders.get(), 2, "rendered while the tree was off");
++
++        // That prepaint left no nodes to replay: the first frame with the tree renders it.
++        fixture.simulate_tree(cx, true);
++        let tree = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3);
++        assert_eq!(node_with_role(&tree, Role::Button), button);
++        let again = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3, "and the next one reuses it");
++        assert_eq!(shape(&again), shape(&tree));
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 1);
++
++        // A view prepainted with the tree and reused without it is whole when it is built again.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        fixture.simulate_tree(cx, true);
++        let back = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 3);
++        assert_eq!(shape(&back), shape(&tree));
++        fixture.click(cx, button);
++        assert_eq!(fixture.clicks.get(), 2);
++    }
++
++    #[gpui::test]
++    fn a_reused_view_reports_the_focus_it_holds(cx: &mut TestAppContext) {
++        let fixture = Fixture::new(cx);
++        fixture.simulate_tree(cx, true);
++        let button = node_with_role(&fixture.draw(cx).expect("a tree"), Role::Button);
++        cx.update_window(fixture.window, |_, window, cx| {
++            let focus = fixture.inner.read(cx).focus.clone();
++            window.focus(&focus, cx);
++        })
++        .expect("focus");
++        fixture.draw(cx);
++        let renders = fixture.renders.get();
++        let reused = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), renders, "the view was reused");
++        assert_eq!(reused.focus, button);
++    }
++
++    #[gpui::test]
++    fn a_deferred_popup_in_a_reused_view_keeps_its_nodes(cx: &mut TestAppContext) {
++        let fixture = Fixture::with_popup(cx);
++        fixture.simulate_tree(cx, true);
++
++        let first = fixture.draw(cx).expect("a tree");
++        assert_eq!(fixture.renders.get(), 1);
++        let popup = node_with_label(&first, "Popup");
++        let menu = node_with_role(&first, Role::Menu);
++        assert!(
++            first
++                .nodes
++                .iter()
++                .any(|(id, node)| *id == menu && node.children() == [popup]),
++            "the popup's button is a child of its menu"
++        );
++        let shape_first = shape(&first);
++
++        cx.update_window(fixture.window, |_, window, cx| {
++            let focus = match &fixture.inner.read(cx).popup {
++                Some(popup) => popup.focus.clone(),
++                None => unreachable!("the fixture has a popup"),
++            };
++            window.focus(&focus, cx);
++        })
++        .expect("focus");
++        fixture.draw(cx);
++
++        // Frames that reuse the view reuse the deferred draw too, and the popup stays whole.
++        for round in 1..=3 {
++            let renders = fixture.renders.get();
++            let reused = fixture.draw(cx).expect("a tree");
++            assert_eq!(
++                fixture.renders.get(),
++                renders,
++                "round {round}: the view was reused"
++            );
++            assert_eq!(shape(&reused), shape_first, "round {round}");
++            assert_eq!(
++                reused.focus, popup,
++                "round {round}: the popup's focus is reported"
++            );
++            fixture.click(cx, popup);
++            assert_eq!(
++                fixture.popup_clicks.get(),
++                round,
++                "round {round}: its action works"
++            );
++        }
++
++        // The tree off and on again: the next frame with it is whole.
++        fixture.simulate_tree(cx, false);
++        assert!(fixture.draw(cx).is_none());
++        fixture.simulate_tree(cx, true);
++        let back = fixture.draw(cx).expect("a tree");
++        assert_eq!(shape(&back), shape_first);
++        fixture.click(cx, popup);
++        assert_eq!(fixture.popup_clicks.get(), 4);
++    }
++}
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
-index ae98aa5..ea0f6a4 100644
+index ae98aa5..86bec5a 100644
 --- a/src/window/a11y/debug.rs
 +++ b/src/window/a11y/debug.rs
-@@ -268,6 +268,14 @@ fn node_to_json(
+@@ -91,6 +91,12 @@ impl A11yDebug {
+         });
+     }
+ 
++    #[cfg(any(test, feature = "test-support"))]
++    // KOAN: (#1899) Wormhole's a11y replay, for tests.
++    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
++        self.last_tree_update.as_ref()
++    }
++
+     #[cfg(debug_assertions)]
+     pub(crate) fn capture_node_info(&mut self, node_info: &FxHashMap<NodeId, NodeDebugInfo>) {
+         self.last_node_info = node_info.clone();
+@@ -268,6 +274,14 @@ fn node_to_json(
      if let Some(v) = node.toggled() {
          aria.insert("toggled".into(), json!(format!("{v:?}")));
      }
@@ -1906,10 +2686,51 @@ index ae98aa5..ea0f6a4 100644
          aria.insert("orientation".into(), json!(format!("{v:?}")));
      }
 diff --git a/src/window/a11y.rs b/src/window/a11y.rs
-index 5b63821..d5794cd 100644
+index 5b63821..e2888a3 100644
 --- a/src/window/a11y.rs
 +++ b/src/window/a11y.rs
-@@ -221,6 +221,13 @@ impl A11y {
+@@ -107,6 +107,7 @@ use accesskit::{Action, NodeId, TreeUpdate};
+ use collections::{FxHashMap, FxHashSet};
+ use smallvec::SmallVec;
+ use std::hash::{Hash, Hasher};
++use std::mem;
+ use std::sync::{
+     Arc,
+     atomic::{AtomicBool, Ordering},
+@@ -149,6 +150,10 @@ pub(crate) struct A11y {
+     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
+     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
++    /// The previous frame's [`Self::action_listeners`]. Listeners are registered while painting,
++    /// which a reused view skips, so [`Self::reuse_action_listeners`] moves its nodes' listeners
++    /// from here into the frame being built.
++    retired_action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+     /// The window's title, used to label the root node so assistive
+     /// technology can tell windows apart.
+     window_title: Option<SharedString>,
+@@ -177,6 +182,7 @@ impl A11y {
+             focus_ids: FxHashMap::default(),
+             node_bounds: FxHashMap::default(),
+             action_listeners: FxHashMap::default(),
++            retired_action_listeners: FxHashMap::default(),
+             window_title,
+             last_focus_without_node: None,
+             debug: debug::A11yDebug::default(),
+@@ -213,6 +219,13 @@ impl A11y {
+         self.active_this_frame = self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
+     }
+ 
++    // KOAN: (#1899) Wormhole's a11y replay, from here to `CapturedA11y`.
++    /// The tree sent in the last frame that built one.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
++        self.debug.last_tree_update()
++    }
++
+     pub(crate) fn is_enabled(&self) -> bool {
+         !self.force_disabled
+     }
+@@ -221,6 +234,13 @@ impl A11y {
          self.active_this_frame
      }
  
@@ -1923,11 +2744,206 @@ index 5b63821..d5794cd 100644
      pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
          self.focus_ids.insert(node_id, focus_id);
      }
+@@ -275,10 +295,104 @@ impl A11y {
+     pub(crate) fn begin_frame(&mut self) {
+         self.focus_ids.clear();
+         self.node_bounds.clear();
++        mem::swap(
++            &mut self.action_listeners,
++            &mut self.retired_action_listeners,
++        );
+         self.action_listeners.clear();
+         self.nodes.begin_frame(self.window_title.as_ref());
+     }
+ 
++    /// Note where a view's prepaint starts, to [`Self::capture`] what it adds to the tree.
++    // KOAN: (#1899) Wormhole's a11y replay: mark, capture, replay, listeners.
++    pub(crate) fn mark(&self) -> A11yMark {
++        A11yMark {
++            nodes: self.nodes.all_nodes.len(),
++            parent_children: self
++                .nodes
++                .nodes_stack
++                .last()
++                .map_or(0, |parent| parent.children().len()),
++            active_descendant: self.nodes.active_descendant,
++        }
++    }
++
++    /// Everything added to the tree since `mark`, for [`Self::replay`] when the view is reused.
++    ///
++    /// Must be called with the same node on top of the stack as at `mark`, after every node
++    /// pushed in between has been popped.
++    pub(crate) fn capture(&self, mark: &A11yMark) -> CapturedA11y {
++        let nodes = self.nodes.all_nodes[mark.nodes..].to_vec();
++        let roots = self
++            .nodes
++            .nodes_stack
++            .last()
++            .and_then(|parent| parent.children().get(mark.parent_children..))
++            .unwrap_or_default()
++            .iter()
++            .copied()
++            .collect();
++        let bounds = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, *self.node_bounds.get(id)?)))
++            .collect();
++        let focusable = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, *self.focus_ids.get(id)?)))
++            .collect();
++        // The claim only counts while the node that was focused when it was made still is.
++        let active_descendant = self
++            .nodes
++            .active_descendant
++            .filter(|id| mark.active_descendant != Some(*id))
++            .zip(self.nodes.focus);
++        #[cfg(debug_assertions)]
++        let info = nodes
++            .iter()
++            .filter_map(|(id, _)| Some((*id, self.nodes.node_info.get(id)?.clone())))
++            .collect();
++        CapturedA11y {
++            nodes,
++            roots,
++            bounds,
++            focusable,
++            active_descendant,
++            #[cfg(debug_assertions)]
++            info,
++        }
++    }
++
++    /// Add a [`Self::capture`]d subtree to the tree being built, as the view's prepaint did when it
++    /// ran: its top-level nodes become children of the node on top of the stack. `focus` is the
++    /// window's focused element, which decides whether a replayed node reports focus.
++    pub(crate) fn replay(&mut self, captured: &CapturedA11y, focus: Option<FocusId>) {
++        self.nodes.replay(captured);
++        for (id, bounds) in &captured.bounds {
++            self.node_bounds.insert(*id, *bounds);
++        }
++        for (id, focus_id) in &captured.focusable {
++            self.set_focusable(*id, *focus_id);
++            if focus == Some(*focus_id) {
++                self.set_focus(*id);
++            }
++        }
++        if let Some((id, anchor)) = captured.active_descendant
++            && self.nodes.focus == Some(anchor)
++        {
++            self.nodes.set_active_descendant(id);
++        }
++    }
++
++    /// Keep the action listeners of `captured`'s nodes for the frame being built. Listeners are
++    /// registered while painting, so a view whose paint is reused calls this instead.
++    pub(crate) fn reuse_action_listeners(&mut self, captured: &CapturedA11y) {
++        for (id, _) in &captured.nodes {
++            if let Some(listeners) = self.retired_action_listeners.remove(id) {
++                self.action_listeners.insert(*id, listeners);
++            }
++        }
++    }
++
+     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
+     pub(crate) fn end_frame(&mut self, frame: debug::FrameDebugInfo) -> TreeUpdate {
+         let update = self.nodes.finalize();
+@@ -299,6 +413,36 @@ impl A11y {
+     }
+ }
+ 
++/// Where a view's prepaint started in the tree being built. See [`A11y::mark`].
++// KOAN: (#1899) Wormhole's a11y replay.
++pub(crate) struct A11yMark {
++    nodes: usize,
++    parent_children: usize,
++    active_descendant: Option<NodeId>,
++}
++
++/// The accessibility nodes one view's prepaint added to the tree, kept with the view so that a
++/// frame which reuses its prepaint (a [cached view]) can add them again. A view's own prepaint
++/// is skipped in such a frame, and the tree is rebuilt from nothing every frame.
++///
++/// Action listeners are not kept here, as they cannot be cloned: see
++/// [`A11y::reuse_action_listeners`].
++///
++/// [cached view]: crate::Entity::cached
++// KOAN: (#1899) Wormhole's a11y replay.
++pub(crate) struct CapturedA11y {
++    /// Every node the view pushed, children before their parents.
++    nodes: Vec<(NodeId, accesskit::Node)>,
++    /// The view's top-level nodes: the ones that became children of the node it was embedded in.
++    roots: SmallVec<[NodeId; 4]>,
++    bounds: Vec<(NodeId, Bounds<Pixels>)>,
++    focusable: Vec<(NodeId, FocusId)>,
++    /// A node claiming to be the active descendant, and the node that was focused at the time.
++    active_descendant: Option<(NodeId, NodeId)>,
++    #[cfg(debug_assertions)]
++    info: Vec<(NodeId, debug::NodeDebugInfo)>,
++}
++
+ /// Builder API for synthetic children. See the docs for
+ /// [`Element::a11y_synthetic_children`].
+ pub struct A11ySubtreeBuilder<'a> {
+@@ -456,6 +600,28 @@ impl A11yNodeBuilder {
+         true
+     }
+ 
++    /// Add the nodes of a view that is reused, with its top-level nodes as children of the
++    /// current top-of-stack node. A node whose id is already in the tree is dropped, as in
++    /// [`Self::push`].
++    fn replay(&mut self, captured: &CapturedA11y) {
++        for (id, node) in &captured.nodes {
++            if self.seen_ids.insert(*id) {
++                self.all_nodes.push((*id, node.clone()));
++            } else {
++                debug_assert!(false, "Duplicate a11y node id: {id:?}");
++            }
++        }
++        if let Some(parent) = self.nodes_stack.last_mut() {
++            for id in &captured.roots {
++                parent.push_child(*id);
++            }
++        }
++        #[cfg(debug_assertions)]
++        for (id, info) in &captured.info {
++            self.node_info.insert(*id, info.clone());
++        }
++    }
++
+     pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {
+         self.nodes_stack.last_mut()
+     }
 diff --git a/src/window.rs b/src/window.rs
-index c2ba13d..bce18ee 100644
+index c2ba13d..d5f3919 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -1274,6 +1274,10 @@ pub struct Window {
+@@ -72,9 +72,9 @@ mod prompts;
+ 
+ pub use a11y::A11ySubtreeBuilder;
+ 
+-use self::a11y::A11y;
+ #[cfg(not(target_family = "wasm"))]
+ use self::a11y::ROOT_NODE_ID;
++use self::a11y::{A11y, CapturedA11y};
+ use crate::util::{
+     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
+@@ -1033,6 +1033,12 @@ pub(crate) struct DeferredDraw {
+     absolute_offset: Point<Pixels>,
+     prepaint_range: Range<PrepaintStateIndex>,
+     paint_range: Range<PaintIndex>,
++    // KOAN: (#1899) Wormhole's a11y replay, for deferred draws.
++    /// The accessibility nodes the element's prepaint added, kept when it ran while the tree was
++    /// being built. A deferred draw that is reused (it sits in a cached view) doesn't prepaint
++    /// again, so this is what puts its nodes back in the tree. Shared, since the draw is copied
++    /// into every frame that reuses it.
++    a11y: Option<Rc<CapturedA11y>>,
+ }
+ 
+ pub(crate) struct Frame {
+@@ -1274,6 +1280,10 @@ pub struct Window {
          SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
      hovered: Rc<Cell<bool>>,
      pub(crate) needs_present: Rc<Cell<bool>>,
@@ -1938,7 +2954,17 @@ index c2ba13d..bce18ee 100644
      /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
      /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
      pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
-@@ -2048,7 +2052,18 @@ impl Window {
+@@ -1291,6 +1301,9 @@ pub struct Window {
+     /// Incremented every time focus moves. Used to invalidate a
+     /// pending keyboard activation state when focus changes.
+     pub(crate) focus_generation: u64,
++    // KOAN: draws so far, which a cached view's ranges are checked against
++    // (`view.rs`).
++    pub(crate) frames_drawn: u64,
+     pending_input: Option<PendingInput>,
+     pending_modifier: ModifierState,
+     pub(crate) pending_input_observers: SingleSubscriberSet<AnyObserver>,
+@@ -2048,7 +2061,18 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -1958,7 +2984,7 @@ index c2ba13d..bce18ee 100644
                      handle
                          .update(&mut cx, |_, window, _| window.present())
                          .with_context(|| {
-@@ -2057,13 +2072,19 @@ impl Window {
+@@ -2057,13 +2081,19 @@ impl Window {
                          .log_err();
                  }
  
@@ -1979,7 +3005,7 @@ index c2ba13d..bce18ee 100644
                      })
                      .with_context(|| {
                          format!(
-@@ -2071,14 +2092,15 @@ impl Window {
+@@ -2071,14 +2101,15 @@ impl Window {
                              handle.window_id()
                          )
                      })
@@ -1997,7 +3023,7 @@ index c2ba13d..bce18ee 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -2396,6 +2418,8 @@ impl Window {
+@@ -2396,6 +2427,8 @@ impl Window {
              visibility_observers: SingleSubscriberSet::new(),
              hovered,
              needs_present,
@@ -2006,7 +3032,56 @@ index c2ba13d..bce18ee 100644
              input_rate_tracker,
              #[cfg(feature = "profiler")]
              window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
-@@ -3827,12 +3851,40 @@ impl Window {
+@@ -2413,6 +2446,7 @@ impl Window {
+             focus: None,
+             focus_enabled: true,
+             focus_generation: 0,
++            frames_drawn: 0,
+             pending_input: None,
+             pending_modifier: ModifierState::default(),
+             pending_input_observers: SingleSubscriberSet::new(),
+@@ -2915,6 +2949,14 @@ impl Window {
+         AsyncWindowContext::new_context(cx.to_async(), self.handle)
+     }
+ 
++    // KOAN: (#1871) a frame number for work spread over frames.
++    /// The number of the frame being drawn, counted from the window's first:
++    /// what work spread over several frames, such as uploads, can be
++    /// budgeted by.
++    pub fn frame_number(&self) -> u64 {
++        self.frames_drawn
++    }
++
+     /// Schedule the given closure to be run directly after the current frame is rendered.
+     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
+         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+@@ -3103,6 +3145,17 @@ impl Window {
+         self.rendered_frame.scene.quads.clone()
+     }
+ 
++    // KOAN: the shader quads in the most recently rendered frame's scene,
++    // layer groups included, so tests can hold what draws at rest (#1741).
++    /// The number of shader quads in the most recently rendered frame's scene.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn painted_shader_count(&self) -> usize {
++        fn count(scene: &Scene) -> usize {
++            scene.shaders.len() + scene.layer_groups.iter().map(count).sum::<usize>()
++        }
++        count(&self.rendered_frame.scene)
++    }
++
+     /// Returns the underlines in the most recently rendered frame's scene.
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn painted_underlines(&self) -> Vec<Underline> {
+@@ -3648,6 +3701,7 @@ impl Window {
+     /// the contents of the new [`Scene`], use [`Self::present`].
+     #[profiling::function]
+     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
++        self.frames_drawn += 1; // KOAN: view.rs.
+         // Drain every draw in profiler builds so a previous frame's
+         // first-invalidation timestamp can't be attributed to this one.
+         #[cfg(feature = "profiler")]
+@@ -3827,12 +3881,40 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -2047,7 +3122,102 @@ index c2ba13d..bce18ee 100644
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4899,6 +4951,107 @@ impl Window {
+@@ -4076,6 +4158,13 @@ impl Window {
+             // case, instead update the tooltip's visibility here.
+             let is_visible =
+                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
++            // KOAN: a tooltip asked for and whether it was drawn (#1814).
++            log::debug!(
++                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
++                mouse_position,
++                self.mouse_position(),
++                tooltip_bounds
++            );
+             if !is_visible {
+                 continue;
+             }
+@@ -4122,7 +4211,15 @@ impl Window {
+             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+ 
+             for deferred_draw_ix in traversal_order {
+-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
++                let (
++                    element,
++                    parent_node,
++                    current_view,
++                    rem_size,
++                    absolute_offset,
++                    prepaint_range,
++                    a11y,
++                ) = {
+                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                     self.element_id_stack
+                         .clone_from(&deferred_draw.element_id_stack);
+@@ -4135,12 +4232,16 @@ impl Window {
+                         deferred_draw.rem_size,
+                         deferred_draw.absolute_offset,
+                         deferred_draw.prepaint_range.clone(),
++                        deferred_draw.a11y.take(),
+                     )
+                 };
+                 self.next_frame.dispatch_tree.set_active_node(parent_node);
+ 
+                 let prepaint_start = self.prepaint_index();
+                 if let Some(mut element) = element {
++                    // Like a cached view, a deferred draw that is reused later must be able to
++                    // put its nodes back: they are added here, outside of any view's prepaint.
++                    let a11y_mark = self.a11y.is_active().then(|| self.a11y.mark());
+                     self.with_rendered_view(current_view, |window| {
+                         window.with_rem_size(Some(rem_size), |window| {
+                             window.with_absolute_element_offset(absolute_offset, |window| {
+@@ -4148,9 +4249,17 @@ impl Window {
+                             });
+                         });
+                     });
+-                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
++                    let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
++                    deferred_draw.element = Some(element);
++                    deferred_draw.a11y = a11y_mark.map(|mark| Rc::new(self.a11y.capture(&mark)));
+                 } else {
+                     self.reuse_prepaint(prepaint_range);
++                    if self.a11y.is_active()
++                        && let Some(a11y) = &a11y
++                    {
++                        self.a11y.replay(a11y, self.focus);
++                    }
++                    self.next_frame.deferred_draws[deferred_draw_ix].a11y = a11y;
+                 }
+                 let prepaint_end = self.prepaint_index();
+                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
+@@ -4194,6 +4303,11 @@ impl Window {
+                 })
+             } else {
+                 self.reuse_paint(deferred_draw.paint_range.clone());
++                if self.a11y.is_active()
++                    && let Some(a11y) = &deferred_draw.a11y
++                {
++                    self.a11y.reuse_action_listeners(a11y);
++                }
+             }
+             let paint_end = self.paint_index();
+             deferred_draw.paint_range = paint_start..paint_end;
+@@ -4267,6 +4381,7 @@ impl Window {
+                     absolute_offset: deferred_draw.absolute_offset,
+                     prepaint_range: deferred_draw.prepaint_range.clone(),
+                     paint_range: deferred_draw.paint_range.clone(),
++                    a11y: deferred_draw.a11y.clone(),
+                 }),
+         );
+     }
+@@ -4749,6 +4864,7 @@ impl Window {
+             absolute_offset,
+             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
+             paint_range: PaintIndex::default()..PaintIndex::default(),
++            a11y: None,
+         });
+     }
+ 
+@@ -4899,6 +5015,110 @@ impl Window {
          }
      }
  
@@ -2079,6 +3249,7 @@ index c2ba13d..bce18ee 100644
 +            uniforms,
 +            image: None,
 +            group: None,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +    }
@@ -2109,6 +3280,7 @@ index c2ba13d..bce18ee 100644
 +            uniforms,
 +            image: None,
 +            group: None,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.pop_group(shader);
 +    }
@@ -2147,6 +3319,7 @@ index c2ba13d..bce18ee 100644
 +            uniforms,
 +            image: Some(tile),
 +            group: None,
++            group_inset: Default::default(),
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +        Ok(())
@@ -2155,7 +3328,7 @@ index c2ba13d..bce18ee 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4986,7 +5139,12 @@ impl Window {
+@@ -4986,7 +5206,12 @@ impl Window {
          let content_mask = self.content_mask();
          let opacity = self.element_opacity();
          path.content_mask = content_mask;
@@ -2169,7 +3342,38 @@ index c2ba13d..bce18ee 100644
          path.color = color.opacity(opacity);
          self.next_frame
              .scene
-@@ -7297,6 +7455,22 @@ impl Window {
+@@ -7274,6 +7499,30 @@ impl Window {
+         self.a11y.is_active()
+     }
+ 
++    /// Pretend that an assistive technology connected to (or left) this window, as the
++    /// platform's adapter reports it, which the test platform has none of. The next frame
++    /// builds the accessibility tree, or stops building it. (A platform's activation also
++    /// refreshes the window; call [`Self::refresh`] for that.)
++    #[cfg(any(test, feature = "test-support"))]
++    // KOAN: (#1899) Wormhole's test hooks for the a11y replay.
++    pub fn simulate_a11y_active(&mut self, active: bool) {
++        self.a11y.set_active_flag(active);
++    }
++
++    /// The accessibility tree of the last frame that built one, as it was sent to the platform's
++    /// adapter, with the real node ids.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn last_a11y_tree_update(&self) -> Option<accesskit::TreeUpdate> {
++        self.a11y.last_tree_update().cloned()
++    }
++
++    /// Deliver an action request to the window as the platform's adapter does when an assistive
++    /// technology performs one on a node of the tree.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn simulate_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
++        self.handle_a11y_action(request, cx);
++    }
++
+     /// Debug representation of the last frame's accessibility information.
+     pub fn debug_a11y_tree_json(&self) -> Option<String> {
+         self.a11y.debug_tree_json()
+@@ -7297,6 +7546,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

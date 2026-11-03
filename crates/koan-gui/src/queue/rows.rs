@@ -2,7 +2,7 @@
 //! beneath it, and tracks on no record or standing alone. The runs are the
 //! engine's (`QueueItem::run`); nothing here compares names.
 
-use koan_ffi::{QueueItem, RunRole};
+use koan_runtime::{QueueItem, RunRole};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Row {
@@ -169,7 +169,7 @@ pub fn position(rows: &[Row], dest: usize, len: usize) -> usize {
 mod tests {
     use super::*;
     use core::prelude::v1::test;
-    use koan_ffi::EntryStatus;
+    use koan_runtime::EntryStatus;
 
     fn item(id: &str, run: RunRole) -> QueueItem {
         QueueItem {

@@ -159,15 +159,29 @@ pub struct TvWake {
 impl TvWake {
     fn new(id: String, name: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let code = cx.new(|cx| FieldState::new(window, cx).placeholder("0000"));
-        let subscription = cx.subscribe_in(&code, window, |this, _, event: &InputEvent, _, cx| {
-            match event {
-                // Four digits typed is the whole code.
-                InputEvent::Change if this.digits(cx).len() == 4 => this.finish(cx),
-                InputEvent::Change => cx.notify(),
-                InputEvent::PressEnter { .. } => this.finish(cx),
-                _ => {}
-            }
-        });
+        let subscription =
+            cx.subscribe_in(&code, window, |this, _, event: &InputEvent, window, cx| {
+                match event {
+                    // Four digits typed is the whole code; more (a paste, a
+                    // slip) keeps the first four rather than leaving the sheet
+                    // waiting for a code it cannot take.
+                    InputEvent::Change => {
+                        let digits = this.digits(cx);
+                        if digits.len() > 4 {
+                            let kept = digits[..4].to_owned();
+                            this.code
+                                .update(cx, |code, cx| code.set_value(kept, window, cx));
+                        }
+                        if this.digits(cx).len() == 4 {
+                            this.finish(cx);
+                        } else {
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::PressEnter { .. } => this.finish(cx),
+                    _ => {}
+                }
+            });
         // However the sheet goes (closed, or replaced by another), a pairing
         // not finished is called off, so the TV puts its code away.
         let released = cx.on_release(|this: &mut Self, cx| {
@@ -316,7 +330,7 @@ impl Render for TvWake {
                 )
                 .into_any_element(),
         };
-        ask::panel(look)
+        ask::panel("wake from sleep", look)
             .child(ask::head("Wake from Sleep", vec![close.into_any_element()], look))
             .child(
                 ask::body("tv-wake", look)

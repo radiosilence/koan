@@ -65,8 +65,10 @@ impl RenderOnce for EmptyState {
                 .items_center()
                 .gap(look.space(Space::M))
                 .p(look.space(Space::Xxl))
-                // Room for a title on one line, at the size type is drawn.
-                .max_w(px(420.0 * look.scale.text))
+                // Room for a title on one line, and a sentence of detail on
+                // one or two with no word left alone on the last, at the size
+                // type is drawn.
+                .max_w(px(480.0 * look.scale.text))
                 .text_center()
                 .child(
                     KoanIcon::new(self.icon)

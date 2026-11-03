@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use futures_channel::mpsc;
 use futures_util::StreamExt as _;
-use koan_ffi::{Anchor, KoanEngine, NowPlaying, PlayState, StateSlice};
 use koan_kit::app::{App, AsyncApp, Global};
+use koan_runtime::{Anchor, KoanEngine, NowPlaying, PlayState, StateSlice};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
     SeekDirection,
@@ -327,7 +327,7 @@ async fn answer(
         // next key waiting for this one to finish: one sent to a device
         // being controlled can take seconds.
         let sent: std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<(), koan_ffi::KoanError>>>,
+            Box<dyn std::future::Future<Output = Result<(), koan_runtime::KoanError>>>,
         > = match command {
             Command::Play => Box::pin(engine.resume()),
             Command::Pause => Box::pin(engine.pause()),
@@ -469,7 +469,7 @@ fn remove(path: PathBuf, cx: &AsyncApp) {
 mod tests {
     use super::*;
     use core::prelude::v1::test;
-    use koan_ffi::{EntryStatus, QueueItem, RepeatMode, RunRole};
+    use koan_runtime::{EntryStatus, QueueItem, RepeatMode, RunRole};
 
     fn item(title: &str, duration_ms: Option<u64>) -> QueueItem {
         QueueItem {

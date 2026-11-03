@@ -68,10 +68,15 @@ struct KoanShaderInstance {
 @group(2) @binding(1) var s_koan_image: sampler;
 
 // The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
-// texels around its tile in the atlas.
+// texels around its tile in the atlas. KOAN: past the texture's edge it is
+// clear, as a layer group's texture holds only its visible part (#1878).
 fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let extent = vec2<f32>(textureDimensions(t_koan_image, 0));
-    let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
+    let raw = tile.xy + uv * tile.zw;
+    if (any(raw < vec2<f32>(0.0)) || any(raw > extent)) {
+        return vec4<f32>(0.0);
+    }
+    let at = clamp(raw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
     return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
 }
 
@@ -400,6 +405,10 @@ struct WgpuResources {
     shader_layers: KoanLayers,
     // KOAN: each layer group's texture (#1859).
     layer_groups: KoanLayers,
+    // KOAN: whether drawing a scene drops the atlas bind groups it does not
+    // use: not while a layer group is drawn, which would drop the window's
+    // and the other groups' each frame (#1878).
+    prune_bind_groups: bool,
     compose_pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
 
@@ -1681,6 +1690,7 @@ impl WgpuRendererCore {
                 blank_texture_bind_group,
                 shader_layers: KoanLayers::default(),
                 layer_groups: KoanLayers::default(),
+                prune_bind_groups: true,
                 compose_pipelines: None,
             },
             atlas,
@@ -1763,7 +1773,12 @@ impl WgpuRendererCore {
         );
 
         self.atlas.before_frame();
-        self.ensure_intermediate_textures(size);
+        // KOAN: a layer group the size of its bounds holds no paths, and
+        // resizing the path textures to it would reallocate them each frame
+        // (#1878).
+        if self.resources().prune_bind_groups || !scene.paths.is_empty() {
+            self.ensure_intermediate_textures(size);
+        }
 
         let gamma_params = GammaParams {
             gamma_ratios: self.rendering_params.gamma_ratios,
@@ -1841,7 +1856,11 @@ impl WgpuRendererCore {
                 .iter()
                 .map(|shader| gpui::ShaderInstance::of(shader, now))
                 .collect();
-            Some(self.write_instance_binding("koan_shaders_bind_group", &mut instance_offset, &instances)?)
+            Some(self.write_instance_binding(
+                "koan_shaders_bind_group",
+                &mut instance_offset,
+                &instances,
+            )?)
         };
 
         let mut encoder =
@@ -2069,9 +2088,30 @@ impl WgpuRendererCore {
             }
         }
 
-        self.resources_mut()
-            .atlas_texture_bind_groups
-            .retain(|texture_id, _| texture_ids.contains(texture_id));
+        // KOAN: what the scene's layer groups use is kept too, and a group's
+        // own drawing drops nothing (#1878).
+        for group in &scene.layer_groups {
+            for batch in group.batches() {
+                let texture_id = match batch {
+                    PrimitiveBatch::MonochromeSprites { texture_id, .. }
+                    | PrimitiveBatch::SubpixelSprites { texture_id, .. }
+                    | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
+                    PrimitiveBatch::Shaders {
+                        texture: Some(texture_id),
+                        ..
+                    } => texture_id,
+                    _ => continue,
+                };
+                if !texture_ids.contains(&texture_id) {
+                    texture_ids.push(texture_id);
+                }
+            }
+        }
+        if self.resources().prune_bind_groups {
+            self.resources_mut()
+                .atlas_texture_bind_groups
+                .retain(|texture_id, _| texture_ids.contains(texture_id));
+        }
 
         for texture_id in texture_ids {
             let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
@@ -2200,48 +2240,80 @@ impl WgpuRendererCore {
         });
     }
 
-    // KOAN: (#1859) each layer group's scene drawn into a texture the size
-    // of the window, over clear, its content where it was painted; kept for
-    // the frame's presents.
+    // KOAN: (#1859, #1878) each layer group's scene drawn into a texture of
+    // its own, over clear: the visible part of the shader composing it, its
+    // content moved to the texture's origin, or the window's size for one
+    // holding paths or too large. A group is drawn again when the frame is
+    // new or when `Scene::layer_group_stale` says so. Groups nested in others
+    // are drawn first, as their composing shader is in the enclosing group's
+    // scene. A texture keeps its bind group while its size holds.
     fn draw_layer_groups(
         &mut self,
         scene: &Scene,
         size: Size<DevicePixels>,
         premultiplied_alpha: bool,
     ) -> Result<()> {
-        let extent = (size.width.0 as u32, size.height.0 as u32);
         if scene.layer_groups.is_empty() {
             self.resources_mut().layer_groups = KoanLayers::default();
             return Ok(());
         }
-        let held = &self.resources().layer_groups;
-        if held.generation == scene.generation && held.size == extent {
-            return Ok(());
+        let now = gpui::present_now();
+        let new_frame = self.resources().layer_groups.generation != scene.generation;
+        let slot_generation = gpui::color_slots_generation();
+        let slots_written = self.resources().layer_groups.slot_generation != slot_generation;
+        let count = scene.layer_groups.len();
+        let mut moving = std::mem::take(&mut self.resources_mut().layer_groups.moving);
+        if new_frame {
+            moving.clear();
         }
-        let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
-            if self.resources().layer_groups.size == extent {
-                std::mem::take(&mut self.resources_mut().layer_groups.layers)
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            } else {
-                Vec::new()
-            };
-        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
-        for group in &scene.layer_groups {
+        moving.resize(count, false);
+        let mut redrawn = vec![false; count];
+        let extents: Vec<Size<DevicePixels>> = scene
+            .layer_group_frames
+            .iter()
+            .map(|frame| match frame {
+                Some(frame) => Size {
+                    width: DevicePixels((frame.size.width.0.ceil() as i32).max(1)),
+                    height: DevicePixels((frame.size.height.0.ceil() as i32).max(1)),
+                },
+                None => size,
+            })
+            .collect();
+        let mut held = std::mem::take(&mut self.resources_mut().layer_groups.layers);
+        held.resize_with(scene.layer_groups.len(), || None);
+        self.resources_mut().prune_bind_groups = false;
+        let mut result = Ok(());
+        for index in (0..scene.layer_groups.len()).rev() {
+            let group = &scene.layer_groups[index];
             if group.is_blank() {
-                drawn.push(None);
+                held[index] = None;
                 continue;
             }
-            let (texture, bind_group) = match pool.pop() {
-                Some(held) => held,
+            let extent = extents[index];
+            let (width, height) = (extent.width.0 as u32, extent.height.0 as u32);
+            let fits = held[index]
+                .as_ref()
+                .is_some_and(|(t, _)| t.width() == width && t.height() == height);
+            let stale = scene.layer_group_stale(
+                index,
+                now,
+                slots_written,
+                &mut moving[index],
+                &redrawn,
+            );
+            if fits && !new_frame && !stale {
+                continue;
+            }
+            redrawn[index] = true;
+            let (texture, bind_group) = match held[index].take().filter(|_| fits) {
+                Some(kept) => kept,
                 None => {
                     let resources = self.resources();
                     let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("koan_layer_group"),
                         size: wgpu::Extent3d {
-                            width: extent.0,
-                            height: extent.1,
+                            width,
+                            height,
                             depth_or_array_layers: 1,
                         },
                         mip_level_count: 1,
@@ -2257,18 +2329,29 @@ impl WgpuRendererCore {
                     (texture, bind_group)
                 }
             };
+            // The groups so far in place, which a group nested in this one
+            // is (higher indices first).
+            self.resources_mut().layer_groups.layers = held.clone();
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.render_frame(group, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
-            drawn.push(Some((texture, bind_group)));
+            if let Err(error) = self.render_frame(
+                group,
+                &view,
+                extent,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            ) {
+                result = Err(error);
+            }
+            held[index] = Some((texture, bind_group));
         }
-        self.resources_mut().layer_groups = KoanLayers {
-            generation: scene.generation,
-            slot_generation: 0,
-            size: extent,
-            layers: drawn,
-            moving: Vec::new(),
-        };
-        Ok(())
+        self.resources_mut().prune_bind_groups = true;
+        let groups = &mut self.resources_mut().layer_groups;
+        groups.layers = held;
+        groups.moving = moving;
+        groups.slot_generation = slot_generation;
+        groups.generation = scene.generation;
+        groups.size = (size.width.0 as u32, size.height.0 as u32);
+        result
     }
 
     fn compose_frame(
@@ -2335,7 +2418,13 @@ impl WgpuRendererCore {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 // Every layer over a clear texture, which leaves its colours
                 // premultiplied; queued before the compose that reads them.
-                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+                self.render_frame(
+                    layer,
+                    &view,
+                    size,
+                    premultiplied_alpha,
+                    wgpu::Color::TRANSPARENT,
+                )?;
                 drawn.push(Some((texture, bind_group)));
             }
             self.resources_mut().shader_layers = KoanLayers {
@@ -2343,7 +2432,11 @@ impl WgpuRendererCore {
                 slot_generation,
                 size: extent,
                 layers: drawn,
-                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
+                moving: plan
+                    .layers
+                    .iter()
+                    .map(|l| l.color_slots_moving(now))
+                    .collect(),
             };
         } else {
             for (k, layer) in plan.layers.iter().enumerate() {
@@ -2356,14 +2449,23 @@ impl WgpuRendererCore {
                 if !(written || moving || was_moving) {
                     continue;
                 }
-                let Some(view) = self.resources().shader_layers.layers[k]
-                    .as_ref()
-                    .map(|(texture, _)| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+                let Some(view) =
+                    self.resources().shader_layers.layers[k]
+                        .as_ref()
+                        .map(|(texture, _)| {
+                            texture.create_view(&wgpu::TextureViewDescriptor::default())
+                        })
                 else {
                     continue;
                 };
                 // After the last compose that read it: the same queue.
-                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+                self.render_frame(
+                    layer,
+                    &view,
+                    size,
+                    premultiplied_alpha,
+                    wgpu::Color::TRANSPARENT,
+                )?;
             }
             self.resources_mut().shader_layers.slot_generation = slot_generation;
         }
@@ -2378,9 +2480,11 @@ impl WgpuRendererCore {
             premultiplied_alpha: premultiplied_alpha as u32,
             pad: 0,
         };
-        self.resources
-            .queue
-            .write_buffer(&self.resources.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        self.resources.queue.write_buffer(
+            &self.resources.globals_buffer,
+            0,
+            bytemuck::bytes_of(&globals),
+        );
         // Only the shaders' own images: the layers' were prepared as they
         // were drawn, and a present walks nothing but the quads.
         self.prepare_shader_textures(scene);
@@ -2395,8 +2499,11 @@ impl WgpuRendererCore {
             .map(|shader| gpui::ShaderInstance::of(shader, now))
             .collect();
         let mut instance_offset = 0;
-        let instances =
-            self.write_instance_binding("koan_shaders_bind_group", &mut instance_offset, &instances)?;
+        let instances = self.write_instance_binding(
+            "koan_shaders_bind_group",
+            &mut instance_offset,
+            &instances,
+        )?;
 
         let resources = self.resources();
         let (copy, over) = resources
@@ -2404,11 +2511,12 @@ impl WgpuRendererCore {
             .as_ref()
             .context("missing compose pipelines")?;
         let layers = &resources.shader_layers.layers;
-        let mut encoder = resources
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("koan_compose"),
-            });
+        let mut encoder =
+            resources
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("koan_compose"),
+                });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("koan_compose"),
@@ -2434,7 +2542,11 @@ impl WgpuRendererCore {
                 while start < group.end {
                     let head = &scene.shaders[start];
                     let key = |s: &gpui::PaintShader| {
-                        (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
+                        (
+                            s.program.name,
+                            s.image.as_ref().map(|t| t.texture_id),
+                            s.group,
+                        )
                     };
                     // A layer group's shader is drawn alone, with its texture.
                     let end = scene.shaders[start..group.end]
@@ -2605,12 +2717,12 @@ impl WgpuRendererCore {
         let image = match (grouped, texture) {
             (Some((_, bind_group)), _) => bind_group,
             (None, texture) => match texture {
-            Some(id) => match resources.atlas_texture_bind_groups.get(&id) {
-                Some(cached) => &cached.bind_group,
-                // Released by the atlas: a stale paint, replaced soon.
-                None => return,
-            },
-            None => &resources.blank_texture_bind_group,
+                Some(id) => match resources.atlas_texture_bind_groups.get(&id) {
+                    Some(cached) => &cached.bind_group,
+                    // Released by the atlas: a stale paint, replaced soon.
+                    None => return,
+                },
+                None => &resources.blank_texture_bind_group,
             },
         };
         pass.set_pipeline(pipeline);
@@ -3820,30 +3932,48 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         let uniforms = Arc::new(gpui::ShaderUniforms::new());
         uniforms.set(0, 0.5);
         let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
-            origin: Point { x: ScaledPixels(x), y: ScaledPixels(y) },
-            size: Size { width: ScaledPixels(w), height: ScaledPixels(h) },
+            origin: Point {
+                x: ScaledPixels(x),
+                y: ScaledPixels(y),
+            },
+            size: Size {
+                width: ScaledPixels(w),
+                height: ScaledPixels(h),
+            },
         };
         let mut scene = Scene::default();
         scene.insert_primitive(gpui::PaintShader {
             order: 0,
             bounds: rect(0.0, 0.0, 64.0, 32.0),
-            content_mask: ContentMask { bounds: rect(0.0, 0.0, 64.0, 16.0) },
+            content_mask: ContentMask {
+                bounds: rect(0.0, 0.0, 64.0, 16.0),
+            },
             program: &HALF,
             uniforms: uniforms.clone(),
             image: None,
             group: None,
+            group_inset: Default::default(),
         });
         scene.finish();
-        let size = Size { width: DevicePixels(64), height: DevicePixels(32) };
+        let size = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(32),
+        };
         let image = renderer.render_scene_to_image(&scene, size)?;
         let red = |x, y| image.get_pixel(x, y).0[0] > 200;
         assert!(red(8, 8), "the left half, inside the mask, is drawn");
-        assert!(!red(48, 8), "the right half is the program's to leave clear");
+        assert!(
+            !red(48, 8),
+            "the right half is the program's to leave clear"
+        );
         assert!(!red(8, 24), "below the mask is clipped");
 
         uniforms.set(0, 1.0);
         let image = renderer.render_scene_to_image(&scene, size)?;
-        assert!(image.get_pixel(48, 8).0[0] > 200, "the uniforms are read afresh");
+        assert!(
+            image.get_pixel(48, 8).0[0] > 200,
+            "the uniforms are read afresh"
+        );
         Ok(())
     }
 
@@ -3874,22 +4004,42 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             curve,
             repeat,
         };
-        let spring = |stiffness, damping| TrackCurve::Spring { stiffness, damping, velocity: 0.0 };
+        let spring = |stiffness, damping| TrackCurve::Spring {
+            stiffness,
+            damping,
+            velocity: 0.0,
+        };
         let tracks = [
             track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
-            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
+            track(
+                20.0,
+                100.0,
+                TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                TrackRepeat::Once,
+            ),
             track(0.3, 5.0, spring(170.0, 12.0), TrackRepeat::Once),
             track(0.3, 5.0, spring(100.0, 20.0), TrackRepeat::Once),
             track(0.3, 5.0, spring(100.0, 40.0), TrackRepeat::Once),
             track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
-            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
+            track(
+                160.0,
+                100.0,
+                TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),
+                TrackRepeat::Alternate,
+            ),
         ];
         for (k, t) in tracks.iter().enumerate() {
             uniforms.set_track(k, *t);
         }
         let bounds = Bounds {
-            origin: Point { x: ScaledPixels(0.0), y: ScaledPixels(0.0) },
-            size: Size { width: ScaledPixels(7.0), height: ScaledPixels(1.0) },
+            origin: Point {
+                x: ScaledPixels(0.0),
+                y: ScaledPixels(0.0),
+            },
+            size: Size {
+                width: ScaledPixels(7.0),
+                height: ScaledPixels(1.0),
+            },
         };
         let mut scene = Scene::default();
         scene.insert_primitive(gpui::PaintShader {
@@ -3899,12 +4049,19 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             program: &PROGRAM,
             uniforms: uniforms.clone(),
             image: None,
+            group: None,
+            group_inset: Default::default(),
         });
         scene.finish();
         let mut renderer = WgpuHeadlessRenderer::new()?;
         let before = uniforms.time_at(gpui::present_now());
-        let image = renderer
-            .render_scene_to_image(&scene, Size { width: DevicePixels(7), height: DevicePixels(1) })?;
+        let image = renderer.render_scene_to_image(
+            &scene,
+            Size {
+                width: DevicePixels(7),
+                height: DevicePixels(1),
+            },
+        )?;
         let after = uniforms.time_at(gpui::present_now());
         for (k, t) in tracks.iter().enumerate() {
             let levels = (0..=64).map(|i| {
@@ -3940,7 +4097,10 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
     #[cfg(target_os = "linux")]
     fn close(a: &image::RgbaImage, b: &image::RgbaImage) -> bool {
-        a.as_raw().iter().zip(b.as_raw()).all(|(x, y)| x.abs_diff(*y) <= 1)
+        a.as_raw()
+            .iter()
+            .zip(b.as_raw())
+            .all(|(x, y)| x.abs_diff(*y) <= 1)
     }
 
     #[cfg(target_os = "linux")]
@@ -3960,6 +4120,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             uniforms: uniforms.clone(),
             image: None,
             group: None,
+            group_inset: Default::default(),
         }
     }
 
@@ -3991,6 +4152,65 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
             assert!(close(&whole, &moved), "covered: {covered}, moved");
         }
+        Ok(())
+    }
+
+    // KOAN: (#1878) a layer group at the identity pose, partly outside the
+    // window, composed through its texture gives the pixels its content does
+    // drawn without a group: the offset, the clipped frame, the tile and the
+    // texture's viewport agree.
+    #[cfg(target_os = "linux")]
+    static IDENTITY: gpui::ShaderProgram = gpui::ShaderProgram {
+        name: "koan-test-identity",
+        msl: "",
+        wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let c = koan_sample(tile, position / size);
+    var rgb = vec3<f32>(0.0);
+    if (c.a > 0.0) {
+        rgb = c.rgb / c.a;
+    }
+    return vec4<f32>(rgb, c.a);
+}
+"#,
+        prepare: None,
+    };
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_a_group_at_rest_matches_its_content() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 0.5);
+        let scene = |grouped: bool| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 64.0, 32.0, gpui::blue()));
+            if grouped {
+                scene.push_group();
+            }
+            scene.insert_primitive(solid_quad(10.0, 10.0, 20.0, 10.0, gpui::green()));
+            scene.insert_primitive(shader_at(30.0, 8.0, 24.0, 16.0, &uniforms));
+            if grouped {
+                let mut compose = shader_at(4.0, 4.0, 80.0, 40.0, &uniforms);
+                compose.program = &IDENTITY;
+                compose.uniforms = Arc::new(gpui::ShaderUniforms::new());
+                compose.content_mask = solid_quad(0.0, 0.0, 64.0, 32.0, gpui::red()).content_mask;
+                scene.pop_group(compose);
+            }
+            scene.finish();
+            scene
+        };
+        let grouped = scene(true);
+        assert!(grouped.layer_group_frames[0].is_some());
+        let plain = renderer.compose_scene_to_image(&scene(false), device_size(64, 32))?;
+        let composed = renderer.compose_scene_to_image(&grouped, device_size(64, 32))?;
+        assert!(
+            plain
+                .as_raw()
+                .iter()
+                .zip(composed.as_raw())
+                .all(|(x, y)| x.abs_diff(*y) <= 2)
+        );
         Ok(())
     }
 

@@ -36,7 +36,8 @@ pub enum Opened {
 /// be starting.
 const CONNECT_FOR: Duration = Duration::from_secs(3);
 
-/// How long the first waits for a second launch to finish writing.
+/// How long the first waits for a second launch to finish writing, and the
+/// second for the first to take what it wrote and close.
 const READ_FOR: Duration = Duration::from_secs(2);
 
 /// The most a second launch may send: a selection of several thousand files.
@@ -186,7 +187,18 @@ fn hand(lock: &mut File, paths: &[PathBuf]) -> std::io::Result<()> {
     // macOS (EINVAL), and the hand-off, files and coming to the front, would
     // be lost.
     stream.set_read_timeout(Some(READ_FOR))?;
-    let _ = stream.read(&mut [0u8; 1]);
+    loop {
+        match stream.read(&mut [0u8; 1]) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // The running app did not take it in time: said, since what was
+            // handed may be lost, and this launch still exits.
+            Err(e) => {
+                log::warn!("instance: the running app did not take the hand-off: {e}");
+                break;
+            }
+            Ok(_) => break,
+        }
+    }
     Ok(())
 }
 

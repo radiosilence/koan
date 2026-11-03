@@ -4779,6 +4779,9 @@ fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
         .ok_or_else(|| SubsonicError::not_found("Playlist"))
 }
 
+/// How many covers `koanCovers` reads ahead of the frame being sent.
+const COVERS_AHEAD: usize = 4;
+
 /// `koanCovers`: the covers of many records at one size, answered from what
 /// the cover cache holds (the warm keeps every album at 300 and 600), as one
 /// stream of frames in the order the ids were given. A record whose cover is
@@ -4836,26 +4839,29 @@ async fn koan_covers(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
         Ok(resolved) => resolved,
         Err(e) => return SubsonicResponse::error(json, &e),
     };
-    // Each frame is made as the body is read, its cover read on the blocking
-    // pool for that one read: a client reading slowly holds no thread, and
-    // one that goes stops the reads.
+    // Frames are made as the body is read, each cover read on the blocking
+    // pool, `COVERS_AHEAD` ahead of the one being sent so the next is ready
+    // when the socket takes it: a client reading slowly holds no more than
+    // those, and one that goes stops the reads.
     use futures_util::StreamExt as _;
-    let frames = futures_util::stream::iter(resolved).then(move |(raw, album)| {
-        let state = state.clone();
-        async move {
-            let bytes = tokio::task::spawn_blocking(move || {
-                use koan_core::remote::covers::{BulkCover, frame};
-                match album.and_then(|id| state.covers.album_cover_kept(id, size)) {
-                    Some(Some(cover)) => frame(&raw, BulkCover::Cover(&cover)),
-                    Some(None) => frame(&raw, BulkCover::None),
-                    None => frame(&raw, BulkCover::NotHeld),
-                }
-            })
-            .await
-            .map_err(std::io::Error::other)?;
-            Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes))
-        }
-    });
+    let frames = futures_util::stream::iter(resolved)
+        .map(move |(raw, album)| {
+            let state = state.clone();
+            async move {
+                let bytes = tokio::task::spawn_blocking(move || {
+                    use koan_core::remote::covers::{BulkCover, frame};
+                    match album.and_then(|id| state.covers.album_cover_kept(id, size)) {
+                        Some(Some(cover)) => frame(&raw, BulkCover::Cover(&cover)),
+                        Some(None) => frame(&raw, BulkCover::None),
+                        None => frame(&raw, BulkCover::NotHeld),
+                    }
+                })
+                .await
+                .map_err(std::io::Error::other)?;
+                Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes))
+            }
+        })
+        .buffered(COVERS_AHEAD);
     Response::builder()
         .header(header::CONTENT_TYPE, koan_core::remote::covers::BULK_TYPE)
         .body(axum::body::Body::from_stream(frames))
@@ -11172,6 +11178,7 @@ mod tests {
         }
     }
 
+    /// `koanCovers` answers the covers it has made, in the order asked.
     #[tokio::test]
     async fn test_bulk_covers_answer_what_is_made() {
         use koan_core::remote::covers::{BulkCover, read_frame};

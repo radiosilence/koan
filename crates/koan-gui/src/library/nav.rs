@@ -30,13 +30,15 @@ pub enum Anchored {
         features: bool,
     },
     Track(i64),
+    /// The biography at the page's end.
+    About,
 }
 
 /// A heading on a page, by what it heads rather than where it falls, since
 /// headings come and go as sections do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heading {
-    Section(koan_ffi::ReleaseSection),
+    Section(koan_runtime::ReleaseSection),
     Features,
     Appearances,
 }

@@ -16,10 +16,10 @@
 use std::error::Error;
 use std::time::Duration;
 
-use koan_ffi::KoanEngine;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::AppContext;
+use koan_runtime::KoanEngine;
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, px, size};
 
@@ -31,6 +31,7 @@ const WIDTH: f32 = 1180.0;
 const HEIGHT: f32 = 760.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
     }

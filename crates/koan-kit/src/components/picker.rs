@@ -80,11 +80,23 @@ impl RenderOnce for Picker {
         let open = window.use_keyed_state(child(&self.id, "open"), cx, |_, _| false);
         let is_open = *open.read(cx) && !self.disabled;
         let handle = focus(&self.id, window, cx);
-        let color = look.palette.ink.hsla();
-        let shown = self
+        // Nothing to choose from, or nothing chosen: said in `muted`, so the
+        // control is never an empty box.
+        let chosen = self
             .selected
-            .and_then(|index| self.options.get(index).cloned())
-            .unwrap_or_default();
+            .and_then(|index| self.options.get(index).cloned());
+        let color = if chosen.is_some() {
+            look.palette.ink.hsla()
+        } else {
+            look.palette.muted.hsla()
+        };
+        let shown = chosen.unwrap_or_else(|| {
+            label(if self.options.is_empty() {
+                "none"
+            } else {
+                "choose"
+            })
+        });
 
         let toggle = open.clone();
         let (pointer, lit) = super::hover_fill(&self.id, &look, window, cx);

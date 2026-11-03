@@ -18,7 +18,8 @@ pub struct Synced {
 }
 
 /// The steps a sync runs once the library is walked, timed: what the apps
-/// show as its last phase, with the library's own closing steps.
+/// show as its last phase. The library's own closing steps are timed in
+/// `SyncResult::finishing`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AfterLibrary {
     pub favourites: std::time::Duration,
@@ -128,6 +129,8 @@ pub fn sync_remote(
     let history = crate::remote::history::reconcile(db, client, url, username);
     let history_took = step.elapsed();
     cancelled()?;
+    // The cover preload wakes before the EQ's round trips, not after them.
+    crate::remote::covers::synced();
     let step = std::time::Instant::now();
     let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
     let after = AfterLibrary {
@@ -143,7 +146,6 @@ pub fn sync_remote(
         after.history,
         after.dsp
     );
-    crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,
