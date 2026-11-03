@@ -224,6 +224,9 @@ pub struct Menu {
     /// The menus it opened from, as a submenu, nearest first: a press in
     /// any of them is not outside.
     ancestors: Vec<Rc<Cell<Option<Bounds<Pixels>>>>>,
+    /// The least the panel is wide, in points, so a menu whose rows change
+    /// while it is open does not change size with them.
+    min_width: Option<f32>,
     _submenu: Vec<Subscription>,
 }
 
@@ -254,6 +257,7 @@ impl Menu {
                 focus: cx.focus_handle(),
                 bounds: Rc::default(),
                 ancestors: Vec::new(),
+                min_width: None,
                 _submenu: Vec::new(),
             };
             build(menu, window, cx)
@@ -299,15 +303,29 @@ impl Menu {
             focus: self.focus.clone(),
             bounds: self.bounds.clone(),
             ancestors: self.ancestors.clone(),
+            min_width: self.min_width,
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
         self.entries = built.entries;
+        self.min_width = built.min_width;
         self._submenu.clear();
         self.highlighted = self
             .highlighted
             .filter(|&i| i < self.entries.len() && self.choosable(i));
         cx.notify();
+    }
+
+    /// The width a picker of places (outputs, devices) keeps whatever its
+    /// rows say: a rich row's glyph, its name over one line of detail, and
+    /// its actions' slots, a "move here" among them.
+    pub const PICKER_WIDTH: f32 = 440.0;
+
+    /// Keep the panel at least `points` wide, so it holds its size as rows
+    /// come, go and change while it is open.
+    pub fn min_width(mut self, points: f32) -> Self {
+        self.min_width = Some(points);
+        self
     }
 
     /// A rule between groups; one at the start, at the end or after another
@@ -516,7 +534,7 @@ impl Render for Menu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let menu = cx.entity();
-        let mut panel = MenuPanel::new();
+        let mut panel = MenuPanel::new().min_width(self.min_width);
         // Every row keeps as many slots as the fullest needs; the last is
         // wide when any row's last action is words, and a choice's tick then
         // counts as that slot's.
