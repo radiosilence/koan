@@ -84,6 +84,9 @@ struct Stamp {
     library: Option<u64>,
     history: Option<u64>,
     favourites: u64,
+    /// The server's reach: a read that failed while it was away is asked
+    /// again once it changes.
+    connection: u64,
 }
 
 impl Stamp {
@@ -98,6 +101,7 @@ impl Stamp {
             } else {
                 0
             },
+            connection: feed.connection_epoch,
         }
     }
 }
