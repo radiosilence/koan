@@ -197,26 +197,28 @@ impl ParentElement for ToolbarGroup {
 
 impl RenderOnce for ToolbarGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        // The groups shrink to their content's minimum, so a filter field in
-        // one gives up its width when the toolbar is narrow; buttons do not.
+        // One row, the groups apart by a fixed spacer: every item is the
+        // row's own, so when the toolbar is narrow a filter field gives up
+        // its width down to its minimum while buttons and spacers keep
+        // theirs. Nested rows would each count the field's whole measure as
+        // the least they can be, and shrinking them would squeeze the
+        // buttons' rows too. The row itself may shrink below its content
+        // (`min_w_0`) for the same reason.
+        let spacer = ToolbarMetrics::SPACER - ToolbarMetrics::GROUP_GAP * 2.;
+        let mut items: Vec<AnyElement> = Vec::new();
+        for group in self.groups.into_iter().filter(|g| !g.is_empty()) {
+            if !items.is_empty() {
+                items.push(div().flex_none().w(spacer).into_any_element());
+            }
+            items.extend(group);
+        }
         div()
             .flex_shrink_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap(ToolbarMetrics::SPACER)
-            .children(
-                self.groups
-                    .into_iter()
-                    .filter(|g| !g.is_empty())
-                    .map(|group| {
-                        div()
-                            .flex_shrink_1()
-                            .flex()
-                            .items_center()
-                            .gap(ToolbarMetrics::GROUP_GAP)
-                            .children(group)
-                    }),
-            )
+            .gap(ToolbarMetrics::GROUP_GAP)
+            .children(items)
     }
 }
 

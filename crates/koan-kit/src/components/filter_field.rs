@@ -43,6 +43,11 @@ impl RenderOnce for FilterField {
         let hover = look.palette.ink.hsla();
         div()
             .id("filter-field")
+            .map(|d| {
+                #[cfg(test)]
+                let d = d.debug_selector(|| "filter".into());
+                d
+            })
             .flex()
             .items_center()
             .cursor_text()
@@ -211,11 +216,7 @@ mod tests {
                     .principal(div().id("drag").size_full())
                     .trailing(
                         ToolbarGroup::new()
-                            .child(
-                                div()
-                                    .debug_selector(|| "filter".into())
-                                    .child(FilterField::new(&self.input)),
-                            )
+                            .child(FilterField::new(&self.input))
                             .spacer()
                             .child(
                                 div()
