@@ -383,7 +383,8 @@ impl Animated {
     /// alpha. A colour naming a colour slot (the accent) is read from the
     /// slot at each present, so it moves in the program with no frame drawn.
     pub fn set_color(&self, index: usize, color: Hsla) {
-        if self.0.uniforms.set_color(index, color) {
+        debug_assert!(index % 4 == 0, "a colour takes a whole block of four");
+        if self.0.uniforms.set_color(index / 4, color) {
             self.wake();
         }
     }

@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::*;
 
+use super::ShaderProgram;
+
 use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, child};
 use crate::theme::{KoanTheme, Motion};
 
@@ -140,7 +142,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     } else {
         a = 0.12 * (1.0 - e);
     }
-    return float4(u[2], u[3], u[4], u[5] * a);
+    return float4(u[8], u[9], u[10], u[11] * a);
 }
 "#,
     wgsl: r#"
@@ -188,7 +190,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     } else {
         a = 0.12 * (1.0 - e);
     }
-    let rgba = vec4<f32>(u[0].z, u[0].w, u[1].x, u[1].y);
+    let rgba = u[2];
     return vec4<f32>(rgba.xyz, rgba.w * a);
 }
 "#,
@@ -264,7 +266,7 @@ impl Answerer {
         let (view, cell) = (self.view, self.cell.clone());
         self.state(cx).update(cx, |s, cx| {
             s.animated.set_all(0, &[answer.code(), answer.heading()]);
-            s.animated.set_color(2, color);
+            s.animated.set_color(8, color);
             let at = Animated::now();
             for (k, ease) in [(0, Ease::Linear), (1, answer.ease())] {
                 s.animated

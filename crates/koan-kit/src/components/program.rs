@@ -11,7 +11,7 @@ use gpui::SHADER_UNIFORMS;
 use parking_lot::Mutex;
 
 use super::track::{SHADER_PLAIN, SHADER_TRACKS, TRACK_FLOATS, TRACKS_MSL, TRACKS_WGSL};
-use super::{Track, TrackRepeat};
+use super::{Repeat as TrackRepeat, Track};
 
 /// A fragment program drawing a quad, written once for each renderer.
 ///

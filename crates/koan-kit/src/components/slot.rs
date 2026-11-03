@@ -138,10 +138,8 @@ pub struct ColorSlot(ColorHandle);
 impl ColorSlot {
     /// A free slot standing at `color`, or `None` when every slot is taken.
     pub fn claim(color: Rgba) -> Option<Self> {
-        let Some(handle) = ColorHandle::claim(color) else {
-            log::error!("every colour slot is taken: a colour drawn now does not move");
-            return None;
-        };
+        // Every slot taken: the colour is drawn as it is, and does not move.
+        let handle = ColorHandle::claim(color)?;
         let rgba = [color.r, color.g, color.b, color.a];
         with_table(|table| {
             table.entries[handle.index()] = Some(Entry {

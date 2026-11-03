@@ -37,7 +37,7 @@ koan-kit = { path = "../koan-kit" }
 # Only so the code GPUI's macros write, which names `gpui::`, resolves.
 # Pages reach GPUI through `koan_kit::raw`, and `just gui-theme-leaks`
 # forbids `gpui::` in source.
-gpui = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan" }
+gpui = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan" }
 # The platform cache directory for artwork.
 dirs = "7"
 # Decoding sleeves for the library's covers, and the playing record's,
@@ -64,8 +64,8 @@ koan-kit = { path = "../koan-kit", features = ["test-support"] }
 criterion = "0.8"
 # Switches on GPUI's bench and test support, which the benches reach as
 # `gpui::`.
-gpui = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan", features = ["test-support", "bench-support"] }
-gpui_platform = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan-platform", features = ["bench-support"] }
+gpui = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan", features = ["test-support", "bench-support"] }
+gpui_platform = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan-platform", features = ["bench-support"] }
 # The large test library's tags (examples/gen_library.rs).
 lofty = "0.25"
 tempfile = "3"

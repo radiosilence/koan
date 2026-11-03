@@ -18,8 +18,8 @@ test-support = ["gpui/test-support"]
 [dependencies]
 # GPUI itself (our vendored copy; the library is named `gpui`) and its
 # platform: the app model, elements, the platform and the test harness.
-gpui = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan" }
-gpui_platform = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan-platform" }
+gpui = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan" }
+gpui_platform = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan-platform" }
 # The wash's bake and the accent's sampling, in the version GPUI builds
 # against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
@@ -30,7 +30,7 @@ smallvec = "1"
 unicode-segmentation = "1.13"
 
 [dev-dependencies]
-gpui = { git = "https://github.com/radiosilence/zed", rev = "73660fcc81e83db960535c8e071806a832b8186c", package = "gpui-koan", features = ["test-support"] }
+gpui = { git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc", package = "gpui-koan", features = ["test-support"] }
 serde_json = "1"
 
 # Reduce Motion, Increase Contrast, Reduce Transparency and Low Power Mode,

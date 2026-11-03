@@ -20,9 +20,10 @@ pub mod wash;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use crate::components::{Repeat as TrackRepeat, Track};
 use gpui::{
-    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Track,
-    TrackRepeat, Window, WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
+    WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, Shade};

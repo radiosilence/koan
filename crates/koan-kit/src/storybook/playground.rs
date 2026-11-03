@@ -6,6 +6,8 @@
 
 use gpui::prelude::*;
 use gpui::*;
+
+use crate::components::ShaderProgram;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;

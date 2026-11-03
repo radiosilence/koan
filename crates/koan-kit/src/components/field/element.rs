@@ -3,12 +3,13 @@
 //! underlined, the placeholder while empty, and the caret, a shader quad
 //! whose blink presents the frame again and draws nothing.
 
+use crate::components::ShaderProgram;
 use std::ops::Range;
 
 use gpui::{
     App, Bounds, DispatchPhase, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels, Point, ShaderProgram,
-    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
+    InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels, Point, SharedString, Style,
+    TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
