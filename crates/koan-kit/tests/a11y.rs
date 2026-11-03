@@ -385,7 +385,7 @@ fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
     let (_, mut last) = drawn_rows(&tree(window, cx));
     let first_screen = last;
     for _ in 0..40 {
-        let (row, _) = node(&tree(window, cx), &format!("row {last}"));
+        let (row, _) = node(&tree(window, cx), &format!("row {last}"), "ListItem");
         send(window, cx, Action::ScrollIntoView, row);
         let (_, now) = drawn_rows(&tree(window, cx));
         assert!(
@@ -453,7 +453,7 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
     assert!(top >= 140, "the list did not scroll down: top row {top}");
     let start = top;
     for _ in 0..20 {
-        let (row, _) = node(&tree(window, cx), &format!("row {top}"));
+        let (row, _) = node(&tree(window, cx), &format!("row {top}"), "ListItem");
         send(window, cx, Action::ScrollIntoView, row);
         let (now, _) = drawn_rows(&tree(window, cx));
         assert!(
