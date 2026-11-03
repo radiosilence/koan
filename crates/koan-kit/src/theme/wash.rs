@@ -970,8 +970,11 @@ impl Wash {
             .child(
                 canvas(
                     move |_, window, cx| {
+                        // Not decorative: Reduce Motion stops the drift
+                        // through its amplitude, and the dissolve between
+                        // records still runs, as the Mac's does.
                         for (_, shader) in &quads {
-                            shader.attach(true, window, cx);
+                            shader.attach(false, window, cx);
                         }
                         quads
                     },

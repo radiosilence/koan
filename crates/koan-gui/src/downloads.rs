@@ -154,7 +154,13 @@ impl DownloadsPage {
         };
         let bar = (t.state == TransferState::Running).then(|| {
             let glide = crate::transfers::bar(id, cx);
-            ProgressBar::new(("bar", id as u64), Some(glide.value())).glide(&glide)
+            // A download whose size the server never said runs the bar's
+            // indeterminate stretch, as before there were glides.
+            if glide.known() {
+                ProgressBar::new(("bar", id as u64), Some(glide.value())).glide(&glide)
+            } else {
+                ProgressBar::new(("bar", id as u64), None)
+            }
         });
         let row = TableRow::new(("download", id as u64), RowKind::Text)
             .cursor(self.keyed && self.cursor.at == Some(index))

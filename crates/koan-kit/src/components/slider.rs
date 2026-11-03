@@ -99,13 +99,7 @@ impl Glide {
             _ => 0.0,
         };
         self.0.set_all(0, &[0.0, (value + rate).min(1.0)]);
-        if rate > 0.0 && value < 1.0 {
-            let length = Duration::from_secs_f32((1.0 - value) / rate);
-            self.0
-                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
-        } else {
-            self.0.hold(0, value);
-        }
+        self.run(next);
         if offset != 0.0 {
             self.0
                 .segment(1, offset, 0.0, now, SETTLE, Ease::InOut, Repeat::Once);
@@ -115,14 +109,37 @@ impl Glide {
         self.0.hold(2, 0.0);
     }
 
-    /// The value comes to rest where it stands: nothing presents for it
-    /// until it is set again.
+    /// Track 0 running from `anchor` at its rate to the end, or held there.
+    fn run(&self, (value, rate, since): (f32, f32, Instant)) {
+        if rate > 0.0 && value < 1.0 {
+            let length = Duration::from_secs_f32((1.0 - value) / rate);
+            self.0
+                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
+        } else {
+            self.0.hold(0, value);
+        }
+    }
+
+    /// Not moving, the value comes to rest where it stands: nothing presents
+    /// for it. Moving again, it runs on from the anchor it was last set to,
+    /// so a window hidden and shown again, which sets the same anchor, does
+    /// not leave it standing.
     pub fn set_moving(&self, moving: bool) {
-        if !moving {
+        if moving {
+            let anchor = *self.1.lock();
+            if let Some(anchor) = anchor {
+                self.run(anchor);
+            }
+        } else {
             let now = Animated::now();
             self.0.hold(0, self.0.at(0, now));
             self.0.hold(1, 0.0);
         }
+    }
+
+    /// Whether a value has been set since the last `set_unknown`.
+    pub fn known(&self) -> bool {
+        self.1.lock().is_some()
     }
 
     /// No value to show, as a download whose size is unknown: a ring turns
@@ -614,6 +631,28 @@ mod tests {
     };
 
     use super::*;
+
+    /// A glide brought to rest (a window hidden) and set the same anchor
+    /// again as it shows runs on from it, rather than standing where it
+    /// stopped.
+    #[test]
+    fn a_glide_at_rest_runs_on_when_moving_again() {
+        let glide = Glide::new();
+        let since = Animated::now();
+        glide.set(0.25, 0.01, since);
+        glide.set_moving(false);
+        let later = Animated::now() + Duration::from_secs(10);
+        let held = glide.0.at(0, later);
+        glide.set(0.25, 0.01, since);
+        glide.set_moving(true);
+        assert!(
+            glide.0.at(0, later) > held + 0.05,
+            "it moves on from its anchor"
+        );
+        assert!(glide.known());
+        glide.set_unknown();
+        assert!(!glide.known());
+    }
 
     struct Owner {
         value: f32,
