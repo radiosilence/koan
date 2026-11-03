@@ -160,7 +160,10 @@ impl RenderOnce for Heart {
         // While the glyph answers, the program draws it in its place.
         let morphing = answers.glyph_live(cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
-        let drawn = answers.glyph_layer(side, color, window, cx);
+        // The fill in the heart's own on-colour, which falls back to `ink`
+        // where the accent does not read as text, so neither end snaps.
+        let fill = look.text_color(Tone::Accent);
+        let drawn = answers.glyph_layer(side, color, Some(fill), window, cx);
         let icons = look.icons;
         let tip = self.help.clone().unwrap_or_else(|| {
             crate::theme::label(if on {

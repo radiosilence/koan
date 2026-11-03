@@ -259,6 +259,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// accent (a heart's fill, its particles), 12 the glyph's side, all in
 /// device pixels; track 0 the answer's time from 0 to 1, track 1 the same on
 /// its curve.
+///
+/// It holds its end pose once the time has run, which is the icon itself,
+/// so the frame between the answer's end and the control drawing its icon
+/// again shows the icon either way. Open strokes have square caps and the
+/// closed triangles mitred corners, as the icons are drawn.
 pub static GLYPH: ShaderProgram = ShaderProgram {
     name: "koan-glyph",
     msl: r#"
@@ -268,8 +273,27 @@ float kg_seg(float2 p, float2 a, float2 b) {
     float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     return length(pa - ba * h);
 }
+float kg_boxd(float2 p, float2 a, float2 b) {
+    float2 ba = b - a;
+    float l = max(length(ba), 0.0001);
+    float2 d = ba / l;
+    float2 pa = p - a;
+    float along = dot(pa, d);
+    float perp = abs(d.x * pa.y - d.y * pa.x);
+    return max(perp, abs(along - 0.5 * l) - 0.5 * l);
+}
 float kg_line(float2 p, float2 a, float2 b, float k) {
-    return clamp((0.75 - kg_seg(p, a, b)) * k + 0.5, 0.0, 1.0);
+    return clamp((0.75 - kg_boxd(p, a, b)) * k + 0.5, 0.0, 1.0);
+}
+float kg_edge(float2 p, float2 a, float2 b, float2 inside) {
+    float2 n = normalize(float2(b.y - a.y, a.x - b.x));
+    if (dot(inside - a, n) > 0.0) { n = -n; }
+    return dot(p - a, n);
+}
+float kg_tri(float2 p, float2 a, float2 b, float2 c, float k) {
+    float2 m = (a + b + c) / 3.0;
+    float d = max(max(kg_edge(p, a, b, m), kg_edge(p, b, c, m)), kg_edge(p, c, a, m));
+    return clamp((0.75 - abs(d)) * k + 0.5, 0.0, 1.0);
 }
 float kg_heart(float2 g) {
     float d1 = length(g - float2(9.0, 10.0)) - 4.243;
@@ -289,7 +313,6 @@ float2 kg_turn(float2 g, float a) {
 }
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
-    if (t >= 1.0) { return float4(0.0); }
     float e = clamp(koan_track(u, 1, time), 0.0, 1.0);
     float k = max(u[12], 1.0) / 24.0;
     float2 g = (position - u[6]) / k;
@@ -319,9 +342,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         fill = max(fill, clamp(-d * k + 0.5, 0.0, 1.0));
     } else if (kind == 12 || kind == 13) {
         float m = kind == 12 ? e : 1.0 - e;
-        line = max(line, kg_line(g, mix(float2(7.0, 5.0), float2(8.5, 5.0), m), mix(float2(7.0, 19.0), float2(8.5, 19.0), m), k));
-        line = max(line, kg_line(g, mix(float2(7.0, 5.0), float2(15.5, 5.0), m), mix(float2(19.0, 12.0), float2(15.5, 12.0), m), k));
-        line = max(line, kg_line(g, mix(float2(19.0, 12.0), float2(15.5, 12.0), m), mix(float2(7.0, 19.0), float2(15.5, 19.0), m), k));
+        float bars = kg_line(g, mix(float2(7.0, 5.0), float2(8.5, 5.0), m), mix(float2(7.0, 19.0), float2(8.5, 19.0), m), k);
+        bars = max(bars, kg_line(g, mix(float2(7.0, 5.0), float2(15.5, 5.0), m), mix(float2(19.0, 12.0), float2(15.5, 12.0), m), k));
+        bars = max(bars, kg_line(g, mix(float2(19.0, 12.0), float2(15.5, 12.0), m), mix(float2(7.0, 19.0), float2(15.5, 19.0), m), k));
+        float tri = kg_tri(g, float2(7.0, 5.0), float2(19.0, 12.0), float2(7.0, 19.0), k);
+        line = mix(tri, bars, smoothstep(0.0, 0.3, m));
     } else if (kind == 14 || kind == 15) {
         float m = 1.0 - (kind == 14 ? 1.0 : 0.4) * sin(pi * e);
         float2 a3 = mix(float2(16.0, 7.0), float2(16.0, 17.0), m);
@@ -351,16 +376,13 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float sb = kind == 17 ? kg_back(t) : (kind == 18 ? 1.0 - e : 0.0);
         if (sb > 0.01) {
             float2 b = float2(12.0, 12.0) + (g - float2(12.0, 12.0)) / sb;
-            float d = min(kg_seg(b, float2(11.0, 10.5), float2(12.5, 10.0)), kg_seg(b, float2(12.5, 10.0), float2(12.5, 14.0))) * sb;
+            float d = min(kg_boxd(b, float2(11.0, 10.5), float2(12.5, 10.0)), kg_boxd(b, float2(12.5, 10.0), float2(12.5, 14.0))) * sb;
             line = max(line, clamp((0.75 - d) * k + 0.5, 0.0, 1.0));
         }
     } else if (kind == 19) {
         float x = g.x - 2.2 * sin(pi * t) * u[1];
         float2 n = float2(u[1] < 0.0 ? 24.0 - x : x, g.y);
-        line = max(line, kg_line(n, float2(5.0, 6.0), float2(15.0, 12.0), k));
-        line = max(line, kg_line(n, float2(15.0, 12.0), float2(5.0, 18.0), k));
-        line = max(line, kg_line(n, float2(5.0, 18.0), float2(5.0, 6.0), k));
-        line = max(line, kg_line(n, float2(19.0, 6.0), float2(19.0, 18.0), k));
+        line = max(kg_tri(n, float2(5.0, 6.0), float2(15.0, 12.0), float2(5.0, 18.0), k), kg_line(n, float2(19.0, 6.0), float2(19.0, 18.0), k));
     }
     float la = line * u[5];
     float fa = fill * u[11];
@@ -377,8 +399,27 @@ fn kg_seg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     return length(pa - ba * h);
 }
+fn kg_boxd(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ba = b - a;
+    let l = max(length(ba), 0.0001);
+    let d = ba / l;
+    let pa = p - a;
+    let along = dot(pa, d);
+    let perp = abs(d.x * pa.y - d.y * pa.x);
+    return max(perp, abs(along - 0.5 * l) - 0.5 * l);
+}
 fn kg_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, k: f32) -> f32 {
-    return clamp((0.75 - kg_seg(p, a, b)) * k + 0.5, 0.0, 1.0);
+    return clamp((0.75 - kg_boxd(p, a, b)) * k + 0.5, 0.0, 1.0);
+}
+fn kg_edge(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, inside: vec2<f32>) -> f32 {
+    var n = normalize(vec2<f32>(b.y - a.y, a.x - b.x));
+    if (dot(inside - a, n) > 0.0) { n = -n; }
+    return dot(p - a, n);
+}
+fn kg_tri(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, k: f32) -> f32 {
+    let m = (a + b + c) / 3.0;
+    let d = max(max(kg_edge(p, a, b, m), kg_edge(p, b, c, m)), kg_edge(p, c, a, m));
+    return clamp((0.75 - abs(d)) * k + 0.5, 0.0, 1.0);
 }
 fn kg_heart(g: vec2<f32>) -> f32 {
     let d1 = length(g - vec2<f32>(9.0, 10.0)) - 4.243;
@@ -398,7 +439,6 @@ fn kg_turn(g: vec2<f32>, a: f32) -> vec2<f32> {
 }
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
-    if (t >= 1.0) { return vec4<f32>(0.0); }
     let e = clamp(koan_track(u, 1u, time), 0.0, 1.0);
     let k = max(u[3].x, 1.0) / 24.0;
     let g = (position - u[1].z) / k;
@@ -430,9 +470,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     } else if (kind == 12 || kind == 13) {
         var m = e;
         if (kind == 13) { m = 1.0 - e; }
-        line = max(line, kg_line(g, mix(vec2<f32>(7.0, 5.0), vec2<f32>(8.5, 5.0), m), mix(vec2<f32>(7.0, 19.0), vec2<f32>(8.5, 19.0), m), k));
-        line = max(line, kg_line(g, mix(vec2<f32>(7.0, 5.0), vec2<f32>(15.5, 5.0), m), mix(vec2<f32>(19.0, 12.0), vec2<f32>(15.5, 12.0), m), k));
-        line = max(line, kg_line(g, mix(vec2<f32>(19.0, 12.0), vec2<f32>(15.5, 12.0), m), mix(vec2<f32>(7.0, 19.0), vec2<f32>(15.5, 19.0), m), k));
+        var bars = kg_line(g, mix(vec2<f32>(7.0, 5.0), vec2<f32>(8.5, 5.0), m), mix(vec2<f32>(7.0, 19.0), vec2<f32>(8.5, 19.0), m), k);
+        bars = max(bars, kg_line(g, mix(vec2<f32>(7.0, 5.0), vec2<f32>(15.5, 5.0), m), mix(vec2<f32>(19.0, 12.0), vec2<f32>(15.5, 12.0), m), k));
+        bars = max(bars, kg_line(g, mix(vec2<f32>(19.0, 12.0), vec2<f32>(15.5, 12.0), m), mix(vec2<f32>(7.0, 19.0), vec2<f32>(15.5, 19.0), m), k));
+        let tri = kg_tri(g, vec2<f32>(7.0, 5.0), vec2<f32>(19.0, 12.0), vec2<f32>(7.0, 19.0), k);
+        line = mix(tri, bars, smoothstep(0.0, 0.3, m));
     } else if (kind == 14 || kind == 15) {
         var reach = 0.4;
         if (kind == 14) { reach = 1.0; }
@@ -466,7 +508,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         if (kind == 18) { sb = 1.0 - e; }
         if (sb > 0.01) {
             let b = vec2<f32>(12.0, 12.0) + (g - vec2<f32>(12.0, 12.0)) / sb;
-            let d = min(kg_seg(b, vec2<f32>(11.0, 10.5), vec2<f32>(12.5, 10.0)), kg_seg(b, vec2<f32>(12.5, 10.0), vec2<f32>(12.5, 14.0))) * sb;
+            let d = min(kg_boxd(b, vec2<f32>(11.0, 10.5), vec2<f32>(12.5, 10.0)), kg_boxd(b, vec2<f32>(12.5, 10.0), vec2<f32>(12.5, 14.0))) * sb;
             line = max(line, clamp((0.75 - d) * k + 0.5, 0.0, 1.0));
         }
     } else if (kind == 19) {
@@ -474,10 +516,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         var nx = x;
         if (heading < 0.0) { nx = 24.0 - x; }
         let n = vec2<f32>(nx, g.y);
-        line = max(line, kg_line(n, vec2<f32>(5.0, 6.0), vec2<f32>(15.0, 12.0), k));
-        line = max(line, kg_line(n, vec2<f32>(15.0, 12.0), vec2<f32>(5.0, 18.0), k));
-        line = max(line, kg_line(n, vec2<f32>(5.0, 18.0), vec2<f32>(5.0, 6.0), k));
-        line = max(line, kg_line(n, vec2<f32>(19.0, 6.0), vec2<f32>(19.0, 18.0), k));
+        line = max(kg_tri(n, vec2<f32>(5.0, 6.0), vec2<f32>(15.0, 12.0), vec2<f32>(5.0, 18.0), k), kg_line(n, vec2<f32>(19.0, 6.0), vec2<f32>(19.0, 18.0), k));
     }
     let la = line * u[1].y;
     let fa = fill * u[2].w;
@@ -741,13 +780,15 @@ impl Answerer {
     }
 
     /// The glyph answer being drawn, in place of the icon `side` points
-    /// square that the control hides meanwhile, its strokes in `color`;
+    /// square that the control hides meanwhile, its strokes in `color` and
+    /// what fills in `fill` (the accent if `None`);
     /// nothing at rest. The quad stands over the icon and a little past it,
     /// for what is thrown out; the icon's parent is `relative`.
     pub fn glyph_layer(
         &self,
         side: Pixels,
         color: Hsla,
+        fill: Option<Hsla>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -759,7 +800,10 @@ impl Answerer {
         let scale = window.scale_factor();
         s.animated.set_all(6, &[f32::from(spill) * scale]);
         s.animated.set_color(2, color);
-        s.animated.set_color(8, look.accent.hsla());
+        // What fills (a heart, its particles): the colour its owner fills
+        // in at rest, or the accent.
+        s.animated
+            .set_color(8, fill.unwrap_or_else(|| look.accent.hsla()));
         s.animated.set_all(12, &[f32::from(side) * scale]);
         Some(
             AnimatedQuad::new(&GLYPH, &s.animated)

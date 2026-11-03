@@ -856,7 +856,11 @@ impl Render for Transport {
         let entry = now.entry.as_ref();
         self.scale = window.scale_factor();
         self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, self.scale, cx);
-        let playing = now.state == PlayState::Playing;
+        // A skip to a track still arriving reports `Stopped` while it waits,
+        // and opens playing: it is playing, so play and pause do not fold
+        // back and forth for it.
+        let playing =
+            now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
             RepeatMode::Off | RepeatMode::Queue => Icon::RepeatQueue,

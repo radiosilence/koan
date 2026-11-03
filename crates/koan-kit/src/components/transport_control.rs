@@ -126,7 +126,7 @@ impl RenderOnce for TransportControl {
             }
         }
         let glyph_side = glyph;
-        let drawn = answers.glyph_layer(glyph_side, color, window, cx);
+        let drawn = answers.glyph_layer(glyph_side, color, None, window, cx);
         let hidden = answers.glyph_live(cx);
         // A stop in the window's Tab order, which Return and Space click.
         let handle = focus(&self.id, window, cx);

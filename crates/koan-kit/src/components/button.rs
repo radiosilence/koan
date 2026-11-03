@@ -272,7 +272,9 @@ impl RenderOnce for Button {
         let role = kind.role();
         // Play and pause fold into each other as the state they show moves,
         // whoever moved it; the glyph is drawn by the program meanwhile.
-        let morphing = show_glyph && self.icon.is_some_and(super::answer::morphs);
+        // Only a glyph alone, a toggle's face: a labelled button with one of
+        // those glyphs (a "Play" header button) shows no state to move.
+        let morphing = glyph_only && self.icon.is_some_and(super::answer::morphs);
         if let Some(icon) = self.icon.filter(|_| morphing) {
             let mark = super::answer::glyph_mark(icon, None);
             if let Some(answer) = answers
@@ -358,6 +360,7 @@ impl RenderOnce for Button {
         let drawn = answers.glyph_layer(
             px(crate::theme::icons::side(look.points(role))),
             color,
+            None,
             window,
             cx,
         );
