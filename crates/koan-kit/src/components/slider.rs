@@ -94,6 +94,18 @@ impl Glide {
         if previous == Some(next) {
             return;
         }
+        // A reckoned value never goes back: where the new reckoning is short
+        // of what is drawn (a stall's reckoning overtaken by the bytes), it
+        // stands where it is until the new one passes it.
+        let reckoned = self.2.lock().is_some();
+        let drawn = self.0.at(0, now) + self.0.at(1, now);
+        if reckoned && previous.is_some() && at(next) < drawn {
+            self.0.set_all(0, &[0.0, (value + rate).min(1.0)]);
+            self.run_from(next, Some(drawn));
+            self.0.hold(1, 0.0);
+            self.0.hold(2, 0.0);
+            return;
+        }
         let offset = match previous {
             Some(previous) if previous.1 == rate && rate > 0.0 => {
                 // Where the fill stands: the old anchor's reckoning and what
@@ -129,26 +141,39 @@ impl Glide {
 
     /// Track 0 running from `anchor` at its rate to the end, or as far as
     /// the horizon reaches, or held there.
-    fn run(&self, (value, rate, since): (f32, f32, Instant)) {
-        if rate > 0.0 && value < 1.0 {
-            let to_end = (1.0 - value) / rate;
-            let seconds = match *self.2.lock() {
-                Some(horizon) => to_end.min(horizon.as_secs_f32()),
-                None => to_end,
-            };
-            let to = (value + rate * seconds).min(1.0);
-            self.0.segment(
-                0,
-                value,
-                to,
-                since,
-                Duration::from_secs_f32(seconds),
-                Ease::Linear,
-                Repeat::Once,
-            );
-        } else {
-            self.0.hold(0, value);
+    fn run(&self, anchor: (f32, f32, Instant)) {
+        self.run_from(anchor, None);
+    }
+
+    /// `run`, standing at `floor` until the reckoning passes it.
+    fn run_from(&self, (value, rate, since): (f32, f32, Instant), floor: Option<f32>) {
+        let floor = floor.unwrap_or(value).max(value);
+        if !(rate > 0.0 && value < 1.0) {
+            self.0.hold(0, floor);
+            return;
         }
+        let to_end = (1.0 - value) / rate;
+        let seconds = match *self.2.lock() {
+            Some(horizon) => to_end.min(horizon.as_secs_f32()),
+            None => to_end,
+        };
+        let to = (value + rate * seconds).min(1.0);
+        if to <= floor {
+            self.0.hold(0, floor);
+            return;
+        }
+        // From where the reckoning reaches the floor: before then the
+        // segment stands at its start.
+        let passes = (floor - value) / rate;
+        self.0.segment(
+            0,
+            floor,
+            to,
+            since + Duration::from_secs_f32(passes),
+            Duration::from_secs_f32(seconds - passes),
+            Ease::Linear,
+            Repeat::Once,
+        );
     }
 
     /// Not moving, the value comes to rest where it stands: nothing presents
@@ -159,7 +184,13 @@ impl Glide {
         if moving {
             let anchor = *self.1.lock();
             if let Some(anchor) = anchor {
-                self.run(anchor);
+                // A reckoned value moves on from where it rests, never back.
+                let rests = self
+                    .2
+                    .lock()
+                    .is_some()
+                    .then(|| self.0.at(0, Animated::now()));
+                self.run_from(anchor, rests);
             }
         } else {
             let now = Animated::now();
@@ -721,6 +752,30 @@ mod tests {
     /// A glide reckoned for a horizon rests where its rate takes it by then:
     /// a stalled download is never drawn as further on than that, and one
     /// reckoned to the end still runs there.
+    /// A stalled download's glide rests past its horizon; the next report,
+    /// short of that and at a new rate, never draws it further back.
+    #[test]
+    fn a_reckoned_glide_never_goes_back() {
+        // The last report five seconds ago: rested long since.
+        let since = Animated::now() - Duration::from_secs(5);
+        let download = Glide::new();
+        download.reckon_for(Duration::from_millis(500));
+        download.set(0.4, 0.2, since);
+        let rested = download.0.at(0, Animated::now());
+        assert!((rested - 0.5).abs() < 0.01);
+        // Bytes resume: a report a little short of the rest, slower.
+        let resumed = Animated::now();
+        download.set(0.45, 0.05, resumed);
+        for ms in (0..2000).step_by(50) {
+            let at = resumed + Duration::from_millis(ms);
+            let drawn = download.0.at(0, at) + download.0.at(1, at);
+            assert!(
+                drawn >= rested - 1e-4,
+                "{drawn} fell below {rested} at {ms} ms"
+            );
+        }
+    }
+
     #[test]
     fn a_reckoned_glide_rests_at_its_horizon() {
         let since = Animated::now();

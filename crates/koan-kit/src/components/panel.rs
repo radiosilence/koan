@@ -462,7 +462,7 @@ impl RenderOnce for MenuRow {
                             }),
                     )
             }
-            None => div().relative().flex_1().child(name),
+            None => div().relative().flex_1().min_w_0().child(name),
         };
         let rich = self.rich;
         // The row's slots: its actions, then its tick when it is the choice.

@@ -45,12 +45,12 @@ struct Entry {
     reported: bool,
 }
 
-/// How far past its last report a transfer is reckoned: a little over the
-/// time between a healthy download's reports. Reports come as bytes land,
-/// so one that stalls says nothing; past this its glides rest where they
-/// reckoned, never drawn as further on than it might be, and stop
-/// presenting until the next report.
-const RECKONS: Duration = Duration::from_secs(2);
+/// How far past its last report a transfer is reckoned: about the gap
+/// between a healthy download's reports, which come some ten a second as
+/// bytes land. One that stalls says nothing; past this its glides rest
+/// where they reckoned, a fraction of a second's bytes ahead at most, and
+/// stop presenting until the next report, which never draws them back.
+const RECKONS: Duration = Duration::from_millis(400);
 
 /// A glide for a transfer: reckoned only as far as `RECKONS`.
 fn transfer_glide() -> Glide {
