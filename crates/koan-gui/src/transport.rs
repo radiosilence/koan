@@ -740,10 +740,15 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
 }
 
 /// One of the trailing group's items, as the Mac lays them out: as wide as
-/// what it shows, the full bar's height and half the gap either side to hit.
+/// what it shows, the full bar's height and half the gap either side, and
+/// an invisible strip either side past that so a glyph is at least `HIT`
+/// wide to click, reaching over the gap without moving anything.
 fn trailing_item(p: &Paint) -> Div {
     let reach = TransportMetrics::trailing_gap(&p.look) / 2.;
+    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
+    let extra = ((theme::HIT - glyph - reach * 2.) / 2.).max(Pixels::ZERO);
     div()
+        .relative()
         .flex()
         .items_center()
         .justify_center()
@@ -752,6 +757,14 @@ fn trailing_item(p: &Paint) -> Div {
         .mx(-reach)
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(-extra)
+                .right(-extra),
+        )
 }
 
 /// The group a text button's glyph follows the pointer by.
