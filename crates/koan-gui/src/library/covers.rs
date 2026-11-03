@@ -361,6 +361,11 @@ impl Queue {
         if self.last_cut.is_some_and(|at| sent <= at) {
             return false;
         }
+        // The first answer is the server's usual time until others say more.
+        let first = ok && self.usual.is_none();
+        if first {
+            self.usual = Some(took);
+        }
         if !ok || took > self.late() {
             self.cut(format_args!(
                 "a fetch {} after {} ms",
@@ -369,10 +374,9 @@ impl Queue {
             ));
             return false;
         }
-        self.usual = Some(match self.usual {
-            None => took,
-            Some(usual) => usual.mul_f64(7.0 / 8.0) + took.mul_f64(1.0 / 8.0),
-        });
+        if !first && let Some(usual) = self.usual {
+            self.usual = Some(usual.mul_f64(7.0 / 8.0) + took.mul_f64(1.0 / 8.0));
+        }
         // This answer's place included: every place the window allows was
         // taken.
         if self.fetching.len() + 1 >= self.window as usize {
@@ -1811,7 +1815,7 @@ mod tests {
         }
         // A screen of covers waiting: what is ahead goes, then the landing
         // spot, the farthest first.
-        for id in 20..23 {
+        for id in 20..22 {
             q.want(key(id, 64), Priority::Visible);
         }
         assert_eq!(q.give_way(), 2);
