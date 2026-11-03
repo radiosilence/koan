@@ -381,6 +381,7 @@ impl Render for Sidebar {
         if !dragging {
             self.drop_playlist = None;
         }
+        let spot = self.spot.clone();
         let row = |page: Route,
                    id: ElementId,
                    label: &'static str,
@@ -390,7 +391,7 @@ impl Render for Sidebar {
                 .icon(icon)
                 .selected(current == Some(page))
                 .cursor(keyed == Some(page))
-                .spot(&self.spot)
+                .spot(&spot)
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
