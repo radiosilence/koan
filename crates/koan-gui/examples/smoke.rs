@@ -38,6 +38,11 @@ const HEIGHT: f32 = 750.0;
 const BUDGET: Duration = Duration::from_secs(600);
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // SAFETY: set before any other thread starts.
+    unsafe {
+        std::env::set_var("KOAN_DEVICES__NEARBY", "false");
+        std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
+    }
     throwaway()?;
     let churn = Duration::from_secs(
         std::env::var("KOAN_SMOKE_SECS")
@@ -57,11 +62,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         default(info);
         std::process::exit(101);
     }));
-    // SAFETY: set before any other thread starts.
-    unsafe {
-        std::env::set_var("KOAN_DEVICES__NEARBY", "false");
-        std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
-    }
 
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
     let pages = prepare(&engine)?;
