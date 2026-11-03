@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use crate::components::CopyButton;
 use crate::theme::{Look, Space, Tone, TypeRole};
-use koan_ffi::{ConnectionInfo, Invite, KoanEngine, KoanError};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, Invite, KoanEngine, KoanError};
 
 use crate::mirror::Slice;
 use crate::settings::form::{section, text};

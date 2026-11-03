@@ -5434,27 +5434,11 @@ dependencies = [
 name = "koan-ffi"
 version = "0.69.6"
 dependencies = [
- "chrono",
- "crossbeam-channel",
- "futures-lite",
- "getrandom 0.4.3",
- "image",
  "jni",
- "koan-core",
- "koan-server",
- "libc",
+ "koan-runtime",
  "log",
- "nucleo",
- "parking_lot 0.13.0",
- "qrcode",
- "rusqlite",
  "rustls-platform-verifier",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "toml 1.1.8+spec-1.1.0",
  "uniffi",
- "uuid",
 ]
 
 [[package]]
@@ -5474,8 +5458,8 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "koan-core",
- "koan-ffi",
  "koan-kit",
+ "koan-runtime",
  "lofty",
  "log",
  "objc2 0.6.5",
@@ -5519,6 +5503,30 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "koan-runtime"
+version = "0.69.6"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "futures-lite",
+ "getrandom 0.4.3",
+ "image",
+ "koan-core",
+ "koan-server",
+ "libc",
+ "log",
+ "nucleo",
+ "parking_lot 0.13.0",
+ "qrcode",
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+ "uuid",
 ]
 
 [[package]]

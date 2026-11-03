@@ -5,12 +5,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use koan_ffi::{
+use koan_kit::app::input::{InputEvent, InputState};
+use koan_kit::app::*;
+use koan_runtime::{
     AutoEqEntry, AutoEqOffer, DspEarKind, DspMeasurementReading, DspResponse, DspTargetOption,
     SquigHit,
 };
-use koan_kit::app::input::{InputEvent, InputState};
-use koan_kit::app::*;
 
 use super::graph::{Graph, Shown};
 use super::model::{Dsp, describe};

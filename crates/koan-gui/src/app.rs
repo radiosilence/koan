@@ -7,8 +7,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::KoanEngine;
 use koan_kit::app::*;
+use koan_runtime::KoanEngine;
 
 use crate::covers::Covers;
 use crate::engine::Engine;

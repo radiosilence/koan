@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 
 use super::graph::{Graph, Part, Stroke};
 
@@ -347,7 +347,7 @@ impl EqBody {
 }
 
 /// Each stage playing, drawn as its block is.
-fn parts(o: &DspOverview, r: Option<&koan_ffi::DspResponse>) -> Vec<Part> {
+fn parts(o: &DspOverview, r: Option<&koan_runtime::DspResponse>) -> Vec<Part> {
     let Some(r) = r else { return Vec::new() };
     let eqs: Vec<(usize, &str, &Vec<f64>)> = o
         .chain
@@ -1442,7 +1442,7 @@ pub fn set_from_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koan_ffi::{DspProfileSummary, DspTuningEntry};
+    use koan_runtime::{DspProfileSummary, DspTuningEntry};
 
     fn overview(active: Option<&str>, chain: &[(&str, bool)]) -> DspOverview {
         DspOverview {

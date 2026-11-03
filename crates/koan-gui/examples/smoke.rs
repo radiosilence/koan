@@ -19,10 +19,10 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::{AppContext, Entity, Modifiers, MouseMoveEvent, ScrollEvent};
+use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic input, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{

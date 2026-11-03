@@ -19,8 +19,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::{DspBand, DspBrush, DspPoint, DspResponse};
 use koan_kit::app::*;
+use koan_runtime::{DspBand, DspBrush, DspPoint, DspResponse};
 // painted and hit-tested by hand: drawing koan-kit has no component for.
 use koan_kit::raw::{DispatchPhase, Path, PathBuilder, canvas, fill};
 // text measured or shaped at runtime.
@@ -1248,7 +1248,7 @@ impl Graph {
                 let (freq, gain_db, q) = if modifiers.alt {
                     let (from_y, from_q) = *drag.alt_from.get_or_insert((at.y, q));
                     let dy = f32::from(at.y - from_y) as f64;
-                    (freq, gain_db, koan_ffi::dsp_drag_q(from_q, dy))
+                    (freq, gain_db, koan_runtime::dsp_drag_q(from_q, dy))
                 } else {
                     drag.alt_from = None;
                     (hz, db, q)
@@ -1273,7 +1273,7 @@ impl Graph {
                     .painted
                     .clone()
                     .unwrap_or_else(|| drag.band.curve.clone());
-                let points = koan_ffi::dsp_paint_curve(from, hz, db, self.brush);
+                let points = koan_runtime::dsp_paint_curve(from, hz, db, self.brush);
                 self.painted = Some(points.clone());
                 Commit::Curve {
                     name: e.name.clone(),

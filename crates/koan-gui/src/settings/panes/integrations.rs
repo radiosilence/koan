@@ -4,9 +4,9 @@
 
 use crate::components::{Button, ButtonKind, CopyButton, CopyText, Spinner, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_ffi::{Assistants, ScrobblingConnection};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{Assistants, ScrobblingConnection};
 
 use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{count, describe};

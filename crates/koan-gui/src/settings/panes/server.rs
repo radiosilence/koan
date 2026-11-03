@@ -6,9 +6,9 @@ use crate::components::{
     Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
-use koan_ffi::{ConnectionInfo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, Settings};
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
