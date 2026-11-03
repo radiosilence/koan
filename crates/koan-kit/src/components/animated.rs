@@ -126,6 +126,11 @@ impl Animated {
         self.0.uniforms.track(k).at(self.0.uniforms.time_at(at))
     }
 
+    /// Whether a track is moving now.
+    pub fn moving(&self) -> bool {
+        self.0.uniforms.tracks_moving(Self::now())
+    }
+
     /// Track `k` as it was last written.
     pub fn track(&self, k: usize) -> Track {
         self.0.uniforms.track(k)

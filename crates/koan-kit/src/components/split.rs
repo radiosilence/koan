@@ -232,6 +232,7 @@ impl RenderOnce for SplitView {
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
+                    .relative()
                     .child(match &slide {
                         Some(slide) => super::AnimatedLayer::new(
                             &slide.animated,
@@ -239,7 +240,12 @@ impl RenderOnce for SplitView {
                         )
                         .into_any_element(),
                         None => div().w(width).h_full().child(leading).into_any_element(),
-                    }),
+                    })
+                    // Sliding out, it takes no clicks: what it covers is going.
+                    .when(
+                        slide.as_ref().is_some_and(|s| s.laid_out) && !self.shown,
+                        |d| d.child(div().absolute().inset_0().occlude()),
+                    ),
             )
             .child(
                 div()

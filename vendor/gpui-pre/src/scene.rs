@@ -67,6 +67,10 @@ pub struct Scene {
     // that a renderer draws into a texture for its shader to compose (#1859).
     pub layer_groups: Vec<Scene>,
     group_stack: Vec<usize>,
+    /// Shaders painted inside each open group, held to be drawn after it at
+    /// their own place: a group is drawn once per frame, and a shader in it
+    /// would stand still in its texture.
+    group_shaders: Vec<Vec<Primitive>>,
 }
 
 /// A scene split where its shaders are drawn (#1641).
@@ -100,6 +104,7 @@ impl Scene {
         self.shaders.clear(); // KOAN: shader quads (#1641).
         self.layer_groups.clear(); // KOAN: #1859.
         self.group_stack.clear();
+        self.group_shaders.clear();
         self.color_slots.clear(); // KOAN: #1859.
     }
 
@@ -170,7 +175,13 @@ impl Scene {
         // KOAN: painted inside a layer group: into its scene, recorded here
         // so a cached view replays it (#1859).
         if let Some(&group) = self.group_stack.last() {
-            self.layer_groups[group].insert_primitive(primitive.clone());
+            if matches!(primitive, Primitive::Shader(_)) {
+                if let Some(held) = self.group_shaders.last_mut() {
+                    held.push(primitive.clone());
+                }
+            } else {
+                self.layer_groups[group].insert_primitive(primitive.clone());
+            }
             self.paint_operations
                 .push(PaintOperation::Primitive(primitive));
             return;
@@ -238,6 +249,7 @@ impl Scene {
         let group = self.layer_groups.len();
         self.layer_groups.push(Scene::default());
         self.group_stack.push(group);
+        self.group_shaders.push(Vec::new());
         self.paint_operations.push(PaintOperation::StartGroup);
         group
     }
@@ -248,16 +260,19 @@ impl Scene {
         let Some(group) = self.group_stack.pop() else {
             return;
         };
+        let held = self.group_shaders.pop().unwrap_or_default();
         shader.group = Some(group);
         self.paint_operations
             .push(PaintOperation::EndGroup(shader.clone()));
-        // Into the enclosing group's scene, or this one.
+        // Into the enclosing group's scene, or this one, then the shaders
+        // painted inside it over it. Their operations are already recorded
+        // (the EndGroup's and each where it was painted): not twice.
         let ops = self.paint_operations.len();
         self.insert_primitive(shader);
-        // The shader's own operation is the EndGroup's: not twice.
-        if self.paint_operations.len() > ops {
-            self.paint_operations.pop();
+        for primitive in held {
+            self.insert_primitive(primitive);
         }
+        self.paint_operations.truncate(ops);
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {

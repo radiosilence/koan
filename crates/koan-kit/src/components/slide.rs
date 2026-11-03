@@ -60,7 +60,9 @@ impl RenderOnce for Slide {
             let travel = f32::from(self.width) * window.scale_factor();
             let slide = sliding(child(&self.id, "open"), self.shown, travel, window, cx);
             self.state.0.set(if slide.laid_out { 1.0 } else { 0.0 });
+            let leaving = slide.laid_out && !self.shown;
             return div()
+                .relative()
                 .h_full()
                 .flex_none()
                 .w(if slide.laid_out { self.width } else { px(0.) })
@@ -71,6 +73,8 @@ impl RenderOnce for Slide {
                         div().w(self.width).h_full().children(self.content),
                     ))
                 })
+                // Sliding out, it takes no clicks: what it covers is going.
+                .when(leaving, |d| d.child(div().absolute().inset_0().occlude()))
                 .into_any_element();
         }
         let open = super::ease(

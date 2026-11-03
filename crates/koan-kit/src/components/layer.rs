@@ -124,6 +124,12 @@ impl Element for AnimatedLayer {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // A layer only while it moves: settled, it is painted as it stands,
+        // with no texture of its own.
+        if !self.animated.moving() {
+            self.child.paint(window, cx);
+            return;
+        }
         let child = &mut self.child;
         self.animated
             .paint_layer(&LAYER, bounds, window, cx, |window, cx| {
