@@ -2967,8 +2967,14 @@ mod layer_group_tests {
     fn a_group_with_a_path_is_drawn_at_the_windows_size() {
         let mut scene = Scene::default();
         scene.push_group();
-        let path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
-        scene.insert_primitive(path.scale(1.0));
+        let mut path: Path<Pixels> = Path::new(point(px(110.0), px(60.0)));
+        path.line_to(point(px(150.0), px(60.0)));
+        path.line_to(point(px(150.0), px(90.0)));
+        let mut path = path.scale(1.0);
+        path.content_mask = ContentMask {
+            bounds: bounds(0.0, 0.0, 1000.0, 1000.0),
+        };
+        scene.insert_primitive(path);
         scene.pop_group(shader(bounds(100.0, 50.0, 200.0, 100.0)));
         scene.finish();
         assert_eq!(scene.layer_group_frames[0], None);
