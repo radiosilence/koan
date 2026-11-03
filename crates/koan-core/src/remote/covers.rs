@@ -10,8 +10,11 @@
 //! cache limit and trimmed with them (`trim`).
 //!
 //! The preload walks every record whose cover is on the server only and
-//! fetches it at the size grids draw, one at a time and only while no cover a
-//! page asked for is in flight, so it never holds up what is on screen. It
+//! fetches it at the size grids draw: from a kōan server two hundred to a
+//! request (`koanCovers`), and otherwise, or for whatever the server did not
+//! hold, six at a time by `getCoverArt`. It starts a request only while no
+//! cover a page asked for is in flight, so it does not hold up what is on
+//! screen. It
 //! sleeps on the engine's change signal while there is nothing to do, and
 //! starts again when a sync finishes or the settings or the connection move.
 //! It stops short of the cache limit, never pushing out a download, and
@@ -82,11 +85,23 @@ pub fn frame(id: &str, cover: BulkCover<&[u8]>) -> Vec<u8> {
 pub fn read_frame(
     from: &mut impl std::io::Read,
 ) -> std::io::Result<Option<(String, BulkCover<Vec<u8>>)>> {
+    // The end only where no byte of the next frame came: a stream cut
+    // inside the id's length is cut inside a frame.
     let mut len = [0u8; 2];
-    match from.read_exact(&mut len) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
+    let mut read = 0;
+    while read < len.len() {
+        match from.read(&mut len[read..]) {
+            Ok(0) if read == 0 => return Ok(None),
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "a stream cut inside a frame",
+                ));
+            }
+            Ok(n) => read += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
     }
     let mut id = vec![0u8; u16::from_be_bytes(len) as usize];
     from.read_exact(&mut id)?;
@@ -763,6 +778,15 @@ mod tests {
         assert!(
             err.is_some(),
             "a stream cut inside a frame is an error, not its end"
+        );
+        // Cut one byte into the next frame's id length: an error too.
+        let mut one = frame("al-6", BulkCover::None);
+        one.push(0);
+        let mut read = &one[..];
+        assert!(read_frame(&mut read).unwrap().is_some());
+        assert!(
+            read_frame(&mut read).is_err(),
+            "a stream cut inside the id's length is cut inside a frame"
         );
         // A length past any cover is refused before anything is allocated.
         let mut huge = frame("al-5", BulkCover::None);
