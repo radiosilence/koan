@@ -73,6 +73,10 @@ pub struct KoanTheme {
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
+    /// The hidden rainbow appearance, while it is drawn, and whether in
+    /// brat's palette: what may carry the palette as a gradient (a progress
+    /// fill, the chosen tab) does.
+    pub prism: Option<bool>,
 }
 
 impl Global for KoanTheme {}
@@ -90,6 +94,7 @@ impl Default for KoanTheme {
             opaque: false,
             system_text: 1.0,
             pinned: HashMap::new(),
+            prism: None,
         }
     }
 }
@@ -450,6 +455,22 @@ impl KoanTheme {
             percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());
         sync_components(is_dark(cx.window_appearance()), cx);
         cx.refresh_windows();
+    }
+
+    /// The rainbow appearance drawn, in brat's palette or not, or put away.
+    pub fn set_prism(prism: Option<bool>, cx: &mut App) {
+        if cx.global::<KoanTheme>().prism != prism {
+            cx.global_mut::<KoanTheme>().prism = prism;
+            cx.refresh_windows();
+        }
+    }
+
+    /// The palette's gradient, where a component may draw one: the rainbow
+    /// is drawn, shaders are, and motion is allowed.
+    pub fn prism_gradient(cx: &App) -> Option<bool> {
+        cx.global::<KoanTheme>()
+            .prism
+            .filter(|_| crate::components::SHADED && Self::motion_allowed(cx))
     }
 
     pub fn set_icons(icons: bool, cx: &mut App) {

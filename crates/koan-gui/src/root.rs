@@ -51,6 +51,7 @@ pub struct WindowRoot {
     prism_fed: bool,
     confetti: Burst,
     sweep: Burst,
+    sticker: Burst,
     /// The record playing when the rainbow last looked, for its sweep.
     swept: Option<i64>,
     /// This window is in front, and shows.
@@ -96,6 +97,7 @@ impl WindowRoot {
             prism_fed: false,
             confetti: Burst::confetti(),
             sweep: Burst::sweep(),
+            sticker: Burst::sticker(),
             swept: None,
             active: window.is_window_active(),
             visible: true,
@@ -114,9 +116,14 @@ impl WindowRoot {
                 cx.observe_global::<crate::rainbow::Painted>(move |this, cx| {
                     let was = this.rainbow;
                     this.follow(&painted, true, cx);
-                    // Coming out: confetti from the middle of the window.
+                    // Coming out: confetti and a sticker in the middle of the
+                    // window.
                     if this.rainbow && !was && this.active {
                         this.throw_confetti(None);
+                        let middle =
+                            Point::new(this.viewport.width / 2.0, this.viewport.height / 2.0);
+                        let brat = crate::rainbow::Painted::now() == Some(true);
+                        this.sticker.fire(middle, this.scale, brat);
                     }
                     this.feed_prism(cx);
                     cx.notify();
@@ -348,6 +355,7 @@ impl Render for WindowRoot {
                             .child(self.prism.ball().size_full()),
                     )
                     .child(layer(self.sweep.element().size_full().into_any_element()))
+                    .child(layer(self.sticker.element().size_full().into_any_element()))
                     .child(layer(
                         self.confetti.element().size_full().into_any_element(),
                     ))

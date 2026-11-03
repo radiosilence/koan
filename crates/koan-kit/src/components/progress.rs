@@ -76,14 +76,20 @@ impl RenderOnce for ProgressBar {
             .relative()
             .overflow_hidden();
         match self.fraction {
-            Some(fraction) => track
-                .child(
-                    div()
-                        .h_full()
-                        .w(relative(fraction.clamp(0.0, 1.0)))
-                        .bg(accent),
-                )
-                .into_any_element(),
+            Some(fraction) => {
+                let prism = KoanTheme::prism_gradient(cx);
+                let id = super::child(&self.id, "prism");
+                track
+                    .child(
+                        div().h_full().w(relative(fraction.clamp(0.0, 1.0))).map(
+                            |fill| match prism {
+                                Some(brat) => fill.child(super::PrismFill::new(id, brat)),
+                                None => fill.bg(accent),
+                            },
+                        ),
+                    )
+                    .into_any_element()
+            }
             None if SHADED && KoanTheme::motion_allowed(cx) => {
                 let rgba = accent.to_rgb();
                 let running = Animated::new();

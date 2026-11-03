@@ -884,7 +884,8 @@ impl Render for Transport {
                                 title.child(
                                     crate::components::Sheen::new("np-title-sheen")
                                         .brat(brat)
-                                        .strength(0.35),
+                                        .strength(0.35)
+                                        .glitch(true),
                                 )
                             },
                         )

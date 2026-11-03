@@ -477,7 +477,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
 
 /// A band of the palette passing diagonally over an element, again and
 /// again: refraction on what the pointer is on, a shimmer through a title.
-/// Uniforms: 0 brat's palette, 1 the strength.
+/// Uniforms: 0 brat's palette, 1 the strength, 2 a glitch every five seconds.
 static SHEEN: ShaderProgram = ShaderProgram {
     name: "koan-prism-sheen",
     msl: concat!(
@@ -489,7 +489,16 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float band = smoothstep(0.0, 0.25, sweep) * (1.0 - smoothstep(0.25, 0.55, sweep));
     float gloss = pow(band, 10.0);
     float3 colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0]), float3(1.0, 0.75, 0.88), 0.25), float3(1.0), gloss);
-    return float4(colour, clamp(band * u[1] + gloss * 0.6, 0.0, 1.0));
+    float alpha = clamp(band * u[1] + gloss * 0.6, 0.0, 1.0);
+    if (u[2] > 0.5 && fract(time / 5.0) < 0.035) {
+        float slice = floor(position.y / max(size.y / 6.0, 1.0));
+        float h = koan_prism_hash(float2(slice, floor(time / 5.0)));
+        if (h > 0.45) {
+            colour = h > 0.72 ? float3(1.0, 0.18, 0.6) : float3(0.0, 0.78, 1.0);
+            alpha = 0.6;
+        }
+    }
+    return float4(colour, alpha);
 }
 "#
     ),
@@ -501,8 +510,17 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
     let sweep = fract(s * 0.8 - time * 0.35);
     let band = smoothstep(0.0, 0.25, sweep) * (1.0 - smoothstep(0.25, 0.55, sweep));
     let gloss = pow(band, 10.0);
-    let colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0].x), vec3<f32>(1.0, 0.75, 0.88), 0.25), vec3<f32>(1.0), gloss);
-    return vec4<f32>(colour, clamp(band * u[0].y + gloss * 0.6, 0.0, 1.0));
+    var colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0].x), vec3<f32>(1.0, 0.75, 0.88), 0.25), vec3<f32>(1.0), gloss);
+    var alpha = clamp(band * u[0].y + gloss * 0.6, 0.0, 1.0);
+    if (u[0].z > 0.5 && fract(time / 5.0) < 0.035) {
+        let slice = floor(position.y / max(size.y / 6.0, 1.0));
+        let h = koan_prism_hash(vec2<f32>(slice, floor(time / 5.0)));
+        if (h > 0.45) {
+            colour = select(vec3<f32>(0.0, 0.78, 1.0), vec3<f32>(1.0, 0.18, 0.6), h > 0.72);
+            alpha = 0.6;
+        }
+    }
+    return vec4<f32>(colour, alpha);
 }
 "#
     ),
@@ -677,6 +695,179 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
     prepare: None,
 };
 
+/// The palette as a gradient running along a fill, a glint passing through
+/// it: a progress bar's fill, the chosen tab's rule. Uniforms: 0 brat's
+/// palette.
+static GRADIENT: ShaderProgram = ShaderProgram {
+    name: "koan-prism-gradient",
+    msl: concat!(
+        prism_msl!(),
+        r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float x = position.x / max(size.x, 1.0);
+    float3 colour = koan_prism(x * 0.8 - time * 0.2, u[0]);
+    float glint = pow(max(0.0, 1.0 - abs(fract(x * 0.5 - time * 0.35) - 0.5) * 6.0), 4.0);
+    return float4(mix(colour, float3(1.0), glint * 0.5), 1.0);
+}
+"#
+    ),
+    wgsl: concat!(
+        prism_wgsl!(),
+        r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let x = position.x / max(size.x, 1.0);
+    let colour = koan_prism(x * 0.8 - time * 0.2, u[0].x);
+    let glint = pow(max(0.0, 1.0 - abs(fract(x * 0.5 - time * 0.35) - 0.5) * 6.0), 4.0);
+    return vec4<f32>(mix(colour, vec3<f32>(1.0), glint * 0.5), 1.0);
+}
+"#
+    ),
+    prepare: None,
+};
+
+/// The sticker slapped on mid-window as the appearance comes out: brat's
+/// wordmark on lime for a track that brought it, a chrome y2k star
+/// otherwise. It pops in past its size, settles with a wobble at a tilt,
+/// holds and fades. A burst's uniforms, 3 choosing brat's.
+static STICKER: ShaderProgram = ShaderProgram {
+    name: "koan-prism-sticker",
+    msl: concat!(
+        prism_msl!(),
+        r#"
+float koan_segment(float2 p, float2 a, float2 b) {
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// "brat", lowercase, drawn in strokes on a 300 by 124 card centred on 0.
+float koan_brat_word(float2 p) {
+    float d = 1e5;
+    d = min(d, koan_segment(p, float2(-130.0, -55.0), float2(-130.0, 40.0)));
+    d = min(d, abs(length(p - float2(-105.0, 13.0)) - 25.0));
+    d = min(d, koan_segment(p, float2(-55.0, -12.0), float2(-55.0, 40.0)));
+    if (p.y < 3.0 && p.x > -55.0) {
+        d = min(d, abs(length(p - float2(-30.0, 3.0)) - 25.0));
+    }
+    d = min(d, abs(length(p - float2(30.0, 15.0)) - 25.0));
+    d = min(d, koan_segment(p, float2(55.0, -10.0), float2(55.0, 40.0)));
+    d = min(d, koan_segment(p, float2(100.0, -45.0), float2(100.0, 40.0)));
+    d = min(d, koan_segment(p, float2(84.0, -15.0), float2(118.0, -15.0)));
+    return 1.0 - smoothstep(6.0, 7.5, d);
+}
+
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float t = time;
+    if (t < 0.0 || t > u[5]) {
+        return float4(0.0);
+    }
+    float s = u[4];
+    float pop = t < 0.3 ? (1.0 - pow(1.0 - t / 0.3, 3.0)) * 1.12 : (t < 0.45 ? mix(1.12, 1.0, (t - 0.3) / 0.15) : 1.0);
+    float fade = 1.0 - smoothstep(u[5] - 0.5, u[5], t);
+    float tilt = -0.14 + 0.05 * sin(t * 9.0) * exp(-t * 3.0);
+    float2 p = (position - float2(u[0], u[1])) / (s * max(pop, 0.001));
+    if (length(p) > 220.0) {
+        return float4(0.0);
+    }
+    float cs = cos(tilt);
+    float sn = sin(tilt);
+    p = float2(p.x * cs - p.y * sn, p.x * sn + p.y * cs);
+    if (u[3] > 0.5) {
+        float2 q = abs(p) - float2(150.0, 62.0);
+        float edge = clamp(0.5 - max(q.x, q.y), 0.0, 1.0);
+        if (edge <= 0.0) {
+            return float4(0.0);
+        }
+        float3 lime = float3(0.541, 0.808, 0.0);
+        return float4(mix(lime, float3(0.0), koan_brat_word(p)), edge * fade);
+    }
+    float r = length(p);
+    float a = atan2(p.y, p.x);
+    float star = 110.0 * (0.45 + 0.55 * pow(abs(cos(a * 2.0)), 10.0));
+    float inside = clamp((star - r) * 0.8, 0.0, 1.0);
+    if (inside <= 0.0) {
+        return float4(0.0);
+    }
+    float3 chrome = mix(float3(0.62, 0.66, 0.74), float3(1.0), 0.5 + 0.5 * sin(p.y * 0.05 + t * 3.0));
+    float3 holo = koan_prism(a / 6.2831853 + r * 0.004 + t * 0.2, 0.0);
+    float sweep = pow(max(0.0, 1.0 - abs(p.x + p.y * 0.6 - (t * 320.0 - 160.0)) / 40.0), 3.0);
+    return float4(min(mix(chrome, holo, 0.35) + sweep * 0.6, float3(1.0)), inside * fade);
+}
+"#
+    ),
+    wgsl: concat!(
+        prism_wgsl!(),
+        r#"
+fn koan_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+fn koan_brat_word(p: vec2<f32>) -> f32 {
+    var d = 1e5;
+    d = min(d, koan_segment(p, vec2<f32>(-130.0, -55.0), vec2<f32>(-130.0, 40.0)));
+    d = min(d, abs(length(p - vec2<f32>(-105.0, 13.0)) - 25.0));
+    d = min(d, koan_segment(p, vec2<f32>(-55.0, -12.0), vec2<f32>(-55.0, 40.0)));
+    if (p.y < 3.0 && p.x > -55.0) {
+        d = min(d, abs(length(p - vec2<f32>(-30.0, 3.0)) - 25.0));
+    }
+    d = min(d, abs(length(p - vec2<f32>(30.0, 15.0)) - 25.0));
+    d = min(d, koan_segment(p, vec2<f32>(55.0, -10.0), vec2<f32>(55.0, 40.0)));
+    d = min(d, koan_segment(p, vec2<f32>(100.0, -45.0), vec2<f32>(100.0, 40.0)));
+    d = min(d, koan_segment(p, vec2<f32>(84.0, -15.0), vec2<f32>(118.0, -15.0)));
+    return 1.0 - smoothstep(6.0, 7.5, d);
+}
+
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let t = time;
+    if (t < 0.0 || t > u[1].y) {
+        return vec4<f32>(0.0);
+    }
+    let s = u[1].x;
+    var pop = 1.0;
+    if (t < 0.3) {
+        pop = (1.0 - pow(1.0 - t / 0.3, 3.0)) * 1.12;
+    } else if (t < 0.45) {
+        pop = mix(1.12, 1.0, (t - 0.3) / 0.15);
+    }
+    let fade = 1.0 - smoothstep(u[1].y - 0.5, u[1].y, t);
+    let tilt = -0.14 + 0.05 * sin(t * 9.0) * exp(-t * 3.0);
+    var p = (position - u[0].xy) / (s * max(pop, 0.001));
+    if (length(p) > 220.0) {
+        return vec4<f32>(0.0);
+    }
+    let cs = cos(tilt);
+    let sn = sin(tilt);
+    p = vec2<f32>(p.x * cs - p.y * sn, p.x * sn + p.y * cs);
+    if (u[0].w > 0.5) {
+        let q = abs(p) - vec2<f32>(150.0, 62.0);
+        let edge = clamp(0.5 - max(q.x, q.y), 0.0, 1.0);
+        if (edge <= 0.0) {
+            return vec4<f32>(0.0);
+        }
+        let lime = vec3<f32>(0.541, 0.808, 0.0);
+        return vec4<f32>(mix(lime, vec3<f32>(0.0), koan_brat_word(p)), edge * fade);
+    }
+    let r = length(p);
+    let a = atan2(p.y, p.x);
+    let star = 110.0 * (0.45 + 0.55 * pow(abs(cos(a * 2.0)), 10.0));
+    let inside = clamp((star - r) * 0.8, 0.0, 1.0);
+    if (inside <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let chrome = mix(vec3<f32>(0.62, 0.66, 0.74), vec3<f32>(1.0), 0.5 + 0.5 * sin(p.y * 0.05 + t * 3.0));
+    let holo = koan_prism(a / 6.2831853 + r * 0.004 + t * 0.2, 0.0);
+    let sweep = pow(max(0.0, 1.0 - abs(p.x + p.y * 0.6 - (t * 320.0 - 160.0)) / 40.0), 3.0);
+    return vec4<f32>(min(mix(chrome, holo, 0.35) + sweep * 0.6, vec3<f32>(1.0)), inside * fade);
+}
+"#
+    ),
+    prepare: None,
+};
+
 /// How long a beat holds its strength, as the programs decay it: e^-5t.
 const BEAT_DECAY: f32 = 5.0;
 /// The least time between two beats, in seconds: the flashes they bring
@@ -785,6 +976,16 @@ impl Burst {
         }
     }
 
+    /// The sticker: brat's when fired with `brat`, the chrome star
+    /// otherwise.
+    pub fn sticker() -> Self {
+        Self {
+            animated: Animated::new(),
+            program: &STICKER,
+            length: Duration::from_millis(2600),
+        }
+    }
+
     pub fn sweep() -> Self {
         Self {
             animated: Animated::new(),
@@ -828,6 +1029,7 @@ pub struct Sheen {
     id: ElementId,
     brat: bool,
     strength: f32,
+    glitch: bool,
 }
 
 impl Sheen {
@@ -836,7 +1038,15 @@ impl Sheen {
             id: id.into(),
             brat: false,
             strength: 0.45,
+            glitch: false,
         }
+    }
+
+    /// Every five seconds, for a blink, slices of what it covers turn pink
+    /// and cyan: the playing title's glitch.
+    pub fn glitch(mut self, glitch: bool) -> Self {
+        self.glitch = glitch;
+        self
     }
 
     pub fn brat(mut self, brat: bool) -> Self {
@@ -862,11 +1072,54 @@ impl RenderOnce for Sheen {
             })
             .read(cx)
             .clone();
-        animated.set_all(0, &[self.brat as u8 as f32, self.strength]);
+        animated.set_all(
+            0,
+            &[
+                self.brat as u8 as f32,
+                self.strength,
+                self.glitch as u8 as f32,
+            ],
+        );
         div().absolute().top_0().left_0().size_full().child(
             AnimatedQuad::new(&SHEEN, &animated)
                 .decorative()
                 .size_full(),
         )
+    }
+}
+
+/// The palette as a gradient filling its parent, moving while it is drawn:
+/// what carries the accent in a component carries this instead while the
+/// rainbow is drawn (`KoanTheme::prism_gradient`).
+#[derive(IntoElement)]
+pub struct PrismFill {
+    id: ElementId,
+    brat: bool,
+}
+
+impl PrismFill {
+    pub fn new(id: impl Into<ElementId>, brat: bool) -> Self {
+        Self {
+            id: id.into(),
+            brat,
+        }
+    }
+}
+
+impl RenderOnce for PrismFill {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let animated = window
+            .use_keyed_state(self.id, cx, |_, _| {
+                let animated = Animated::new();
+                animated.set_origin(Instant::now());
+                animated.run(true);
+                animated
+            })
+            .read(cx)
+            .clone();
+        animated.set(0, self.brat as u8 as f32);
+        AnimatedQuad::new(&GRADIENT, &animated)
+            .decorative()
+            .size_full()
     }
 }

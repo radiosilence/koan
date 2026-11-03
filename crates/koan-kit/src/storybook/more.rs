@@ -34,6 +34,7 @@ pub struct State {
     prism: Prism,
     confetti: Burst,
     sweep: Burst,
+    sticker: Burst,
     glide: Glide,
 }
 
@@ -58,6 +59,7 @@ impl State {
             prism: Prism::new(),
             confetti: Burst::confetti(),
             sweep: Burst::sweep(),
+            sticker: Burst::sticker(),
             glide: {
                 let glide = Glide::new();
                 glide.set(0.62, 0.0, std::time::Instant::now());
@@ -646,6 +648,9 @@ impl StoryContent {
                         .child(overlay(
                             self.more.confetti.element().size_full().into_any_element(),
                         ))
+                        .child(overlay(
+                            self.more.sticker.element().size_full().into_any_element(),
+                        ))
                         .into_any_element(),
                     div()
                         .flex()
@@ -653,6 +658,13 @@ impl StoryContent {
                         .child(beat)
                         .child(fire(&self.more.confetti, "confetti", "story-confetti"))
                         .child(fire(&self.more.sweep, "sweep", "story-sweep"))
+                        .child(fire(&self.more.sticker, "sticker", "story-sticker"))
+                        .into_any_element(),
+                    SectionHeader::new("The palette as a gradient").into_any_element(),
+                    div()
+                        .w(look.spaced(420.0))
+                        .h(look.spaced(6.0))
+                        .child(crate::components::PrismFill::new("story-gradient", false))
                         .into_any_element(),
                     SectionHeader::new("The seek bar's trail").into_any_element(),
                     div()

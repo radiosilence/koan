@@ -377,6 +377,7 @@ fn refresh(cx: &mut App) {
             Ordering::Relaxed,
         );
         cx.set_global(painted);
+        KoanTheme::set_prism(painted.0, cx);
     }
 }
 
