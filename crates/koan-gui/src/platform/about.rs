@@ -159,12 +159,7 @@ fn show(cx: &mut App) {
                 .justify_center()
                 .gap(look.space(Space::M))
                 .bg(look.palette.bg.hsla())
-                .child(
-                    div()
-                        .text_role(TypeRole::Title, &look)
-                        .text_color(look.palette.strong.hsla())
-                        .child("kōan"),
-                )
+                .child(crate::components::title_text("kōan", &look))
                 .child(
                     div()
                         .text_role(TypeRole::Meta, &look)

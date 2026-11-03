@@ -25,8 +25,7 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     platform::about::name_unbundled();
-    // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-    let application = koan_kit::raw::application().with_assets(theme::icons::Assets);
+    let application = koan_kit::app::platform::application().with_assets(theme::icons::Assets);
     // Opened again from the Dock or Finder while running: the window, which
     // kōan kept running with it closed opens again.
     application.on_reopen(platform::to_front);
@@ -40,8 +39,7 @@ fn main() {
         platform::residency::launched_at_login();
         #[cfg(target_os = "macos")]
         platform::about::icon_unbundled();
-        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-        koan_kit::raw::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
         quit_on_signal(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {

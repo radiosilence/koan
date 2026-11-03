@@ -8,6 +8,15 @@ use gpui_kit::*;
 use super::RowMetrics;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
 
+/// A title standing alone, outside a page's header: the About window's
+/// name, a confirmation's question. `title`, `strong`, kept as given.
+pub fn title_text(text: impl Into<SharedString>, look: &Look) -> Div {
+    div()
+        .text_role(TypeRole::Title, look)
+        .text_color(look.palette.strong.hsla())
+        .child(text.into())
+}
+
 /// The header every page shares: an optional cover, the title over a
 /// detail line (a count, a duration), the page's actions under them, and
 /// what trails at the far edge.

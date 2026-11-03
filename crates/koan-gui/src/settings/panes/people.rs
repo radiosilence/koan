@@ -12,8 +12,6 @@ use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// overlays placed against another element.
-use koan_kit::raw::{anchored, deferred};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;
@@ -483,20 +481,12 @@ fn more_menu(
             .on_click(move |_, _, cx| opener(cx)),
         )
         .when(shown, |this| {
-            this.child(
-                deferred(
-                    anchored()
-                        .snap_to_window_with_margin(look.space(Space::S))
-                        .child(
-                            div()
-                                .id(("people-menu", index))
-                                .occlude()
-                                .on_mouse_down_out(move |_, _, cx| closer(cx))
-                                .child(panel),
-                        ),
-                )
-                .with_priority(1),
-            )
+            this.child(crate::components::anchored_panel(
+                ("people-menu", index),
+                panel,
+                closer,
+                look,
+            ))
         })
         .into_any_element()
 }

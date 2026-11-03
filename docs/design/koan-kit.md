@@ -295,7 +295,11 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
-`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `open(cx, build)` (or `options(cx)`): a window beside the main one, centred at its size in points, its content under the root the kit's sheets, menus and fields draw in. `MainWindow::new(title, app_id).place(saved).min(size).buttons_at(origin).open(cx, build)` is the app's own window: put back where it was left, its content under the title bar on macOS with the window's buttons on the toolbar's ground. `moves_window(area)` makes bare space move the window and zoom it on a double click, as a title bar does; where the compositor leaves the decorations to the app (`draws_decorations`), `window_buttons(on_close)` and `close_button(on_close)` are the buttons a toolbar or a top strip carries.
+
+`opens_panel(id, trigger, content)` is a control that opens a panel under it, made each time it opens, with a `Dismiss` for its rows; `ToolbarMenu` is one with a toolbar button, `TextTrigger` the word that opens one in a form row or the selection bar. `anchored_panel` stands a panel by the control that opened it and keeps it in the window. `title_text` is a title outside a page's header (About, a confirmation). `TextArea` (with `AreaState`) is several lines of text on a field's ground. `sheet::trap_focus` keeps Tab inside a sheet its owner draws. `RowMetrics::lead_width(count)` is a number column measured in the face its numbers are drawn in.
+
+`koan_kit::app::platform` holds what the app asks of the platform beyond its windows' content (start-up, the menu bar and the Dock's menu, the system, the keymap, a scroll's phase), `app::image` the decoded sleeves the components draw, and `app::test` the test harness. koan-gui reaches `raw` only where it draws by hand: the EQ graph and the profiler's measurements.
 
 ## Accessibility
 

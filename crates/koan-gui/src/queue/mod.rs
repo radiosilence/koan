@@ -13,8 +13,6 @@ use std::collections::HashSet;
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
-// the colour a row part is drawn in, chosen from the theme by the caller.
-use koan_kit::raw::Hsla;
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -35,7 +33,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, TypeRole};
+use crate::theme::{self, Hsla, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
 

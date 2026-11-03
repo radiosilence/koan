@@ -9,12 +9,6 @@ use koan_ffi::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, px};
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 
 use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
@@ -792,7 +786,7 @@ impl Render for Transport {
 
         let left = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(p.space(Space::M))
@@ -846,7 +840,7 @@ impl Render for Transport {
                     })
                     .flex()
                     .flex_col()
-                    .min_w(px(0.))
+                    .min_w_0()
                     // The title and the record lead to the record, each
                     // credited artist to the artist.
                     .children(entry.map(|e| {
@@ -1002,7 +996,7 @@ impl Render for Transport {
 
         let right = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .justify_end()
@@ -1136,7 +1130,7 @@ pub struct Seek {
     lapse: Option<Task<()>>,
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
-    width: std::rc::Rc<std::cell::Cell<f32>>,
+    width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1258,7 +1252,7 @@ impl Seek {
             return;
         }
         let to_second = 1000 - position % 1000;
-        let width = self.width.get();
+        let width = self.width.get().map_or(0.0, f32::from);
         let to_pixel = if width > 0.0 && !SHADED {
             (duration as f32 / width).ceil() as u64
         } else {
@@ -1315,15 +1309,7 @@ impl Render for Seek {
         // seek's target until it lands there (`SharedPlayerState::request_seek`,
         // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
-        let width = self.width.clone();
-        let measure = canvas(
-            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        let measure = crate::components::width_probe(self.width.clone(), cx.entity_id());
         // How far a track still downloading can be played, moving as its
         // bytes arrive; nothing once the file is all here.
         let reach = self
