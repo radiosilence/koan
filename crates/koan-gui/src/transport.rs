@@ -1455,6 +1455,24 @@ impl Render for Seek {
     }
 }
 
+/// What the control button draws from the devices: the device controlled,
+/// how it can be reached, and its name.
+type ControlledShown = (
+    Option<String>,
+    Option<koan_ffi::DeviceReach>,
+    Option<String>,
+);
+
+fn controlled_shown(view: &Devices) -> ControlledShown {
+    let name = view.target.as_ref().and_then(|t| {
+        view.devices
+            .iter()
+            .find(|d| &d.id == t)
+            .map(|d| d.name.clone())
+    });
+    (view.target.clone(), view.target_reach.clone(), name)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -1503,22 +1521,4 @@ mod tests {
         let heard = Some((TRACK - 100, now - Duration::from_millis(400)));
         assert_eq!(shown_position(TRACK - 50, heard, true, now, TRACK), TRACK);
     }
-}
-
-/// What the control button draws from the devices: the device controlled,
-/// how it can be reached, and its name.
-type ControlledShown = (
-    Option<String>,
-    Option<koan_ffi::DeviceReach>,
-    Option<String>,
-);
-
-fn controlled_shown(view: &Devices) -> ControlledShown {
-    let name = view.target.as_ref().and_then(|t| {
-        view.devices
-            .iter()
-            .find(|d| &d.id == t)
-            .map(|d| d.name.clone())
-    });
-    (view.target.clone(), view.target_reach.clone(), name)
 }
