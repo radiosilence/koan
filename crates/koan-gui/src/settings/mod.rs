@@ -213,11 +213,9 @@ impl SettingsWindow {
             }),
             // The CLI and the TUI write the same file; coming back to this
             // window is the moment to notice they did.
-            // The system's settings can turn the login item off the same way.
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.ctx.model.update(cx, |model, cx| model.reload(cx));
-                    crate::platform::residency::read_login(cx);
                 }
             }),
             cx.on_release(|_, cx| {

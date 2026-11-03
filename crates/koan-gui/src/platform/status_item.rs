@@ -234,11 +234,7 @@ fn mark(mtm: MainThreadMarker) -> Retained<NSImage> {
         return image;
     }
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-    let shared = app.applicationIconImage().unwrap_or_default();
-    // A copy: the app's icon object is shared with every other place that
-    // draws it (About), which a resize here would shrink too.
-    // SAFETY: `copy` on an NSImage returns a new, owned NSImage.
-    let icon: Retained<NSImage> = unsafe { objc2::msg_send![&shared, copy] };
+    let icon = app.applicationIconImage().unwrap_or_default();
     icon.setSize(NSSize::new(18.0, 18.0));
     icon
 }

@@ -478,7 +478,7 @@ impl Render for DevicesPane {
             &look,
         ));
 
-        sections.push(background(&settings, &model, &look, cx));
+        sections.push(background(&settings, &model, entity.clone(), &look, cx));
 
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
@@ -720,6 +720,7 @@ impl Render for DevicesPane {
 fn background(
     settings: &koan_ffi::Settings,
     model: &Entity<crate::settings::model::SettingsModel>,
+    pane: Entity<impl Render>,
     look: &Look,
     cx: &App,
 ) -> AnyElement {
@@ -742,7 +743,7 @@ fn background(
                 .into_any_element(),
         );
     }
-    let login = residency::login(cx);
+    let login = residency::login();
     if login != Login::Unavailable {
         rows.push(
             Toggle::new(
@@ -750,7 +751,11 @@ fn background(
                 "Open at login",
                 matches!(login, Login::On | Login::NeedsApproval),
             )
-            .on_change(move |on, _, cx| residency::set_login(*on, cx))
+            .on_change(move |on, _, cx| {
+                residency::set_login(*on, cx);
+                // What the system now says shows at once.
+                pane.update(cx, |_, cx| cx.notify());
+            })
             .into_any_element(),
         );
     }
