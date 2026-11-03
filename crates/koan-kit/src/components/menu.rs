@@ -880,7 +880,7 @@ impl Global for LastMenu {}
 
 /// What takes the keyboard when a menu closes and what held it before is
 /// gone: the app's page in front, say.
-struct MenuFallback(Rc<dyn Fn(&mut Window, &mut App)>);
+struct MenuFallback(super::choice::Run);
 
 impl Global for MenuFallback {}
 

@@ -111,7 +111,7 @@ pub struct SectionHeading {
     trailing: Vec<AnyElement>,
     count: Option<SharedString>,
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
-    reveal: Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>>,
+    reveal: Option<super::choice::Run>,
 }
 
 impl SectionHeading {
