@@ -357,6 +357,12 @@ struct OpenedOutput {
     /// rate if it did.
     mixed: Option<bool>,
     mixer_rate: Option<f64>,
+    /// The device's rate watch, made on the open thread where that call can
+    /// stall (`AudioBackend::rate_watch_on_player`). It says nothing until
+    /// `armed`, which the session using this output sets, so the watch of an
+    /// output never used writes no shared state.
+    rate_watch: Option<Box<dyn SampleRateWatch>>,
+    armed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// An output opened, or why not, for the ask `ticket`.
@@ -388,6 +394,8 @@ struct OpenFlight {
 /// What the open thread needs of the player.
 struct OpenContext {
     backend: Arc<dyn AudioBackend>,
+    /// For the rate watch only: the open thread itself writes no state.
+    state: Arc<SharedPlayerState>,
     samples_played: Arc<std::sync::atomic::AtomicU64>,
     /// The ask this open answers, and the one the player wants answered
     /// (`Player::open_live`). Once they differ the open stops touching the
@@ -611,10 +619,10 @@ impl Player {
     ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
         let key = self.open_key(info);
         self.shared_state.clear_output_sample_rate();
-        let opened = open_output(&self.open_context(0), &key, consumer)?;
+        let mut opened = open_output(&self.open_context(0), &key, consumer)?;
         self.keep_dsp(&opened);
         self.apply_lead_in(&opened);
-        let watch = self.publish_output(&opened);
+        let watch = self.publish_output(&mut opened);
         Ok((opened.engine, watch))
     }
 
@@ -631,6 +639,7 @@ impl Player {
     fn open_context(&self, ticket: u64) -> OpenContext {
         OpenContext {
             backend: self.backend.clone(),
+            state: self.shared_state.clone(),
             samples_played: self.timeline.samples_played_counter(),
             ticket,
             live: self.open_live.clone(),
@@ -640,12 +649,12 @@ impl Player {
         }
     }
 
-    /// Say what the output settled at, from the player thread, and watch the
-    /// device for a rate someone else moves: koan is not its only client,
-    /// and the reading would otherwise stand until the next track. Made here
-    /// rather than by the open thread, so an output never used never takes
-    /// the watch (on iOS a single one) from the session playing.
-    fn publish_output(&self, opened: &OpenedOutput) -> Option<Box<dyn SampleRateWatch>> {
+    /// Say what the output settled at, from the player thread, and arm the
+    /// device's rate watch for the session now using it. Where the backend
+    /// keeps the watch for the session playing (iOS), it is made here, a call
+    /// that touches nothing of the audio system's; elsewhere the open thread
+    /// made it.
+    fn publish_output(&self, opened: &mut OpenedOutput) -> Option<Box<dyn SampleRateWatch>> {
         // The front ends compare this against the source rate to say whether
         // anything had to resample.
         let state = &self.shared_state;
@@ -654,15 +663,18 @@ impl Player {
         if let Some(rate) = opened.mixer_rate {
             state.set_output_sample_rate(rate.round() as u32);
         }
-        let watch_state = state.clone();
-        let watch_name = opened.device.name.clone();
-        self.backend.watch_device_sample_rate(
-            &opened.device,
-            Box::new(move |rate| {
-                log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
-                watch_state.set_output_sample_rate(rate.round() as u32);
-            }),
-        )
+        opened
+            .armed
+            .store(true, std::sync::atomic::Ordering::Release);
+        if self.backend.rate_watch_on_player() {
+            return rate_watch(
+                self.backend.as_ref(),
+                &self.shared_state,
+                &opened.device,
+                &opened.armed,
+            );
+        }
+        opened.rate_watch.take()
     }
 
     /// The DSP setup an output was opened with, kept as the one in use for
@@ -1334,11 +1346,13 @@ impl Player {
             stream,
         } = pending;
         let PreparedOutput {
-            producer, parts, ..
+            producer,
+            mut parts,
+            ..
         } = *output;
         self.keep_dsp(&parts);
         self.apply_lead_in(&parts);
-        let rate_watch = self.publish_output(&parts);
+        let rate_watch = self.publish_output(&mut parts);
         let OpenedOutput {
             engine, dsp: setup, ..
         } = parts;
@@ -3593,6 +3607,12 @@ fn open_output(
     } else {
         None
     };
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let rate_watch = if ctx.backend.rate_watch_on_player() || ctx.abandoned() {
+        None
+    } else {
+        rate_watch(ctx.backend.as_ref(), &ctx.state, &device, &armed)
+    };
     Ok(OpenedOutput {
         device,
         dsp,
@@ -3601,7 +3621,33 @@ fn open_output(
         switched,
         mixed,
         mixer_rate,
+        rate_watch,
+        armed,
     })
+}
+
+/// Watch `device` for a rate someone else moves: koan is not its only
+/// client, and the reading would otherwise stand until the next track. Says
+/// nothing until `armed`.
+fn rate_watch(
+    backend: &dyn AudioBackend,
+    state: &Arc<SharedPlayerState>,
+    device: &backend::DeviceInfo,
+    armed: &Arc<std::sync::atomic::AtomicBool>,
+) -> Option<Box<dyn SampleRateWatch>> {
+    let state = state.clone();
+    let armed = armed.clone();
+    let name = device.name.clone();
+    backend.watch_device_sample_rate(
+        device,
+        Box::new(move |rate| {
+            if !armed.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            log::info!("device sample rate changed externally: {rate}Hz on '{name}'");
+            state.set_output_sample_rate(rate.round() as u32);
+        }),
+    )
 }
 
 impl OpenContext {
@@ -7005,7 +7051,14 @@ mod tests {
         starts: Arc<std::sync::atomic::AtomicUsize>,
         /// Opens waiting at the gate now.
         waiting: Arc<std::sync::atomic::AtomicUsize>,
+        /// Each rate watch made: the thread it was made on and its callback.
+        watches: Arc<std::sync::Mutex<Vec<(String, WatchFn)>>>,
     }
+
+    type WatchFn = Arc<dyn Fn(f64) + Send + Sync>;
+
+    struct NoWatch;
+    impl SampleRateWatch for NoWatch {}
 
     impl GatedBackend {
         fn new(held: &[&'static str]) -> Self {
@@ -7016,6 +7069,7 @@ mod tests {
                 prepared: Default::default(),
                 starts: Default::default(),
                 waiting: Default::default(),
+                watches: Default::default(),
             }
         }
 
@@ -7039,6 +7093,7 @@ mod tests {
                 prepared: self.prepared.clone(),
                 starts: self.starts.clone(),
                 waiting: self.waiting.clone(),
+                watches: self.watches.clone(),
             }
         }
 
@@ -7101,6 +7156,18 @@ mod tests {
         ) -> Result<f64, BackendError> {
             self.prepared.lock().unwrap().push(device.name.clone());
             Ok(rate)
+        }
+        fn watch_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            on_change: Box<dyn Fn(f64) + Send + Sync>,
+        ) -> Option<Box<dyn SampleRateWatch>> {
+            let thread = std::thread::current().name().unwrap_or_default().to_owned();
+            self.watches
+                .lock()
+                .unwrap()
+                .push((thread, Arc::from(on_change)));
+            Some(Box::new(NoWatch))
         }
         fn create_engine(
             &self,
@@ -7456,6 +7523,32 @@ mod tests {
         assert!(player.prepared.is_some(), "kept for a play soon after");
         player.process_command(PlayerCommand::RestartOutput);
         assert!(player.prepared.is_none(), "the device may have moved");
+    }
+
+    #[test]
+    fn the_rate_watch_is_made_off_the_player_thread_and_armed_by_its_session() {
+        let backend = GatedBackend::new(&[]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+        let watch = |i: usize| backend.watches.lock().unwrap()[i].clone();
+
+        // Opened for a session stopped meanwhile: its watch says nothing.
+        player.process_command(PlayerCommand::Play(ids[0]));
+        player.process_command(PlayerCommand::CancelOutput);
+        take_opened(&mut player);
+        let (thread, unused) = watch(0);
+        assert_eq!(thread, "koan-output-open");
+        let before = state.output_sample_rate();
+        unused(96_000.0);
+        assert_eq!(state.output_sample_rate(), before, "not armed");
+
+        // Taken by the next play: armed.
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert!(player.session().is_some());
+        assert_eq!(backend.watches.lock().unwrap().len(), 1, "made once");
+        unused(96_000.0);
+        assert_eq!(state.output_sample_rate(), Some(96_000));
+        player.process_command(PlayerCommand::Stop);
     }
 
     #[test]
