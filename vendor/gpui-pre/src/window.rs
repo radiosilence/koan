@@ -1281,6 +1281,10 @@ pub struct Window {
         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    // KOAN: the colour slot table's generation as last presented, and
+    // whether a slot the scene draws with was moving then (#1859).
+    color_slot_generation: Cell<u64>,
+    color_slot_moving: Cell<bool>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1918,7 +1922,10 @@ impl Window {
                     // uniforms read afresh, with no frame drawn (#1641).
                     || handle
                         .update(&mut cx, |_, window, _| {
-                            window.rendered_frame.scene.take_shader_present()
+                            // KOAN: or a colour slot it draws with moved
+                            // (#1859).
+                            let slots = window.take_color_slot_present();
+                            window.rendered_frame.scene.take_shader_present() | slots
                         })
                         .unwrap_or(false)
                 {
@@ -1930,7 +1937,9 @@ impl Window {
                 // KOAN: a live shader keeps the frames coming (#1641).
                 let live = handle
                     .update(&mut cx, |_, window, _| {
-                        let live = window.rendered_frame.scene.has_live_shaders();
+                        let live = window.rendered_frame.scene.has_live_shaders()
+                            // KOAN: so does a moving colour slot (#1859).
+                            || window.color_slot_moving.get();
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
                             || live
@@ -2196,6 +2205,8 @@ impl Window {
             visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
+            color_slot_generation: Cell::new(0), // KOAN: #1859.
+            color_slot_moving: Cell::new(false), // KOAN: #1859.
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -3630,6 +3641,23 @@ impl Window {
         self.invalidator.replace_views(views);
     }
 
+    // KOAN: whether this refresh should present for the colour slots the
+    // scene draws with: one moves, one was written since the last present,
+    // or the motion has just ended and its last value is still to be shown
+    // (#1859).
+    fn take_color_slot_present(&self) -> bool {
+        let scene = &self.rendered_frame.scene;
+        if scene.color_slots.is_empty() {
+            self.color_slot_moving.set(false);
+            return false;
+        }
+        let generation = crate::color_slots_generation();
+        let changed = self.color_slot_generation.replace(generation) != generation;
+        let moving = scene.color_slots_moving(crate::present_now());
+        let landing = self.color_slot_moving.replace(moving) && !moving;
+        changed || moving || landing
+    }
+
     #[profiling::function]
     fn present(&mut self) {
         #[cfg(feature = "profiler")]
@@ -3639,6 +3667,14 @@ impl Window {
         // KOAN: what this present shows of the shaders is taken as shown
         // (#1641).
         self.rendered_frame.scene.take_shader_present();
+        // KOAN: the colour slots as this present shows them (#1859).
+        self.color_slot_generation
+            .set(crate::color_slots_generation());
+        let scene = &self.rendered_frame.scene;
+        let moving = !scene.color_slots.is_empty() && scene.color_slots_moving(crate::present_now());
+        if moving {
+            self.color_slot_moving.set(true);
+        }
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
@@ -4732,8 +4768,39 @@ impl Window {
             program,
             uniforms,
             image: None,
+            group: None,
         };
         self.next_frame.scene.insert_primitive(shader);
+    }
+
+    // KOAN: a layer group (#1859).
+    /// Paints what `paint` paints into a texture of its own, which `program`
+    /// composes over `bounds` at each present, sampling it with
+    /// `koan_sample`: content drawn once, moved, clipped or faded by the
+    /// program's tracks with no frame drawn.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_layer_group(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        program: &'static crate::ShaderProgram,
+        uniforms: Arc<crate::ShaderUniforms>,
+        cx: &mut App,
+        paint: impl FnOnce(&mut Self, &mut App),
+    ) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.scene.push_group();
+        paint(self, cx);
+        let shader = crate::PaintShader {
+            order: 0,
+            bounds: self.snap_bounds(bounds),
+            content_mask: self.snapped_content_mask(),
+            program,
+            uniforms,
+            image: None,
+            group: None,
+        };
+        self.next_frame.scene.pop_group(shader);
     }
 
     // KOAN: shader quads (#1641).
@@ -4769,6 +4836,7 @@ impl Window {
             program,
             uniforms,
             image: Some(tile),
+            group: None,
         };
         self.next_frame.scene.insert_primitive(shader);
         Ok(())

@@ -96,9 +96,19 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-The field at the top of the sidebar searches the library as you type, ⌘K or `/` reaching it from anywhere. Under it, a panel suggests a few tracks, records and artists; the arrows light one and Return goes to it, while Return with none lit, or the sidebar's Results row, opens every result on a page laid out as the shelves are, its headings opening each browser with the query as its search. Escape or the field's clear mark empties it.
+⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches tracks, records and artists as you type, and everything in it is done from the keyboard:
 
-⇧⌘K (Ctrl+Shift+K on Linux), File → Add Music…, opens the picker: tracks, records or artists by name, several picked with a click, then Add (Return), Add & Play (⌘Return) or Replace Queue (⇧⌘Return), which says how much comes off the queue before it does. A double-click plays the one thing at once.
+| Key | Does |
+|---|---|
+| ↑ ↓ | Light a result |
+| Return | Play a track after the end of the queue, or open a record or an artist |
+| ⌘Return | Play next |
+| ⌥Return | Add to the queue |
+| Tab | Tick the lit result; Return, ⌘Return and ⌥Return then act on everything ticked |
+| ⇧Return | Every result, on a page of its own, whose headings open each kind's whole listing |
+| Escape | Empty the query, then close the box |
+
+A click on a result does what Return does, and ⌘-click ticks it.
 
 ## Lyrics, track info and artwork
 

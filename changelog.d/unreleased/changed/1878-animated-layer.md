@@ -1,0 +1,1 @@
+- **Fades, reveals and sliding panels move on the GPU.** An artist's photo or biography arriving, the lyrics panel and the sidebar sliding in and out are drawn once and moved by the GPU, with no frames drawn while they move; the page beside a panel moves once rather than reflowing frame by frame.

@@ -13,6 +13,20 @@ use koan_kit::app::*;
 
 use super::drag::Playable;
 
+/// Moves whenever a favourite is toggled from the app: every page's feed and
+/// the Dock's menu read the favourites again, so a heart and the Dock's
+/// Favourite check agree. A library change moves them as well, through the
+/// library slice.
+#[derive(Default)]
+pub struct FavouritesMoved(u64);
+
+impl Global for FavouritesMoved {}
+
+/// A favourite was toggled and the engine has answered.
+pub fn favourites_moved(cx: &mut App) {
+    cx.default_global::<FavouritesMoved>().0 += 1;
+}
+
 pub struct Feed {
     pub engine: Arc<KoanEngine>,
     /// Moves whenever the library's rows do. Pages showing a listing ask for
@@ -46,7 +60,7 @@ pub struct Feed {
     /// again when it lands.
     favourites_reading: bool,
     favourites_stale: bool,
-    _observe: [Subscription; 5],
+    _observe: [Subscription; 6],
 }
 
 impl Feed {
@@ -78,6 +92,9 @@ impl Feed {
                     .map(|c| (c.signed_in_to.clone(), c.linked, c.server_kind.clone()));
                 feed.connection(reach, cx);
             }),
+            // A favourite toggled anywhere in the app: the Dock's menu, or
+            // another window's page.
+            cx.observe_global::<FavouritesMoved>(|feed, cx| feed.reload_favourites(cx)),
             cx.observe(&mirror.history, |feed, history, cx| {
                 let version = Some(history.read(cx).0);
                 if version != feed.history_version {
@@ -185,6 +202,9 @@ impl Feed {
     /// again after it, as the Mac does.
     pub fn toggle_favourite(&mut self, item: Playable, cx: &mut Context<Self>) {
         let on = self.favourites.flip(item);
+        if on {
+            crate::rainbow::celebrate(cx);
+        }
         cx.notify();
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
@@ -201,7 +221,8 @@ impl Feed {
                 // a sync or another device may have moved others since.
                 if feed.favourites.answered(item, now) {
                     feed.favourites_revision += 1;
-                    feed.reload_favourites(cx);
+                    // Every feed and the Dock read again, this one included.
+                    favourites_moved(cx);
                 }
                 cx.notify();
             })

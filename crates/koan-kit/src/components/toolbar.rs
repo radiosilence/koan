@@ -14,8 +14,6 @@ pub struct ToolbarMetrics;
 
 impl ToolbarMetrics {
     pub const HEIGHT: Pixels = px(TOOLBAR_HEIGHT);
-    /// A toolbar button's cell.
-    pub const BUTTON: Pixels = px(36.);
     /// From the toolbar's edges to its first and last cells.
     pub const INSET: Pixels = px(8.);
     /// Between separate items: sidebar, back and forward; select and lyrics.
@@ -27,6 +25,11 @@ impl ToolbarMetrics {
     pub const SPACER: Pixels = px(16.);
     /// The filter field, from its glyph to the end of its text.
     pub const FIELD: Pixels = px(167.);
+    /// The narrowest the filter field gets in a narrow page column, before
+    /// any of the toolbar's buttons go.
+    pub const FIELD_MIN: Pixels = px(64.);
+    /// The filter field's height to click: a toolbar button's.
+    pub const FIELD_HIT: Pixels = crate::theme::TOOLBAR_BUTTON;
     /// Between the filter field's glyph and its text.
     pub const FIELD_GLYPH_GAP: Pixels = px(10.);
     /// The window's own buttons (the Mac's traffic lights), 14 tall,
@@ -311,17 +314,80 @@ impl ToolbarMenu {
 impl RenderOnce for ToolbarMenu {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let content = self.content;
-        gpui_kit::component::popover::Popover::new(self.id)
-            .appearance(false)
-            .arrow(false)
-            .trigger(self.button)
-            .content(move |_, window, cx| {
-                let state = cx.weak_entity();
-                let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
-                    state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
-                });
-                content(dismiss, window, cx)
+        opens_panel(self.id, self.button, move |dismiss, window, cx| {
+            content(dismiss, window, cx).into_any_element()
+        })
+    }
+}
+
+/// A control that opens a panel under it, made each time it opens: a
+/// toolbar's menu, a filter's choices, the selection's playlists. The
+/// trigger is drawn pressed while the panel shows; the panel's rows call
+/// the `Dismiss` they are given before they act. A press outside closes it.
+pub fn opens_panel<T: gpui_kit::base::Selectable + IntoElement + 'static>(
+    id: impl Into<ElementId>,
+    trigger: T,
+    content: impl Fn(Dismiss, &mut Window, &mut App) -> AnyElement + 'static,
+) -> impl IntoElement {
+    gpui_kit::component::popover::Popover::new(id)
+        .appearance(false)
+        .arrow(false)
+        .trigger(trigger)
+        .content(move |_, window, cx| {
+            let state = cx.weak_entity();
+            let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
+                state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
+            });
+            content(dismiss, window, cx)
+        })
+}
+
+/// A word that opens a panel (`opens_panel`): a filter's value, "add to
+/// playlist". `control`, `muted`, `ink` under the pointer and while open.
+#[derive(IntoElement)]
+pub struct TextTrigger {
+    id: ElementId,
+    label: SharedString,
+    open: bool,
+}
+
+impl TextTrigger {
+    /// `label` is data or the app's words, kept as given.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            open: false,
+        }
+    }
+}
+
+impl gpui_kit::base::Selectable for TextTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.open = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.open
+    }
+}
+
+impl RenderOnce for TextTrigger {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let ink = look.palette.ink.hsla();
+        div()
+            .id(self.id)
+            .cursor_pointer()
+            .text_role(crate::theme::TypeRole::Control, &look)
+            .text_color(if self.open {
+                ink
+            } else {
+                look.palette.muted.hsla()
             })
+            .hover(move |s| s.text_color(ink))
+            .child(self.label)
     }
 }
 

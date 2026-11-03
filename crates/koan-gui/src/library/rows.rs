@@ -10,15 +10,13 @@
 
 use koan_ffi::{Track, TransferState};
 use koan_kit::app::*;
-// text measured or shaped at runtime.
-use koan_kit::raw::font;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
+use super::Lib;
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
+use super::nav::Page;
 use super::selection::Selection;
 use super::tokens::{Paint, Type};
 use crate::components::{
@@ -43,12 +41,29 @@ pub fn art_height(p: &Paint) -> Pixels {
 /// A gathered row's sleeve, in points at 100 % (`RowMetrics::sleeve`).
 pub const SLEEVE: f32 = 32.0;
 
+/// Where a click on a track's row landed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowPart {
+    /// The row itself, which each list answers in its own way.
     Row,
     Artist(i64),
     Album(i64),
     Heart,
+}
+
+impl RowPart {
+    /// What a click on a row's link or heart does, the same in every list:
+    /// the artist's or the record's page, or the track's favourite.
+    pub fn follow(self, track: i64, lib: &Lib, cx: &mut App) {
+        match self {
+            RowPart::Row => {}
+            RowPart::Artist(id) => lib.nav.update(cx, |n, cx| n.open(Page::Artist(id), cx)),
+            RowPart::Album(id) => lib.nav.update(cx, |n, cx| n.open(Page::Album(id), cx)),
+            RowPart::Heart => lib
+                .feed
+                .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
+        }
+    }
 }
 
 pub trait TrackList: actions::Menus {
@@ -149,6 +164,7 @@ pub fn track_row<V: TrackList>(
     };
     let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
         .current(state.current)
+        .picked(state.selected)
         .when(state.current, |n| n.bars(crate::levels::bars(p.accent)))
         .on_play(play);
 
@@ -284,15 +300,7 @@ pub fn track_row<V: TrackList>(
 /// A lead column wide enough for the longest number in a list of `count`,
 /// measured in the face the numbers are drawn in.
 pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
-    let digits = count.max(1).to_string().len().max(2) as f32;
-    let text = window.text_system();
-    let font = text.resolve_font(&font(crate::theme::FONT_FAMILY));
-    let size = p.look.font_size(Type::Meta);
-    let digit = text
-        .advance(font, size, '0')
-        .map(|size| size.width)
-        .unwrap_or(size * 0.6);
-    digit * digits + px(4.0)
+    crate::components::RowMetrics::lead_width(count, &p.look, window)
 }
 
 /// What a click on a row does to a list's selection: picks it alone, ⌘ adds

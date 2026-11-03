@@ -13,8 +13,6 @@ use std::collections::HashSet;
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
-// the colour a row part is drawn in, chosen from the theme by the caller.
-use koan_kit::raw::Hsla;
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -35,7 +33,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, TypeRole};
+use crate::theme::{self, Hsla, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
 
@@ -89,13 +87,13 @@ struct RowRef {
     heading: bool,
 }
 
-/// Rows dragged within the queue. Named by the layout they were dragged from:
-/// a drop after the queue was sent whole again is ignored rather than applied
-/// to rows that have since moved.
+/// Rows dragged within the queue, by the row the drag began on. What moves
+/// is named by queue item as the drag begins (`QueueView::dragging`), so a
+/// queue sent whole while the drag lasts (a download landing, a library
+/// rescan) still takes the drop.
 #[derive(Clone)]
 struct DraggedRows {
     row: usize,
-    whole: u64,
 }
 
 /// What a drag of queue rows shows: the first row's sleeve and how many.
@@ -134,6 +132,8 @@ pub struct QueueView {
     drop_at: Option<usize>,
     /// The row a secondary click landed on, for the list's one context menu.
     menu_row: Option<usize>,
+    /// The queue items a drag of rows carries, named as it began.
+    dragging: Vec<String>,
     /// The navigator's rewinds of the queue already answered.
     rewinds: u32,
     /// Where the rows' links lead.
@@ -213,6 +213,7 @@ impl QueueView {
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
+            dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
             following: false,
@@ -231,6 +232,12 @@ impl QueueView {
         }
         view.lay_out(cx);
         view
+    }
+
+    /// Where row `row` was drawn last frame, in the window; `None` while it
+    /// is off screen. For tools that drive the window headlessly.
+    pub fn row_bounds(&self, row: usize) -> Option<Bounds<Pixels>> {
+        self.list.row_bounds(row)
     }
 
     /// "Group by album": the rows under record headings, or flat.
@@ -502,15 +509,18 @@ impl QueueView {
     /// is the end of the queue. The layout the drag began in must still be
     /// the one on screen: the engine puts items whose target it cannot find
     /// at the end of the queue, so a stale target would move them there.
-    fn drop_rows(&mut self, dragged: &DraggedRows, dest: usize, cx: &mut Context<Self>) {
+    fn drop_rows(&mut self, dest: usize, cx: &mut Context<Self>) {
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
-        if dragged.whole != queue.whole || dragged.row >= queue.rows.len() {
+        // What is still queued of what was picked up.
+        let moving: Vec<String> = std::mem::take(&mut self.dragging)
+            .into_iter()
+            .filter(|id| queue.at.contains_key(id))
+            .collect();
+        if moving.is_empty() {
             return;
         }
-        let moving = self.acting_on(dragged.row, cx);
-        let queue = self.queue.read(cx);
         let Some((target, after)) = rows::drop_target(&queue.rows, dest, &moving, &queue.base)
         else {
             return;
@@ -693,15 +703,27 @@ impl QueueView {
                 (frame, id)
             }
         };
-        let dragged = DraggedRows {
-            row,
-            whole: queue.whole,
-        };
+        let dragged = DraggedRows { row };
         // The insertion line, while a drag in the queue is over this row: above
         // it, or below the last row for the end of the queue.
         let dragging = cx.has_active_drag();
         let line_above = dragging && self.drop_at == Some(row);
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
+        // Whatever is dragged over the row, the insertion line goes above it
+        // in its upper half and below it in its lower.
+        let aim = move |this: &mut Self,
+                        at: Point<Pixels>,
+                        bounds: Bounds<Pixels>,
+                        cx: &mut Context<Self>| {
+            if !bounds.contains(&at) {
+                return;
+            }
+            let at = rows::insertion_point(row, at.y > bounds.center().y);
+            if this.drop_at != Some(at) {
+                this.drop_at = Some(at);
+                cx.notify();
+            }
+        };
         let view = cx.entity();
         let list = self.list.clone();
         row_frame
@@ -719,16 +741,8 @@ impl QueueView {
                 d.border_b(INSERTION).border_color(insertion)
             })
             .on_drag_move::<DraggedRows>(cx.listener(
-                move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<DraggedRows>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_mouse_down(
@@ -741,8 +755,10 @@ impl QueueView {
             }))
             .on_drag(dragged, move |dragged, _, _, cx| {
                 let (label, album) = view.update(cx, |this, cx| {
-                    // A new drag starts from no insertion point.
+                    // A new drag starts from no insertion point, carrying
+                    // the queue items under it.
                     this.drop_at = None;
+                    this.dragging = this.acting_on(dragged.row, cx);
                     let queue = this.queue.read(cx);
                     let album = queue
                         .rows
@@ -754,37 +770,21 @@ impl QueueView {
                 cx.new(|_| DragPreview(label, album))
             })
             .on_drag_move::<PlayableDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
                 this.drop_library(dragged, dest, cx);
             }))
             .on_drag_move::<PlaylistDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
-                    let lower = event.event.position.y > event.bounds.center().y;
-                    let at = rows::insertion_point(row, lower);
-                    if this.drop_at != Some(at) {
-                        this.drop_at = Some(at);
-                        cx.notify();
-                    }
+                move |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    aim(this, e.event.position, e.bounds, cx)
                 },
             ))
             .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
@@ -1312,7 +1312,6 @@ pub(crate) fn track(
 /// The heart, as the Mac's: shown while the track is a favourite or the row
 /// is under the pointer, and toggling it.
 fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
-    let p = look.p;
     let slot = div().flex().justify_center();
     let (Some(track), Some(favourite), Some(feed)) =
         (item.track_id, extras.favourite, extras.feed.clone())
@@ -1715,9 +1714,9 @@ impl Render for QueueView {
                 },
             ))
             // Below the last row: the end of the queue.
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);

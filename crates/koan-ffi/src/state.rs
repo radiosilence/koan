@@ -216,6 +216,10 @@ pub struct EngineState {
     /// Woken on every publish. Carries the clock so a receiver that was busy
     /// still sees it moved.
     tick: tokio::sync::watch::Sender<u64>,
+    /// The playhead as clients last heard it, and a wake when it moves: what
+    /// a `ClockStream` counts whole seconds from.
+    anchor: parking_lot::Mutex<Option<Anchor>>,
+    anchor_moved: tokio::sync::watch::Sender<u64>,
 }
 
 impl EngineState {
@@ -224,6 +228,8 @@ impl EngineState {
             slots: parking_lot::Mutex::new(Slots::default()),
             sending: [const { parking_lot::Mutex::new(()) }; SLOTS],
             tick: tokio::sync::watch::channel(0).0,
+            anchor: parking_lot::Mutex::new(None),
+            anchor_moved: tokio::sync::watch::channel(0).0,
         })
     }
 
@@ -259,9 +265,32 @@ impl EngineState {
         slots.clock += 1;
         let clock = slots.clock;
         slots.seq[i] = clock;
+        if let StateSlice::Playhead {
+            position_ms,
+            playing,
+            ..
+        } = &*slice
+        {
+            *self.anchor.lock() = Some(Anchor {
+                position_ms: *position_ms,
+                playing: *playing,
+                at: Instant::now(),
+            });
+            let _ = self.anchor_moved.send(clock);
+        }
         slots.latest[i] = Some(slice);
         drop(slots);
         let _ = self.tick.send(clock);
+    }
+
+    /// The playhead as clients last heard it.
+    pub fn anchor(&self) -> Option<Anchor> {
+        *self.anchor.lock()
+    }
+
+    /// Woken each time the playhead is anchored afresh.
+    pub fn anchor_moves(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.anchor_moved.subscribe()
     }
 
     /// Everything that moved past `seen`, and advance it.

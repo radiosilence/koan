@@ -22,12 +22,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use koan_ffi::KoanEngine;
+use koan_kit::app::platform::{KeyBindingContextPredicate, OperatingSystem};
 use koan_kit::app::{Action, App, KeyBinding, actions};
 use koan_kit::components::list_actions as list;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::KeyBindingContextPredicate;
-// the platform's menu bar and Dock menu, which koan-kit does not draw.
-use koan_kit::raw::OperatingSystem;
 
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
@@ -176,7 +173,12 @@ macro_rules! shortcut {
 /// as well as ⌘+, as in every app with the item; the menu shows the first.
 pub const MENU: &[Shortcut] = &[
     shortcut!("Search…", ["secondary-k"], Navigation, Search),
-    shortcut!("Add Music…", ["secondary-shift-k"], Navigation, AddMusic),
+    shortcut!(
+        "Find and Play…",
+        ["secondary-shift-k"],
+        Navigation,
+        AddMusic
+    ),
     shortcut!("Queue", ["secondary-1"], Navigation, ShowQueue),
     shortcut!("Albums", ["secondary-2"], Navigation, ShowAlbums),
     shortcut!("Artists", ["secondary-3"], Navigation, ShowArtists),
@@ -247,7 +249,7 @@ pub const HOTKEYS: &[Shortcut] = &[
         Playback,
         FavouriteCurrentTrack
     ),
-    shortcut!("Add music", ["p"], Navigation, AddMusic),
+    shortcut!("Find and play", ["p"], Navigation, AddMusic),
     shortcut!("Search library", ["/"], Navigation, Search),
     shortcut!("Albums", ["l", "a"], Navigation, ShowAlbums),
     shortcut!("Artists", ["r"], Navigation, ShowArtists),
@@ -614,13 +616,10 @@ mod tests {
     /// The binding a keystroke dispatches with focus at `stack`, innermost
     /// last.
     fn winner(bindings: Vec<KeyBinding>, key: &'static str, stack: &[&str]) -> String {
-        // the keymap, read to check the bindings.
-        let keymap = koan_kit::raw::Keymap::new(bindings);
-        // the keymap, read to check the bindings.
-        let stack: Vec<koan_kit::raw::KeyContext> = stack
+        let keymap = koan_kit::app::platform::Keymap::new(bindings);
+        let stack: Vec<koan_kit::app::KeyContext> = stack
             .iter()
-            // the keymap, read to check the bindings.
-            .map(|c| koan_kit::raw::KeyContext::parse(c).unwrap())
+            .map(|c| koan_kit::app::KeyContext::parse(c).unwrap())
             .collect();
         let (found, _) =
             keymap.bindings_for_input(&[koan_kit::app::Keystroke::parse(key).unwrap()], &stack);

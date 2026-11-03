@@ -189,6 +189,265 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git b/src/color_slots.rs b/src/color_slots.rs
+new file mode 100644
+index 0000000..df9fef2
+--- /dev/null
++++ b/src/color_slots.rs
+@@ -0,0 +1,253 @@
++// KOAN: colours that move on the GPU (#1859).
++//
++// A colour slot is one entry of an app-wide table of moving colours: a
++// colour at each end and a track from 0 to 1 between them. Any quad, shadow,
++// underline or monochrome sprite may name a slot instead of a fixed colour,
++// by an `Hsla` whose hue is 2 or more (`ColorSlot::hsla`): the stock shaders
++// read the table at present time and mix the two ends by the track, so a
++// colour fading moves on a present with no frame drawn. The alpha of that
++// `Hsla` still scales the colour's, so element opacity composes with it.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::Instant;
++
++use parking_lot::Mutex;
++
++use crate::{Hsla, Rgba, Track, TrackRepeat, present_now};
++
++/// How many slots the table holds: as many as fit, with the header, in the
++/// 16 KiB every renderer guarantees a uniform buffer.
++pub const COLOR_SLOTS: usize = 255;
++/// Floats per slot: the `from` colour, the `to` colour, then the track.
++pub const COLOR_SLOT_FLOATS: usize = 16;
++/// Floats before the slots in a frame's table: the time, then padding.
++pub const COLOR_SLOTS_HEADER: usize = 4;
++
++/// The hue at which slot hues start.
++const SLOT_HUE: f32 = 2.0;
++
++struct Table {
++    data: Box<[[f32; COLOR_SLOT_FLOATS]; COLOR_SLOTS]>,
++    used: Box<[bool; COLOR_SLOTS]>,
++    /// When the slot's track stops moving, in table seconds; `f32::INFINITY`
++    /// for one that repeats, and negative for one at rest.
++    ends: Box<[f32; COLOR_SLOTS]>,
++    origin: Instant,
++}
++
++static TABLE: Mutex<Option<Table>> = Mutex::new(None);
++/// Moves whenever a slot is written, so a renderer uploads the table only
++/// when it changed and a window presents once more for the change.
++static GENERATION: AtomicU64 = AtomicU64::new(1);
++
++fn with_table<R>(f: impl FnOnce(&mut Table) -> R) -> R {
++    let mut table = TABLE.lock();
++    let table = table.get_or_insert_with(|| Table {
++        data: Box::new([[0.0; COLOR_SLOT_FLOATS]; COLOR_SLOTS]),
++        used: Box::new([false; COLOR_SLOTS]),
++        ends: Box::new([-1.0; COLOR_SLOTS]),
++        origin: Instant::now(),
++    });
++    f(table)
++}
++
++fn seconds(table: &Table, at: Instant) -> f32 {
++    match at.checked_duration_since(table.origin) {
++        Some(after) => after.as_secs_f32(),
++        None => -table.origin.duration_since(at).as_secs_f32(),
++    }
++}
++
++/// One slot of the table, held while something draws with it, and freed
++/// when dropped.
++#[derive(Debug)]
++pub struct ColorSlot(u16);
++
++impl ColorSlot {
++    /// A free slot standing at `color`, or `None` when every slot is taken.
++    pub fn claim(color: Rgba) -> Option<Self> {
++        let index = with_table(|table| {
++            let Some(index) = table.used.iter().position(|used| !used) else {
++                log::error!("every colour slot is taken: a colour drawn now does not move");
++                return None;
++            };
++            table.used[index] = true;
++            table.ends[index] = -1.0;
++            let rgba = [color.r, color.g, color.b, color.a];
++            let track = Track::hold(1.0).encode();
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&rgba);
++            slot[4..8].copy_from_slice(&rgba);
++            slot[8..16].copy_from_slice(&track);
++            Some(index)
++        })?;
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++        Some(Self(index as u16))
++    }
++
++    /// The colour to draw with: this slot, its alpha scaled by `alpha`.
++    pub fn hsla(&self, alpha: f32) -> Hsla {
++        Hsla {
++            h: SLOT_HUE + self.0 as f32,
++            s: 0.0,
++            l: 0.0,
++            a: alpha,
++        }
++    }
++
++    /// The colour the slot shows at `at`.
++    pub fn at(&self, at: Instant) -> Rgba {
++        with_table(|table| {
++            let slot = &table.data[self.0 as usize];
++            let t = Track::decode(&slot[8..16]).at(seconds(table, at));
++            let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
++            Rgba {
++                r: mix(0),
++                g: mix(1),
++                b: mix(2),
++                a: mix(3),
++            }
++        })
++    }
++
++    /// Moves from the colour shown now to `to`, along `track`'s curve over
++    /// its length, starting now; `track`'s ends and start are replaced.
++    pub fn to(&self, to: Rgba, track: Track) {
++        let now = present_now();
++        let from = self.at(now);
++        with_table(|table| {
++            rebase(table, now);
++            let start = seconds(table, now);
++            let track = Track {
++                from: 0.0,
++                to: 1.0,
++                start,
++                ..track
++            };
++            let index = self.0 as usize;
++            table.ends[index] = match track.repeat {
++                _ if track.length <= 0.0 => -1.0,
++                TrackRepeat::Once => start + track.length,
++                _ => f32::INFINITY,
++            };
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&[from.r, from.g, from.b, from.a]);
++            slot[4..8].copy_from_slice(&[to.r, to.g, to.b, to.a]);
++            slot[8..16].copy_from_slice(&track.encode());
++        });
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++    }
++
++    /// Stands at `color`.
++    pub fn hold(&self, color: Rgba) {
++        self.to(color, Track::hold(1.0));
++    }
++
++    /// Whether the slot moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        with_table(|table| table.ends[self.0 as usize] > seconds(table, at))
++    }
++}
++
++impl Drop for ColorSlot {
++    fn drop(&mut self) {
++        with_table(|table| {
++            table.used[self.0 as usize] = false;
++            table.ends[self.0 as usize] = -1.0;
++        });
++    }
++}
++
++/// Track starts are seconds from the table's origin, in f32: an hour on, the
++/// origin moves to now and every slot with it, so the table keeps its
++/// precision for a koan open for days.
++fn rebase(table: &mut Table, now: Instant) {
++    let shift = seconds(table, now);
++    if shift < 3600.0 {
++        return;
++    }
++    table.origin = now;
++    for (slot, end) in table.data.iter_mut().zip(table.ends.iter_mut()) {
++        slot[10] -= shift;
++        if end.is_finite() && *end >= 0.0 {
++            *end -= shift;
++        }
++    }
++}
++
++/// The slot a colour names, if it names one.
++pub fn color_slot_of(color: &Hsla) -> Option<usize> {
++    (color.h >= SLOT_HUE).then(|| ((color.h - SLOT_HUE) as usize).min(COLOR_SLOTS - 1))
++}
++
++/// Bytes of a frame's table.
++pub const COLOR_SLOTS_BYTES: usize = (COLOR_SLOTS_HEADER + COLOR_SLOTS * COLOR_SLOT_FLOATS) * 4;
++
++/// The slots a scene draws with, as a bit set.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct ColorSlotSet(Box<[u64; COLOR_SLOTS.div_ceil(64)]>);
++
++impl ColorSlotSet {
++    /// Notes the slot `color` names, if any.
++    pub fn note(&mut self, color: &Hsla) {
++        if let Some(index) = color_slot_of(color) {
++            self.0[index / 64] |= 1 << (index % 64);
++        }
++    }
++
++    /// Whether the set names no slot.
++    pub fn is_empty(&self) -> bool {
++        self.0.iter().all(|word| *word == 0)
++    }
++
++    /// Names no slot.
++    pub fn clear(&mut self) {
++        *self.0 = [0; COLOR_SLOTS.div_ceil(64)];
++    }
++
++    /// Adds every slot `other` names.
++    pub fn extend(&mut self, other: &Self) {
++        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
++            *a |= *b;
++        }
++    }
++
++    /// Whether any slot in the set moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        if self.is_empty() {
++            return false;
++        }
++        with_table(|table| {
++            let now = seconds(table, at);
++            self.0.iter().enumerate().any(|(w, word)| {
++                let mut bits = *word;
++                while bits != 0 {
++                    let index = w * 64 + bits.trailing_zeros() as usize;
++                    if table.ends[index] > now {
++                        return true;
++                    }
++                    bits &= bits - 1;
++                }
++                false
++            })
++        })
++    }
++}
++
++/// The table as the stock shaders read it at `at`: the time, padding, then
++/// every slot. Written into `out`, which is cleared first.
++pub fn color_slots_frame(at: Instant, out: &mut Vec<f32>) {
++    out.clear();
++    with_table(|table| {
++        out.push(seconds(table, at));
++        out.extend([0.0; COLOR_SLOTS_HEADER - 1]);
++        for slot in table.data.iter() {
++            out.extend_from_slice(slot);
++        }
++    });
++}
++
++/// Moves whenever any slot is written.
++pub fn color_slots_generation() -> u64 {
++    GENERATION.load(Ordering::Relaxed)
++}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
 index 11f0b72..2c5b9ec 100644
 --- a/src/elements/div.rs
@@ -241,30 +500,32 @@ index 11f0b72..2c5b9ec 100644
              node.set_numeric_value(value);
          }
 diff --git a/src/gpui.rs b/src/gpui.rs
-index 2328e95..5b5e7bc 100644
+index 2328e95..f00ef65 100644
 --- a/src/gpui.rs
 +++ b/src/gpui.rs
-@@ -52,6 +52,7 @@ pub mod queue;
+@@ -52,6 +52,8 @@ pub mod queue;
  #[cfg(any(test, feature = "bench-support"))]
  pub mod randomized_element_tree;
  mod scene;
 +mod shader; // KOAN: #1641.
++mod color_slots; // KOAN: #1859.
  #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
  mod seeds;
  mod shared_uri;
-@@ -200,6 +201,7 @@ pub use profiler::*;
+@@ -200,6 +202,8 @@ pub use profiler::*;
  pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
  pub use refineable::*;
  pub use scene::*;
 +pub use shader::*; // KOAN: #1641.
++pub use color_slots::*; // KOAN: #1859.
  pub use shared_uri::*;
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..40e041a 100644
+index 6cb3387..57c1f12 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,29 @@ pub struct Scene {
+@@ -50,6 +50,41 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -277,6 +538,18 @@ index 6cb3387..40e041a 100644
 +    // re-present composes them rather than drawing the whole scene; `None`
 +    // where the shaders cannot be drawn apart from the rest (#1641).
 +    pub shader_layers: Option<Box<ShaderLayers>>,
++    // KOAN: the colour slots this scene draws with, so a window presents
++    // while one of them moves and a renderer redraws the layers holding it
++    // (#1859).
++    pub color_slots: crate::ColorSlotSet,
++    // KOAN: what was painted inside each layer group, as a scene of its own
++    // that a renderer draws into a texture for its shader to compose (#1859).
++    pub layer_groups: Vec<Scene>,
++    group_stack: Vec<usize>,
++    /// Shaders painted inside each open group, held to be drawn after it at
++    /// their own place: a group is drawn once per frame, and a shader in it
++    /// would stand still in its texture.
++    group_shaders: Vec<Vec<Primitive>>,
 +}
 +
 +/// A scene split where its shaders are drawn (#1641).
@@ -294,11 +567,46 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +89,22 @@ impl Scene {
+@@ -66,6 +101,57 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
 +        self.shaders.clear(); // KOAN: shader quads (#1641).
++        self.layer_groups.clear(); // KOAN: #1859.
++        self.group_stack.clear();
++        self.group_shaders.clear();
++        self.color_slots.clear(); // KOAN: #1859.
++    }
++
++    // KOAN: whether a colour slot this scene draws with moves at `at`
++    // (#1859).
++    pub fn color_slots_moving(&self, at: std::time::Instant) -> bool {
++        self.color_slots.moving(at)
++    }
++
++    // KOAN: the colour slots the primitives name (#1859).
++    fn collect_color_slots(&self) -> crate::ColorSlotSet {
++        let mut set = crate::ColorSlotSet::default();
++        for quad in &self.quads {
++            set.note(&quad.border_color);
++            set.note(&quad.background.solid);
++            for stop in &quad.background.colors {
++                set.note(&stop.color);
++            }
++        }
++        for shadow in &self.shadows {
++            set.note(&shadow.color);
++        }
++        for underline in &self.underlines {
++            set.note(&underline.color);
++        }
++        for sprite in &self.monochrome_sprites {
++            set.note(&sprite.color);
++        }
++        for sprite in &self.subpixel_sprites {
++            set.note(&sprite.color);
++        }
++        set
 +    }
 +
 +    // KOAN: whether a shader on screen asks for the window to present every
@@ -317,7 +625,28 @@ index 6cb3387..40e041a 100644
      }
  
      pub fn len(&self) -> usize {
-@@ -133,6 +172,11 @@ impl Scene {
+@@ -86,6 +172,20 @@ impl Scene {
+ 
+     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+         let mut primitive = primitive.into();
++        // KOAN: painted inside a layer group: into its scene, recorded here
++        // so a cached view replays it (#1859).
++        if let Some(&group) = self.group_stack.last() {
++            if matches!(primitive, Primitive::Shader(_)) {
++                if let Some(held) = self.group_shaders.last_mut() {
++                    held.push(primitive.clone());
++                }
++            } else {
++                self.layer_groups[group].insert_primitive(primitive.clone());
++            }
++            self.paint_operations
++                .push(PaintOperation::Primitive(primitive));
++            return;
++        }
+         let clipped_bounds = primitive
+             .bounds()
+             .intersect(&primitive.content_mask().bounds);
+@@ -133,17 +233,58 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -329,7 +658,54 @@ index 6cb3387..40e041a 100644
          }
          self.paint_operations
              .push(PaintOperation::Primitive(primitive));
-@@ -160,6 +204,171 @@ impl Scene {
+     }
+ 
++    // KOAN: opens a layer group: what is painted until `pop_group` is drawn
++    // into a texture of its own (#1859).
++    pub fn push_group(&mut self) -> usize {
++        let group = self.layer_groups.len();
++        self.layer_groups.push(Scene::default());
++        self.group_stack.push(group);
++        self.group_shaders.push(Vec::new());
++        self.paint_operations.push(PaintOperation::StartGroup);
++        group
++    }
++
++    // KOAN: closes the open group, composed by `shader` sampling its texture
++    // (#1859).
++    pub fn pop_group(&mut self, mut shader: crate::PaintShader) {
++        let Some(group) = self.group_stack.pop() else {
++            return;
++        };
++        let held = self.group_shaders.pop().unwrap_or_default();
++        shader.group = Some(group);
++        self.paint_operations
++            .push(PaintOperation::EndGroup(shader.clone()));
++        // Into the enclosing group's scene, or this one, then the shaders
++        // painted inside it over it. Their operations are already recorded
++        // (the EndGroup's and each where it was painted): not twice.
++        let ops = self.paint_operations.len();
++        self.insert_primitive(shader);
++        for primitive in held {
++            self.insert_primitive(primitive);
++        }
++        self.paint_operations.truncate(ops);
++    }
++
+     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+         for operation in &prev_scene.paint_operations[range] {
+             match operation {
+                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                 PaintOperation::EndLayer => self.pop_layer(),
++                PaintOperation::StartGroup => {
++                    self.push_group();
++                }
++                PaintOperation::EndGroup(shader) => self.pop_group(shader.clone()),
+             }
+         }
+     }
+@@ -160,6 +301,180 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -345,6 +721,12 @@ index 6cb3387..40e041a 100644
 +        // KOAN: (#1641).
 +        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 +        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
++        // KOAN: each group drawn whole into its texture (#1859).
++        for group in &mut self.layer_groups {
++            group.finish();
++            group.shader_layers = None;
++        }
 +        self.shader_layers = self.plan_shader_layers().map(Box::new);
 +    }
 +
@@ -497,11 +879,14 @@ index 6cb3387..40e041a 100644
 +            path.id = PathId(paths.len());
 +            paths.push(path);
 +        }
++        for layer in &mut layers {
++            layer.color_slots = layer.collect_color_slots(); // KOAN: #1859.
++        }
 +        Some(ShaderLayers { layers, groups })
      }
  
      #[cfg_attr(
-@@ -187,6 +396,8 @@ impl Scene {
+@@ -187,6 +502,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -510,7 +895,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -209,6 +420,7 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +526,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -518,7 +903,17 @@ index 6cb3387..40e041a 100644
  }
  
  pub(crate) enum PaintOperation {
-@@ -228,6 +440,7 @@ pub enum Primitive {
+     Primitive(Primitive),
+     StartLayer(Bounds<ScaledPixels>),
+     EndLayer,
++    // KOAN: a layer group's start, and its end with the shader that
++    // composes it (#1859).
++    StartGroup,
++    EndGroup(crate::PaintShader),
+ }
+ 
+ #[derive(Clone)]
+@@ -228,6 +550,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -526,7 +921,7 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +455,7 @@ impl Primitive {
+@@ -242,6 +565,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -534,7 +929,7 @@ index 6cb3387..40e041a 100644
          }
      }
  
-@@ -255,6 +469,7 @@ impl Primitive {
+@@ -255,6 +579,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -542,7 +937,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -283,6 +498,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +608,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -552,7 +947,7 @@ index 6cb3387..40e041a 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +534,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +644,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -564,15 +959,18 @@ index 6cb3387..40e041a 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +684,33 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +794,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
 +            // KOAN: shader quads (#1641): one batch per run of one program.
 +            PrimitiveKind::Shader => {
 +                let first = self.shaders_iter.peek().unwrap();
-+                let (program, texture) =
-+                    (first.program, first.image.as_ref().map(|t| t.texture_id));
++                let (program, texture, group) = (
++                    first.program,
++                    first.image.as_ref().map(|t| t.texture_id),
++                    first.group,
++                );
 +                let shaders_start = self.shaders_start;
 +                let mut shaders_end = shaders_start + 1;
 +                self.shaders_iter.next();
@@ -583,6 +981,9 @@ index 6cb3387..40e041a 100644
 +                            && std::ptr::eq(shader.program, program)
 +                            && shader.image.as_ref().map(|t| t.texture_id)
 +                                == texture
++                            // KOAN: each group's texture its own (#1859).
++                            && shader.group == group
++                            && group.is_none()
 +                    })
 +                    .is_some()
 +                {
@@ -592,13 +993,14 @@ index 6cb3387..40e041a 100644
 +                Some(PrimitiveBatch::Shaders {
 +                    program,
 +                    texture,
++                    group,
 +                    range: shaders_start..shaders_end,
 +                })
 +            }
          }
      }
  }
-@@ -493,6 +743,12 @@ pub enum PrimitiveBatch {
+@@ -493,6 +860,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -606,12 +1008,14 @@ index 6cb3387..40e041a 100644
 +    Shaders {
 +        program: &'static crate::ShaderProgram,
 +        texture: Option<AtlasTextureId>,
++        // KOAN: the layer group it composes (#1859).
++        group: Option<usize>,
 +        range: Range<usize>,
 +    },
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +781,10 @@ impl PrimitiveBatch {
+@@ -525,6 +900,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -624,10 +1028,10 @@ index 6cb3387..40e041a 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..c799f78
+index 0000000..4fcacc5
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,640 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -644,8 +1048,289 @@ index 0000000..c799f78
 +
 +use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
 +
-+/// How many floats a shader's uniform block holds.
-+pub const SHADER_UNIFORMS: usize = 16;
++/// How many plain floats a shader's uniform block holds, written by the app
++/// when they change: colours, sizes, flags.
++pub const SHADER_PLAIN: usize = 16;
++/// How many tracks follow them: values the GPU moves itself.
++pub const SHADER_TRACKS: usize = 8;
++/// The floats one track takes: `from, to, start, length` and
++/// `kind + 4 * repeat, a, b, c`.
++pub const TRACK_FLOATS: usize = 8;
++/// How many floats a shader's uniform block holds: the plain values, then
++/// the tracks (#1859).
++pub const SHADER_UNIFORMS: usize = SHADER_PLAIN + SHADER_TRACKS * TRACK_FLOATS;
++
++// KOAN: tracks (#1859). A track is one segment of a moving value, evaluated
++// by the program at present time through the prelude's `koan_track`, so the
++// CPU writes it when the value's target changes and never per frame. The
++// same evaluation is here, for the app to read where a track stands (a
++// retarget starts from there) and for the renderer's liveness.
++
++/// How a track moves between its ends.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackCurve {
++    Linear,
++    /// A CSS cubic Bézier timing function, `cubic-bezier(x1, y1, x2, y2)`.
++    Bezier(f32, f32, f32, f32),
++    /// A damped spring of unit mass, set off with `velocity` (units of the
++    /// value per second). Its `length` is how long it takes to settle.
++    Spring {
++        stiffness: f32,
++        damping: f32,
++        velocity: f32,
++    },
++}
++
++/// What a track does at its end.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackRepeat {
++    /// Holds `to`.
++    Once,
++    /// Starts again from `from`.
++    Loop,
++    /// Goes back to `from`, and on again: a breath.
++    Alternate,
++}
++
++/// One segment of a value the GPU moves: from `from` to `to` over `length`
++/// seconds from `start`, seconds of the shader's time, along `curve`.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Track {
++    pub from: f32,
++    pub to: f32,
++    pub start: f32,
++    pub length: f32,
++    pub curve: TrackCurve,
++    pub repeat: TrackRepeat,
++}
++
++impl Track {
++    /// Standing at `value`.
++    pub fn hold(value: f32) -> Self {
++        Self {
++            from: value,
++            to: value,
++            start: 0.0,
++            length: 0.0,
++            curve: TrackCurve::Linear,
++            repeat: TrackRepeat::Once,
++        }
++    }
++
++    /// Where it stands at `time`, seconds of the shader's time: what the
++    /// prelude's `koan_track` draws.
++    pub fn at(&self, time: f32) -> f32 {
++        if self.length <= 0.0 {
++            return self.to;
++        }
++        let elapsed = (time - self.start).max(0.0);
++        if let TrackCurve::Spring {
++            stiffness,
++            damping,
++            velocity,
++        } = self.curve
++        {
++            if elapsed >= self.length {
++                return self.to;
++            }
++            return self.to + spring(self.from - self.to, velocity, stiffness, damping, elapsed);
++        }
++        let mut phase = elapsed / self.length;
++        match self.repeat {
++            TrackRepeat::Once => phase = phase.min(1.0),
++            TrackRepeat::Loop => phase = phase.fract(),
++            TrackRepeat::Alternate => {
++                let p = phase.rem_euclid(2.0);
++                phase = if p > 1.0 { 2.0 - p } else { p };
++            }
++        }
++        let eased = match self.curve {
++            TrackCurve::Linear => phase,
++            TrackCurve::Bezier(x1, y1, x2, y2) => bezier(x1, y1, x2, y2, phase),
++            TrackCurve::Spring { .. } => phase,
++        };
++        self.from + (self.to - self.from) * eased
++    }
++
++    /// When it stops moving, in seconds of the shader's time; `None` for one
++    /// that repeats.
++    pub fn end(&self) -> Option<f32> {
++        match self.repeat {
++            TrackRepeat::Once => Some(self.start + self.length.max(0.0)),
++            _ if self.length <= 0.0 => Some(self.start),
++            _ => None,
++        }
++    }
++
++    pub(crate) fn encode(&self) -> [f32; TRACK_FLOATS] {
++        let repeat = match self.repeat {
++            TrackRepeat::Once => 0.0,
++            TrackRepeat::Loop => 1.0,
++            TrackRepeat::Alternate => 2.0,
++        };
++        let (kind, a, b, c) = match self.curve {
++            TrackCurve::Linear => (0.0, 0.0, 0.0, 0.0),
++            TrackCurve::Bezier(x1, y1, x2, y2) => (1.0, pack_halves(x1, y1), pack_halves(x2, y2), 0.0),
++            TrackCurve::Spring {
++                stiffness,
++                damping,
++                velocity,
++            } => (2.0, stiffness, damping, velocity),
++        };
++        [
++            self.from,
++            self.to,
++            self.start,
++            self.length,
++            kind + 4.0 * repeat,
++            a,
++            b,
++            c,
++        ]
++    }
++
++    pub(crate) fn decode(f: &[f32]) -> Self {
++        let code = f[4] as u32;
++        let repeat = match code / 4 {
++            1 => TrackRepeat::Loop,
++            2 => TrackRepeat::Alternate,
++            _ => TrackRepeat::Once,
++        };
++        let curve = match code % 4 {
++            1 => {
++                let (x1, y1) = unpack_halves(f[5]);
++                let (x2, y2) = unpack_halves(f[6]);
++                TrackCurve::Bezier(x1, y1, x2, y2)
++            }
++            2 => TrackCurve::Spring {
++                stiffness: f[5],
++                damping: f[6],
++                velocity: f[7],
++            },
++            _ => TrackCurve::Linear,
++        };
++        Self {
++            from: f[0],
++            to: f[1],
++            start: f[2],
++            length: f[3],
++            curve,
++            repeat,
++        }
++    }
++}
++
++/// How long a spring takes to come within a thousandth of the distance it
++/// set off from (or of a ten-thousandth of a unit, for one set off from its
++/// end): the first moment a bound on how far it can still be falls under
++/// that, for each regime's own motion.
++pub fn spring_length(distance: f32, velocity: f32, stiffness: f32, damping: f32) -> f32 {
++    let (x0, v0) = (distance as f64, velocity as f64);
++    let omega = (stiffness.max(1e-3) as f64).sqrt();
++    let zeta = damping as f64 / (2.0 * omega);
++    let epsilon = (x0.abs() * 1e-3).max(1e-4);
++    // How far from its end it can be at `t`, at most.
++    let bound = |t: f64| -> f64 {
++        if zeta < 1.0 {
++            let wd = omega * (1.0 - zeta * zeta).sqrt();
++            let reach = (x0 * x0 + ((v0 + zeta * omega * x0) / wd).powi(2)).sqrt();
++            reach * (-zeta * omega * t).exp()
++        } else if zeta > 1.0 + 1e-4 {
++            let root = (zeta * zeta - 1.0).sqrt();
++            let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
++            let c1 = (v0 - r2 * x0) / (r1 - r2);
++            c1.abs() * (r1 * t).exp() + (x0 - c1).abs() * (r2 * t).exp()
++        } else {
++            (x0.abs() + (v0 + omega * x0).abs() * t) * (-omega * t).exp()
++        }
++    };
++    let step = 1.0 / 480.0;
++    let mut t = 0.0;
++    while t < 10.0 && bound(t) > epsilon {
++        t += step;
++    }
++    t as f32
++}
++
++/// The displacement of a unit-mass spring `t` seconds after it set off from
++/// `x0` with velocity `v0`.
++fn spring(x0: f32, v0: f32, stiffness: f32, damping: f32, t: f32) -> f32 {
++    let omega = stiffness.max(1e-3).sqrt();
++    let zeta = damping / (2.0 * omega);
++    if zeta < 1.0 {
++        let wd = omega * (1.0 - zeta * zeta).sqrt();
++        let envelope = (-zeta * omega * t).exp();
++        envelope * (x0 * (wd * t).cos() + (v0 + zeta * omega * x0) / wd * (wd * t).sin())
++    } else if zeta > 1.0 + 1e-4 {
++        let root = (zeta * zeta - 1.0).sqrt();
++        let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
++        let c1 = (v0 - r2 * x0) / (r1 - r2);
++        c1 * (r1 * t).exp() + (x0 - c1) * (r2 * t).exp()
++    } else {
++        (x0 + (v0 + omega * x0) * t) * (-omega * t).exp()
++    }
++}
++
++/// A CSS cubic Bézier timing function: the curve's y where its x is `t`, by
++/// Newton's method from `t`, as the prelude's `koan_bezier` finds it.
++fn bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
++    if t <= 0.0 || t >= 1.0 {
++        return t.clamp(0.0, 1.0);
++    }
++    let curve = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
++    };
++    let slope = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * a + 6.0 * u * s * (b - a) + 3.0 * s * s * (1.0 - b)
++    };
++    let mut s = t;
++    for _ in 0..6 {
++        let d = slope(x1, x2, s);
++        if d.abs() < 1e-5 {
++            break;
++        }
++        s = (s - (curve(x1, x2, s) - t) / d).clamp(0.0, 1.0);
++    }
++    curve(y1, y2, s)
++}
++
++/// Two numbers as half floats in one float's bits: a Bézier's control point.
++fn pack_halves(a: f32, b: f32) -> f32 {
++    f32::from_bits(to_half(a) as u32 | (to_half(b) as u32) << 16)
++}
++
++fn unpack_halves(v: f32) -> (f32, f32) {
++    let bits = v.to_bits();
++    (from_half(bits as u16), from_half((bits >> 16) as u16))
++}
++
++fn to_half(v: f32) -> u16 {
++    let bits = v.to_bits();
++    let sign = ((bits >> 16) & 0x8000) as u16;
++    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
++    let mantissa = bits & 0x7f_ffff;
++    if exponent <= 0 {
++        return sign;
++    }
++    if exponent >= 31 {
++        return sign | 0x7c00;
++    }
++    // Rounded to the nearest half.
++    let rounded = (exponent as u32) << 10 | (mantissa + 0x1000) >> 13;
++    sign | rounded.min(0x7bff) as u16
++}
++
++fn from_half(h: u16) -> f32 {
++    let sign = ((h & 0x8000) as u32) << 16;
++    let exponent = ((h >> 10) & 0x1f) as u32;
++    let mantissa = (h & 0x3ff) as u32;
++    if exponent == 0 {
++        return f32::from_bits(sign) + (mantissa as f32) * 2f32.powi(-24) * if sign != 0 { -1.0 } else { 1.0 };
++    }
++    f32::from_bits(sign | (exponent + 127 - 15) << 23 | mantissa << 13)
++}
 +
 +/// A fragment program, written once for each renderer.
 +///
@@ -656,7 +1341,7 @@ index 0000000..c799f78
 +///   where `koan_sample(image, tile, uv)` reads the shader's image
 +///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 +///   kept to its edge
-+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
++/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32>`,
 +///   where `koan_sample(tile, uv)` reads the image the same way
 +///
 +/// `position` is the pixel's centre within the quad and `size` the quad's
@@ -685,6 +1370,31 @@ index 0000000..c799f78
 +}
 +
 +
++// KOAN: the present clock (#1859).
++static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
++
++/// The moment the frame being made now will reach the screen: what a
++/// shader's `time` is reckoned at, and what a retarget samples a track at,
++/// so motion neither jitters with encode latency nor jumps when retargeted.
++///
++/// Monotonic: displays at different refresh rates report different leads,
++/// and a frame's time never steps back when one link's report follows
++/// another's.
++pub fn present_now() -> Instant {
++    static LATEST: AtomicI64 = AtomicI64::new(i64::MIN);
++    let lead = PRESENT_LEAD.load(Ordering::Relaxed).max(0) as u64;
++    let at = Instant::now() + std::time::Duration::from_nanos(lead);
++    let nanos = since_epoch(at);
++    let latest = LATEST.fetch_max(nanos, Ordering::Relaxed).max(nanos);
++    shader_epoch() + std::time::Duration::from_nanos(latest.max(0) as u64)
++}
++
++/// How far ahead of now a frame encoded now is shown, as the platform's
++/// display link reports it.
++pub fn set_present_lead(lead: std::time::Duration) {
++    PRESENT_LEAD.store(lead.as_nanos().min(i64::MAX as u128) as i64, Ordering::Relaxed);
++}
++
 +/// Signed nanoseconds from [`shader_epoch`] to `at`.
 +fn since_epoch(at: Instant) -> i64 {
 +    let epoch = shader_epoch();
@@ -703,7 +1413,7 @@ index 0000000..c799f78
 +/// While any shader on screen is `live` the window keeps its refreshes
 +/// coming; otherwise it parks, and a change is seen at the next refresh,
 +/// which `Window::request_present` asks for.
-+#[derive(Debug, Default)]
++#[derive(Debug)]
 +pub struct ShaderUniforms {
 +    values: [AtomicU32; SHADER_UNIFORMS],
 +    live: AtomicBool,
@@ -720,6 +1430,30 @@ index 0000000..c799f78
 +    /// A lapse not yet presented: the present that lands a transition at
 +    /// its end, however early the last refresh before it fell.
 +    landing: AtomicBool,
++    // KOAN: #1859.
++    /// Nanoseconds from [`shader_epoch`] until which a track moves; 0 for
++    /// none, `u64::MAX` for one that repeats.
++    moving_until: AtomicU64,
++    /// The present that lands the last track at its end.
++    track_landing: AtomicBool,
++}
++
++// KOAN: written out, since an array of eighty has no derived default
++// (#1859).
++impl Default for ShaderUniforms {
++    fn default() -> Self {
++        Self {
++            values: std::array::from_fn(|_| AtomicU32::new(0)),
++            live: AtomicBool::new(false),
++            continuous: AtomicBool::new(false),
++            changed: AtomicBool::new(false),
++            origin: AtomicI64::new(0),
++            until: AtomicU64::new(0),
++            landing: AtomicBool::new(false),
++            moving_until: AtomicU64::new(0),
++            track_landing: AtomicBool::new(false),
++        }
++    }
 +}
 +
 +impl ShaderUniforms {
@@ -762,8 +1496,11 @@ index 0000000..c799f78
 +    }
 +
 +    pub fn is_live(&self) -> bool {
-+        self.live.load(Ordering::Relaxed)
-+            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
++        (self.live.load(Ordering::Relaxed)
++            && (!self.lapsed() || self.landing.load(Ordering::Relaxed)))
++            // KOAN: a moving track keeps the window presenting (#1859).
++            || self.tracks_moving(present_now())
++            || self.track_landing.load(Ordering::Relaxed)
 +    }
 +
 +    /// Whether a deadline was set and has passed.
@@ -793,12 +1530,56 @@ index 0000000..c799f78
 +    pub fn take_present(&self) -> bool {
 +        let changed = self.changed.swap(false, Ordering::Relaxed);
 +        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
-+        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
++        // KOAN: a track moves with time; the present after its end lands it
++        // (#1859).
++        let now = present_now();
++        let moving = self.tracks_moving(now);
++        let track_landed = !moving && self.track_landing.swap(false, Ordering::Relaxed);
++        changed
++            || landed
++            || moving
++            || track_landed
++            || (self.is_live() && self.continuous.load(Ordering::Relaxed))
 +    }
 +
 +    /// Every value, as a renderer copies them into a frame.
 +    pub fn snapshot(&self) -> [f32; SHADER_UNIFORMS] {
 +        std::array::from_fn(|i| self.get(i))
++    }
++
++    // KOAN: #1859.
++    /// Puts `track` in slot `k`: the program draws it from the next present
++    /// on, and the window presents while it moves.
++    pub fn set_track(&self, k: usize, track: Track) {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        for (i, value) in track.encode().into_iter().enumerate() {
++            self.set(base + i, value);
++        }
++        let origin = self.origin.load(Ordering::Relaxed);
++        let until = (0..SHADER_TRACKS)
++            .map(|k| self.track(k))
++            .filter(|t| t.length > 0.0)
++            .map(|t| match t.end() {
++                None => u64::MAX,
++                Some(end) => (origin + (end as f64 * 1e9) as i64).max(1) as u64,
++            })
++            .max()
++            .unwrap_or(0);
++        self.moving_until.store(until, Ordering::Relaxed);
++        self.track_landing.store(until != 0, Ordering::Relaxed);
++    }
++
++    /// The track in slot `k`.
++    pub fn track(&self, k: usize) -> Track {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
++        Track::decode(&floats)
++    }
++
++    /// Whether a track is moving at `now`.
++    pub fn tracks_moving(&self, now: Instant) -> bool {
++        let until = self.moving_until.load(Ordering::Relaxed);
++        until != 0 && (since_epoch(now).max(0) as u64) < until
 +    }
 +}
 +
@@ -812,6 +1593,10 @@ index 0000000..c799f78
 +    pub uniforms: std::sync::Arc<ShaderUniforms>,
 +    /// The image the program samples, in the sprite atlas.
 +    pub image: Option<AtlasTile>,
++    // KOAN: the layer group the shader composes, as its image: what was
++    // painted inside `Window::paint_layer_group`, drawn into a texture of
++    // its own (#1859).
++    pub group: Option<usize>,
 +}
 +
 +impl From<PaintShader> for Primitive {
@@ -823,7 +1608,7 @@ index 0000000..c799f78
 +/// One shader as a renderer hands it to the GPU: its quad, its clip and its
 +/// uniforms and time as they were when the frame was presented. Laid out for
 +/// both Metal and WGSL: blocks of 16-byte aligned floats.
-+#[derive(Clone, Copy, Debug, Default)]
++#[derive(Clone, Copy, Debug)]
 +#[repr(C)]
 +pub struct ShaderInstance {
 +    /// x, y, width, height.
@@ -835,6 +1620,18 @@ index 0000000..c799f78
 +    pub time: [f32; 4],
 +    /// The image's tile in its atlas texture, in texels: x, y, width, height.
 +    pub tile: [f32; 4],
++}
++
++impl Default for ShaderInstance {
++    fn default() -> Self {
++        Self {
++            bounds: [0.0; 4],
++            clip: [0.0; 4],
++            uniforms: [0.0; SHADER_UNIFORMS],
++            time: [0.0; 4],
++            tile: [0.0; 4],
++        }
++    }
 +}
 +
 +impl ShaderInstance {
@@ -857,18 +1654,69 @@ index 0000000..c799f78
 +            clip: rect(&shader.content_mask.bounds),
 +            uniforms,
 +            time: [time, 0.0, 0.0, 0.0],
-+            tile: shader.image.as_ref().map_or([0.0; 4], |tile| {
-+                let b = tile.bounds;
-+                [
-+                    b.origin.x.0 as f32,
-+                    b.origin.y.0 as f32,
-+                    b.size.width.0 as f32,
-+                    b.size.height.0 as f32,
-+                ]
-+            }),
++            // A group's texture is the window's size, its content where it
++            // was painted: the tile is the quad's own bounds.
++            tile: match (&shader.image, shader.group) {
++                (Some(tile), _) => {
++                    let b = tile.bounds;
++                    [
++                        b.origin.x.0 as f32,
++                        b.origin.y.0 as f32,
++                        b.size.width.0 as f32,
++                        b.size.height.0 as f32,
++                    ]
++                }
++                (None, Some(_)) => rect(&shader.bounds),
++                (None, None) => [0.0; 4],
++            },
 +        }
 +    }
 +}
+diff --git a/src/view.rs b/src/view.rs
+index 76688b7..6ef8b65 100644
+--- a/src/view.rs
++++ b/src/view.rs
+@@ -8,7 +8,6 @@ use crate::{Empty, Window};
+ use anyhow::Result;
+ use collections::FxHashSet;
+ use refineable::Refineable;
+-use std::mem;
+ use std::{
+     any::{TypeId, type_name},
+     fmt,
+@@ -560,7 +559,11 @@ fn prepaint_view(
+                     return (None, element_state);
+                 }
+ 
+-                let refreshing = mem::replace(&mut window.refreshing, true);
++                // KOAN: a view drawn again leaves the cached views inside it
++                // to their own keys: one that is neither dirty nor moved is
++                // reused, so a change redraws its own view and its ancestors
++                // and nothing beside them. Only a refresh of the window draws
++                // everything again.
+                 let prepaint_start = window.prepaint_index();
+                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                     let mut element = render(window, cx);
+@@ -570,7 +573,6 @@ fn prepaint_view(
+                 });
+ 
+                 let prepaint_end = window.prepaint_index();
+-                window.refreshing = refreshing;
+ 
+                 (
+                     Some(element),
+@@ -623,9 +625,9 @@ fn paint_view(
+                     let paint_start = window.paint_index();
+ 
+                     if let Some(element) = element {
+-                        let refreshing = mem::replace(&mut window.refreshing, true);
++                        // KOAN: as in prepaint, the cached views inside are
++                        // left to their own keys.
+                         element.paint(window, cx);
+-                        window.refreshing = refreshing;
+                     } else {
+                         window.reuse_paint(element_state.paint_range.clone());
+                     }
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
 index ae98aa5..ea0f6a4 100644
 --- a/src/window/a11y/debug.rs
@@ -907,10 +1755,21 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..de0eb09 100644
+index c559412..161492e 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -1913,28 +1913,40 @@ impl Window {
+@@ -1281,6 +1281,10 @@ pub struct Window {
+         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
+     hovered: Rc<Cell<bool>>,
+     pub(crate) needs_present: Rc<Cell<bool>>,
++    // KOAN: the colour slot table's generation as last presented, and
++    // whether a slot the scene draws with was moving then (#1859).
++    color_slot_generation: Cell<u64>,
++    color_slot_moving: Cell<bool>,
+     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
+     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+@@ -1913,28 +1917,45 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -920,7 +1779,10 @@ index c559412..de0eb09 100644
 +                    // uniforms read afresh, with no frame drawn (#1641).
 +                    || handle
 +                        .update(&mut cx, |_, window, _| {
-+                            window.rendered_frame.scene.take_shader_present()
++                            // KOAN: or a colour slot it draws with moved
++                            // (#1859).
++                            let slots = window.take_color_slot_present();
++                            window.rendered_frame.scene.take_shader_present() | slots
 +                        })
 +                        .unwrap_or(false)
 +                {
@@ -933,7 +1795,9 @@ index c559412..de0eb09 100644
 +                // KOAN: a live shader keeps the frames coming (#1641).
 +                let live = handle
                      .update(&mut cx, |_, window, _| {
-+                        let live = window.rendered_frame.scene.has_live_shaders();
++                        let live = window.rendered_frame.scene.has_live_shaders()
++                            // KOAN: so does a moving colour slot (#1859).
++                            || window.color_slot_moving.get();
                          if window.invalidator.is_dirty()
                              || !window.next_frame_callbacks.borrow().is_empty()
 +                            || live
@@ -955,17 +1819,57 @@ index c559412..de0eb09 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -3624,6 +3636,9 @@ impl Window {
+@@ -2184,6 +2205,8 @@ impl Window {
+             visibility_observers: SubscriberSet::new(),
+             hovered,
+             needs_present,
++            color_slot_generation: Cell::new(0), // KOAN: #1859.
++            color_slot_moving: Cell::new(false), // KOAN: #1859.
+             input_rate_tracker,
+             #[cfg(feature = "profiler")]
+             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+@@ -3618,12 +3641,40 @@ impl Window {
+         self.invalidator.replace_views(views);
+     }
+ 
++    // KOAN: whether this refresh should present for the colour slots the
++    // scene draws with: one moves, one was written since the last present,
++    // or the motion has just ended and its last value is still to be shown
++    // (#1859).
++    fn take_color_slot_present(&self) -> bool {
++        let scene = &self.rendered_frame.scene;
++        if scene.color_slots.is_empty() {
++            self.color_slot_moving.set(false);
++            return false;
++        }
++        let generation = crate::color_slots_generation();
++        let changed = self.color_slot_generation.replace(generation) != generation;
++        let moving = scene.color_slots_moving(crate::present_now());
++        let landing = self.color_slot_moving.replace(moving) && !moving;
++        changed || moving || landing
++    }
++
+     #[profiling::function]
+     fn present(&mut self) {
+         #[cfg(feature = "profiler")]
          let _foreground_turn = profiler::journal::foreground_turn();
          #[cfg(feature = "profiler")]
          let present_start = Instant::now();
 +        // KOAN: what this present shows of the shaders is taken as shown
 +        // (#1641).
 +        self.rendered_frame.scene.take_shader_present();
++        // KOAN: the colour slots as this present shows them (#1859).
++        self.color_slot_generation
++            .set(crate::color_slots_generation());
++        let scene = &self.rendered_frame.scene;
++        let moving = !scene.color_slots.is_empty() && scene.color_slots_moving(crate::present_now());
++        if moving {
++            self.color_slot_moving.set(true);
++        }
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4705,75 @@ impl Window {
+@@ -4690,6 +4741,107 @@ impl Window {
          }
      }
  
@@ -996,8 +1900,39 @@ index c559412..de0eb09 100644
 +            program,
 +            uniforms,
 +            image: None,
++            group: None,
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
++    }
++
++    // KOAN: a layer group (#1859).
++    /// Paints what `paint` paints into a texture of its own, which `program`
++    /// composes over `bounds` at each present, sampling it with
++    /// `koan_sample`: content drawn once, moved, clipped or faded by the
++    /// program's tracks with no frame drawn.
++    ///
++    /// This method should only be called as part of the paint phase of element drawing.
++    pub fn paint_layer_group(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        program: &'static crate::ShaderProgram,
++        uniforms: Arc<crate::ShaderUniforms>,
++        cx: &mut App,
++        paint: impl FnOnce(&mut Self, &mut App),
++    ) {
++        self.invalidator.debug_assert_paint();
++        self.next_frame.scene.push_group();
++        paint(self, cx);
++        let shader = crate::PaintShader {
++            order: 0,
++            bounds: self.snap_bounds(bounds),
++            content_mask: self.snapped_content_mask(),
++            program,
++            uniforms,
++            image: None,
++            group: None,
++        };
++        self.next_frame.scene.pop_group(shader);
 +    }
 +
 +    // KOAN: shader quads (#1641).
@@ -1033,6 +1968,7 @@ index c559412..de0eb09 100644
 +            program,
 +            uniforms,
 +            image: Some(tile),
++            group: None,
 +        };
 +        self.next_frame.scene.insert_primitive(shader);
 +        Ok(())
@@ -1041,7 +1977,7 @@ index c559412..de0eb09 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7158,22 @@ impl Window {
+@@ -7074,6 +7226,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

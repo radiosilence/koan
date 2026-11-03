@@ -305,6 +305,58 @@ impl VizLevels {
     }
 }
 
+/// How high a playing indicator's three bars stand, 0 to 1, from the levels
+/// as they arrive. Each band is measured against its own recent loudest
+/// rather than full scale, so a record mastered quiet moves as much as a
+/// loud one, and the analyser's A-weighting tilt does not leave the bass bar
+/// the sluggish one. The fall is the analyser's; nothing else is smoothed.
+#[derive(Clone, Debug, Default)]
+pub struct BarHeights {
+    heights: [f32; 3],
+    ceiling: [f32; 3],
+    stamp: Option<std::time::Instant>,
+}
+
+impl BarHeights {
+    /// A band below this is room tone: it never sets a ceiling, and silence
+    /// is measured against it, so a quiet passage stays flat rather than
+    /// being normalised up into a dance.
+    pub const QUIETEST: f32 = 0.12;
+    /// Seconds a band takes to forget half of a loud passage.
+    pub const FORGET: f32 = 4.0;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The bars as they stand, low band to high.
+    pub fn heights(&self) -> [f32; 3] {
+        self.heights
+    }
+
+    /// A frame of `heard` at `now`: the bars' new heights, or `None` when
+    /// they did not move, which most of a quiet passage is.
+    pub fn take(&mut self, heard: VizLevels, now: std::time::Instant) -> Option<[f32; 3]> {
+        // Clamped: a machine that slept owes the bars nothing.
+        let elapsed = self
+            .stamp
+            .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
+        self.stamp = Some(now);
+        let hold = 0.5_f32.powf(elapsed / Self::FORGET);
+        let heard = [heard.low, heard.mid, heard.high];
+        let mut next = self.heights;
+        for band in 0..3 {
+            self.ceiling[band] = heard[band].max((self.ceiling[band] * hold).max(Self::QUIETEST));
+            next[band] = (heard[band] / self.ceiling[band]).min(1.0);
+        }
+        if next == self.heights {
+            return None;
+        }
+        self.heights = next;
+        Some(next)
+    }
+}
+
 // ── Raw sample window (used internally by VizBuffer and VizAnalyzer) ──────────
 
 /// A window of `VizBuffer` contents, bundling raw samples with the metadata
@@ -463,6 +515,29 @@ impl VizBuffer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_bar_stands_against_its_own_recent_loudest() {
+        let mut bars = BarHeights::new();
+        let at = std::time::Instant::now();
+        let heard = |low, mid, high| VizLevels { low, mid, high };
+        let first = bars.take(heard(0.5, 0.2, 0.1), at).unwrap();
+        assert_eq!(first[0], 1.0);
+        assert_eq!(first[1], 1.0);
+        // Below room tone: measured against it, never normalised up.
+        assert!((first[2] - 0.1 / BarHeights::QUIETEST).abs() < 1e-6);
+        assert_eq!(bars.take(heard(0.5, 0.2, 0.1), at), None, "nothing moved");
+        let later = bars.take(heard(0.25, 0.2, 0.1), at).unwrap();
+        assert!((later[0] - 0.5).abs() < 0.01, "half its ceiling");
+        // Four seconds on, half the loud passage is forgotten.
+        let forgotten = bars
+            .take(
+                heard(0.25, 0.2, 0.1),
+                at + std::time::Duration::from_millis(250),
+            )
+            .map_or(later[0], |h| h[0]);
+        assert!(forgotten > later[0], "the ceiling falls as time passes");
+    }
+
     use super::*;
 
     /// Fill the delay line with a ramp so every sample identifies its own index.

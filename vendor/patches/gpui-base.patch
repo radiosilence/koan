@@ -1,5 +1,5 @@
 diff --git a/src/input/base/blink_cursor.rs b/src/input/base/blink_cursor.rs
-index b41f2bb..6a732e0 100644
+index b41f2bb..0338d2b 100644
 --- a/src/input/base/blink_cursor.rs
 +++ b/src/input/base/blink_cursor.rs
 @@ -1,4 +1,7 @@
@@ -25,7 +25,7 @@ index b41f2bb..6a732e0 100644
 +}
 +"#,
 +    wgsl: r#"
-+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
++fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
 +    return vec4<f32>(u[1].xyz, u[1].w * u[0].x);
 +}
 +"#,

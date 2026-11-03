@@ -23,6 +23,11 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
+
+/// Analyser frames a second for clients that interpolate between them
+/// (`viz_keyframes`): enough for the bars to follow the music, few enough
+/// that the analyser costs little.
+const VIZ_KEYFRAMES: u8 = 30;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
@@ -624,6 +629,76 @@ impl Drop for KoanEngine {
     }
 }
 
+/// The playhead at each whole second of playback, from the engine
+/// (`KoanEngine::clock_stream`): what a time shown on screen moves on, with no
+/// timer of the client's own.
+#[derive(uniffi::Object)]
+pub struct ClockStream {
+    state: Weak<state::EngineState>,
+    moves: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+}
+
+#[uniffi::export]
+impl ClockStream {
+    /// The playhead, in milliseconds, at its next whole second while it
+    /// plays, or as soon as it is anchored afresh (a seek, a pause, the next
+    /// track). Waits through a pause. `None` once the engine is gone.
+    pub async fn next(&self) -> Option<u64> {
+        let mut moves = self.moves.lock().await;
+        moves.borrow_and_update();
+        let anchor = self.state.upgrade()?.anchor();
+        match anchor {
+            Some(anchor) if anchor.playing => {
+                let now = std::time::Instant::now();
+                let wait = 1000 - anchor.reckoning(now) % 1000;
+                tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_millis(wait)) => {
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                    moved = moves.changed() => {
+                        moved.ok()?;
+                        let anchor = self.state.upgrade()?.anchor()?;
+                        Some(anchor.reckoning(std::time::Instant::now()))
+                    }
+                }
+            }
+            _ => {
+                moves.changed().await.ok()?;
+                let anchor = self.state.upgrade()?.anchor()?;
+                Some(anchor.reckoning(std::time::Instant::now()))
+            }
+        }
+    }
+}
+
+/// How high a playing indicator's bars stand, from the levels a `VizStream`
+/// delivers: koan-core's reading (`BarHeights`), each band against its own
+/// recent loudest, so every app draws the same bars.
+#[derive(uniffi::Object, Default)]
+pub struct BarHeights(parking_lot::Mutex<koan_core::audio::viz::BarHeights>);
+
+#[uniffi::export]
+impl BarHeights {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A frame as it arrives: the bars' heights, 0 to 1, low band to high,
+    /// or none when they did not move.
+    pub fn take(&self, levels: VizLevels) -> Option<Vec<f32>> {
+        let heard = koan_core::audio::viz::VizLevels {
+            low: levels.low,
+            mid: levels.mid,
+            high: levels.high,
+        };
+        self.0
+            .lock()
+            .take(heard, std::time::Instant::now())
+            .map(|heights| heights.to_vec())
+    }
+}
+
 /// One client's subscription to the levels of whatever it is showing as
 /// playing: this device's analyser, or, while another device is controlled,
 /// that device's levels over the link (`koan_core::remote::levels`).
@@ -637,6 +712,42 @@ pub struct VizStream {
     /// the analyser up. The loop *is* the subscription.
     viz: Weak<VizSnapshot>,
     inner: tokio::sync::Mutex<Following>,
+}
+
+/// Whether this run may write its queue over the saved session. A save
+/// before the session was read back would put whatever the player holds in
+/// its place: nothing, or a restore half applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionGate {
+    /// Not read yet, or reading it failed. A queue the person has changed
+    /// since (its content moved from `baseline`) is theirs to keep, and is
+    /// saved; until then nothing is.
+    Unread { baseline: u64 },
+    /// Being read and sent to the player: nothing is saved.
+    Restoring,
+    /// Read and applied, or there was none: every save writes.
+    Read,
+}
+
+impl SessionGate {
+    /// The gate once the player has applied a restore's commands, the
+    /// queue's content then being at `content`.
+    fn settled(restored: bool, content: u64) -> Self {
+        if restored {
+            SessionGate::Read
+        } else {
+            SessionGate::Unread { baseline: content }
+        }
+    }
+
+    /// Whether a save may write, the queue's content being at `content`.
+    fn allows(self, content: u64) -> bool {
+        match self {
+            SessionGate::Read => true,
+            SessionGate::Restoring => false,
+            SessionGate::Unread { baseline } => content != baseline,
+        }
+    }
 }
 
 struct Following {
@@ -745,6 +856,8 @@ pub struct KoanEngine {
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
+    /// Whether this run may write over the saved session: see `SessionGate`.
+    session_gate: parking_lot::Mutex<SessionGate>,
     /// Whose saved session this engine reads and writes: its device's files
     /// prefix (`LinkIdentity::files`). Another device on the same config
     /// directory keeps a session of its own.
@@ -1318,6 +1431,25 @@ impl KoanEngine {
     /// — so a paused koan delivers no messages, wakes nothing, and the thread
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
+        VizStream::new(&self.viz)
+    }
+
+    /// The playhead's whole seconds as it plays, for a client that shows the
+    /// time: the engine wakes it at each, and while paused or with no
+    /// subscriber nothing runs.
+    pub fn clock_stream(&self) -> Arc<ClockStream> {
+        Arc::new(ClockStream {
+            state: Arc::downgrade(&self.out),
+            moves: tokio::sync::Mutex::new(self.out.anchor_moves()),
+        })
+    }
+
+    /// Follow the spectrum as keyframes, for a client that draws the bars
+    /// on the GPU and moves them between frames itself (the kōan GUI app):
+    /// the analyser runs at the rate koan chooses for keyframes, which is far
+    /// below a display's, and the client never names a rate.
+    pub fn viz_keyframes(&self) -> Arc<VizStream> {
+        self.set_viz_fps(VIZ_KEYFRAMES);
         VizStream::new(&self.viz)
     }
 
@@ -2071,33 +2203,24 @@ impl KoanEngine {
         self: Arc<Self>,
         shelf: ShelfKind,
     ) -> Result<ShelfSummary, KoanError> {
-        use koan_core::shelves::{self, Shelf};
-        offload::offload(move || {
-            let db = self.db()?;
-            let shelf = match &shelf {
-                ShelfKind::Favourites => Shelf::Favourites,
-                ShelfKind::Recent => Shelf::Recent,
-                ShelfKind::Search { query } => Shelf::Search(query),
-                ShelfKind::Downloaded => Shelf::Downloaded,
-            };
-            let s = shelves::summary(
-                &db.conn,
-                shelf,
-                queries::LOCAL_USER,
-                shelves::now(),
-                offline(),
-            )
-            .map_err(db_err)?;
-            Ok(ShelfSummary {
-                artists: s.artists.preview.into_iter().map(Artist::from).collect(),
-                artist_total: s.artists.total,
-                albums: decorate_albums(&db, s.albums.preview),
-                album_total: s.albums.total,
-                tracks: self.decorate(&db, s.tracks.preview),
-                track_total: s.tracks.total,
-            })
-        })
-        .await
+        shelf_summary_of(self, shelf, koan_core::shelves::PREVIEW).await
+    }
+
+    /// The same, `artists`, `albums` and `tracks` deep: what a search box
+    /// that things are picked from lists.
+    pub async fn shelf_summary_sized(
+        self: Arc<Self>,
+        shelf: ShelfKind,
+        artists: u32,
+        albums: u32,
+        tracks: u32,
+    ) -> Result<ShelfSummary, KoanError> {
+        let sizes = koan_core::shelves::Sizes {
+            artists,
+            albums,
+            tracks,
+        };
+        shelf_summary_of(self, shelf, sizes).await
     }
 
     /// The Apple TV's Top Shelf: the first `TOP_SHELF_LIMIT` records played
@@ -2689,6 +2812,9 @@ impl KoanEngine {
     pub async fn save_session(self: Arc<Self>) -> Result<(), KoanError> {
         use std::sync::atomic::Ordering;
         offload::offload(move || {
+            if !self.may_save_session() {
+                return Ok(());
+            }
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
@@ -2735,7 +2861,13 @@ impl KoanEngine {
     /// second of playback rather than the whole session. `save_session` still
     /// runs when the queue changes and on quit.
     pub async fn save_position(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || self.write_position(&*self.db()?)).await
+        offload::offload(move || {
+            if !self.may_save_session() {
+                return Ok(());
+            }
+            self.write_position(&*self.db()?)
+        })
+        .await
     }
 
     /// Whether this device keeps its queue in the account's play queue on the
@@ -2805,56 +2937,11 @@ impl KoanEngine {
         // place: see `server_queue`.
         let engine = Arc::downgrade(&self);
         let restoring = self.clone();
+        *self.session_gate.lock() = SessionGate::Restoring;
         let restored = offload::sequenced(move || {
-            let db = self.db()?;
-            // Before the queue and whether there is one: the mode is the
-            // player's, and a shuffled queue's play order is drawn as it
-            // arrives, from the rows not marked played.
-            let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
-            self.send_local(PlayerCommand::RestorePlayMode(mode))?;
-            let Some(saved) =
-                queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
-            else {
-                return Ok(0);
-            };
-
-            // Controlling another device, as the last run left it: this one's
-            // queue comes back, but not playing over that device's.
-            let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
-
-            let items = restore_items(&db, &saved.items);
-            if items.is_empty() {
-                return Ok(0);
-            }
-
-            let count = items.len() as u32;
-            // Found among the saved items, not the restored ones: re-resolving
-            // can give an item a new path, and `restore_items` keeps one item
-            // per saved entry, in order.
-            let cursor = saved
-                .cursor_path
-                .as_ref()
-                .and_then(|cp| saved.items.iter().position(|i| &i.path == cp))
-                .and_then(|ix| items.get(ix))
-                .map(|i| i.id);
-
-            self.send_local(PlayerCommand::AddToPlaylist(items))?;
-
-            if let Some(id) = cursor {
-                // The player waits for a track still downloading, and opens it
-                // at the position once it can.
-                if saved.position_ms > 0 || resume {
-                    self.send_local(PlayerCommand::Cue {
-                        id,
-                        position_ms: saved.position_ms,
-                        play: resume,
-                    })?;
-                } else {
-                    self.state.set_cursor(Some(id));
-                }
-            }
-
-            Ok(count)
+            let outcome = self.restore_blocking();
+            self.settle_session(outcome.is_ok());
+            outcome
         })
         .await;
         if Config::cached().remote.play_queue {
@@ -2873,6 +2960,58 @@ impl KoanEngine {
         } else {
             restored
         }
+    }
+
+    /// `restore_session`'s reading and sending, on the command lane.
+    fn restore_blocking(&self) -> Result<u32, KoanError> {
+        let db = self.db()?;
+        // Before the queue and whether there is one: the mode is the
+        // player's, and a shuffled queue's play order is drawn as it
+        // arrives, from the rows not marked played.
+        let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
+        self.send_local(PlayerCommand::RestorePlayMode(mode))?;
+        let Some(saved) = queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
+        else {
+            return Ok(0);
+        };
+
+        // Controlling another device, as the last run left it: this one's
+        // queue comes back, but not playing over that device's.
+        let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
+
+        let items = restore_items(&db, &saved.items);
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        let count = items.len() as u32;
+        // Found among the saved items, not the restored ones: re-resolving
+        // can give an item a new path, and `restore_items` keeps one item
+        // per saved entry, in order.
+        let cursor = saved
+            .cursor_path
+            .as_ref()
+            .and_then(|cp| saved.items.iter().position(|i| &i.path == cp))
+            .and_then(|ix| items.get(ix))
+            .map(|i| i.id);
+
+        self.send_local(PlayerCommand::AddToPlaylist(items))?;
+
+        if let Some(id) = cursor {
+            // The player waits for a track still downloading, and opens it
+            // at the position once it can.
+            if saved.position_ms > 0 || resume {
+                self.send_local(PlayerCommand::Cue {
+                    id,
+                    position_ms: saved.position_ms,
+                    play: resume,
+                })?;
+            } else {
+                self.state.set_cursor(Some(id));
+            }
+        }
+
+        Ok(count)
     }
 
     // --- Output device -----------------------------------------------------
@@ -4431,6 +4570,22 @@ impl KoanEngine {
         save_appearance("wash_tint", move |cfg| cfg.appearance.wash_tint = percent);
     }
 
+    /// How fast the kōan theme's wash drifts, in percent of its own pace (see
+    /// `appearance.wash_drift`). Saved in the background; the app redraws
+    /// from its own copy.
+    pub fn set_wash_drift(&self, percent: u16) {
+        let percent = percent.min(200);
+        save_appearance("wash_drift", move |cfg| cfg.appearance.wash_drift = percent);
+    }
+
+    /// How far the kōan theme's wash turns as it drifts, in degrees (see
+    /// `appearance.wash_turn`). Saved in the background; the app redraws from
+    /// its own copy.
+    pub fn set_wash_turn(&self, degrees: u8) {
+        let degrees = u16::from(degrees.min(10));
+        save_appearance("wash_turn", move |cfg| cfg.appearance.wash_turn = degrees);
+    }
+
     /// Wait for every setting still being saved to land. For the app to call as
     /// it quits, since a change made just before would otherwise go with the
     /// process: the theme, which takes effect on the next launch, most of all.
@@ -4456,6 +4611,8 @@ impl KoanEngine {
             rainbow: cfg.appearance.rainbow,
             text_size: cfg.appearance.text_size,
             wash_tint: cfg.appearance.wash_tint.min(100) as u8,
+            wash_drift: cfg.appearance.wash_drift.min(200),
+            wash_turn: cfg.appearance.wash_turn.min(10) as u8,
         }
     }
 
@@ -5511,8 +5668,8 @@ impl KoanEngine {
     ///
     /// The playhead is the one thing no writer can announce, because it moves
     /// on its own. It is published as an anchor instead: see `state::Anchor`.
-    /// Publish the transfers' figures whenever the store takes a reading — a
-    /// few times a second while something downloads, never otherwise.
+    /// Publish the transfers' figures whenever the store takes a reading:
+    /// about fifteen times a second while something downloads, never otherwise.
     ///
     /// Its own thread on the store's own signal. Readings are rung there and
     /// not on the engine's, so a transfer in progress wakes this and nothing
@@ -6539,6 +6696,8 @@ impl KoanEngine {
             });
         }
 
+        let baseline = state.content_version();
+
         let engine = Arc::new(Self {
             state,
             tx,
@@ -6549,6 +6708,7 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
+            session_gate: parking_lot::Mutex::new(SessionGate::Unread { baseline }),
             session: identity.files,
             remote_seek: Default::default(),
             playlist_history: Default::default(),
@@ -6820,6 +6980,50 @@ impl KoanEngine {
             self.bump_library();
         }
         Ok(())
+    }
+
+    /// Opens the session gate once the player has applied everything the
+    /// restore sent it, the play mode included, whose arrival moves the
+    /// queue's content version: `Read` after a restore, `Unread` from the
+    /// content as it then stands after a failed one. Until the player
+    /// answers, the gate stays `Restoring`; past `LANDED` a thread waits on
+    /// the answer, so a slow player never leaves a baseline read too soon.
+    fn settle_session(self: &Arc<Self>, restored: bool) {
+        let (reply, answered) = crossbeam_channel::bounded(1);
+        if self.send_local(PlayerCommand::Barrier(reply)).is_err() {
+            // No player: nothing it holds can be saved over anything.
+            return;
+        }
+        let settle = move |engine: &Self| {
+            let gate = SessionGate::settled(restored, engine.state.content_version());
+            if let SessionGate::Unread { .. } = gate {
+                log::warn!("session: not restored; it is saved again once the queue is edited");
+            }
+            *engine.session_gate.lock() = gate;
+        };
+        if answered.recv_timeout(server_queue::LANDED).is_ok() {
+            settle(self);
+            return;
+        }
+        let engine = Arc::downgrade(self);
+        let waiting = std::thread::Builder::new()
+            .name("koan-session-gate".into())
+            .spawn(move || {
+                if answered.recv().is_ok()
+                    && let Some(engine) = engine.upgrade()
+                {
+                    settle(&engine);
+                }
+            });
+        if let Err(e) = waiting {
+            log::warn!("session: cannot wait for the restore to land: {e}");
+        }
+    }
+
+    /// Whether a save may write now: see `SessionGate`.
+    fn may_save_session(&self) -> bool {
+        let gate = *self.session_gate.lock();
+        gate.allows(self.state.content_version())
     }
 
     /// Wait until the player has applied and published every command sent to
@@ -7935,6 +8139,40 @@ mod restore_tests {
     }
 
     #[test]
+    fn a_session_is_saved_once_read_or_once_the_queue_is_the_persons() {
+        // Before the restore, an untouched queue would replace the saved one.
+        assert!(!SessionGate::Unread { baseline: 4 }.allows(4));
+        // A queue built since (the restore failed, or never ran) is saved.
+        assert!(SessionGate::Unread { baseline: 4 }.allows(5));
+        // Half applied: never written.
+        assert!(!SessionGate::Restoring.allows(9));
+        assert!(SessionGate::Read.allows(4));
+    }
+
+    #[test]
+    fn a_failed_restore_after_a_play_mode_does_not_save_the_empty_queue() {
+        use koan_core::player::state::PlayMode;
+        let state = SharedPlayerState::new();
+        // The restore sent the saved mode, then failed to read the queue.
+        // The player applying the mode moves the content version; the gate
+        // is settled after it has.
+        state.set_play_mode(PlayMode {
+            shuffle: true,
+            ..PlayMode::default()
+        });
+        let gate = SessionGate::settled(false, state.content_version());
+        assert!(
+            !gate.allows(state.content_version()),
+            "an untouched queue is not written over the saved one"
+        );
+        state.add_items(Vec::new());
+        assert!(
+            gate.allows(state.content_version()),
+            "a queue the person changed is"
+        );
+    }
+
+    #[test]
     fn a_saved_queue_restores_by_id_when_its_paths_have_moved() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
@@ -8029,6 +8267,43 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
         },
         ImportError::Failed(message) => KoanError::BadArgument { message },
     }
+}
+
+/// A shelf's summary, `sizes` deep: what `shelf_summary` and
+/// `shelf_summary_sized` share.
+async fn shelf_summary_of(
+    engine: Arc<KoanEngine>,
+    shelf: ShelfKind,
+    sizes: koan_core::shelves::Sizes,
+) -> Result<ShelfSummary, KoanError> {
+    use koan_core::shelves::{self, Shelf};
+    offload::offload(move || {
+        let db = engine.db()?;
+        let shelf = match &shelf {
+            ShelfKind::Favourites => Shelf::Favourites,
+            ShelfKind::Recent => Shelf::Recent,
+            ShelfKind::Search { query } => Shelf::Search(query),
+            ShelfKind::Downloaded => Shelf::Downloaded,
+        };
+        let s = shelves::summary_of(
+            &db.conn,
+            shelf,
+            queries::LOCAL_USER,
+            shelves::now(),
+            offline(),
+            sizes,
+        )
+        .map_err(db_err)?;
+        Ok(ShelfSummary {
+            artists: s.artists.preview.into_iter().map(Artist::from).collect(),
+            artist_total: s.artists.total,
+            albums: decorate_albums(&db, s.albums.preview),
+            album_total: s.albums.total,
+            tracks: engine.decorate(&db, s.tracks.preview),
+            track_total: s.tracks.total,
+        })
+    })
+    .await
 }
 
 #[cfg(test)]

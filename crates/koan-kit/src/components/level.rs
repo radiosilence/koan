@@ -1,8 +1,9 @@
 //! A level between two glyphs: a renderer's volume.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use gpui_kit::{App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Window, div};
+use gpui_kit::{App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window, div};
 
 use super::{Handler, Slider, child};
 use crate::theme::{Icon, KoanIcon, Look, Space, Tone};
@@ -12,6 +13,11 @@ use crate::theme::{Icon, KoanIcon, Look, Space, Tone};
 /// sends nothing; the value is committed once, when the drag is let go or an
 /// arrow key steps it. For a value set over the network, where every step of
 /// a drag would be a round trip and the value reported back lags the hand.
+///
+/// A committed value is held until the value given agrees with it or
+/// `LANDING` passes, so the slider does not jump back to the old value while
+/// the device takes the new one and reports it, as the seek bar's landing
+/// holds the playhead.
 #[derive(IntoElement)]
 pub struct Level {
     id: ElementId,
@@ -21,6 +27,26 @@ pub struct Level {
     high: Icon,
     numbered: bool,
     on_commit: Option<Handler<u32>>,
+}
+
+/// How long a committed value is shown before the value given wins again:
+/// longer than a renderer takes to report a change it accepted.
+const LANDING: Duration = Duration::from_secs(3);
+
+/// What the slider shows over the value it is given: where a drag has it,
+/// or a committed value still landing.
+#[derive(Clone, Copy)]
+enum Held {
+    Dragging(u32),
+    Landing(u32, Instant),
+}
+
+/// A slider's hold, and the one timer that ends a landing at its deadline:
+/// replaced at each commit, which drops and so cancels the one before.
+#[derive(Default)]
+struct Hold {
+    held: Option<Held>,
+    deadline: Option<Task<()>>,
 }
 
 impl Level {
@@ -58,11 +84,25 @@ impl Level {
 impl RenderOnce for Level {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        // Where a drag has the slider, until it is let go. Keyed state
-        // redraws the view that draws it, and only that view.
-        let held = window.use_keyed_state(child(&self.id, "held"), cx, |_, _| None::<u32>);
+        // Where a drag has the slider, and then the value committed until it
+        // lands. Keyed state redraws the view that draws it, and only that
+        // view.
+        let held = window.use_keyed_state(child(&self.id, "held"), cx, |_, _| Hold::default());
         let max = self.max;
-        let shown = held.read(cx).unwrap_or(self.value);
+        let value = self.value;
+        // A landing ends as soon as the value given agrees, or its deadline
+        // passes: from then on a change made elsewhere shows at once.
+        let landed = match held.read(cx).held {
+            Some(Held::Landing(to, until)) => to == value || Instant::now() >= until,
+            _ => false,
+        };
+        if landed {
+            held.update(cx, |hold, _| *hold = Hold::default());
+        }
+        let shown = match held.read(cx).held {
+            Some(Held::Dragging(to) | Held::Landing(to, _)) => to,
+            None => value,
+        };
         let (moving, committing) = (held.clone(), held);
         let fallback = self.value;
         let on_commit = self.on_commit;
@@ -72,20 +112,31 @@ impl RenderOnce for Level {
             .compact()
             .on_change(move |fraction, _, cx| {
                 let to = (fraction * max as f32).round() as u32;
-                moving.update(cx, |held, cx| {
-                    if *held != Some(to) {
-                        *held = Some(to);
+                moving.update(cx, |hold, cx| {
+                    if !matches!(hold.held, Some(Held::Dragging(at)) if at == to) {
+                        hold.held = Some(Held::Dragging(to));
                         cx.notify();
                     }
                 });
             })
             .on_commit(move |_, window, cx| {
-                let to = committing.update(cx, |held, cx| {
+                let to = committing.update(cx, |hold, cx| {
+                    let to = match hold.held {
+                        Some(Held::Dragging(to) | Held::Landing(to, _)) => to,
+                        None => fallback,
+                    };
+                    hold.held = Some(Held::Landing(to, Instant::now() + LANDING));
+                    // Once, at the deadline, so a value the device never
+                    // reports gives way to the one it does.
+                    hold.deadline = Some(cx.spawn(async move |hold, cx| {
+                        cx.background_executor().timer(LANDING).await;
+                        hold.update(cx, |_, cx| cx.notify()).ok();
+                    }));
                     cx.notify();
-                    held.take()
+                    to
                 });
                 if let Some(commit) = &on_commit {
-                    commit(&to.unwrap_or(fallback), window, cx);
+                    commit(&to, window, cx);
                 }
             });
         div()

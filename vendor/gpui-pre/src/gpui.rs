@@ -53,6 +53,7 @@ pub mod queue;
 pub mod randomized_element_tree;
 mod scene;
 mod shader; // KOAN: #1641.
+mod color_slots; // KOAN: #1859.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod seeds;
 mod shared_uri;
@@ -202,6 +203,7 @@ pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shader::*; // KOAN: #1641.
+pub use color_slots::*; // KOAN: #1859.
 pub use shared_uri::*;
 use std::{any::Any, future::Future};
 pub use style::*;

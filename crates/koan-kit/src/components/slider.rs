@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -8,7 +8,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
-use super::{Animated, SHADED, ShaderProgram};
+use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 
 use super::{Handler, accessible, child, focus, pointer, ring, track};
 use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole, label};
@@ -32,16 +32,22 @@ pub struct Slider {
     reach: Option<Glide>,
     /// What it sets, for a screen reader: "seek", "volume".
     name: Option<SharedString>,
+    /// A gliding fill drawn as the rainbow appearance's trail.
+    prism: bool,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
-/// does: the share of the track at a moment and how fast it moves from it.
-/// Where the renderer draws shaders, the fill and the thumb are a shader quad
-/// reckoning the value per present from these, so the slider glides with no
-/// frame drawn and no timer; elsewhere, and while dragged, the slider draws
-/// `value` as given. The owner writes it from any thread, keeps it across
-/// renders, and stops it (`set_moving(false)`) when the value rests or
-/// nothing shows it.
+/// does: the share of the track at a moment and how fast it moves from it,
+/// written as keyframes (#1859). Where the renderer draws shaders, the fill
+/// and the thumb are a shader quad drawing the value's track at present time,
+/// so the slider glides at the display's rate with no frame drawn and no
+/// timer; elsewhere, and while dragged, the slider draws `value` as given.
+/// The owner writes it from any thread when the anchor changes, and keeps it
+/// across renders.
+///
+/// Tracks: 0 the value, 1 a small correction easing out, 2 the turn shown
+/// while the size is unknown; plain value 0 is 1 while it is unknown, and 1
+/// the value a second past the anchor, past which a ring does not reckon.
 #[derive(Clone, Default)]
 pub struct Glide(
     pub(crate) Animated,
@@ -52,7 +58,7 @@ pub struct Glide(
 /// rather than jumped, in seconds of play: a little over what a late report
 /// leaves between the reckoning and the report. A skip or a seek is longer
 /// than this however long the track.
-const SETTLE: f32 = 0.25;
+const SETTLE: Duration = Duration::from_millis(250);
 const DRIFT: f32 = 0.3;
 
 impl Glide {
@@ -60,14 +66,14 @@ impl Glide {
         Self::default()
     }
 
-    /// `value` at `since`, moving `rate` of the track a second.
-    /// A new anchor that disagrees a little with where the slider had
+    /// `value` at `since`, moving `rate` of the track a second, until the
+    /// end. A new anchor that disagrees a little with where the slider had
     /// reckoned it, while playing on at the same rate, is eased into over
     /// `SETTLE` rather than jumped to: the fill moves continuously and
     /// corrects without a step. A seek, a pause or any larger difference
     /// moves at once.
     pub fn set(&self, value: f32, rate: f32, since: Instant) {
-        let now = Instant::now();
+        let now = Animated::now();
         let at = |(value, rate, since): (f32, f32, Instant)| {
             let t = if now >= since {
                 now.duration_since(since).as_secs_f32()
@@ -78,8 +84,11 @@ impl Glide {
         };
         let next = (value, rate, since);
         let previous = self.1.lock().replace(next);
+        if previous == Some(next) {
+            return;
+        }
         let offset = match previous {
-            Some(previous) if previous != next && previous.1 == rate && rate > 0.0 => {
+            Some(previous) if previous.1 == rate && rate > 0.0 => {
                 let offset = at(previous) - at(next);
                 if offset.abs() <= rate * DRIFT {
                     offset
@@ -89,33 +98,52 @@ impl Glide {
             }
             _ => 0.0,
         };
-        let start = if now >= since {
-            now.duration_since(since).as_secs_f32()
+        self.0.set_all(0, &[0.0, (value + rate).min(1.0)]);
+        if rate > 0.0 && value < 1.0 {
+            let length = Duration::from_secs_f32((1.0 - value) / rate);
+            self.0
+                .segment(0, value, 1.0, since, length, Ease::Linear, Repeat::Once);
         } else {
-            -since.duration_since(now).as_secs_f32()
-        };
-        self.0.set_all(0, &[value, rate]);
-        if previous != Some(next) {
-            self.0.set_all(5, &[offset, start, SETTLE]);
+            self.0.hold(0, value);
         }
-        self.0.set_origin(since);
+        if offset != 0.0 {
+            self.0
+                .segment(1, offset, 0.0, now, SETTLE, Ease::InOut, Repeat::Once);
+        } else {
+            self.0.hold(1, 0.0);
+        }
+        self.0.hold(2, 0.0);
     }
 
-    /// Whether the value is moving: presented every refresh while it is.
+    /// The value comes to rest where it stands: nothing presents for it
+    /// until it is set again.
     pub fn set_moving(&self, moving: bool) {
-        self.0.run(moving);
+        if !moving {
+            let now = Animated::now();
+            self.0.hold(0, self.0.at(0, now));
+            self.0.hold(1, 0.0);
+        }
     }
 
     /// No value to show, as a download whose size is unknown: a ring turns
-    /// instead, presented every refresh until a value is set.
+    /// instead, until a value is set.
     pub fn set_unknown(&self) {
-        self.0.set_all(0, &[-1.0, 0.0]);
-        self.0.run(true);
+        *self.1.lock() = None;
+        self.0.set(0, 1.0);
+        self.0.segment(
+            2,
+            0.0,
+            1.0,
+            Animated::now(),
+            Duration::from_secs(1),
+            Ease::Linear,
+            Repeat::Loop,
+        );
     }
 
     /// The value as last set, before any motion since.
     pub fn value(&self) -> f32 {
-        self.0.get(0)
+        self.1.lock().map_or(0.0, |(value, _, _)| value)
     }
 
     /// The fill, thumb and their colours, in device pixels.
@@ -128,6 +156,26 @@ impl Glide {
     }
 }
 
+/// A bar `height` points high filled to `glide`'s value in `color`, drawn
+/// on the GPU at present time: the downloads page's bars.
+pub(crate) fn glide_fill(glide: Glide, color: Hsla, height: f32) -> impl IntoElement {
+    canvas(
+        move |_, window, cx| {
+            glide.style(&Style {
+                fill: height * window.scale_factor(),
+                thumb: 0.0,
+                inset: 0.0,
+                fill_color: color,
+                thumb_color: color,
+            });
+            glide.0.attach(false, window, cx);
+            glide
+        },
+        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
+    )
+    .size_full()
+}
+
 struct Style {
     fill: f32,
     /// The thumb's side, or 0 while it is hidden.
@@ -138,19 +186,17 @@ struct Style {
     thumb_color: Hsla,
 }
 
-/// The fill and thumb as a fragment program. Uniforms: 0 the value at the
-/// origin, 1 its rate a second, 2 the fill's height, 3 the thumb's side (0
-/// hidden), 4 the inset, in device pixels; 5 a correction still easing out,
-/// 6 when it began and 7 how long it takes, in seconds of shader time; 8..12
-/// the fill's colour, 12..16 the thumb's.
+/// The fill and thumb as a fragment program. Uniforms: 2 the fill's height,
+/// 3 the thumb's side (0 hidden), 4 the inset, in device pixels; 8..12 the
+/// fill's colour, 12..16 the thumb's; tracks 0 the value and 1 a correction
+/// easing out (`Glide`).
 static GLIDE: ShaderProgram = ShaderProgram {
     name: "koan-slider-glide",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float width = size.x - 2.0 * u[4];
     float x = position.x - u[4];
-    float easing = u[7] > 0.0 ? 1.0 - smoothstep(0.0, 1.0, (time - u[6]) / u[7]) : 0.0;
-    float end = clamp(u[0] + u[1] * time + u[5] * easing, 0.0, 1.0) * width;
+    float end = clamp(koan_track(u, 0, time) + koan_track(u, 1, time), 0.0, 1.0) * width;
     float dy = abs(position.y - size.y * 0.5);
     if (u[3] > 0.0 && abs(x - end) <= u[3] * 0.5 && dy <= u[3] * 0.5) {
         return float4(u[12], u[13], u[14], u[15]);
@@ -163,14 +209,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let width = size.x - 2.0 * u[1].x;
     let x = position.x - u[1].x;
-    var easing = 0.0;
-    if (u[1].w > 0.0) {
-        easing = 1.0 - smoothstep(0.0, 1.0, (time - u[1].z) / u[1].w);
-    }
-    let end = clamp(u[0].x + u[0].y * time + u[1].y * easing, 0.0, 1.0) * width;
+    let end = clamp(koan_track(u, 0u, time) + koan_track(u, 1u, time), 0.0, 1.0) * width;
     let dy = abs(position.y - size.y * 0.5);
     if (u[0].w > 0.0 && abs(x - end) <= u[0].w * 0.5 && dy <= u[0].w * 0.5) {
         return u[3];
@@ -201,7 +243,15 @@ impl Slider {
             on_commit: None,
             glide: None,
             reach: None,
+            prism: false,
         }
+    }
+
+    /// With a `glide`, the fill as a rainbow trail running back from the
+    /// playhead: the hidden rainbow appearance's seek bar.
+    pub fn prism(mut self, prism: bool) -> Self {
+        self.prism = prism;
+        self
     }
 
     /// The value moves on its own from `value` as `glide` says; see `Glide`.
@@ -296,6 +346,7 @@ impl RenderOnce for Slider {
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
         let glide = self.glide.clone().filter(|_| SHADED);
+        let prism = self.prism;
         let reach = self.reach.clone();
         let rule = look.palette.rule.hsla();
 
@@ -449,6 +500,11 @@ impl RenderOnce for Slider {
             })
             .when_some(glide, |rail, glide| {
                 let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
+                let program = if prism {
+                    &super::prism::PRISM_GLIDE
+                } else {
+                    &GLIDE
+                };
                 rail.child(
                     canvas(
                         move |_, window, cx| {
@@ -463,7 +519,7 @@ impl RenderOnce for Slider {
                             glide.0.attach(false, window, cx);
                             glide
                         },
-                        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
+                        |bounds, glide, window, _| glide.0.paint(program, None, bounds, window),
                     )
                     .absolute()
                     .top_0()

@@ -9,16 +9,10 @@ use koan_ffi::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, px};
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider, TransportControl, TransportMetrics,
+    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
+    TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -391,7 +385,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Devices,
-            trailing_item(p)
+            trailing_item(p, false)
                 .id("devices")
                 .tooltip(tip(if away {
                     format!("{name} is out of reach")
@@ -423,7 +417,7 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Eq,
-            trailing_item(p)
+            trailing_item(p, p.look.icons)
                 .id("eq")
                 .text_color(color)
                 .hover(|s| s.opacity(0.8))
@@ -699,26 +693,6 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
 /// How far an arrow key moves the seek bar.
 const SEEK_KEY_MS: u64 = 5_000;
 
-/// The theme's text button: the label in `muted`, `ink` under the pointer.
-/// The control's glyph with icons on, its label without: the theme's two
-/// variants. The label is what the plain variant shows, so it is lowercase.
-fn glyph_or_label(
-    icon: Icon,
-    label: &'static str,
-    role: TypeRole,
-    color: Hsla,
-    p: &Paint,
-) -> AnyElement {
-    if p.look.icons {
-        KoanIcon::new(icon)
-            .role(role)
-            .color(color)
-            .into_any_element()
-    } else {
-        div().child(label).into_any_element()
-    }
-}
-
 /// The theme's text button, or with icons its icon button: `muted`, `ink`
 /// under the pointer.
 fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
@@ -732,7 +706,7 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     } else {
         div().child(label).into_any_element()
     };
-    trailing_item(p)
+    trailing_item(p, p.look.icons)
         .group(TEXT_BUTTON)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
@@ -741,8 +715,17 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
 
 /// One of the trailing group's items, as the Mac lays them out: as wide as
 /// what it shows, the full bar's height and half the gap either side to hit.
-fn trailing_item(p: &Paint) -> Div {
-    let reach = TransportMetrics::trailing_gap(&p.look) / 2.;
+/// A glyph alone reaches further, over the gap, so it is at least `HIT` wide
+/// to click: padding taken back by an equal negative margin, so the item's
+/// own bounds grow and nothing moves.
+fn trailing_item(p: &Paint, glyph_only: bool) -> Div {
+    let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
+    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
+    let reach = if glyph_only {
+        gap.max((theme::HIT - glyph) / 2.)
+    } else {
+        gap
+    };
     div()
         .flex()
         .items_center()
@@ -803,7 +786,7 @@ impl Render for Transport {
 
         let left = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(p.space(Space::M))
@@ -857,12 +840,12 @@ impl Render for Transport {
                     })
                     .flex()
                     .flex_col()
-                    .min_w(px(0.))
+                    .min_w_0()
                     // The title and the record lead to the record, each
                     // credited artist to the artist.
                     .children(entry.map(|e| {
                         let album = e.album_id.map(crate::navigator::Route::Album);
-                        links::names(
+                        let names = links::names(
                             vec![
                                 links::link(
                                     "np-title".into(),
@@ -876,7 +859,24 @@ impl Render for Transport {
                             TypeRole::Meta,
                             p.strong,
                             &p,
-                        )
+                        );
+                        // The rainbow's shimmer through the playing title,
+                        // over it while the rainbow is drawn; the title
+                        // otherwise stands as it is.
+                        match crate::rainbow::Painted::palette(cx) {
+                            Some(brat) => div()
+                                .relative()
+                                .min_w_0()
+                                .child(names)
+                                .child(
+                                    crate::components::Sheen::new("np-title-sheen")
+                                        .brat(brat)
+                                        .strength(0.35)
+                                        .glitch(true),
+                                )
+                                .into_any_element(),
+                            None => names.into_any_element(),
+                        }
                     }))
                     .children(entry.map(|e| {
                         let mut detail = links::credit(
@@ -992,7 +992,7 @@ impl Render for Transport {
                         }),
                     ),
             )
-            // Its own cached view. A tick re-renders the slider and the views
+            // Its own cached view. A second of the clock re-renders the slider and the views
             // that hold it (the bar, the shell), whose other cached children
             // replay their last frame rather than laying out again.
             .child(
@@ -1013,7 +1013,7 @@ impl Render for Transport {
 
         let right = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .justify_end()
@@ -1140,14 +1140,16 @@ pub struct Seek {
     playback: Entity<Playback>,
     /// Whether the window shows: hidden, no timer runs.
     visible: bool,
-    tick: Option<Task<()>>,
+    /// Following the engine's clock while the window shows.
+    clock: Option<Task<()>>,
+    /// The playhead as the engine's clock last reported it, and when: the
+    /// times show at least this, since the anchor is stamped a little later
+    /// than the engine took it. Dropped when the anchor moves.
+    heard: Option<(u64, Instant)>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
     /// Wakes the slider when a seek's target lapses unanswered.
     lapse: Option<Task<()>>,
-    /// The slider's width as last painted, for when its fill next moves a
-    /// pixel.
-    width: std::rc::Rc<std::cell::Cell<f32>>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1178,10 +1180,10 @@ impl Seek {
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
-            tick: None,
+            clock: None,
+            heard: None,
             dragging: None,
             lapse: None,
-            width: Default::default(),
             glide: Glide::new(),
         };
         seek.schedule(cx);
@@ -1189,6 +1191,7 @@ impl Seek {
     }
 
     fn moved(&mut self, cx: &mut Context<Self>) {
+        self.heard = None;
         self.schedule(cx);
         cx.notify();
     }
@@ -1245,10 +1248,27 @@ impl Seek {
     }
 
     fn schedule(&mut self, cx: &mut Context<Self>) {
-        self.tick = None;
         let anchor = self.anchor(cx);
         let duration = self.duration_ms(cx);
         let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        // The times follow the engine's clock, which wakes this at each
+        // whole second while it plays; nothing of its own counts.
+        if self.visible != self.clock.is_some() {
+            self.clock = self.visible.then(|| {
+                let clock = engine(cx).clock_stream();
+                cx.spawn(async move |this, cx| {
+                    while let Some(position) = clock.next().await {
+                        let heard = this.update(cx, |this, cx| {
+                            this.heard = Some((position, Instant::now()));
+                            cx.notify();
+                        });
+                        if heard.is_err() {
+                            break;
+                        }
+                    }
+                })
+            });
+        }
         if duration > 0 {
             self.glide.set(
                 (anchor.position_ms as f64 / duration as f64) as f32,
@@ -1261,27 +1281,6 @@ impl Seek {
             );
         }
         self.glide.set_moving(moving);
-        if !self.visible || !anchor.playing || duration == 0 {
-            return;
-        }
-        let position = anchor.at(Instant::now(), duration);
-        if position >= duration {
-            return;
-        }
-        let to_second = 1000 - position % 1000;
-        let width = self.width.get();
-        let to_pixel = if width > 0.0 && !SHADED {
-            (duration as f32 / width).ceil() as u64
-        } else {
-            to_second
-        };
-        // No more often than a 60 Hz frame: a short track on a wide slider
-        // would otherwise step its fill faster than the display shows it.
-        let wait = Duration::from_millis(to_second.min(to_pixel).max(16));
-        self.tick = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            this.update(cx, |this, cx| this.moved(cx)).ok();
-        }));
     }
 
     fn commit(&mut self, cx: &mut Context<Self>) {
@@ -1311,7 +1310,17 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.shown(cx).0.at(Instant::now(), duration);
+        let (anchor, _) = self.shown(cx);
+        let now = Instant::now();
+        let reckoned = anchor.at(now, duration);
+        // At the engine's whole second, its own reading, so the times step
+        // as it says rather than a moment behind.
+        let position = match self.heard {
+            Some((heard, at)) if anchor.playing => {
+                reckoned.max((heard + now.duration_since(at).as_millis() as u64).min(duration))
+            }
+            _ => reckoned,
+        };
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,
@@ -1326,13 +1335,6 @@ impl Render for Seek {
         // seek's target until it lands there (`SharedPlayerState::request_seek`,
         // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
-        let width = self.width.clone();
-        let measure = canvas(
-            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
         // How far a track still downloading can be played, moving as its
         // bytes arrive; nothing once the file is all here.
         let reach = self
@@ -1350,6 +1352,7 @@ impl Render for Seek {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .prism(crate::rainbow::Painted::palette(cx).is_some())
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
@@ -1371,6 +1374,5 @@ impl Render for Seek {
             .flex()
             .items_center()
             .child(div().w_full().child(slider))
-            .child(measure)
     }
 }

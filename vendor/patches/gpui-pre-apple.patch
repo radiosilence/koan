@@ -1,8 +1,8 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..ce7e077 100644
+index 862e62a..91388e4 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
-@@ -126,6 +126,18 @@ pub struct MetalRenderer {
+@@ -126,6 +126,22 @@ pub struct MetalRenderer {
      monochrome_sprites_pipeline_state: metal::RenderPipelineState,
      polychrome_sprites_pipeline_state: metal::RenderPipelineState,
      surfaces_pipeline_state: metal::RenderPipelineState,
@@ -15,28 +15,39 @@ index 862e62a..ce7e077 100644
 +    // KOAN: the last frame drawn as the layers its shaders are drawn
 +    // between, which each present composes with the shaders (#1641).
 +    shader_layers: ShaderLayerTextures,
++    // KOAN: each layer group's texture, and the frame they were drawn for
++    // (#1859).
++    group_textures: Vec<Option<metal::Texture>>,
++    group_generation: u64,
 +    compose_pipelines: Option<ComposePipelines>,
 +    /// What a shader with no image is given to sample.
 +    blank_texture: Option<metal::Texture>,
      unit_vertices: metal::Buffer,
      #[allow(clippy::arc_with_non_send_sync)]
      instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-@@ -423,6 +435,10 @@ impl MetalRenderer {
+@@ -423,6 +439,12 @@ impl MetalRenderer {
              path_sprites_pipeline_state,
              shadows_pipeline_state,
              quads_pipeline_state,
 +            shader_pipelines: Default::default(), // KOAN: #1641.
 +            shader_layers: Default::default(), // KOAN: #1641.
++            group_textures: Vec::new(),        // KOAN: #1859.
++            group_generation: 0,
 +            compose_pipelines: None,           // KOAN: #1641.
 +            blank_texture: None,               // KOAN: #1641.
              underlines_pipeline_state,
              monochrome_sprites_pipeline_state,
              polychrome_sprites_pipeline_state,
-@@ -542,7 +558,17 @@ impl MetalRenderer {
+@@ -542,7 +564,22 @@ impl MetalRenderer {
              return;
          };
  
 -        let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size) {
++        // KOAN: each layer group drawn into its texture, once per frame
++        // drawn (#1859).
++        if let Err(error) = self.draw_layer_groups(scene, viewport_size) {
++            log::error!("failed to draw layer groups: {error:#}");
++        }
 +        // KOAN: a scene with shaders is drawn once as the layers they are
 +        // drawn between, and each present composes the layers with the
 +        // shaders, so re-presenting a moving shader costs the shaders and a
@@ -51,7 +62,7 @@ index 862e62a..ce7e077 100644
              Ok(command_buffer) => command_buffer,
              Err(error) => {
                  log::error!("failed to render: {error:#}");
-@@ -565,6 +591,7 @@ impl MetalRenderer {
+@@ -565,6 +602,7 @@ impl MetalRenderer {
          scene: &Scene,
          texture: &metal::TextureRef,
          viewport_size: Size<DevicePixels>,
@@ -59,7 +70,7 @@ index 862e62a..ce7e077 100644
      ) -> Result<metal::CommandBuffer> {
          let mut writer = InstanceBufferWriter::new(
              &self.device,
-@@ -589,6 +616,7 @@ impl MetalRenderer {
+@@ -589,6 +627,7 @@ impl MetalRenderer {
              &mut writer,
              texture,
              viewport_size,
@@ -67,7 +78,7 @@ index 862e62a..ce7e077 100644
          )?;
  
          let instance_buffer_pool = self.instance_buffer_pool.clone();
-@@ -627,7 +655,7 @@ impl MetalRenderer {
+@@ -627,7 +666,7 @@ impl MetalRenderer {
              .next_drawable()
              .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
  
@@ -76,7 +87,15 @@ index 862e62a..ce7e077 100644
  
          // Commit and wait for completion without presenting
          command_buffer.commit();
-@@ -674,7 +702,7 @@ impl MetalRenderer {
+@@ -655,6 +694,7 @@ impl MetalRenderer {
+         objc2::rc::autoreleasepool(|_| {
+             // Update path intermediate textures for this size
+             self.update_path_intermediate_textures(size);
++            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
+ 
+             // Create an offscreen texture as render target
+             let texture_descriptor = metal::TextureDescriptor::new();
+@@ -674,7 +714,7 @@ impl MetalRenderer {
              });
              let target_texture = self.device.new_texture(&texture_descriptor);
  
@@ -85,7 +104,7 @@ index 862e62a..ce7e077 100644
  
              // Managed textures require an explicit blit synchronize before the CPU
              // can read back the rendered data. Without this, get_bytes returns
-@@ -693,6 +721,52 @@ impl MetalRenderer {
+@@ -693,6 +733,53 @@ impl MetalRenderer {
          })
      }
  
@@ -101,6 +120,7 @@ index 862e62a..ce7e077 100644
 +    ) -> Result<RgbaImage> {
 +        objc2::rc::autoreleasepool(|_| {
 +            self.update_path_intermediate_textures(size);
++            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
 +            let texture_descriptor = metal::TextureDescriptor::new();
 +            texture_descriptor.set_width(size.width.0 as u64);
 +            texture_descriptor.set_height(size.height.0 as u64);
@@ -138,7 +158,7 @@ index 862e62a..ce7e077 100644
      /// Renders a scene to a reused offscreen texture without reading pixels
      /// back or blocking on GPU completion.
      ///
-@@ -728,7 +802,7 @@ impl MetalRenderer {
+@@ -728,7 +815,7 @@ impl MetalRenderer {
                  .clone()
                  .expect("just ensured the render target exists");
  
@@ -147,7 +167,7 @@ index 862e62a..ce7e077 100644
  
              // Commit without waiting, mirroring presentation to a real window where
              // the CPU doesn't block on the GPU.
-@@ -744,10 +818,11 @@ impl MetalRenderer {
+@@ -744,10 +831,11 @@ impl MetalRenderer {
          writer: &mut InstanceBufferWriter,
          texture: &metal::TextureRef,
          viewport_size: Size<DevicePixels>,
@@ -160,7 +180,7 @@ index 862e62a..ce7e077 100644
  
          let mut command_encoder = new_command_encoder_for_texture(
              command_buffer,
-@@ -813,6 +888,19 @@ impl MetalRenderer {
+@@ -813,6 +901,21 @@ impl MetalRenderer {
                          viewport_size,
                          command_encoder,
                      ),
@@ -168,10 +188,12 @@ index 862e62a..ce7e077 100644
 +                PrimitiveBatch::Shaders {
 +                    program,
 +                    texture,
++                    group,
 +                    range,
 +                } => self.draw_shaders(
 +                    program,
 +                    texture,
++                    group,
 +                    range,
 +                    instance_bindings,
 +                    viewport_size,
@@ -180,7 +202,20 @@ index 862e62a..ce7e077 100644
                  PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                      &scene.surfaces[range.clone()],
                      range.start,
-@@ -941,6 +1029,233 @@ impl MetalRenderer {
+@@ -911,6 +1014,12 @@ impl MetalRenderer {
+         }
+ 
+         command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
++        // KOAN: colour slots (#1859).
++        command_encoder.set_vertex_buffer(
++            COLOR_SLOTS_INDEX,
++            Some(&instance_bindings.color_slots.buffer),
++            instance_bindings.color_slots.offset as u64,
++        );
+         command_encoder.set_vertex_buffer(
+             ShadowInputIndex::Vertices as u64,
+             Some(&self.unit_vertices),
+@@ -941,6 +1050,310 @@ impl MetalRenderer {
          );
      }
  
@@ -207,10 +242,15 @@ index 862e62a..ce7e077 100644
 +        if self.compose_pipelines.is_none() {
 +            self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
 +        }
-+        if !self
-+            .shader_layers
-+            .holds(scene.generation, width, height)
-+        {
++        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
++        // while one of its slots moves, when the table was written since it
++        // was drawn, and once more after its slots stop, so the last value
++        // lands; the other layers are kept.
++        let now = gpui::present_now();
++        let slot_generation = gpui::color_slots_generation();
++        let held = self.shader_layers.holds(scene.generation, width, height)
++            && self.shader_layers.layers.len() == plan.layers.len();
++        if !held {
 +            let mut pool = self.shader_layers.take(width, height);
 +            let mut drawn = Vec::with_capacity(plan.layers.len());
 +            for (k, layer) in plan.layers.iter().enumerate() {
@@ -236,10 +276,30 @@ index 862e62a..ce7e077 100644
 +            }
 +            self.shader_layers = ShaderLayerTextures {
 +                generation: scene.generation,
++                slot_generation,
 +                width,
 +                height,
 +                layers: drawn,
++                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
 +            };
++        } else {
++            let written = self.shader_layers.slot_generation != slot_generation;
++            for (k, layer) in plan.layers.iter().enumerate() {
++                if layer.color_slots.is_empty() {
++                    continue;
++                }
++                let moving = layer.color_slots_moving(now);
++                let was_moving = std::mem::replace(&mut self.shader_layers.moving[k], moving);
++                if !(written || moving || was_moving) {
++                    continue;
++                }
++                if let Some(target) = self.shader_layers.layers[k].clone() {
++                    // After the last compose that read it: the same queue.
++                    self.render_frame(layer, &target, viewport_size, k > 0)?
++                        .commit();
++                }
++            }
++            self.shader_layers.slot_generation = slot_generation;
 +        }
 +        let pipelines = self
 +            .compose_pipelines
@@ -251,7 +311,8 @@ index 862e62a..ce7e077 100644
 +            &self.instance_buffer_pool,
 +            self.is_unified_memory,
 +        );
-+        let now = std::time::Instant::now();
++        // KOAN: the present clock (#1859).
++        let now = gpui::present_now();
 +        let shaders = writer.write_iter(
 +            scene
 +                .shaders
@@ -299,15 +360,16 @@ index 862e62a..ce7e077 100644
 +            while start < group.end {
 +                let head = &scene.shaders[start];
 +                let key = |s: &gpui::PaintShader| {
-+                    (s.program.name, s.image.as_ref().map(|t| t.texture_id))
++                    (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
 +                };
 +                let end = scene.shaders[start..group.end]
 +                    .iter()
-+                    .position(|s| key(s) != key(head))
-+                    .map_or(group.end, |n| start + n);
++                    .position(|s| key(s) != key(head) || s.group.is_some())
++                    .map_or(group.end, |n| (start + n).max(start + 1));
 +                self.draw_shaders(
 +                    head.program,
 +                    head.image.as_ref().map(|t| t.texture_id),
++                    head.group,
 +                    start..end,
 +                    &bindings,
 +                    viewport_size,
@@ -333,6 +395,53 @@ index 862e62a..ce7e077 100644
 +            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
 +        }
 +        Ok(command_buffer)
++    }
++
++    // KOAN: (#1859) each layer group's scene drawn into a texture the size
++    // of the window, transparent, its content where it was painted; kept
++    // for the frame's presents.
++    fn draw_layer_groups(&mut self, scene: &Scene, viewport_size: Size<DevicePixels>) -> Result<()> {
++        if scene.layer_groups.is_empty() {
++            self.group_textures.clear();
++            return Ok(());
++        }
++        let width = i32::from(viewport_size.width) as u64;
++        let height = i32::from(viewport_size.height) as u64;
++        let fits = self.group_textures.iter().flatten().all(|t| {
++            t.width() == width && t.height() == height
++        });
++        if self.group_generation == scene.generation && fits {
++            return Ok(());
++        }
++        let mut pool: Vec<metal::Texture> = if fits {
++            std::mem::take(&mut self.group_textures).into_iter().flatten().collect()
++        } else {
++            Vec::new()
++        };
++        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
++        for group in &scene.layer_groups {
++            if group.is_blank() {
++                drawn.push(None);
++                continue;
++            }
++            let target = pool.pop().unwrap_or_else(|| {
++                let descriptor = metal::TextureDescriptor::new();
++                descriptor.set_width(width);
++                descriptor.set_height(height);
++                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
++                descriptor.set_usage(
++                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
++                );
++                descriptor.set_storage_mode(metal::MTLStorageMode::Private);
++                self.device.new_texture(&descriptor)
++            });
++            // The same queue runs these before whatever samples them.
++            self.render_frame(group, &target, viewport_size, true)?.commit();
++            drawn.push(Some(target));
++        }
++        self.group_textures = drawn;
++        self.group_generation = scene.generation;
++        Ok(())
 +    }
 +
 +    // KOAN: shader quads (#1641). A program's pipeline is compiled from its
@@ -373,6 +482,7 @@ index 862e62a..ce7e077 100644
 +        &self,
 +        program: &'static gpui::ShaderProgram,
 +        texture: Option<AtlasTextureId>,
++        group: Option<usize>,
 +        shaders: Range<usize>,
 +        instance_bindings: &impl HasShaders,
 +        viewport_size: Size<DevicePixels>,
@@ -389,8 +499,10 @@ index 862e62a..ce7e077 100644
 +        command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
 +        command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
 +        command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
-+        let image = texture
-+            .and_then(|id| self.sprite_atlas.metal_texture(id))
++        // KOAN: a layer group's texture, drawn this frame (#1859).
++        let image = group
++            .and_then(|group| self.group_textures.get(group).cloned().flatten())
++            .or_else(|| texture.and_then(|id| self.sprite_atlas.metal_texture(id)))
 +            .or_else(|| self.blank_texture.clone());
 +        command_encoder.set_fragment_texture(0, image.as_deref());
 +        let viewport = [
@@ -414,21 +526,69 @@ index 862e62a..ce7e077 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -1486,8 +1801,196 @@ struct InstanceBindings {
+@@ -953,6 +1366,12 @@ impl MetalRenderer {
+         }
+ 
+         command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
++        // KOAN: colour slots (#1859).
++        command_encoder.set_vertex_buffer(
++            COLOR_SLOTS_INDEX,
++            Some(&instance_bindings.color_slots.buffer),
++            instance_bindings.color_slots.offset as u64,
++        );
+         command_encoder.set_vertex_buffer(
+             QuadInputIndex::Vertices as u64,
+             Some(&self.unit_vertices),
+@@ -1066,6 +1485,12 @@ impl MetalRenderer {
+         }
+ 
+         command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
++        // KOAN: colour slots (#1859).
++        command_encoder.set_vertex_buffer(
++            COLOR_SLOTS_INDEX,
++            Some(&instance_bindings.color_slots.buffer),
++            instance_bindings.color_slots.offset as u64,
++        );
+         command_encoder.set_vertex_buffer(
+             UnderlineInputIndex::Vertices as u64,
+             Some(&self.unit_vertices),
+@@ -1116,6 +1541,12 @@ impl MetalRenderer {
+             DevicePixels(texture.height() as i32),
+         );
+         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
++        // KOAN: colour slots (#1859).
++        command_encoder.set_vertex_buffer(
++            COLOR_SLOTS_INDEX,
++            Some(&instance_bindings.color_slots.buffer),
++            instance_bindings.color_slots.offset as u64,
++        );
+         command_encoder.set_vertex_buffer(
+             SpriteInputIndex::Vertices as u64,
+             Some(&self.unit_vertices),
+@@ -1486,8 +1917,277 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
 +    shaders: InstanceBinding, // KOAN: #1641.
++    color_slots: InstanceBinding, // KOAN: #1859.
 +}
++
++// KOAN: the vertex buffer the stock shaders read the colour slots from
++// (#1859).
++const COLOR_SLOTS_INDEX: u64 = 20;
 +
 +// KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
 +// for a blank one, kept while presents compose them.
 +#[derive(Default)]
 +struct ShaderLayerTextures {
 +    generation: u64,
++    slot_generation: u64, // KOAN: #1859.
 +    width: u64,
 +    height: u64,
 +    layers: Vec<Option<metal::Texture>>,
++    /// KOAN: whether each layer's colour slots were moving when it was
++    /// last drawn (#1859).
++    moving: Vec<bool>,
 +}
 +
 +impl ShaderLayerTextures {
@@ -550,10 +710,82 @@ index 862e62a..ce7e077 100644
 +struct KoanShaderInstance {
 +    float4 bounds;
 +    float4 clip;
-+    float4 uniforms[4];
++    float4 uniforms[20];
 +    float4 time;
 +    float4 tile;
 +};
++
++// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
++float koan_bezier_curve(float a, float b, float s) {
++    float u = 1.0 - s;
++    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
++}
++
++float koan_bezier(float x1, float y1, float x2, float y2, float t) {
++    if (t <= 0.0 || t >= 1.0) {
++        return clamp(t, 0.0, 1.0);
++    }
++    float s = t;
++    for (int i = 0; i < 6; i++) {
++        float u = 1.0 - s;
++        float d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
++        if (abs(d) < 1e-5) {
++            break;
++        }
++        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
++    }
++    return koan_bezier_curve(y1, y2, s);
++}
++
++float koan_spring(float x0, float v0, float k, float c, float t) {
++    float w = sqrt(max(k, 1e-3));
++    float z = c / (2.0 * w);
++    if (z < 1.0) {
++        float wd = w * sqrt(1.0 - z * z);
++        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
++    }
++    if (z > 1.0001) {
++        float root = sqrt(z * z - 1.0);
++        float r1 = -w * (z - root);
++        float r2 = -w * (z + root);
++        float c1 = (v0 - r2 * x0) / (r1 - r2);
++        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
++    }
++    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+ }
+ 
++// Track `k` of the uniforms at `time`.
++float koan_track(constant float *u, uint k, float time) {
++    constant float *t = u + 16 + k * 8;
++    float from = t[0];
++    float to = t[1];
++    float length = t[3];
++    if (length <= 0.0) {
++        return to;
++    }
++    float e = max(time - t[2], 0.0);
++    uint code = uint(t[4]);
++    uint kind = code % 4;
++    uint repeat = code / 4;
++    if (kind == 2) {
++        return e >= length ? to : to + koan_spring(from - to, t[7], t[5], t[6], e);
++    }
++    float p = e / length;
++    if (repeat == 0) {
++        p = min(p, 1.0);
++    } else if (repeat == 1) {
++        p = fract(p);
++    } else {
++        float q = fmod(p, 2.0);
++        p = q > 1.0 ? 2.0 - q : q;
++    }
++    if (kind == 1) {
++        half2 a = as_type<half2>(t[5]);
++        half2 b = as_type<half2>(t[6]);
++        p = koan_bezier(a.x, a.y, b.x, b.y, p);
++    }
++    return from + (to - from) * p;
++}
 +
 +// The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
 +// texels around its tile in the atlas.
@@ -566,8 +798,8 @@ index 862e62a..ce7e077 100644
 +        tile.xy + tile.zw - 0.5
 +    );
 +    return image.sample(linear, at / extent);
- }
- 
++}
++
 +struct KoanShaderVarying {
 +    float4 position [[position]];
 +    float2 local;
@@ -611,14 +843,15 @@ index 862e62a..ce7e077 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2002,17 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2199,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
 +        // KOAN: the shaders' uniforms as they are now, when the frame is
 +        // presented (#1641).
 +        shaders: {
-+            let now = std::time::Instant::now();
++            // KOAN: the present clock (#1859).
++            let now = gpui::present_now();
 +            writer.write_iter(
 +                scene
 +                    .shaders
@@ -626,13 +859,105 @@ index 862e62a..ce7e077 100644
 +                    .map(|shader| gpui::ShaderInstance::of(shader, now)),
 +            )?
 +        },
++        // KOAN: the colour slots as they stand when the frame is presented
++        // (#1859).
++        color_slots: {
++            thread_local! {
++                static TABLE: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
++            }
++            TABLE.with(|table| {
++                let mut table = table.borrow_mut();
++                gpui::color_slots_frame(gpui::present_now(), &mut table);
++                writer.write(&table)
++            })?
++        },
      })
  }
  
-@@ -1799,4 +2313,205 @@ mod tests {
+@@ -1799,4 +2523,287 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
++
++    // KOAN: (#1859) the prelude's `koan_track` draws each curve where
++    // `Track::at` says it stands, so a retarget on the CPU starts from what
++    // is on screen.
++    #[test]
++    fn tracks_draw_where_the_cpu_says() {
++        use gpui::{Track, TrackCurve, TrackRepeat};
++        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
++            name: "koan-test-tracks",
++            msl: r#"
++float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
++    uint k = uint(position.x / size.x * 5.0);
++    return float4(koan_track(u, k, time), 0.0, 0.0, 1.0);
++}
++"#,
++            wgsl: "",
++            prepare: None,
++        };
++        let uniforms = Arc::new(gpui::ShaderUniforms::new());
++        let now = uniforms.time_at(gpui::present_now());
++        let track = |t: f32, length: f32, curve, repeat| Track {
++            from: 0.1,
++            to: 0.9,
++            start: now - t,
++            length,
++            curve,
++            repeat,
++        };
++        let tracks = [
++            track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
++            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
++            track(
++                0.3,
++                5.0,
++                TrackCurve::Spring { stiffness: 30.0, damping: 12.0, velocity: 0.0 },
++                TrackRepeat::Once,
++            ),
++            track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
++            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
++        ];
++        for (k, t) in tracks.iter().enumerate() {
++            uniforms.set_track(k, *t);
++        }
++        let bounds = Bounds {
++            origin: Point::default(),
++            size: size(ScaledPixels(5.0), ScaledPixels(1.0)),
++        };
++        let mut scene = Scene::default();
++        scene.insert_primitive(gpui::PaintShader {
++            order: 0,
++            bounds,
++            content_mask: ContentMask { bounds },
++            program: &PROGRAM,
++            uniforms: uniforms.clone(),
++            image: None,
++            group: None,
++        });
++        scene.finish();
++        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
++        // The render's moment falls between these two, the program compiled
++        // in between: each track is drawn within what it passes through.
++        let before = uniforms.time_at(gpui::present_now());
++        let image = renderer
++            .render_scene_to_image(&scene, size(DevicePixels(5), DevicePixels(1)))
++            .unwrap();
++        let after = uniforms.time_at(gpui::present_now());
++        for (k, t) in tracks.iter().enumerate() {
++            let steps = 64;
++            let levels = (0..=steps).map(|i| {
++                let at = before + (after - before) * i as f32 / steps as f32;
++                (t.at(at) * 255.0).round() as i32
++            });
++            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
++            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
++            assert!(
++                drawn >= low - 2 && drawn <= high + 2,
++                "track {k}: drawn {drawn}, expected {low}..={high}"
++            );
++        }
++    }
 +
 +    // KOAN: (#1641) a scene with a shader nothing covers, presented as a
 +    // window presents it (the base kept, the shaders composed over it), is
@@ -673,6 +998,7 @@ index 862e62a..ce7e077 100644
 +                program: &PROGRAM,
 +                uniforms: uniforms.clone(),
 +                image: None,
++                group: None,
 +            });
 +            let over = if cover {
 +                rect(30.0, 10.0, 20.0, 4.0)
@@ -750,6 +1076,7 @@ index 862e62a..ce7e077 100644
 +            program: &PROGRAM,
 +            uniforms: Arc::new(gpui::ShaderUniforms::new()),
 +            image: None,
++            group: None,
 +        });
 +        // A menu over the shader, and its text over the menu, clear of it.
 +        scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));
@@ -835,3 +1162,191 @@ index 862e62a..ce7e077 100644
 +        }
 +    }
  }
+diff --git a/src/shaders.metal b/src/shaders.metal
+index 2b52bb9..7db62d9 100644
+--- a/src/shaders.metal
++++ b/src/shaders.metal
+@@ -4,6 +4,7 @@
+ using namespace metal;
+ 
+ float4 hsla_to_rgba(Hsla hsla);
++float4 koan_rgba(Hsla hsla, constant float *slots);  // KOAN: colour slots (#1859).
+ float3 srgb_to_linear(float3 color);
+ float3 linear_to_srgb(float3 color);
+ float4 srgb_to_oklab(float4 color);
+@@ -70,14 +71,15 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+                                     constant Quad *quads
+                                     [[buffer(QuadInputIndex_Quads)]],
+                                     constant Size_DevicePixels *viewport_size
+-                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
++                                    [[buffer(QuadInputIndex_ViewportSize)]],
++                                    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   Quad quad = quads[quad_id];
+   float4 device_position =
+       to_device_position(unit_vertex, quad.bounds, viewport_size);
+   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
+                                                  quad.content_mask.bounds);
+-  float4 border_color = hsla_to_rgba(quad.border_color);
++  float4 border_color = koan_rgba(quad.border_color, koan_slots);  // KOAN: colour slots (#1859).
+ 
+   GradientColor gradient = prepare_fill_color(
+     quad.background.tag,
+@@ -86,6 +88,9 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+     quad.background.colors[0].color,
+     quad.background.colors[1].color
+   );
++  if (quad.background.tag != 1 && quad.background.solid.h >= 2.0) {
++    gradient.solid = koan_rgba(quad.background.solid, koan_slots);  // KOAN: colour slots (#1859).
++  }
+ 
+   return QuadVertexOutput{
+       quad_id,
+@@ -464,7 +469,8 @@ vertex ShadowVertexOutput shadow_vertex(
+     constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
+     constant Size_DevicePixels *viewport_size
+-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
++    [[buffer(ShadowInputIndex_ViewportSize)]],
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   Shadow shadow = shadows[shadow_id];
+ 
+@@ -485,7 +491,7 @@ vertex ShadowVertexOutput shadow_vertex(
+       to_device_position(unit_vertex, bounds, viewport_size);
+   float4 clip_distance =
+       distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+-  float4 color = hsla_to_rgba(shadow.color);
++  float4 color = koan_rgba(shadow.color, koan_slots);  // KOAN: colour slots (#1859).
+ 
+   return ShadowVertexOutput{
+       device_position,
+@@ -572,14 +578,15 @@ vertex UnderlineVertexOutput underline_vertex(
+     constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
+     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
+     constant Size_DevicePixels *viewport_size
+-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
++    [[buffer(ShadowInputIndex_ViewportSize)]],
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   Underline underline = underlines[underline_id];
+   float4 device_position =
+       to_device_position(unit_vertex, underline.bounds, viewport_size);
+   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
+                                                  underline.content_mask.bounds);
+-  float4 color = hsla_to_rgba(underline.color);
++  float4 color = koan_rgba(underline.color, koan_slots);  // KOAN: colour slots (#1859).
+   return UnderlineVertexOutput{
+       device_position,
+       color,
+@@ -639,7 +646,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
+     constant Size_DevicePixels *viewport_size
+     [[buffer(SpriteInputIndex_ViewportSize)]],
+     constant Size_DevicePixels *atlas_size
+-    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
++    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
++    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   MonochromeSprite sprite = sprites[sprite_id];
+   float4 device_position =
+@@ -647,7 +655,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
+   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
+                                                  sprite.content_mask.bounds, sprite.transformation);
+   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+-  float4 color = hsla_to_rgba(sprite.color);
++  float4 color = koan_rgba(sprite.color, koan_slots);  // KOAN: colour slots (#1859).
+   return MonochromeSpriteVertexOutput{
+       device_position,
+       tile_position,
+@@ -1277,3 +1285,91 @@ float4 fill_color(Background background,
+ 
+   return color;
+ }
++
++// KOAN: colour slots (#1859). A colour whose hue is 2 or more names slot
++// `hue - 2` of the table at buffer 20: the time, three floats of padding,
++// then per slot the `from` colour, the `to` colour and a track from 0 to 1,
++// evaluated as gpui's `Track::at` and the shader prelude's `koan_track` are.
++float koan_slot_bezier_curve(float a, float b, float s) {
++  float u = 1.0 - s;
++  return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
++}
++
++float koan_slot_bezier(float x1, float y1, float x2, float y2, float t) {
++  if (t <= 0.0 || t >= 1.0) {
++    return clamp(t, 0.0, 1.0);
++  }
++  float s = t;
++  for (int i = 0; i < 6; i++) {
++    float u = 1.0 - s;
++    float d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
++    if (abs(d) < 1e-5) {
++      break;
++    }
++    s = clamp(s - (koan_slot_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
++  }
++  return koan_slot_bezier_curve(y1, y2, s);
++}
++
++float koan_slot_spring(float x0, float v0, float k, float c, float t) {
++  float w = sqrt(max(k, 1e-3));
++  float z = c / (2.0 * w);
++  if (z < 1.0) {
++    float wd = w * sqrt(1.0 - z * z);
++    return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
++  }
++  if (z > 1.0001) {
++    float root = sqrt(z * z - 1.0);
++    float r1 = -w * (z - root);
++    float r2 = -w * (z + root);
++    float c1 = (v0 - r2 * x0) / (r1 - r2);
++    return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
++  }
++  return (x0 + (v0 + w * x0) * t) * exp(-w * t);
++}
++
++float koan_slot_track(constant float *t, float time) {
++  float from = t[0];
++  float to = t[1];
++  float length = t[3];
++  if (length <= 0.0) {
++    return to;
++  }
++  float e = max(time - t[2], 0.0);
++  uint code = uint(t[4]);
++  uint kind = code % 4;
++  uint repeat = code / 4;
++  if (kind == 2) {
++    return e >= length ? to : to + koan_slot_spring(from - to, t[7], t[5], t[6], e);
++  }
++  float p = e / length;
++  if (repeat == 0) {
++    p = min(p, 1.0);
++  } else if (repeat == 1) {
++    p = fract(p);
++  } else {
++    float q = fmod(p, 2.0);
++    p = q > 1.0 ? 2.0 - q : q;
++  }
++  if (kind == 1) {
++    half2 a = as_type<half2>(t[5]);
++    half2 b = as_type<half2>(t[6]);
++    p = koan_slot_bezier(a.x, a.y, b.x, b.y, p);
++  }
++  return from + (to - from) * p;
++}
++
++float4 koan_rgba(Hsla hsla, constant float *slots) {
++  if (hsla.h < 2.0) {
++    return hsla_to_rgba(hsla);
++  }
++  uint index = min(uint(hsla.h - 2.0), 254u);
++  constant float *slot = slots + 4 + index * 16;
++  float t = koan_slot_track(slot + 8, slots[0]);
++  float4 color = clamp(
++      mix(float4(slot[0], slot[1], slot[2], slot[3]),
++          float4(slot[4], slot[5], slot[6], slot[7]), t),
++      0.0, 1.0);
++  color.a *= hsla.a;
++  return color;
++}

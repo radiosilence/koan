@@ -19,10 +19,6 @@ use std::sync::Arc;
 use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
 use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
-// gpui-component's focus and click extensions, for the shell's own handling.
-use koan_kit::raw::base::Root;
-// whether the compositor leaves the window's decorations to the app.
-use koan_kit::raw::Decorations;
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -36,7 +32,7 @@ pub use sheet::Sheets;
 pub struct Settings {
     pub model: Entity<SettingsModel>,
     pub sharing: Entity<Sharing>,
-    window: Option<WindowHandle<Root>>,
+    window: Option<(AnyWindowHandle, WeakEntity<SettingsWindow>)>,
 }
 
 impl Global for Settings {}
@@ -76,6 +72,7 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         cx.update(|cx| {
             KoanTheme::set_record_colours(saved.record_colours, cx);
             KoanTheme::set_wash_tint(u32::from(saved.wash_tint), cx);
+            KoanTheme::set_wash_drift(u32::from(saved.wash_drift), u32::from(saved.wash_turn), cx);
             KoanTheme::set_wash_window(saved.wash_window, cx);
             cx.global_mut::<KoanTheme>().icons = saved.icons;
             KoanTheme::set_text_size(u32::from(saved.text_size), cx);
@@ -94,8 +91,8 @@ pub fn resume(cx: &mut App) {
 
 /// Opens the Settings window, or brings the open one forward.
 pub fn open(cx: &mut App) {
-    let held = cx.global::<Settings>().window;
-    if let Some(handle) = held
+    let held = cx.global::<Settings>().window.clone();
+    if let Some((handle, _)) = held
         && handle
             .update(cx, |_, window, _| window.activate_window())
             .is_ok()
@@ -106,18 +103,16 @@ pub fn open(cx: &mut App) {
     // Activation is not reported by every Linux compositor, so the file is
     // read again on opening as well.
     model.update(cx, |model, cx| model.reload(cx));
-    let options = crate::components::SecondaryWindow::new("Settings", crate::app::APP_ID)
+    let opened = crate::components::SecondaryWindow::new("Settings", crate::app::APP_ID)
         .size(900.0, 820.0)
         .min(600.0, 480.0)
         .transparent_titlebar()
-        .options(cx);
-    let opened = cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx));
-        cx.new(|cx| Root::new(view, window, cx))
-    });
+        .open(cx, |window, cx| {
+            cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx))
+        });
     match opened {
-        Ok(handle) => {
-            cx.global_mut::<Settings>().window = Some(handle);
+        Ok((handle, view)) => {
+            cx.global_mut::<Settings>().window = Some((handle, view.downgrade()));
             // Now the Settings window: it takes what a closed one left unseen.
             let model = cx.global::<Settings>().model.clone();
             model.update(cx, |_, cx| cx.notify());
@@ -139,14 +134,12 @@ pub enum Incoming {
 /// pairing asks whether to sign the device in.
 pub fn answer(link: Incoming, cx: &mut App) {
     open(cx);
-    let Some(handle) = cx.global::<Settings>().window else {
+    let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
     };
     handle
-        .update(cx, |root, window, cx| {
-            if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
-                view.update(cx, |settings, cx| settings.answer(link, window, cx));
-            }
+        .update(cx, |_, window, cx| {
+            view.update(cx, |settings, cx| settings.answer(link, window, cx))
         })
         .ok();
 }
@@ -154,23 +147,14 @@ pub fn answer(link: Incoming, cx: &mut App) {
 /// Opens Settings on the server's pane: the sign-in the banner offers.
 pub fn open_server(cx: &mut App) {
     open(cx);
-    let Some(handle) = cx.global::<Settings>().window else {
+    let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
     };
     handle
-        .update(cx, |root, window, cx| {
-            if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
-                view.update(cx, |settings, cx| settings.choose(Tab::Server, window, cx));
-            }
+        .update(cx, |_, window, cx| {
+            view.update(cx, |settings, cx| settings.choose(Tab::Server, window, cx))
         })
         .ok();
-}
-
-/// Whether `window` is the Settings window.
-pub fn is_settings_window(window: AnyWindowHandle, cx: &App) -> bool {
-    cx.try_global::<Settings>()
-        .and_then(|settings| settings.window)
-        .is_some_and(|held| AnyWindowHandle::from(held) == window)
 }
 
 /// What every pane reads, handed to each as it is made.
@@ -199,7 +183,6 @@ pub struct SettingsWindow {
     people_for: Option<String>,
     /// Pressed on the strip along the top, to move the window on the next
     /// move: a click alone is not a drag.
-    moving_window: bool,
     _people: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -259,7 +242,6 @@ impl SettingsWindow {
             pane,
             people: None,
             people_for: None,
-            moving_window: false,
             _people: None,
             _subscriptions: subscriptions,
         };
@@ -319,7 +301,8 @@ impl SettingsWindow {
             && cx
                 .global::<Settings>()
                 .window
-                .is_some_and(|h| h.window_id() == window.window_handle().window_id());
+                .as_ref()
+                .is_some_and(|h| h.0.window_id() == window.window_handle().window_id());
         let unseen = if live {
             self.ctx
                 .model
@@ -472,42 +455,26 @@ impl SettingsWindow {
     /// buttons sit in it on macOS. It moves the window, and where the
     /// compositor leaves decorations to the app (GNOME on Wayland), it holds
     /// a close button.
-    fn top_strip(&self, window: &Window, cx: &mut koan_kit::app::Context<Self>) -> Stateful<Div> {
-        let client = matches!(window.window_decorations(), Decorations::Client { .. });
+    fn top_strip(
+        &self,
+        window: &mut Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) -> Stateful<Div> {
+        let client = crate::components::draws_decorations(window);
         let look = Look::of(window, cx);
-        div()
+        let strip = div()
             .id("settings-top")
             .flex()
             .justify_end()
             .items_center()
             .h(crate::components::SecondaryWindow::strip_height())
-            .px(look.space(Space::S))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = true),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = false),
-            )
-            .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
-            .on_mouse_move(cx.listener(|this, _, window, _| {
-                if std::mem::take(&mut this.moving_window) {
-                    window.start_window_move();
-                }
+            .px(look.space(Space::S));
+        crate::components::moves_window(strip, window, cx).when(client, |strip| {
+            let sheets = self.ctx.sheets.clone();
+            strip.child(crate::components::close_button(move |window, cx| {
+                answer_unanswered(&sheets, window, cx)
             }))
-            .when(client, |strip| {
-                strip.child(
-                    crate::components::ToolbarButton::new("settings-close", Icon::Close, "close")
-                        .on_click({
-                            let sheets = self.ctx.sheets.clone();
-                            move |_, window, cx| {
-                                answer_unanswered(&sheets, window, cx);
-                                window.remove_window();
-                            }
-                        }),
-                )
-            })
+        })
     }
 }
 

@@ -151,8 +151,6 @@ pub struct Graph {
     /// The flat line a device playing untouched draws, said in words.
     flat_note: Option<SharedString>,
     shown: Shown,
-    /// The chart alone, short.
-    compact: bool,
     height: Pixels,
     editing: Option<Editing>,
     pub brush: DspBrush,
@@ -212,7 +210,6 @@ impl Graph {
             live: None,
             parts: Vec::new(),
             flat_note: None,
-            compact: false,
             height: px(220.0),
             editing: None,
             brush: DspBrush::Narrow,
@@ -291,13 +288,6 @@ impl Graph {
     pub fn set_flat_note(&mut self, note: Option<SharedString>, cx: &mut Context<Self>) {
         if note != self.flat_note {
             self.flat_note = note;
-            cx.notify();
-        }
-    }
-
-    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
-        if compact != self.compact {
-            self.compact = compact;
             cx.notify();
         }
     }
@@ -694,8 +684,8 @@ impl Render for Graph {
         let cache = self.cache.clone();
         let this = cx.weak_entity();
         let editable = self.editing.is_some() && showing_eq;
-        let height = if self.compact { px(96.0) } else { self.height };
-        let measured = self.measured() && !self.compact;
+        let height = self.height;
+        let measured = self.measured();
         let shown = self.shown;
 
         let chart = canvas(
@@ -789,11 +779,10 @@ impl Render for Graph {
                             .child(label(note))
                     })),
             )
-            .when(!self.compact, |d| d.child(self.legend(&response, &look)))
-            .when(
-                !self.compact && self.curve_index().is_some() && showing_eq,
-                |d| d.child(self.brushes(cx)),
-            )
+            .child(self.legend(&response, &look))
+            .when(self.curve_index().is_some() && showing_eq, |d| {
+                d.child(self.brushes(cx))
+            })
     }
 }
 

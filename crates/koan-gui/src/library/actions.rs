@@ -2,6 +2,7 @@
 //! menu, the selection bar's verbs, a click on a sleeve. Every one is an
 //! engine call awaited off the main thread.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,15 +15,40 @@ use super::drag::{Playable, sources};
 use super::nav::Page;
 use crate::theme::{Icon, Tone};
 
+/// How many times music has gone to the queue and to each playlist from
+/// here, which the sidebar's rows answer: the music went somewhere off the
+/// page, and its place says so.
+#[derive(Clone, Default)]
+pub struct Arrivals {
+    pub queue: u64,
+    pub playlists: HashMap<i64, u64>,
+}
+
+impl Global for Arrivals {}
+
+impl Arrivals {
+    pub fn to(&self, playlist: i64) -> u64 {
+        self.playlists.get(&playlist).copied().unwrap_or_default()
+    }
+}
+
+/// Music reached the queue, or `playlist`.
+fn arrived(playlist: Option<i64>, cx: &mut App) {
+    let arrivals = cx.default_global::<Arrivals>();
+    match playlist {
+        None => arrivals.queue += 1,
+        Some(id) => *arrivals.playlists.entry(id).or_default() += 1,
+    }
+}
+
 /// Put `items` in the queue. The returned task ends once the engine has the
 /// command, which is when a sleeve's "starting" mark can go.
 pub fn queue(lib: &Lib, items: &[Playable], placement: Placement, cx: &mut App) -> Task<()> {
     let engine = lib.engine.clone();
     let sets = sources(items);
-    cx.spawn(async move |_| {
-        if let Err(e) = engine.queue(sets, placement).await {
-            log::warn!("queue: {e}");
-        }
+    cx.spawn(async move |cx| match engine.queue(sets, placement).await {
+        Ok(_) => cx.update(|cx| arrived(None, cx)),
+        Err(e) => log::warn!("queue: {e}"),
     })
 }
 
@@ -43,12 +69,13 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
 /// the shell has one to show.
 pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
     let engine = lib.engine.clone();
-    cx.spawn(async move |_| {
-        if let Err(e) = engine
+    cx.spawn(async move |cx| {
+        match engine
             .replace_queue(track_ids, Some(index as u32), false)
             .await
         {
-            log::warn!("play: {e}");
+            Ok(_) => cx.update(|cx| arrived(None, cx)),
+            Err(e) => log::warn!("play: {e}"),
         }
     })
     .detach();
@@ -59,8 +86,9 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
     let sets = sources(items);
     let feed = lib.feed.clone();
     cx.spawn(async move |cx| {
-        if let Err(e) = engine.add_to_playlist(playlist, sets).await {
-            log::warn!("add to playlist {playlist}: {e}");
+        match engine.add_to_playlist(playlist, sets).await {
+            Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
+            Err(e) => log::warn!("add to playlist {playlist}: {e}"),
         }
         feed.update(cx, |feed, cx| feed.reload_playlists(cx));
     })

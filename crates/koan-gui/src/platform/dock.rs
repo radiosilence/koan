@@ -7,9 +7,8 @@
 use std::sync::Arc;
 
 use koan_ffi::{KoanEngine, RepeatMode, SleepTimer};
+use koan_kit::app::platform::{Menu, MenuItem, OperatingSystem};
 use koan_kit::app::{Action, App, Entity, Global};
-// the platform's menu bar and Dock menu, which koan-kit does not draw.
-use koan_kit::raw::{Menu, MenuItem};
 
 use super::actions::{Next, Previous, TogglePlayPause};
 use crate::mirror::{Devices, Mirror, Playback, Slice};
@@ -52,9 +51,11 @@ struct Shown {
 struct DockMenu {
     engine: Arc<KoanEngine>,
     shown: Option<Shown>,
-    /// The favourite tracks' ids as last read, read again when the track or
-    /// the library changes.
-    favourites: Option<(u64, std::collections::HashSet<i64>)>,
+    /// The favourite tracks' ids as last read, read again when the library
+    /// changes or a favourite is toggled.
+    favourites: Option<std::collections::HashSet<i64>>,
+    /// Bumped by each read, so an answer to an older one is dropped.
+    reads: u64,
 }
 
 impl Global for DockMenu {}
@@ -62,14 +63,14 @@ impl Global for DockMenu {}
 /// Follows the mirror and answers the menu's items. Once the mirror is
 /// installed.
 pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) {
-    // the platform's menu bar and Dock menu, which koan-kit does not draw.
-    if cx.platform_info().os != koan_kit::raw::OperatingSystem::Mac {
+    if cx.platform_info().os != OperatingSystem::Mac {
         return;
     }
     cx.set_global(DockMenu {
         engine: engine.clone(),
         shown: None,
         favourites: None,
+        reads: 0,
     });
     let mirror = cx.global::<Mirror>();
     let (playback, devices, library) = (
@@ -80,6 +81,8 @@ pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.observe(&playback, |_, cx| rebuild(cx)).detach();
     cx.observe(&devices, |_, cx| rebuild(cx)).detach();
     cx.observe(&library, |_, cx| read_favourites(cx)).detach();
+    cx.observe_global::<crate::library::feed::FavouritesMoved>(read_favourites)
+        .detach();
     let e = engine.clone();
     cx.on_action(move |action: &Dock, cx| run(&e, action, cx));
     read_favourites(cx);
@@ -89,6 +92,7 @@ fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
     let engine = engine.clone();
     let action = action.clone();
     cx.spawn(async move |cx| {
+        let favourite = matches!(action, Dock::Favourite(_));
         let done = match action {
             Dock::Favourite(id) => engine.toggle_favourite(id).await.map(|_| ()),
             Dock::Repeat(mode) => engine.set_repeat(mode).await,
@@ -100,21 +104,29 @@ fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
         if let Err(e) = done {
             log::warn!("dock menu: {e}");
         }
-        cx.update(read_favourites);
+        // A heart moved: the pages read again, and so does the menu.
+        if favourite {
+            cx.update(crate::library::feed::favourites_moved);
+        }
     })
     .detach();
 }
 
 /// Reads the favourite tracks again, then the menu.
 fn read_favourites(cx: &mut App) {
-    let engine = cx.global::<DockMenu>().engine.clone();
-    let version = cx.global::<Mirror>().library.read(cx).version;
+    let menu = cx.global_mut::<DockMenu>();
+    menu.reads += 1;
+    let (engine, read) = (menu.engine.clone(), menu.reads);
     cx.spawn(async move |cx| {
         let Ok(ids) = engine.favourite_track_ids().await else {
             return;
         };
         cx.update(|cx| {
-            cx.global_mut::<DockMenu>().favourites = Some((version, ids.into_iter().collect()));
+            let menu = cx.global_mut::<DockMenu>();
+            if menu.reads != read {
+                return;
+            }
+            menu.favourites = Some(ids.into_iter().collect());
             rebuild(cx);
         });
     })
@@ -135,7 +147,7 @@ fn shown(playback: &Entity<Playback>, devices: &Entity<Slice<Devices>>, cx: &App
             (true, _) => e.album.clone(),
         }),
         track,
-        favourite: track.is_some_and(|t| favourites.is_some_and(|(_, ids)| ids.contains(&t))),
+        favourite: track.is_some_and(|t| favourites.is_some_and(|ids| ids.contains(&t))),
         playing: now.state == koan_ffi::PlayState::Playing,
         repeat: Some(now.repeat_mode),
         shuffle: now.shuffle,

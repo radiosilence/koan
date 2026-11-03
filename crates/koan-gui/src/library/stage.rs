@@ -59,6 +59,11 @@ impl LibraryStage {
         self.focus_on_arrival = true;
     }
 
+    /// What the library's pages read and act through.
+    pub fn lib(&self) -> super::Lib {
+        self.lib.clone()
+    }
+
     /// The library's artwork cache.
     pub fn covers(&self) -> Entity<super::covers::Covers> {
         self.lib.covers.clone()
@@ -227,7 +232,13 @@ impl Render for LibraryStage {
             // Each page replays its last frame unless it notified, so the
             // overlay above it never redraws a 5,000-record grid.
             .children(page.map(|page| page.cached(StyleRefinement::default().size_full())))
-            .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
+            // Above the page and the playing bars painted over it.
+            .when_some(self.info.as_ref(), |d, (_, info)| {
+                d.child(crate::components::sheet::layered(
+                    crate::components::sheet::Layer::Panel,
+                    info.clone(),
+                ))
+            })
     }
 }
 

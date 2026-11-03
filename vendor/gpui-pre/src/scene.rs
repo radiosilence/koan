@@ -59,6 +59,18 @@ pub struct Scene {
     // re-present composes them rather than drawing the whole scene; `None`
     // where the shaders cannot be drawn apart from the rest (#1641).
     pub shader_layers: Option<Box<ShaderLayers>>,
+    // KOAN: the colour slots this scene draws with, so a window presents
+    // while one of them moves and a renderer redraws the layers holding it
+    // (#1859).
+    pub color_slots: crate::ColorSlotSet,
+    // KOAN: what was painted inside each layer group, as a scene of its own
+    // that a renderer draws into a texture for its shader to compose (#1859).
+    pub layer_groups: Vec<Scene>,
+    group_stack: Vec<usize>,
+    /// Shaders painted inside each open group, held to be drawn after it at
+    /// their own place: a group is drawn once per frame, and a shader in it
+    /// would stand still in its texture.
+    group_shaders: Vec<Vec<Primitive>>,
 }
 
 /// A scene split where its shaders are drawn (#1641).
@@ -90,6 +102,41 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         self.shaders.clear(); // KOAN: shader quads (#1641).
+        self.layer_groups.clear(); // KOAN: #1859.
+        self.group_stack.clear();
+        self.group_shaders.clear();
+        self.color_slots.clear(); // KOAN: #1859.
+    }
+
+    // KOAN: whether a colour slot this scene draws with moves at `at`
+    // (#1859).
+    pub fn color_slots_moving(&self, at: std::time::Instant) -> bool {
+        self.color_slots.moving(at)
+    }
+
+    // KOAN: the colour slots the primitives name (#1859).
+    fn collect_color_slots(&self) -> crate::ColorSlotSet {
+        let mut set = crate::ColorSlotSet::default();
+        for quad in &self.quads {
+            set.note(&quad.border_color);
+            set.note(&quad.background.solid);
+            for stop in &quad.background.colors {
+                set.note(&stop.color);
+            }
+        }
+        for shadow in &self.shadows {
+            set.note(&shadow.color);
+        }
+        for underline in &self.underlines {
+            set.note(&underline.color);
+        }
+        for sprite in &self.monochrome_sprites {
+            set.note(&sprite.color);
+        }
+        for sprite in &self.subpixel_sprites {
+            set.note(&sprite.color);
+        }
+        set
     }
 
     // KOAN: whether a shader on screen asks for the window to present every
@@ -125,6 +172,20 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
+        // KOAN: painted inside a layer group: into its scene, recorded here
+        // so a cached view replays it (#1859).
+        if let Some(&group) = self.group_stack.last() {
+            if matches!(primitive, Primitive::Shader(_)) {
+                if let Some(held) = self.group_shaders.last_mut() {
+                    held.push(primitive.clone());
+                }
+            } else {
+                self.layer_groups[group].insert_primitive(primitive.clone());
+            }
+            self.paint_operations
+                .push(PaintOperation::Primitive(primitive));
+            return;
+        }
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
@@ -182,12 +243,48 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
+    // KOAN: opens a layer group: what is painted until `pop_group` is drawn
+    // into a texture of its own (#1859).
+    pub fn push_group(&mut self) -> usize {
+        let group = self.layer_groups.len();
+        self.layer_groups.push(Scene::default());
+        self.group_stack.push(group);
+        self.group_shaders.push(Vec::new());
+        self.paint_operations.push(PaintOperation::StartGroup);
+        group
+    }
+
+    // KOAN: closes the open group, composed by `shader` sampling its texture
+    // (#1859).
+    pub fn pop_group(&mut self, mut shader: crate::PaintShader) {
+        let Some(group) = self.group_stack.pop() else {
+            return;
+        };
+        let held = self.group_shaders.pop().unwrap_or_default();
+        shader.group = Some(group);
+        self.paint_operations
+            .push(PaintOperation::EndGroup(shader.clone()));
+        // Into the enclosing group's scene, or this one, then the shaders
+        // painted inside it over it. Their operations are already recorded
+        // (the EndGroup's and each where it was painted): not twice.
+        let ops = self.paint_operations.len();
+        self.insert_primitive(shader);
+        for primitive in held {
+            self.insert_primitive(primitive);
+        }
+        self.paint_operations.truncate(ops);
+    }
+
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartGroup => {
+                    self.push_group();
+                }
+                PaintOperation::EndGroup(shader) => self.pop_group(shader.clone()),
             }
         }
     }
@@ -216,6 +313,12 @@ impl Scene {
         // KOAN: (#1641).
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
+        // KOAN: each group drawn whole into its texture (#1859).
+        for group in &mut self.layer_groups {
+            group.finish();
+            group.shader_layers = None;
+        }
         self.shader_layers = self.plan_shader_layers().map(Box::new);
     }
 
@@ -368,6 +471,9 @@ impl Scene {
             path.id = PathId(paths.len());
             paths.push(path);
         }
+        for layer in &mut layers {
+            layer.color_slots = layer.collect_color_slots(); // KOAN: #1859.
+        }
         Some(ShaderLayers { layers, groups })
     }
 
@@ -427,6 +533,10 @@ pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
+    // KOAN: a layer group's start, and its end with the shader that
+    // composes it (#1859).
+    StartGroup,
+    EndGroup(crate::PaintShader),
 }
 
 #[derive(Clone)]
@@ -687,8 +797,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             // KOAN: shader quads (#1641): one batch per run of one program.
             PrimitiveKind::Shader => {
                 let first = self.shaders_iter.peek().unwrap();
-                let (program, texture) =
-                    (first.program, first.image.as_ref().map(|t| t.texture_id));
+                let (program, texture, group) = (
+                    first.program,
+                    first.image.as_ref().map(|t| t.texture_id),
+                    first.group,
+                );
                 let shaders_start = self.shaders_start;
                 let mut shaders_end = shaders_start + 1;
                 self.shaders_iter.next();
@@ -699,6 +812,9 @@ impl<'a> Iterator for BatchIterator<'a> {
                             && std::ptr::eq(shader.program, program)
                             && shader.image.as_ref().map(|t| t.texture_id)
                                 == texture
+                            // KOAN: each group's texture its own (#1859).
+                            && shader.group == group
+                            && group.is_none()
                     })
                     .is_some()
                 {
@@ -708,6 +824,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 Some(PrimitiveBatch::Shaders {
                     program,
                     texture,
+                    group,
                     range: shaders_start..shaders_end,
                 })
             }
@@ -747,6 +864,8 @@ pub enum PrimitiveBatch {
     Shaders {
         program: &'static crate::ShaderProgram,
         texture: Option<AtlasTextureId>,
+        // KOAN: the layer group it composes (#1859).
+        group: Option<usize>,
         range: Range<usize>,
     },
 }

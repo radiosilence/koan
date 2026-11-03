@@ -142,12 +142,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
         .flex_col()
         .gap(look.space(Space::M))
         .p(look.space(Space::L))
-        .child(
-            div()
-                .text_role(TypeRole::Title, look)
-                .text_color(look.palette.strong.hsla())
-                .child(c.title),
-        )
+        .child(crate::components::title_text(c.title, look))
         .child(
             div()
                 .text_role(TypeRole::Meta, look)

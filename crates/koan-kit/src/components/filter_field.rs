@@ -39,19 +39,30 @@ impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let empty = self.input.read(cx).value().is_empty();
-        let (escape, clear) = (self.input.clone(), self.input.clone());
+        let (escape, clear, focus) = (self.input.clone(), self.input.clone(), self.input.clone());
         let hover = look.palette.ink.hsla();
         div()
+            .id("filter-field")
             .flex()
             .items_center()
+            .cursor_text()
             .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
             .map(|d| {
                 if self.fill {
                     d.w_full()
                 } else {
+                    // Its measure, given up before the toolbar's buttons
+                    // when the page column is narrow.
+                    // In the toolbar, a button's height to click, glyph and
+                    // margins included, not the text's line alone.
                     d.w(super::ToolbarMetrics::FIELD * look.scale.size)
-                        .flex_none()
+                        .min_h(super::ToolbarMetrics::FIELD_HIT)
+                        .flex_shrink(1.)
+                        .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }
+            })
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                focus.update(cx, |input, cx| input.focus(window, cx));
             })
             .on_action(move |_: &Escape, window, cx| {
                 if escape.read(cx).value().is_empty() {

@@ -1,8 +1,11 @@
 //! The heart on anything that can be favourited, the Mac's `FavouriteButton`:
 //! the outline off, filled in the accent on. Its own click answers it: six
 //! small dots leave a heart that fills, and one ring closes in on a heart
-//! that empties. The owner says what a click does; where the heart shows
-//! (always, or only under the pointer) is its styling, set as on a `div`.
+//! that empties. A change made elsewhere (a shortcut, another device)
+//! answers alike while the heart is drawn. The owner says what a click
+//! does; a heart without one is a mark, with no tooltip or pointer, inside
+//! a control of its owner's (an album tile). Where the heart shows (always,
+//! or only under the pointer) is its styling, set as on a `div`.
 
 use std::sync::Arc;
 
@@ -111,6 +114,13 @@ impl RenderOnce for Heart {
         };
         let on = self.on;
         let answers = Answerer::of(&self.id, window, cx);
+        answers.follow(
+            on as u64,
+            if on { Answer::Burst } else { Answer::Close },
+            accent,
+            window,
+            cx,
+        );
         let tip = self.help.clone().unwrap_or_else(|| {
             crate::theme::label(if on {
                 "remove from favourites"
@@ -123,8 +133,10 @@ impl RenderOnce for Heart {
             .flex()
             .items_center()
             .justify_center()
-            .cursor_pointer()
-            .tooltip(move |window, cx| super::Tooltip::view(tip.clone(), window, cx))
+            .when(self.on_click.is_some(), |d| {
+                d.cursor_pointer()
+                    .tooltip(move |window, cx| super::Tooltip::view(tip.clone(), window, cx))
+            })
             .child(
                 div()
                     .relative()

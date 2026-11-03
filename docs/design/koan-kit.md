@@ -109,7 +109,7 @@ Toolbar::new()
 
 ### FilterField (Mac: `KoanSearchField`, the filter panel's field)
 
-`FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. The page owns the `InputState` and what typing does.
+`FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. A click anywhere on the field, a toolbar button's height, focuses it; in a narrow page column it gives up width down to 64 points before any toolbar button goes. The page owns the `InputState` and what typing does.
 
 With text in it the field shows a clear mark at its trailing edge, `muted` and `ink` under the pointer; a press on it empties the field and keeps the keyboard there, and Escape does the same, going on to whatever Escape means around the field once it is empty. Emptying is an `InputEvent::Change` like typing. `.fill()` makes it as wide as what holds it, as the sidebar's search is. The input's types are `koan_kit::app::input`.
 
@@ -120,17 +120,19 @@ With text in it the field shows a clear mark at its trailing edge, `muted` and `
 ```rust
 TableRow::new(id, RowKind::Art)
     .selected(picked)
-    .current(playing)
-    .lead(Lead::Number(n))       // or Lead::Time, Lead::Bars
-    .sleeve(sleeve)              // drawn with Placeholder while missing
-    .title(title, credit_line)   // flexes and truncates
-    .mark(availability)
-    .heart(favourite)
-    .figure(Column::Format, quality)   // fixed, right-aligned
-    .figure(Column::Length, duration)
+    .lead(MARK, mark)            // a fixed cell, its content at its trailing edge
+    .lead_exact(sleeve_side, sleeve)
+    .title(title)                // flexes and truncates
+    .line(credit)
+    .figure(FORMAT, quality)     // fixed, right-aligned
+    .figure(LENGTH, duration)
 ```
 
-`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. A fixed cell's width is passed in points at 100 % and grows with the text size; each list names its widths as constants of its own (the queue's `MARK`), so nothing yet makes one figure the same width in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+
+### CommandBar (Arc's and Dia's command bars)
+
+`CommandBar::new(id, &input).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top, results in headed groups of `SuggestionRow`s with the lit one kept in view, and along its foot what each key does. The owner holds the query and decides what is found and what each key does.
 
 ### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
 
@@ -194,24 +196,28 @@ A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_o
 
 ### Animated (GPU-drawn motion)
 
-Anything that moves every frame (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, the spectrum) is an `AnimatedQuad`: an element drawn by a fragment program from sixteen uniforms, which the page writes through an `Animated` handle from any thread. The frame is presented again with the uniforms as they are then; the page and the views around it are not drawn again, and GPUI draws no frame.
+Every aspect of the UI is smooth and moves with ease, because any animation is drawn by the GPU through shaders: at the display's refresh rate always (120 Hz on ProMotion), with next to no CPU per frame, and nothing at all while nothing moves. No animation is capped, paced or stepped by a timer.
+
+Every animation is keyframes the GPU interpolates (#1859), as a browser's compositor does. Anything that moves (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, a control's fill, the spinner) is an `AnimatedQuad`: an element drawn by a fragment program from an `Animated` handle the page writes from any thread. The handle holds sixteen plain values (colours, sizes, flags, written when they change) and eight **tracks**. A track is one segment of a moving value: from, to, when it starts, how long it takes, and its curve. The CPU writes a track when its data changes, at that data's own rate; the program evaluates it at the present's time with `koan_track(u, k, time)`, at the display's rate, with no CPU work per frame. The page and the views around it are not drawn again, and GPUI draws no frame.
 
 ```rust
 static RING: ShaderProgram = ShaderProgram { name: "koan-ring", msl: r#"…"#, wgsl: r#"…"#, prepare: None };
 
-let progress = Animated::new();            // kept by the view, cloned to a worker
+let progress = Animated::new();                  // kept by the view, cloned to a worker
 AnimatedQuad::new(&RING, &progress).size(side)   // declared in render
-progress.set(0, fraction);                 // from any thread, as the engine reports
+progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engine reports, ~15 Hz
 ```
 
-- **Driven by values:** `set`/`set_all` write uniforms; a change wakes the window to present at its next refresh, and nothing runs between changes.
-- **Driven by the clock:** `run(true)` presents every refresh while it runs, and `time` in the program counts from `set_origin`. A seek bar sets the anchor's share, rate and instant and runs while playing; an indeterminate ring runs while shown.
-- **Transitions:** `run_for(length)` runs the clock for a transition's length and stops by itself, with nothing to stop it. The controls' fills fade this way (`transition` and `fill` in `components/mod.rs`); their text colours still fade on GPUI frames, since text cannot change colour without a frame.
-- **Parking** is the kit's: a window with nothing changing or running parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
-- **Reduce Motion:** `.decorative()` stops the clock while the person asks for less motion. Progress is not decorative.
-- **Per-present work:** a program's `prepare` runs on the CPU once per quad at each present, for what every pixel would otherwise work out alike (the wash's pose and eased opacity).
+- **`to(k, value, length, ease)`** moves track `k` from where it stands now (read on the present clock, `Animated::now()`) to `value`: a retarget mid-flight starts from what is on screen, and a spring carries its velocity on.
+- **`segment(k, from, to, start, length, ease, repeat)`** writes the whole segment, for values whose start is known: an analyser frame at its own time, a playhead from its anchor, a drift that breathes (`Repeat::Alternate`) or a turn that loops (`Repeat::Loop`). **`hold(k, value)`** stands still.
+- **Curves** (`Ease`): linear, ease in and out, the theme's quick-out, any CSS cubic Bézier, and a damped spring in closed form. The CPU's `Animated::at` evaluates a track exactly as the program does.
+- **Rates are the engine's:** a view hands each value the engine sends to its `Animated` as the next keyframe, and the GPU interpolates. The bars' bands glide over the gap between the analyser's frames; a seek bar's playhead takes each anchor the engine reports (a seek, a pause, a skip), its downloaded part each reading of the download; the wash, the controls' fills and the spinner are written once and run by themselves. No rate is set or assumed in koan-kit or koan-gui.
+- **States** arrive at once and leave over `Motion::LEAVE` (130 ms): the pointer reaching a control lights it, and its fill fades out once the pointer has gone (`transition` and `fill` in `components/mod.rs`). Every control and row follows this rule; Reduce Motion makes both instant. Text, glyphs and edges fade the same way through colour slots: a control holds one only while its leave fade runs.
+- **Parking** is the kit's: a window presents while any track on screen moves and once more as the last comes to rest, then parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
+- **Reduce Motion:** a `.decorative()` quad's tracks stand at their ends, a repeating one at its start. Progress is not decorative.
+- **`AnimatedLayer`** moves what an element paints: its content is drawn into a texture of its own (a GPUI layer group) and composed at each present with opacity, offset and reveal tracks (`LAYER`). It is a layer only while a track moves, painted plainly once settled; shaders inside it are drawn over it at their own place. `FadeIn`, `Reveal`, `Slide` and `SplitView`'s column are built on it: a slot takes its size at once, so what is beside it moves in one step, and content sliding out takes no clicks.
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
-- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback.
+- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 
@@ -219,16 +225,22 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
 
+A change the control learns of rather than sees done (a favourite set by a shortcut or another device, music queued from a menu) answers through `follow(mark, answer, colour)` as the control draws: `mark` names the state, and a draw that finds it moved starts the answer. A control's first draw only notes the mark, so a row scrolled in shows its state still, and a change the control answered from its own handler a moment earlier is not answered twice. `announce` answers the first draw too, for something whose appearing is the news.
+
 | Control | Answer |
 |---|---|
 | `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
 | `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
-| `Heart` | six dots leaving a heart that fills; a ring closing in on one that empties |
-| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row) | a line drawn in under it |
+| `Heart`, the album tile's heart included, however the favourite changed | six dots leaving a heart that fills; a ring closing in on one that empties |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it |
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
 
-`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
+The storybook's motion playground plays a value on one track as a component would: what it moves (position, opacity, scale, colour), the easing (linear, in-out, quick-out, a Bézier whose handles drag on the plotted curve, a spring with its stiffness and damping), the length and the repeat, on a sample drawn at the display's rate, with a scrubber and the `Animated::segment` call to copy. It doubles as a visual test of every easing.
+
+`PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`. `renderer_mark(color)` takes the bars' place while the music plays on a renderer handed the file itself, where nothing passes through to measure.
+
+`Prism`, `Burst` and `Sheen` (Mac: `Support/Rainbow.swift`'s flourishes): the hidden rainbow appearance, every part a decorative quad on `Animated`. A `Prism` is one window's uniforms, fed the analyser's bands through `hear`, which finds the beat as an onset of the low band over its running average and records its strength and moment; the programs decay it, so a beat fades with nothing written. It draws a layer over the wash (`wash`: a kaleidoscope of plasma through the palette, rippling with the low band), the beat's glow at the edges (`pulse`), a mirror ball (`ball`), turning only while it runs, and over the page the disco (`disco`): the ball's spots wheeling across the window from where it hangs (`ball_at`), stage beams sweeping up from the foot, four-pointed glimmers, falling glitter and a flash on the beat held to a sixth of the window's light. Over that, the party (`party`): six lasers criss-crossing from the top corners, pyro shooting up from the foot on each beat, glossy hearts floating up. Beats are at least a third of a second apart, so no flash comes more than three times a second. A `Burst` is thrown from a point and stops by itself: `confetti`, `sweep`, the ring of colour between records, or `sticker`, brat's wordmark on lime or a chrome star popping in mid-window as the appearance comes out. While `KoanTheme::prism` says the appearance is drawn, what carries the accent as a fill carries the palette's gradient instead (`PrismFill`): a progress bar's fill, the chosen tab's rule. `Sheen::glitch` splits what it covers into pink and cyan for a blink every five seconds, as the Mac's title glitches. `Sheen` passes a band of the palette over its parent. `PlayingBars::prism` and `Slider::prism` switch the bars and a gliding fill to rainbow programs with the same uniforms. Two palettes, hyperpop and brat's lime. An app mounts none of it while the appearance is off, so off costs nothing; under Reduce Motion every clock stands still, and the app mounts none of the window's layers.
 
 `SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 
@@ -264,7 +276,7 @@ A control answers what was done to it, by itself, so every page that uses it ans
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
-`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+`sheet::{panel, wide_panel, head, head_data, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths), its head with the title and trailing actions, its scrolling body. `sheet::present(view, window)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks, holding the keyboard while it does; `sheet::close` takes it away. `sheet::layered(Layer, element)` draws an overlay after the window's content, so a panel, a sheet or a question covers the playing bars the root paints over the page; `Layer` orders them (panel, sheet, question). `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
 
 The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
@@ -272,7 +284,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 `table_list(id, count, rows)`: a virtualised list of `TableRow`s, made a screenful at a time, for a table too long to build whole (a library's organise plan).
 
-`DenseTable::new(columns).header(…).rows(…)` with `Column::fixed(width)` or `Column::flex()` and an `Align` each: the compact table an editor shows, where every cell may be a field. A `DenseRow` can `span` cells (a graphic EQ's curve across four columns) and carries a `trailing` menu. Columns, gutters and row height are the table's; rows declare cells.
+`DenseTable::new(columns).header(…).rows(…)` with `Column::fixed(width)` or `Column::flex()` and an `Align` each: the compact table an editor shows, where every cell may be a field. A `DenseRow` can `span` cells (a graphic EQ's curve across four columns) and carries a `trailing` menu; `trailing_width` keeps that room on every row, the header's included, so the columns line up whichever rows have one. Columns, gutters and row height are the table's; rows declare cells.
 
 ### ProgressRow and StatusBlock (Mac: `ActivityIndicator`, `SidebarView`'s foot)
 
@@ -288,7 +300,11 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
-`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `open(cx, build)` (or `options(cx)`): a window beside the main one, centred at its size in points, its content under the root the kit's sheets, menus and fields draw in. `MainWindow::new(title, app_id).place(saved).min(size).buttons_at(origin).open(cx, build)` is the app's own window: put back where it was left, its content under the title bar on macOS with the window's buttons on the toolbar's ground. `moves_window(area)` makes bare space move the window and zoom it on a double click, as a title bar does; where the compositor leaves the decorations to the app (`draws_decorations`), `window_buttons(on_close)` and `close_button(on_close)` are the buttons a toolbar or a top strip carries.
+
+`opens_panel(id, trigger, content)` is a control that opens a panel under it, made each time it opens, with a `Dismiss` for its rows; `ToolbarMenu` is one with a toolbar button, `TextTrigger` the word that opens one in a form row or the selection bar. `anchored_panel` stands a panel by the control that opened it and keeps it in the window. `title_text` is a title outside a page's header (About, a confirmation). `TextArea` (with `AreaState`) is several lines of text on a field's ground. `sheet::trap_focus` keeps Tab inside a sheet its owner draws. `RowMetrics::lead_width(count)` is a number column measured in the face its numbers are drawn in.
+
+`koan_kit::app::platform` holds what the app asks of the platform beyond its windows' content (start-up, the menu bar and the Dock's menu, the system, the keymap, a scroll's phase), `app::image` the decoded sleeves the components draw, and `app::test` the test harness. koan-gui reaches `raw` only where it draws by hand: the EQ graph and the profiler's measurements.
 
 ## Accessibility
 

@@ -9,8 +9,8 @@
 //! it lands. Typing settles briefly first, which only spares the engine a
 //! round of queries per keystroke from a fast typist.
 
+pub mod bar;
 pub mod field;
-pub mod picker;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -22,6 +22,12 @@ use koan_kit::app::*;
 use crate::navigator::{Listing, Navigator, Route, Shelf};
 
 const SETTLE: Duration = Duration::from_millis(90);
+
+/// How deep the search box's answers go, as the ⇧⌘K picker's did: enough
+/// to build a queue from.
+const DEEP_ARTISTS: u32 = 12;
+const DEEP_ALBUMS: u32 = 40;
+const DEEP_TRACKS: u32 = 60;
 
 /// What the suggestions panel offers of each kind, as the Mac's does.
 const SUGGESTED_TRACKS: usize = 5;
@@ -130,6 +136,10 @@ pub struct Search {
     /// The library's version the results were read at: a change to the
     /// library asks the query again.
     library: Option<u64>,
+    /// The search box over the window is open: its answers go deeper than
+    /// the sidebar's suggestions and the results page's previews, as the box
+    /// is picked from.
+    deep: bool,
     _task: Option<Task<()>>,
 }
 
@@ -144,6 +154,7 @@ impl Search {
             results: None,
             generation: 0,
             library: None,
+            deep: false,
             _task: None,
         }
     }
@@ -171,6 +182,17 @@ impl Search {
         self.ask(SETTLE, cx);
     }
 
+    /// Whether answers go as deep as the search box lists; a change asks the
+    /// query again.
+    pub fn set_deep(&mut self, deep: bool, cx: &mut Context<Self>) {
+        if self.deep != deep {
+            self.deep = deep;
+            if !self.query.is_empty() {
+                self.ask(Duration::ZERO, cx);
+            }
+        }
+    }
+
     /// The library moved under the results: the same query, read again.
     pub fn library_changed(&mut self, version: Option<u64>, cx: &mut Context<Self>) {
         let last = std::mem::replace(&mut self.library, version);
@@ -181,8 +203,12 @@ impl Search {
 
     fn ask(&mut self, settle: Duration, cx: &mut Context<Self>) {
         self.generation += 1;
-        let (engine, generation, query) =
-            (self.engine.clone(), self.generation, self.query.clone());
+        let (engine, generation, query, deep) = (
+            self.engine.clone(),
+            self.generation,
+            self.query.clone(),
+            self.deep,
+        );
         self._task = Some(cx.spawn(async move |this, cx| {
             if !settle.is_zero() {
                 cx.background_executor().timer(settle).await;
@@ -190,7 +216,14 @@ impl Search {
             let shelf = ShelfKind::Search {
                 query: query.clone(),
             };
-            let summary = match engine.shelf_summary(shelf).await {
+            let read = if deep {
+                engine
+                    .shelf_summary_sized(shelf, DEEP_ARTISTS, DEEP_ALBUMS, DEEP_TRACKS)
+                    .await
+            } else {
+                engine.shelf_summary(shelf).await
+            };
+            let summary = match read {
                 Ok(summary) => summary,
                 Err(e) => {
                     log::warn!("search: {e}");

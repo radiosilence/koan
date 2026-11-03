@@ -8,9 +8,8 @@
 //!
 //! Built from koan-kit's sheet: its panel, head and body, keys as badges.
 
+use koan_kit::app::platform::OperatingSystem;
 use koan_kit::app::*;
-// which platform's key names to print, which koan-kit does not decide.
-use koan_kit::raw::OperatingSystem;
 
 use crate::components::{Badge, Button, ButtonKind, sheet};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -21,7 +20,8 @@ actions!(shortcuts_sheet, [Dismiss]);
 
 const CONTEXT: &str = "ShortcutsSheet";
 
-/// The sheet asks to be closed: escape, or its done button.
+/// The sheet asks to be closed: escape, return (its done button is the
+/// default), or the button.
 pub struct Dismissed;
 
 pub struct ShortcutsSheet {
@@ -38,7 +38,10 @@ impl Focusable for ShortcutsSheet {
 
 /// Bind the sheet's own keys. Once, at launch.
 pub fn bind(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("escape", Dismiss, Some(CONTEXT))]);
+    cx.bind_keys([
+        KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
+        KeyBinding::new("enter", Dismiss, Some(CONTEXT)),
+    ]);
 }
 
 impl ShortcutsSheet {
