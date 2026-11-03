@@ -7,7 +7,8 @@
 
 use gpui_kit::*;
 
-use super::{Animated, ShaderProgram};
+use super::{Animated, Ease, Repeat, ShaderProgram};
+use crate::theme::{KoanTheme, Motion};
 
 /// The layer's composition. Tracks: 0 the opacity, 1 and 2 the offset in
 /// device pixels, 3 how much of it shows, from the top left, 0 to 1.
@@ -137,4 +138,87 @@ pub fn standing(animated: &Animated) {
     animated.hold(1, 0.0);
     animated.hold(2, 0.0);
     animated.hold(3, 1.0);
+}
+
+/// A column that slides in and out at an edge (a panel, the sidebar): its
+/// slot laid out at its full width at once, so what is beside it moves in
+/// one step, and its content sliding by the layer's offset track. Gone, the
+/// slot is let go once the slide out ends.
+pub(crate) struct Sliding {
+    /// Whether the slot is laid out: shown, or still sliding out.
+    pub laid_out: bool,
+    pub animated: Animated,
+}
+
+/// The slide for `key`, `travel` device pixels toward the edge the column
+/// leaves by (negative for the leading edge).
+pub(crate) fn sliding(
+    key: ElementId,
+    shown: bool,
+    travel: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> Sliding {
+    struct State {
+        shown: bool,
+        laid_out: bool,
+        animated: Animated,
+        _gone: Option<Task<()>>,
+    }
+    let state = window.use_keyed_state(key, cx, |_, _| {
+        let animated = Animated::new();
+        standing(&animated);
+        State {
+            shown,
+            laid_out: shown,
+            animated,
+            _gone: None,
+        }
+    });
+    let moving = KoanTheme::motion_allowed(cx);
+    state.update(cx, |s, cx| {
+        if s.shown != shown {
+            s.shown = shown;
+            let now = Animated::now();
+            if !moving {
+                s.laid_out = shown;
+                s._gone = None;
+                s.animated.hold(1, 0.0);
+            } else if shown {
+                s.laid_out = true;
+                s._gone = None;
+                s.animated.segment(
+                    1,
+                    travel,
+                    0.0,
+                    now,
+                    Motion::SETTLE,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+            } else {
+                s.animated.segment(
+                    1,
+                    0.0,
+                    travel,
+                    now,
+                    Motion::SETTLE,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+                s._gone = Some(cx.spawn(async move |s, cx| {
+                    cx.background_executor().timer(Motion::SETTLE).await;
+                    s.update(cx, |s, cx| {
+                        s.laid_out = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }));
+            }
+        }
+        Sliding {
+            laid_out: s.laid_out,
+            animated: s.animated.clone(),
+        }
+    })
 }

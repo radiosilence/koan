@@ -14,7 +14,7 @@ use std::rc::Rc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::child;
+use super::{SHADED, child};
 use crate::theme::{Look, Motion};
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
@@ -106,13 +106,29 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        let open = super::ease(
-            child(&self.id, "shown"),
-            self.shown,
-            Motion::SETTLE,
-            window,
-            cx,
-        );
+        // Where the renderer draws shaders, the column slides as a layer by
+        // the GPU, its slot laid out at once (#1859); elsewhere its width
+        // eases on frames.
+        let slide = SHADED.then(|| {
+            let travel = -f32::from(self.width) * window.scale_factor();
+            super::layer::sliding(child(&self.id, "shown"), self.shown, travel, window, cx)
+        });
+        let open = match &slide {
+            Some(slide) => {
+                if slide.laid_out {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            None => super::ease(
+                child(&self.id, "shown"),
+                self.shown,
+                Motion::SETTLE,
+                window,
+                cx,
+            ),
+        };
         let Some(leading) = self.leading.filter(|_| open > 0.0) else {
             return div().size_full().flex().children(self.trailing);
         };
@@ -216,7 +232,14 @@ impl RenderOnce for SplitView {
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
-                    .child(div().w(width).h_full().child(leading)),
+                    .child(match &slide {
+                        Some(slide) => super::AnimatedLayer::new(
+                            &slide.animated,
+                            div().w(width).h_full().child(leading),
+                        )
+                        .into_any_element(),
+                        None => div().w(width).h_full().child(leading).into_any_element(),
+                    }),
             )
             .child(
                 div()

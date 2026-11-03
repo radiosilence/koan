@@ -1,9 +1,11 @@
 //! A panel at the trailing edge of a page that slides in and out rather
-//! than snapping: the lyrics, an inspector. Its width eases between nothing
-//! and the panel's over `Motion::SETTLE`, the panel laid out at full width
-//! and clipped, so nothing in it reflows as it goes; at once under Reduce
-//! Motion. The owner keeps the panel while it slides out and lets it go once
-//! its `SlideState` says it has gone.
+//! than snapping: the lyrics, an inspector. Where the renderer draws shaders
+//! its slot takes the panel's width at once and the panel slides in over
+//! `Motion::SETTLE` as an `AnimatedLayer`, with no frame drawn (#1859);
+//! sliding out, the slot is let go as the slide ends. Elsewhere its width
+//! eases on frames. At once under Reduce Motion. The owner keeps the panel
+//! while it slides out and lets it go once its `SlideState` says it has
+//! gone.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -11,7 +13,8 @@ use std::rc::Rc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::child;
+use super::layer::{AnimatedLayer, sliding};
+use super::{SHADED, child};
 use crate::theme::Motion;
 
 /// How far a slide stands open, as last drawn: held by the owner, which
@@ -53,6 +56,23 @@ impl Slide {
 
 impl RenderOnce for Slide {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if SHADED {
+            let travel = f32::from(self.width) * window.scale_factor();
+            let slide = sliding(child(&self.id, "open"), self.shown, travel, window, cx);
+            self.state.0.set(if slide.laid_out { 1.0 } else { 0.0 });
+            return div()
+                .h_full()
+                .flex_none()
+                .w(if slide.laid_out { self.width } else { px(0.) })
+                .overflow_hidden()
+                .when(slide.laid_out, |d| {
+                    d.child(AnimatedLayer::new(
+                        &slide.animated,
+                        div().w(self.width).h_full().children(self.content),
+                    ))
+                })
+                .into_any_element();
+        }
         let open = super::ease(
             child(&self.id, "open"),
             self.shown,
@@ -73,5 +93,6 @@ impl RenderOnce for Slide {
             .when(open > 0.0, |d| {
                 d.child(div().w(self.width).h_full().children(self.content))
             })
+            .into_any_element()
     }
 }
