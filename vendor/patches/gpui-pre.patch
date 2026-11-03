@@ -206,10 +206,10 @@ index 3bd893f..e757f27 100644
          let l = color.l;
 diff --git b/src/color_slots.rs b/src/color_slots.rs
 new file mode 100644
-index 0000000..7651cfc
+index 0000000..fbb968f
 --- /dev/null
 +++ b/src/color_slots.rs
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,355 @@
 +// KOAN: colours that move on the GPU (#1859).
 +//
 +// A colour slot is one entry of an app-wide table of moving colours: a
@@ -404,7 +404,14 @@ index 0000000..7651cfc
 +    } else {
 +        mixed
 +    };
-+    Rgba { r, g, b, a: mix(3) }
++    // As the stock shaders clamp it: a curve that overshoots (a spring, a
++    // Bezier past its ends) mixes past the ends, never past a colour.
++    Rgba {
++        r: r.clamp(0.0, 1.0),
++        g: g.clamp(0.0, 1.0),
++        b: b.clamp(0.0, 1.0),
++        a: mix(3).clamp(0.0, 1.0),
++    }
 +}
 +
 +/// Track starts are seconds from the table's origin, in f32: an hour on, the

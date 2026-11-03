@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use gpui_kit::{
     ColorSlot, Context, Hsla, IntoElement, Modifiers, ParentElement, Render, Rgba, ShaderUniforms,
     Styled, TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, point, present_now, px,
-    set_present_lead,
 };
 use koan_kit::components::{
     Animated, AnimatedQuad, Ease, Repeat, ShaderProgram, Toolbar, ToolbarButton,
