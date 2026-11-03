@@ -8,10 +8,10 @@
 //! ones to come, and the panel's top and bottom edges fade, so the lines
 //! enter and leave softly rather than being cut.
 //!
-//! Every line is drawn in one size and in `strong`, and the program sets
-//! each line's opacity: no line changes its layout as the song moves, so a
-//! line that wraps never pushes the others about. Where the renderer draws
-//! no shaders, the lines are drawn in their colours and the column steps.
+//! The sung line is drawn in `title small`, the rest in `control`, as the
+//! Mac's panel draws them, all in `strong`; the program sets each line's
+//! opacity. Where the renderer draws no shaders, the lines are drawn in
+//! their colours and the column steps.
 
 use std::time::Instant;
 
@@ -356,7 +356,14 @@ impl RenderOnce for SyncedLines {
                     .px(pad)
                     .py(look.spaced(5.5))
                     .cursor_pointer()
-                    .text_role(TypeRole::TitleSmall, &look)
+                    .text_role(
+                        if active == Some(ix) {
+                            TypeRole::TitleSmall
+                        } else {
+                            TypeRole::Control
+                        },
+                        &look,
+                    )
                     .text_color(color)
                     .when_some(on_line, |d, f| {
                         d.on_click(move |e, window, cx| {
@@ -507,6 +514,25 @@ mod tests {
                 .on_line(move |ix, _, _| clicked.set(Some(*ix))),
             )
         }
+    }
+
+    /// Only the sung line is drawn large; the others in the control size.
+    #[gpui_kit::test]
+    fn only_the_sung_line_is_large(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Lines {
+            clicked: Rc::new(Cell::new(None)),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let height = |cx: &mut VisualTestContext, line: &'static str| {
+            cx.debug_bounds(line).expect("drawn").size.height
+        };
+        let (sung, other) = (height(cx, "synced-line-2"), height(cx, "synced-line-0"));
+        assert!(sung > other, "sung {sung:?}, other {other:?}");
     }
 
     /// A click on a line hands its index over, an empty line keeping its
