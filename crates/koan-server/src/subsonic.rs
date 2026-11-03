@@ -66,6 +66,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DSP_DELETED, &[1]),
     (koan_core::remote::profile::TV_PAIRING, &[1]),
     (koan_core::remote::profile::PLAYLIST_ORDER, &[1]),
+    (koan_core::remote::profile::COVERS, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -4778,6 +4779,72 @@ fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
         .ok_or_else(|| SubsonicError::not_found("Playlist"))
 }
 
+/// `koanCovers`: the covers of many records at one size, answered from what
+/// the cover cache holds (the warm keeps every album at 300 and 600), as one
+/// stream of frames in the order the ids were given. A record whose cover is
+/// not kept, or an id that is not an album's, is answered `NOT_HELD`, and the
+/// client asks `getCoverArt` for it; nothing here opens a music file or
+/// decodes an image, so a library's covers cost the server file reads alone.
+/// See docs/reference/protocol/server-extensions.md#koancovers.
+async fn koan_covers(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
+    let json = auth.wants_json();
+    let ids: Vec<String> = params.all("id").map(str::to_owned).collect();
+    let size = crate::covers::snap(params.get("size").and_then(|s| s.parse().ok()));
+    let held = state.clone();
+    let resolved = offload(move || {
+        let db = authed_db(&held, &auth)?;
+        if ids.is_empty() {
+            return Err(SubsonicError::missing_param("id"));
+        }
+        if ids.len() > koan_core::remote::covers::BULK_MAX {
+            return Err(SubsonicError::bad_param("id"));
+        }
+        held.covers.forget_evicted(&db.conn);
+        Ok(ids
+            .into_iter()
+            .map(|raw| {
+                let album = match resolve_entity(&db, &raw) {
+                    Ok((Some(EntityKind::Album), id)) => Some(id),
+                    _ => None,
+                };
+                (raw, album)
+            })
+            .collect::<Vec<_>>())
+    })
+    .await;
+    let resolved = match resolved {
+        Ok(resolved) => resolved,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
+    tokio::task::spawn_blocking(move || {
+        use koan_core::remote::covers::{BulkCover, frame};
+        for (raw, album) in resolved {
+            let kept = album.and_then(|id| state.covers.album_cover_kept(id, size));
+            let bytes = match &kept {
+                Some(Some(cover)) => frame(&raw, BulkCover::Cover(cover)),
+                Some(None) => frame(&raw, BulkCover::None),
+                None => frame(&raw, BulkCover::NotHeld),
+            };
+            // The client went: nothing more to read.
+            if tx
+                .blocking_send(Ok(axum::body::Bytes::from(bytes)))
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    Response::builder()
+        .header(header::CONTENT_TYPE, koan_core::remote::covers::BULK_TYPE)
+        .body(axum::body::Body::from_stream(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        ))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 /// `koanPlaylistOrder` — the account's playlists in the order given, by
 /// repeated `id`. Its own playlists only: another account's public playlist
 /// sits where its owner put it. Ids no longer known are skipped, since a
@@ -6539,6 +6606,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/koanPlaylistOrder",
             get(koan_playlist_order).post(koan_playlist_order),
         )
+        .route("/rest/koanCovers", get(koan_covers).post(koan_covers))
         .route(
             "/rest/koanDspDeleted",
             get(koan_dsp_deleted).post(koan_dsp_deleted),
@@ -11085,6 +11153,104 @@ mod tests {
                 .unwrap();
             assert_eq!(&body[..], &jpeg[..], "a small JPEG is served as it is");
         }
+    }
+
+    /// `koanCovers` answers from the covers already made: not held before
+    /// any has been asked for, then the cover `getCoverArt` made, and an id
+    /// it cannot place as not held, every id in the order asked.
+    #[tokio::test]
+    async fn test_bulk_covers_answer_what_is_made() {
+        use koan_core::remote::covers::{BulkCover, read_frame};
+        let (state, dir) = test_state();
+        let album = dir.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        let track = album.join("01.flac");
+        std::fs::write(&track, b"no tags here").unwrap();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode_image(&image::RgbImage::from_pixel(
+                64,
+                64,
+                image::Rgb([200, 30, 30]),
+            ))
+            .unwrap();
+        std::fs::write(album.join("folder.jpg"), &jpeg).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta(track.to_str().unwrap(), "Song", "Album", 1),
+        )
+        .unwrap();
+        let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let album_id = queries::get_track_row(&db.conn, track_id)
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        let app = build_test_router(state);
+        let bulk = |app: axum::Router| async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/rest/koanCovers?{}&size=600&id=al-{album_id}&id=al-999999&id=mf-{track_id}",
+                            auth_query("")
+                        ))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.headers()[header::CONTENT_TYPE],
+                koan_core::remote::covers::BULK_TYPE
+            );
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let mut read = &body[..];
+            let mut frames = Vec::new();
+            while let Some(frame) = read_frame(&mut read).unwrap() {
+                frames.push(frame);
+            }
+            frames
+        };
+        let before = bulk(app.clone()).await;
+        assert_eq!(
+            before.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+            vec![
+                format!("al-{album_id}"),
+                "al-999999".to_string(),
+                format!("mf-{track_id}")
+            ]
+        );
+        assert!(before.iter().all(|(_, c)| *c == BulkCover::NotHeld));
+        let made = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/rest/getCoverArt?{}&id=al-{album_id}&size=600",
+                        auth_query("")
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let made = axum::body::to_bytes(made.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let after = bulk(app).await;
+        assert_eq!(after[0].1, BulkCover::Cover(made.to_vec()));
+        assert_eq!(after[1].1, BulkCover::NotHeld);
+        assert_eq!(
+            after[2].1,
+            BulkCover::NotHeld,
+            "a track's cover is not an album's entry"
+        );
     }
 
     /// A record that exists but has no art is served the ensō, at the size
