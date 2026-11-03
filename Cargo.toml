@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor"]
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates/koan-gui", "crates/koan-kit", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]

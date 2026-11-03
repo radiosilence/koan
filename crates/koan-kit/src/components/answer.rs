@@ -257,9 +257,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
 /// The glyph answers as one program, drawing the icons' strokes on their
 /// 24-point grid (`apps/macos/Resources/Icons`). Uniforms: 0 the answer, 1
-/// which way a nudge goes, 2..6 the glyph's colour, 6 the spill, 8..12 the
+/// which way a nudge goes, 2 the spill, 4..8 the glyph's colour, 8..12 the
 /// accent (a heart's fill, its particles), 12 the glyph's side, all in
-/// device pixels; track 0 the answer's time from 0 to 1, track 1 the same on
+/// device pixels; each colour is a whole block of four; track 0 the answer's time from 0 to 1, track 1 the same on
 /// its curve.
 ///
 /// It holds its end pose once the time has run, which is the icon itself,
@@ -317,7 +317,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
     float e = clamp(koan_track(u, 1, time), 0.0, 1.0);
     float k = max(u[12], 1.0) / 24.0;
-    float2 g = (position - u[6]) / k;
+    float2 g = (position - u[2]) / k;
     float pi = 3.14159265;
     float line = 0.0;
     float fill = 0.0;
@@ -386,11 +386,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float2 n = float2(u[1] < 0.0 ? 24.0 - x : x, g.y);
         line = max(kg_tri(n, float2(5.0, 6.0), float2(15.0, 12.0), float2(5.0, 18.0), k), kg_line(n, float2(19.0, 6.0), float2(19.0, 18.0), k));
     }
-    float la = line * u[5];
+    float la = line * u[7];
     float fa = fill * u[11];
     float a = max(la, fa);
     if (a <= 0.0) { return float4(0.0); }
-    float3 rgb = mix(float3(u[8], u[9], u[10]), float3(u[2], u[3], u[4]), la / (la + fa));
+    float3 rgb = mix(float3(u[8], u[9], u[10]), float3(u[4], u[5], u[6]), la / (la + fa));
     return float4(rgb, a);
 }
 "#,
@@ -443,7 +443,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
     let e = clamp(koan_track(u, 1u, time), 0.0, 1.0);
     let k = max(u[3].x, 1.0) / 24.0;
-    let g = (position - u[1].z) / k;
+    let g = (position - u[0].z) / k;
     let pi = 3.14159265;
     let heading = u[0].y;
     var line = 0.0;
@@ -520,11 +520,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         let n = vec2<f32>(nx, g.y);
         line = max(kg_tri(n, vec2<f32>(5.0, 6.0), vec2<f32>(15.0, 12.0), vec2<f32>(5.0, 18.0), k), kg_line(n, vec2<f32>(19.0, 6.0), vec2<f32>(19.0, 18.0), k));
     }
-    let la = line * u[1].y;
+    let la = line * u[1].w;
     let fa = fill * u[2].w;
     let a = max(la, fa);
     if (a <= 0.0) { return vec4<f32>(0.0); }
-    let rgb = mix(u[2].xyz, vec3<f32>(u[0].z, u[0].w, u[1].x), la / (la + fa));
+    let rgb = mix(u[2].xyz, u[1].xyz, la / (la + fa));
     return vec4<f32>(rgb, a);
 }
 "#,
@@ -800,8 +800,8 @@ impl Answerer {
         let look = crate::theme::Look::of(window, cx);
         let spill = look.spaced(answer.spill());
         let scale = window.scale_factor();
-        s.animated.set_all(6, &[f32::from(spill) * scale]);
-        s.animated.set_color(2, color);
+        s.animated.set_all(2, &[f32::from(spill) * scale]);
+        s.animated.set_color(4, color);
         // What fills (a heart, its particles): the colour its owner fills
         // in at rest, or the accent.
         s.animated
