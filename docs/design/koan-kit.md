@@ -199,7 +199,7 @@ A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_o
 Motion is what makes the app feel made with care, and it is easy to spoil with too much of it. Each rule below is one every component follows, so a page that uses the kit gets the same motion everywhere and writes none of its own.
 
 - **Motion says what happened.** An animation answers something the person did or something that changed: a favourite set, music arriving in the queue, a download finishing, a panel opening. Nothing moves without a change behind it, and nothing moves only to decorate. The playing bars and the wash carry the music's own levels and colour; the motion between their values smooths real data, and is never invented.
-- **Quick and quiet.** Every transition is within the motion tokens: `FAST` (80 ms) for a state flipping, `NORMAL` (120 ms) for something arriving, `LEAVE` (130 ms) for something going, `SETTLE` (250 ms) for the longest, an answer or a panel sliding. An answer is the accent at low opacity, drawn around or under what was acted on and never over its text. If an animation is noticed for itself, it is too large.
+- **Quick and quiet.** Every transition is within the motion tokens: `FAST` (80 ms) for a state flipping, `NORMAL` (120 ms) for a marker moving between places, `LEAVE` (130 ms) for something going, `ARRIVE` (200 ms) for something arriving and for a ring answering a press, `SETTLE` (250 ms) for the longest: an answer that travels, a panel sliding, the accent settling. An answer is the accent at low opacity, drawn around or under what was acted on and never over its text. If an animation is noticed for itself, it is too large.
 - **Arrive at once, leave with a fade.** What the person causes shows the moment they cause it: a pressed button, a hovered row and a lit control respond on the frame they are touched. What goes lingers for `LEAVE`, so the eye follows it out. A response that waits for its own animation reads as lag.
 - **Nothing jumps.** A change mid-flight starts from what is on screen, and a spring carries its speed into the new target (`Animated::to`). Content laid out by a moving size is laid out at its full size and clipped, so a sliding panel or a growing slot moves what is beside it and reflows nothing inside.
 - **Motion goes where the thing went.** A sweep draws from the leading edge toward the trailing one; music sent somewhere answers at its destination, the sidebar's queue or playlist row, not where it left. A panel slides from the edge it lives at.
@@ -237,16 +237,17 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 ### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
 
-A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
+A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it, in the accent at low opacity. Two tracks move it: its time, which its fade follows, and its travel on the answer's own curve. Nothing moves at rest, and the quad leaves the scene when the answer ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
 
-A change the control learns of rather than sees done (a favourite set by a shortcut or another device, music queued from a menu) answers through `follow(mark, answer, colour)` as the control draws: `mark` names the state, and a draw that finds it moved starts the answer. A control's first draw only notes the mark, so a row scrolled in shows its state still, and a change the control answered from its own handler a moment earlier is not answered twice. `announce` answers the first draw too, for something whose appearing is the news.
+A change the control learns of rather than sees done (a favourite set by a shortcut or another device, music queued from a menu) answers through `follow(mark, answer, colour)` as the control draws: `mark` names the state, and a draw that finds it moved starts the answer. A control's first draw only notes the mark, so a row scrolled in shows its state still, and a change the control answered from its own handler a moment earlier is not answered twice. `announce` answers the first draw too, for something whose appearing is the news, and `note` records a mark without answering, for a state answered only on the way in. A toggle turned on and a segment chosen answer this way, so the arrow keys, a shortcut or Settings read again answer as a click does.
 
-| Control | Answer |
-|---|---|
-| `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
-| `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
-| `Heart`, the album tile's heart included, however the favourite changed | six dots leaving a heart that fills; a ring closing in on one that empties |
-| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it |
+| Control | Answer | Length, curve |
+|---|---|---|
+| `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box | `ARRIVE`, quick-out |
+| `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling | `SETTLE`, quick-out |
+| `Heart` filling, the album tile's included, however the favourite changed | six dots leaving the heart | `SETTLE`, quick-out |
+| `Heart` emptying | a ring closing in on it | `ARRIVE`, ease in and out |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it from its leading edge | `SETTLE`, quick-out |
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
 

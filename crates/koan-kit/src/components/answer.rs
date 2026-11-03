@@ -47,10 +47,23 @@ impl Answer {
         }
     }
 
+    /// How long it runs: a ring, out or in, is a press's echo and as quick
+    /// as a sleeve arriving; what travels (dots, a line drawn the width of
+    /// a row) or lifts a ground takes the longest token.
     fn duration(self) -> Duration {
         match self {
-            Answer::Ring | Answer::Close | Answer::Sweep => Motion::SETTLE,
-            Answer::Burst | Answer::Lift => Motion::SETTLE,
+            Answer::Ring | Answer::Close => Motion::ARRIVE,
+            Answer::Burst | Answer::Sweep | Answer::Lift => Motion::SETTLE,
+        }
+    }
+
+    /// How what it draws travels: out from the control decisively and
+    /// settling (quick-out); a ring closing in eases both ways, as a
+    /// gathering rather than a throw.
+    fn ease(self) -> Ease {
+        match self {
+            Answer::Close => Ease::InOut,
+            _ => Ease::QuickOut,
         }
     }
 
@@ -65,15 +78,16 @@ impl Answer {
 }
 
 /// The answers as one program. Uniforms: 0 the answer, 2..6 the colour, 6
-/// the spill and 7 a point, in device pixels; track 0 the answer's progress
-/// from 0 to 1.
+/// the spill and 7 a point, in device pixels; track 0 the answer's time
+/// from 0 to 1, which its fade follows, and track 1 its travel, on the
+/// answer's own curve.
 pub static ANSWER: ShaderProgram = ShaderProgram {
     name: "koan-answer",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
     if (t >= 1.0) { return float4(0.0); }
-    float e = 1.0 - (1.0 - t) * (1.0 - t);
+    float e = clamp(koan_track(u, 1, time), 0.0, 1.0);
     float spill = u[6];
     float pt = u[7];
     float2 inner = size - 2.0 * spill;
@@ -111,7 +125,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
     if (t >= 1.0) { return vec4<f32>(0.0); }
-    let e = 1.0 - (1.0 - t) * (1.0 - t);
+    let e = clamp(koan_track(u, 1u, time), 0.0, 1.0);
     let spill = u[1].z;
     let pt = u[1].w;
     let inner = size - 2.0 * spill;
@@ -184,15 +198,11 @@ impl Answerer {
             s.animated.set_all(0, &[answer.code(), 0.0]);
             s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
             let now = Instant::now();
-            s.animated.segment(
-                0,
-                0.0,
-                1.0,
-                Animated::now(),
-                answer.duration(),
-                Ease::Linear,
-                Repeat::Once,
-            );
+            let at = Animated::now();
+            for (k, ease) in [(0, Ease::Linear), (1, answer.ease())] {
+                s.animated
+                    .segment(k, 0.0, 1.0, at, answer.duration(), ease, Repeat::Once);
+            }
             s.live = Some(answer);
             s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
@@ -224,6 +234,13 @@ impl Answerer {
         cx: &mut App,
     ) {
         self.moved(mark, false, answer, color, window, cx);
+    }
+
+    /// Notes `mark` without answering: a state the control answers only one
+    /// way into (an option becoming the chosen one), passed while it stands
+    /// in the other, so the next move in answers.
+    pub fn note(&self, mark: u64, cx: &mut App) {
+        self.0.update(cx, |s, _| s.seen = Some(mark));
     }
 
     /// As `follow`, for something whose appearing is the news (a notice):

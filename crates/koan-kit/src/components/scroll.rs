@@ -14,6 +14,7 @@ pub struct ScrollArea {
     id: ElementId,
     content: Content,
     reveal: Option<usize>,
+    centred: bool,
 }
 
 enum Content {
@@ -28,6 +29,7 @@ impl ScrollArea {
             id: id.into(),
             content: Content::Column(Box::new(content)),
             reveal: None,
+            centred: false,
         }
     }
 
@@ -38,6 +40,7 @@ impl ScrollArea {
             id: id.into(),
             content: Content::Items(items),
             reveal: None,
+            centred: false,
         }
     }
 
@@ -45,6 +48,13 @@ impl ScrollArea {
     /// to the pointer otherwise.
     pub fn reveal(mut self, ix: Option<usize>) -> Self {
         self.reveal = ix;
+        self
+    }
+
+    /// Brings the revealed item to the middle of the view rather than just
+    /// into it, as far as the ends allow: the line being sung.
+    pub fn centred(mut self) -> Self {
+        self.centred = true;
         self
     }
 }
@@ -59,7 +69,20 @@ impl RenderOnce for ScrollArea {
         if *revealed.read(cx) != self.reveal {
             revealed.update(cx, |r, _| *r = self.reveal);
             if let Some(ix) = self.reveal {
-                handle.scroll_to_item(ix);
+                match handle.bounds_for_item(ix).filter(|_| self.centred) {
+                    // Laid out last frame: where it stands in the column is
+                    // known, so the scroll puts its middle at the view's.
+                    Some(item) => {
+                        let view = handle.bounds();
+                        let to = view.center().y - item.center().y;
+                        let y = to.clamp(-handle.max_offset().y, Pixels::ZERO);
+                        handle.set_offset(Point {
+                            x: handle.offset().x,
+                            y,
+                        });
+                    }
+                    None => handle.scroll_to_item(ix),
+                }
             }
         }
         let scrolled = div()
