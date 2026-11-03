@@ -105,7 +105,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, window.scale_factor(), cx)),
             None => chip,
         }
     }
@@ -683,7 +683,7 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = covers::art(album, side, cx);
+            let art = covers::art(album, side, window.scale_factor(), cx);
             Cover::new(art, side)
                 .id(("sleeve", row as u64))
                 .into_any_element()
