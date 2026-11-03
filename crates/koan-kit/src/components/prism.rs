@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram};
+use super::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram, track_at};
 
 /// The palettes and a hash, in MSL, ahead of each program's `shade`.
 macro_rules! prism_msl {
