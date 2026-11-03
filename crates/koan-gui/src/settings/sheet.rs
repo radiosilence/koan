@@ -333,7 +333,7 @@ impl Sheets {
             );
         }
 
-        let panel = crate::components::sheet::panel(look)
+        let panel = crate::components::sheet::panel(sheet.title.as_ref(), look)
             .track_focus(&focus)
             .key_context("SettingsSheet")
             // Before a focused field sees it, which may take Escape for its

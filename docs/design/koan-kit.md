@@ -336,6 +336,8 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 Every koan-kit component reports itself to the accessibility tree GPUI builds over AccessKit (VoiceOver, Orca, UI Automation), so a page made from the kit is read without code of its own. The tree is built only while assistive technology is attached, so this costs nothing otherwise. Each sets its role and name beside its id (`accessible` in `components/mod.rs`) and answers a reader's click with the handler a pointer would call (`answers_click`):
 
+A node's id must be unique among its siblings with ids, or GPUI's tree builder asserts. A component named by its text (`Badge`, a section heading) takes `key` where the same text stands in rows with no id of their own. A slider or segmented control its owner did not name is named by its id read as words. A sheet's panel takes its name (`sheet::panel(name, look)`): a dialog met unnamed says nothing of what it asks. A submenu's row says whether its submenu shows (`MenuRow::expanded`).
+
 | Component | Role, name and state |
 |---|---|
 | `Button`, `ToolbarButton`, `PlayButton`, `ShuffleButton` | Button, named by the label or a glyph's tooltip ("shuffle Hounds of Love") |
