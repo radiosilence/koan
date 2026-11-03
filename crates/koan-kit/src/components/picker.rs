@@ -87,6 +87,7 @@ impl RenderOnce for Picker {
             .unwrap_or_default();
 
         let toggle = open.clone();
+        let (pointer, lit) = super::hover_fill(&self.id, &look, window, cx);
         // A combo box to a screen reader: what is chosen is its value, and
         // a click opens it as the pointer's does.
         let mut picker = accessible(
@@ -109,6 +110,7 @@ impl RenderOnce for Picker {
         .border_color(look.palette.muted.hsla())
         .text_role(TypeRole::Control, &look)
         .text_color(color)
+        .when(!self.disabled, |d| d.child(lit))
         .child(div().whitespace_nowrap().child(shown))
         .child(
             KoanIcon::new(Icon::Choose)
@@ -118,7 +120,6 @@ impl RenderOnce for Picker {
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
-            let (surface, pressed) = (look.palette.surface.hsla(), look.palette.hover.hsla());
             let opens: Handler<gpui_kit::ClickEvent> = {
                 let toggle = open.clone();
                 std::sync::Arc::new(move |_, _, cx| {
@@ -128,10 +129,8 @@ impl RenderOnce for Picker {
                     })
                 })
             };
-            picker = answers_click(picker, opens)
+            picker = super::track(answers_click(picker, opens), &pointer)
                 .cursor_pointer()
-                .hover(move |s| s.bg(surface))
-                .active(move |s| s.bg(pressed))
                 .track_focus(&handle)
                 // Opens only: a click on the picker while the panel is up
                 // lands outside the panel, which closes it.

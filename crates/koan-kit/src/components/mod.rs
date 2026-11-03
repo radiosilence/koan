@@ -454,6 +454,44 @@ pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut
     })
 }
 
+/// The fill under a control that lights under the pointer, as every
+/// control's does: `surface` arriving with the pointer, `hover` while
+/// pressed, fading out over `Motion::LEAVE` once it has gone. The caller
+/// tracks `pointer` on the control with `track` and adds the fill before its
+/// content, so the content draws over it.
+pub(crate) fn hover_fill(
+    id: &ElementId,
+    look: &Look,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<Pointer>, AnyElement) {
+    let state = pointer(&child(id, "pointer"), window, cx);
+    let (hovered, pressed) = {
+        let p = state.read(cx);
+        (p.hovered, p.pressed)
+    };
+    let color = if pressed {
+        look.palette.hover.hsla()
+    } else {
+        look.palette.surface.hsla()
+    };
+    let lit = transition(child(id, "lit"), hovered || pressed, window, cx);
+    (state, fill(color, &lit))
+}
+
+/// A row a click acts on, lit under the pointer as controls are (`surface`,
+/// leaving over `Motion::LEAVE`): its content goes in as children, over the
+/// fill.
+pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let id = id.into();
+    let look = Look::of(window, cx);
+    let (state, fill) = hover_fill(&id, &look, window, cx);
+    track(div().id(id), &state)
+        .relative()
+        .cursor_pointer()
+        .child(fill)
+}
+
 /// A fill under a control, in `color`, faded with `transition`.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if !SHADED {
