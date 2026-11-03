@@ -1,0 +1,1 @@
+- **Rainbow mode's beat stays within the photosensitive limit, and it rests when koan is behind.** The beat brightened the whole window by about a third, double the sixth it was meant to hold to; it now holds to a sixth. A window behind another app no longer animates to the music, and closing a window no longer leaves the analyser running for good.

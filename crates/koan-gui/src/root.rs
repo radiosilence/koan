@@ -146,6 +146,13 @@ impl WindowRoot {
                         this.throw_confetti(Some(window.mouse_position()));
                     }
                 }),
+                // A window closed takes its prism from the analyser's
+                // readers, which would otherwise keep it running.
+                cx.on_release(|this, cx| {
+                    if this.prism_fed {
+                        crate::levels::prism(this.window, None, cx);
+                    }
+                }),
             ],
             _levels: [
                 crate::levels::feed(window.window_handle().window_id(), cx)
@@ -169,16 +176,18 @@ impl WindowRoot {
     }
 
     /// Feeds the prism the analyser and runs its clock while the rainbow is
-    /// drawn and this window is in front and shows; otherwise neither.
+    /// drawn and this window is in front and shows; otherwise neither. Each
+    /// frame of levels fed wakes the window, so a window behind another
+    /// app's is not fed: it stands as it was.
     fn feed_prism(&mut self, cx: &mut Context<Self>) {
         // Under Reduce Motion or Low Power nothing of it is drawn, so the
         // analyser is not read for it and its clock stands.
         let drawn = self.rainbow && SHADED && KoanTheme::motion_allowed(cx);
         let running = drawn && self.active && self.visible;
         self.prism.run(running);
-        if drawn != self.prism_fed {
-            self.prism_fed = drawn;
-            crate::levels::prism(self.window, drawn.then(|| self.prism.clone()), cx);
+        if running != self.prism_fed {
+            self.prism_fed = running;
+            crate::levels::prism(self.window, running.then(|| self.prism.clone()), cx);
         }
     }
 
