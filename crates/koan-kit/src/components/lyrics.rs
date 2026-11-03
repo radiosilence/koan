@@ -8,16 +8,16 @@
 //! ones to come, and the panel's top and bottom edges fade, so the lines
 //! enter and leave softly rather than being cut.
 //!
-//! Every line is drawn in one size and in `strong`, and the program sets
-//! each line's opacity: no line changes its layout as the song moves, so a
-//! line that wraps never pushes the others about. Where the renderer draws
-//! no shaders, the lines are drawn in their colours and the column steps.
+//! The sung line is drawn in `title small`, the rest in `control`, as the
+//! Mac's panel draws them, all in `strong`; the program sets each line's
+//! opacity. Where the renderer draws no shaders, the lines are drawn in
+//! their colours and the column steps.
 
 use std::time::Instant;
 
+use gpui::prelude::*;
+use gpui::*;
 use gpui_kit::base::Scrollbar;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 
 use super::{Animated, Ease, Repeat, SHADED, ShaderProgram};
 use crate::theme::{KoanStyled, KoanTheme, Look, Motion, TypeRole};
@@ -229,6 +229,10 @@ impl RenderOnce for SyncedLines {
                 }
                 if s.active != active {
                     s.waited = 0;
+                    // The sung line grows and the one before shrinks in this
+                    // frame's layout, so the bounds held are the last one's:
+                    // it is placed once the new sizes are laid out.
+                    s.stale = true;
                     let now = Animated::now();
                     // A change inside one still running: the line it was
                     // bringing in leaves from the opacity it had reached, and the
@@ -272,8 +276,8 @@ impl RenderOnce for SyncedLines {
                 // song) and the first draw land at once.
                 let mut waiting = false;
                 if s.stale && s.placing.is_some() {
-                    // Laid out for this song first: the bounds held are the
-                    // last one's.
+                    // Laid out for this song, or these sizes, first: the
+                    // bounds held are the last layout's.
                     s.stale = false;
                     waiting = true;
                 } else if let (Some(from), Some(line)) = (s.placing, active) {
@@ -356,7 +360,14 @@ impl RenderOnce for SyncedLines {
                     .px(pad)
                     .py(look.spaced(5.5))
                     .cursor_pointer()
-                    .text_role(TypeRole::TitleSmall, &look)
+                    .text_role(
+                        if active == Some(ix) {
+                            TypeRole::TitleSmall
+                        } else {
+                            TypeRole::Control
+                        },
+                        &look,
+                    )
                     .text_color(color)
                     .when_some(on_line, |d, f| {
                         d.on_click(move |e, window, cx| {
@@ -486,41 +497,111 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
     use super::*;
     use core::prelude::v1::test;
 
     struct Lines {
         clicked: Rc<Cell<Option<usize>>>,
+        lines: Vec<SharedString>,
+        active: usize,
+    }
+
+    impl Lines {
+        fn new(clicked: Rc<Cell<Option<usize>>>) -> Self {
+            Self {
+                clicked,
+                lines: vec!["one".into(), "".into(), "three".into()],
+                active: 2,
+            }
+        }
     }
 
     impl Render for Lines {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let clicked = self.clicked.clone();
-            div().w(px(280.)).h(px(400.)).child(
-                SyncedLines::new(
-                    "lines",
-                    vec!["one".into(), "".into(), "three".into()],
-                    Some(2),
+            div()
+                .debug_selector(|| "panel".into())
+                .w(px(280.))
+                .h(px(400.))
+                .child(
+                    SyncedLines::new("lines", self.lines.clone(), Some(self.active))
+                        .on_line(move |ix, _, _| clicked.set(Some(*ix))),
                 )
-                .on_line(move |ix, _, _| clicked.set(Some(*ix))),
-            )
         }
     }
 
-    /// A click on a line hands its index over, an empty line keeping its
-    /// place among the others.
+    /// The song moving on to a line that wraps at the sung size and not at
+    /// the others' lands it mid-panel, its new size laid out first.
     #[gpui_kit::test]
-    fn a_click_names_the_line(cx: &mut TestAppContext) {
+    fn the_sung_line_lands_mid_panel_at_its_new_size(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::init(cx);
         });
-        let clicked = Rc::new(Cell::new(None));
-        let (_, cx) = cx.add_window_view(|_, _| Lines {
-            clicked: clicked.clone(),
+        let (view, cx) = cx.add_window_view(|_, _| {
+            let mut lines = Lines::new(Rc::new(Cell::new(None)));
+            lines.lines = (0..24)
+                .map(|i| {
+                    if i == 12 {
+                        "this line wraps when sung".into()
+                    } else {
+                        format!("line {i}").into()
+                    }
+                })
+                .collect();
+            lines.active = 4;
+            lines
         });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        view.update(cx, |lines, cx| {
+            lines.active = 12;
+            cx.notify();
+        });
+        // The frames the app's display would draw: the test's context draws
+        // none for an animation frame asked for.
+        for _ in 0..4 {
+            cx.run_until_parked();
+            view.update(cx, |_, cx| cx.notify());
+        }
+        cx.run_until_parked();
+        let panel = cx.debug_bounds("panel").expect("drawn").center().y;
+        let sung = cx.debug_bounds("synced-line-12").expect("drawn").center().y;
+        assert!(
+            (sung - panel).abs() < px(2.0),
+            "the sung line at {sung:?}, the panel's middle at {panel:?}"
+        );
+    }
+
+    /// Only the sung line is drawn large; the others in the control size.
+    #[gpui_kit::test]
+    fn only_the_sung_line_is_large(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Lines::new(Rc::new(Cell::new(None))));
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let height = |cx: &mut VisualTestContext, line: &'static str| {
+            cx.debug_bounds(line).expect("drawn").size.height
+        };
+        let (sung, other) = (height(cx, "synced-line-2"), height(cx, "synced-line-0"));
+        assert!(sung > other, "sung {sung:?}, other {other:?}");
+    }
+
+    /// A click on a line hands its index over, an empty line keeping its
+    /// place among the others.
+    #[gpui::test]
+    fn a_click_names_the_line(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::app::platform::init(cx);
+            crate::theme::init(cx);
+        });
+        let clicked = Rc::new(Cell::new(None));
+        let (_, cx) = cx.add_window_view(|_, _| Lines::new(clicked.clone()));
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
         let at = cx

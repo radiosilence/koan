@@ -150,8 +150,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
                 let shell = cx.new(|cx| Shell::new(window, cx));
                 let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
-                // gpui-component's root, which the kit's sheets and fields draw in.
-                cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
+                koan_kit::components::host(root, window, cx)
             })?;
             let window = window.into();
             cx.update_window(window, |_, window, cx| {

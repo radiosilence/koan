@@ -72,6 +72,46 @@ pub struct OrganizeSheet {
     _subscriptions: Vec<Subscription>,
 }
 
+/// A format pattern's syntax, coloured: fields (`%album%`) in the accent,
+/// functions (`$if2(`) strong, the brackets, commas and parentheses that
+/// shape it and quoted literals muted; the rest is the path as written.
+fn pattern_spans(pattern: &str) -> Vec<(Range<usize>, Tone)> {
+    // Every mark is ASCII, which no byte of a longer character equals.
+    let bytes = pattern.as_bytes();
+    let closing = |from: usize, mark: u8| {
+        bytes[from..]
+            .iter()
+            .position(|&b| b == mark)
+            .map_or(bytes.len(), |i| from + i + 1)
+    };
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let (end, tone) = match bytes[at] {
+            b'%' => (closing(at + 1, b'%'), Tone::Accent),
+            b'\'' => (closing(at + 1, b'\''), Tone::Muted),
+            b'$' => {
+                let name = bytes[at + 1..]
+                    .iter()
+                    .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+                    .map_or(bytes.len(), |i| at + 1 + i);
+                (
+                    name + usize::from(bytes.get(name) == Some(&b'(')),
+                    Tone::Strong,
+                )
+            }
+            b'[' | b']' | b'(' | b')' | b',' => (at + 1, Tone::Muted),
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        spans.push((at..end, tone));
+        at = end;
+    }
+    spans
+}
+
 impl OrganizeSheet {
     fn new(
         title: String,
@@ -79,7 +119,11 @@ impl OrganizeSheet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let draft = cx.new(|cx| FieldState::new(window, cx).placeholder("%album artist%/…"));
+        let draft = cx.new(|cx| {
+            FieldState::new(window, cx)
+                .placeholder("%album artist%/…")
+                .highlight(pattern_spans)
+        });
         let save_name = cx.new(|cx| FieldState::new(window, cx).placeholder("name"));
         let subscriptions = vec![
             cx.subscribe(&draft, |this, _, event: &InputEvent, cx| {
@@ -599,7 +643,11 @@ impl Render for OrganizeSheet {
                     .flex_none()
                     .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
-                    .child(TextField::new(&self.draft).disabled(running))
+                    .child(
+                        TextField::new(&self.draft)
+                            .label(crate::theme::label("pattern"))
+                            .disabled(running),
+                    )
                     .when(self.modified(cx), |d| {
                         let preview = self.save_preview(cx);
                         d.child(
@@ -608,7 +656,11 @@ impl Render for OrganizeSheet {
                                     .flex()
                                     .items_center()
                                     .gap(look.space(crate::theme::Space::S))
-                                    .child(TextField::new(&self.save_name).disabled(running))
+                                    .child(
+                                        TextField::new(&self.save_name)
+                                            .label(crate::theme::label("save as"))
+                                            .disabled(running),
+                                    )
                                     .child(
                                         Button::new("organize-save", ButtonKind::Bordered)
                                             .label("save")
@@ -633,5 +685,39 @@ impl Render for OrganizeSheet {
                     })),
             )
             .child(list)
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn a_pattern_s_syntax_is_coloured() {
+        let pattern = "%album artist%/[%date% - ]$if2(%album%,'none')/é";
+        let spans: Vec<(&str, Tone)> = pattern_spans(pattern)
+            .into_iter()
+            .map(|(r, t)| (&pattern[r], t))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                ("%album artist%", Tone::Accent),
+                ("[", Tone::Muted),
+                ("%date%", Tone::Accent),
+                ("]", Tone::Muted),
+                ("$if2(", Tone::Strong),
+                ("%album%", Tone::Accent),
+                (",", Tone::Muted),
+                ("'none'", Tone::Muted),
+                (")", Tone::Muted),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unclosed_field_runs_to_the_end() {
+        assert_eq!(pattern_spans("a/%alb"), [(2..6, Tone::Accent)]);
     }
 }

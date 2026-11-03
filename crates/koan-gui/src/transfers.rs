@@ -180,9 +180,21 @@ impl Transfers {
             let report = Report::of(figure, now);
             let partial = |r: Option<Report>| r.and_then(|r| r.share).is_some_and(|s| s < 1.0);
             changed |= !entry.reported || partial(Some(report)) != partial(entry.last);
+            // A share below the last one is the track downloading afresh (its
+            // file cleared or evicted, a retry): bytes never go back within
+            // one transfer. Its glides start again from it, rather than
+            // standing where the last transfer finished, which a reckoned
+            // glide would otherwise hold.
+            let afresh = entry
+                .last
+                .and_then(|last| last.share)
+                .is_some_and(|last| report.share.is_none_or(|share| share < last));
             entry.reported = true;
             entry.last = Some(report);
             for glide in entry.glides() {
+                if afresh {
+                    glide.set_unknown();
+                }
                 report.apply(glide);
             }
         }
@@ -363,5 +375,69 @@ mod tests {
         assert!(matches!(waiting, Some(Availability::Pending)));
         let here = of_queue_row(EntryStatus::PriorityPending, Some(1), true, true, None);
         assert!(stored_here(here));
+    }
+
+    /// The seek bar's reach while the playing track downloads again after
+    /// its file was cleared: there while the transfer runs with a size,
+    /// rising with each report of its bytes from where the new transfer
+    /// stands, not where the last one finished, and gone once they are all
+    /// here.
+    #[koan_kit::app::test::test]
+    fn the_reach_rises_while_bytes_arrive(cx: &mut koan_kit::app::test::TestAppContext) {
+        let mirror = cx.update(|cx| {
+            let mirror = Mirror::empty(cx);
+            cx.set_global(mirror.clone());
+            install(cx);
+            mirror
+        });
+        let track = 7;
+        let total = 40_000_000;
+        let report = |written: u64, cx: &mut koan_kit::app::test::TestAppContext| {
+            cx.update(|cx| {
+                mirror.figures.update(cx, |slice, cx| {
+                    slice.0 = vec![TransferFigure {
+                        track_id: track,
+                        progress: Some(written as f64 / total as f64),
+                        bytes_written: written,
+                        total_bytes: total,
+                        bytes_per_second: 4_000_000,
+                    }];
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|cx| reach(track, cx).map(|glide| glide.drawn()))
+        };
+        cx.update(|cx| {
+            mirror.transfers.update(cx, |slice, cx| {
+                slice.0 = vec![Transfer {
+                    track_id: track,
+                    album_id: None,
+                    artist_id: None,
+                    title: "A track".into(),
+                    artist: "An artist".into(),
+                    artist_credit: Vec::new(),
+                    album: String::new(),
+                    state: TransferState::Running,
+                    failure_reason: None,
+                }];
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        // The track downloaded once already, and its file was cleared: the
+        // finished transfer is still reported as the new one starts.
+        assert_eq!(report(total, cx), None, "all here: no reach");
+        let mut last = 0.0;
+        for written in [4_000_000, 8_000_000, 12_000_000, 20_000_000] {
+            let reached = report(written, cx).expect("a reach while the bytes arrive");
+            let share = written as f32 / total as f32;
+            assert!(
+                reached > last && reached < share + 0.05,
+                "the reach drawn at {reached} after {last}, its bytes at {share}"
+            );
+            last = reached;
+        }
+        assert_eq!(report(total, cx), None, "all here: no reach");
     }
 }

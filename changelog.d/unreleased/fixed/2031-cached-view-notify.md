@@ -1,0 +1,1 @@
+- **Record pages draw their rows as they arrive.** A page opened by navigation could wait for the pointer to move or the window to resize before showing its rows: its notify reached no window when its parent had drawn again in between.

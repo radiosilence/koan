@@ -90,9 +90,10 @@ struct KeptAlbums {
 }
 
 pub struct AlbumGrid {
-    /// A load failed before any landed: the page draws its header and empty
-    /// state rather than staying held, so the query can still be changed.
-    failed: bool,
+    /// A load failed before any landed, and why: the page draws its header
+    /// and the failure with a retry rather than staying held, so the query
+    /// can still be changed. Cleared by the next listing that lands.
+    failed: Option<String>,
     lib: Lib,
     /// A shelf's "see all": the shelf's filter and order in place of the
     /// shared ones, and no controls to change them.
@@ -226,7 +227,7 @@ impl AlbumGrid {
             aimed: None,
             order,
             loaded,
-            failed: false,
+            failed: None,
             loading: None,
             request: 0,
             _load: None,
@@ -252,25 +253,39 @@ impl AlbumGrid {
             waits: 0,
             _subscriptions: subscriptions,
         };
-        // A kept listing draws at once, where the last visit left it.
-        if this.loaded.is_some() {
-            this.restore_scroll();
-        }
-        // A listing kept from a visit under another query (a shelf's "see
-        // all" changed the filter) is not drawn: the page waits for its own,
-        // as a first visit does, rather than drawing the old rows and
-        // swapping them.
-        if this
+        // A kept listing draws at once, where the last visit left it. One
+        // from another query, or from before the library moved, is not drawn:
+        // the page waits for its own, as a first visit does, rather than
+        // drawing old rows and landing the kept place on other records. The
+        // place is kept for a listing of the same query.
+        let version = this.lib.feed.read(cx).library_version;
+        let query = this.query(cx);
+        match this
             .loaded
             .as_ref()
-            .is_some_and(|(q, _)| *q != this.query(cx))
+            .map(|loaded| chrome::kept(loaded, &query, version))
         {
-            this.records = Rc::new(Vec::new());
-            this.order.clear();
-            this.loaded = None;
+            Some(chrome::Kept::Draw) => this.restore_scroll(),
+            Some(kept) => {
+                if kept == chrome::Kept::Forget {
+                    this.restore = None;
+                }
+                this.records = Rc::new(Vec::new());
+                this.order.clear();
+                this.loaded = None;
+            }
+            None => {}
         }
         this.reload(cx);
         this
+    }
+
+    /// The failure's "try again": the same listing asked for afresh.
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        self.failed = None;
+        self.loading = None;
+        self.reload(cx);
+        cx.notify();
     }
 
     fn query(&self, cx: &App) -> Query {
@@ -341,11 +356,12 @@ impl AlbumGrid {
                         this.records = Rc::new(records.into_iter().map(Rc::new).collect());
                         this.aimed = None;
                         this.loaded = Some(wanted);
+                        this.failed = None;
                         this.restore_scroll();
                     }
                     Err(e) => {
                         log::warn!("albums: {e}");
-                        this.failed = true;
+                        this.failed = Some(crate::settings::model::describe(&e));
                     }
                 }
                 cx.notify();
@@ -936,9 +952,15 @@ impl Render for AlbumGrid {
 
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
-        let held = self.loaded.is_none() && !self.failed;
+        let held = self.loaded.is_none() && self.failed.is_none();
         let body = match self.grid {
             _ if held => div().into_any_element(),
+            _ if self.loaded.is_none() => chrome::failed_state(
+                crate::theme::Icon::Album,
+                self.failed.as_deref().unwrap_or_default(),
+                cx.listener(|this, _, _, cx| this.retry(cx)),
+            )
+            .into_any_element(),
             _ if count == 0 => {
                 chrome::empty_state(crate::theme::Icon::Album, empty_title, empty_detail)
                     .into_any_element()

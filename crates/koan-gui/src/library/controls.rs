@@ -76,6 +76,8 @@ impl ControlsSlot {
 impl Render for ControlsSlot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let controls = self.build.clone().map(|build| build(window, cx));
-        div().flex().items_center().children(controls)
+        // `min_w_0`, so a filter field among the controls can give up its
+        // width in a narrow toolbar (koan-kit's `ToolbarGroup`).
+        div().flex().items_center().min_w_0().children(controls)
     }
 }

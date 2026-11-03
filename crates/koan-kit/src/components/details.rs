@@ -3,8 +3,8 @@
 //! name in a column of its own, in `muted`; the value beside it, in `ink`,
 //! wrapping. Both in `fine`.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::SectionHeader;
 use crate::theme::{KoanStyled, Look, Space, TypeRole};

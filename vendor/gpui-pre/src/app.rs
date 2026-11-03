@@ -1409,20 +1409,23 @@ impl App {
         })
     }
 
+    // KOAN: (#1899) every entity read in the callback, including one read
+    // earlier in the frame. A cached view reused while its parent draws
+    // again adds back only what it recorded, so an entity it read but first
+    // read elsewhere (its own, when its parent created it) would drop out of
+    // the window's tracked entities and its notify would draw nothing.
     pub(crate) fn detect_accessed_entities<R>(
         &mut self,
         callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
+        let outer = std::mem::take(self.entities.accessed_entities.get_mut());
         let result = callback(self);
-        let entities_accessed_in_callback = self
-            .entities
+        let accessed = std::mem::replace(self.entities.accessed_entities.get_mut(), outer);
+        self.entities
             .accessed_entities
             .get_mut()
-            .difference(&accessed_entities_start)
-            .copied()
-            .collect::<FxHashSet<EntityId>>();
-        (result, entities_accessed_in_callback)
+            .extend(accessed.iter().copied());
+        (result, accessed)
     }
 
     pub(crate) fn record_entities_accessed(

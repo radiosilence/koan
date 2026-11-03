@@ -5,8 +5,8 @@
 //!
 //! `SyncedLines` (`lyrics.rs`) is the body a panel of timed text takes.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::RowMetrics;
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};

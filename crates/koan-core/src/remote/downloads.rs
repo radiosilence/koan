@@ -278,6 +278,9 @@ pub struct DownloadStore {
     /// far more often than a figure needs redrawing, so this is what holds
     /// them to `MIN_SAMPLE_GAP`. An atomic, because it is asked per chunk.
     last_sample: AtomicU64,
+    /// How close together readings may be, in nanoseconds; 0 for
+    /// `MIN_SAMPLE_GAP`. See `set_reading_gap`.
+    reading_gap: AtomicU64,
     figures: AtomicU64,
     /// Rung when the figures move. Its own signal rather than the engine's:
     /// a transfer's progress is news only to what draws it, and the engine's
@@ -298,6 +301,16 @@ const SETTLED_LIMIT: usize = 50;
 impl DownloadStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Readings at most `gap` apart while bytes land, rather than
+    /// `MIN_SAMPLE_GAP`'s four a second: for a front end whose progress
+    /// moves between readings on the GPU and gains from more of them. Each
+    /// reading publishes the figures to every client of the engine, so a
+    /// phone, where they cost battery, keeps the default.
+    pub fn set_reading_gap(&self, gap: Duration) {
+        self.reading_gap
+            .store(gap.as_nanos().max(1) as u64, Ordering::Relaxed);
     }
 
     /// Bumped when an entry is listed, settles or is forgotten — not when its
@@ -801,19 +814,13 @@ const RATE_SMOOTHING: f64 = 0.3;
 /// arithmetic is mostly noise.
 const MIN_SAMPLE_GAP: Duration = Duration::from_millis(250);
 
-/// How often a reading is taken and published while bytes land: about 15 a
-/// second, the rate a client's progress bars and rings are given new
-/// figures at. Each transfer's rate still moves only every
-/// `MIN_SAMPLE_GAP`; its byte count moves with every reading.
-const READING_GAP: Duration = Duration::from_millis(66);
-
 impl DownloadStore {
     /// Take a rate reading, if one is due.
     ///
     /// Called by the downloader as bytes land, not by a timer: what knows a
     /// transfer moved is the code moving it, and what knows it stopped is the
     /// absence of the next call. Chunks arrive far faster than a figure needs
-    /// redrawing, so this is gated to `READING_GAP` before it touches the
+    /// redrawing, so this is gated to the reading gap before it touches the
     /// list every client is reading.
     ///
     /// Every running transfer is sampled, not just the one that moved: a
@@ -826,7 +833,11 @@ impl DownloadStore {
     pub fn progressed(&self) {
         let now = clock_ns();
         let last = self.last_sample.load(Ordering::Relaxed);
-        if last != 0 && now.saturating_sub(last) < READING_GAP.as_nanos() as u64 {
+        let gap = match self.reading_gap.load(Ordering::Relaxed) {
+            0 => MIN_SAMPLE_GAP.as_nanos() as u64,
+            gap => gap,
+        };
+        if last != 0 && now.saturating_sub(last) < gap {
             return;
         }
         // One chunk among the transfers running takes the reading; the rest
@@ -1340,5 +1351,31 @@ mod tests {
         feed.set(500);
         store.progressed();
         assert_ne!(store.moved().generation(), before);
+    }
+
+    #[test]
+    fn readings_keep_the_default_gap_unless_a_front_end_asks_for_more() {
+        let readings = |gap: Option<Duration>| {
+            let store = DownloadStore::new();
+            if let Some(gap) = gap {
+                store.set_reading_gap(gap);
+            }
+            let (track_id, _, feed) = running(&store, 1, "train");
+            store.started(track_id, 1_000_000);
+            let before = store.figures();
+            let start = Instant::now();
+            let mut n = 0;
+            while start.elapsed() < Duration::from_millis(400) {
+                n += 1;
+                feed.set(n);
+                store.progressed();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            store.figures() - before
+        };
+        let default = readings(None);
+        let desktop = readings(Some(Duration::from_millis(66)));
+        assert!(default <= 3, "a quarter second apart by default: {default}");
+        assert!(desktop >= 5, "about fifteen a second when asked: {desktop}");
     }
 }

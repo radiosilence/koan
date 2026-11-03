@@ -7,8 +7,8 @@
 //! nearest `relative` element and paints above everything else in the
 //! window. What lighting and taking a line do is the owner's.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::RowMetrics;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -252,7 +252,7 @@ impl RenderOnce for SuggestionRow {
         };
         // An option of its list to a screen reader, selected while lit.
         let name = self.title.clone();
-        super::accessible(self.base, gpui_kit::Role::ListBoxOption, Some(name))
+        super::accessible(self.base, gpui::Role::ListBoxOption, Some(name))
             .aria_selected(self.lit)
             .flex()
             .items_center()

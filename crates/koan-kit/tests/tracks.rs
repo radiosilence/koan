@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
+use gpui::{
     Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled, TestAppContext, Track,
     TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead, spring_length,
 };
@@ -374,10 +374,10 @@ impl Render for Quad {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::app::platform::init(cx);
         theme::init(cx);
         cx.set_reduce_motion(true);
     });
@@ -409,7 +409,7 @@ fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
 /// write over any of its floats lets the slot go, so what was written stands.
 #[test]
 fn a_plain_write_over_a_slot_colour_lets_it_go() {
-    use gpui_kit::{ColorSlot, Rgba, ShaderUniforms};
+    use gpui::{ColorSlot, Rgba, ShaderUniforms};
     let red = Rgba {
         r: 1.0,
         g: 0.0,
@@ -425,6 +425,21 @@ fn a_plain_write_over_a_slot_colour_lets_it_go() {
     let values = uniforms.snapshot_at(now);
     assert_eq!(values[6], 0.25);
     assert_eq!(values[4], 0.0, "the slot no longer draws over the floats");
+}
+
+/// A colour slot mixed in OKLab carries 16 in its track's code; the CPU reads
+/// the curve and repeat beneath it, as the shaders do (`code % 16`).
+#[test]
+fn the_oklab_flag_leaves_the_repeat_as_it_was() {
+    for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
+        let uniforms = ShaderUniforms::new();
+        uniforms.set_track(0, segment(TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), repeat));
+        let code = 16 + 4;
+        uniforms.set(code, uniforms.get(code) + 16.0);
+        let track = uniforms.track(0);
+        assert_eq!(track.repeat, repeat);
+        assert!(matches!(track.curve, TrackCurve::Bezier(..)));
+    }
 }
 
 /// A clock run for a length stops by itself (#1741): past it, the quad is
