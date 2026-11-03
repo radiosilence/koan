@@ -55,6 +55,9 @@ enum Kind {
     Type,
     Delete,
     Other,
+    /// An input method committing what it composed: the composition's
+    /// first keystroke already took the step.
+    Commit,
 }
 
 /// How long typing pauses before the next keystroke starts a new undo step.
@@ -638,10 +641,11 @@ impl FieldState {
     /// Keeps the state before an edit, unless the edit continues the last
     /// one (typing, or deleting, without a pause).
     fn remember(&mut self, kind: Kind) {
-        let joins = kind != Kind::Other
+        let continues = kind != Kind::Other
             && self
                 .last_edit
                 .is_some_and(|(last, at)| last == kind && at.elapsed() < COALESCE);
+        let joins = kind == Kind::Commit || continues;
         if !joins {
             self.undo.push(Snapshot {
                 text: self.text.clone(),
@@ -997,7 +1001,9 @@ impl EntityInputHandler for FieldState {
             .unwrap_or(self.selected.clone());
         // What the keyboard types joins the typing before it; a word an
         // input method commits is one step.
-        let kind = if self.marked.is_none() && text.chars().count() == 1 {
+        let kind = if self.marked.is_some() {
+            Kind::Commit
+        } else if text.chars().count() == 1 {
             Kind::Type
         } else {
             Kind::Other

@@ -104,6 +104,7 @@ impl RenderOnce for TextField {
             .relative()
             .flex()
             .items_center()
+            .min_w_0()
             .when(self.ground, |field| {
                 field
                     .px(look.space(Space::M))

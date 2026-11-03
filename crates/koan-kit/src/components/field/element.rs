@@ -85,6 +85,9 @@ impl gpui_kit::Element for FieldElement {
         let rows = self.state.read(cx).rows;
         let mut style = Style::default();
         style.size.width = relative(1.).into();
+        // As narrow as its parent asks: the text scrolls, it never holds a
+        // row open.
+        style.min_size.width = px(0.0).into();
         style.size.height = (window.line_height() * rows as f32).into();
         (window.request_layout(style, [], cx), ())
     }
