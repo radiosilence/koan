@@ -74,6 +74,7 @@ pub fn text_button(id: impl Into<ElementId>, label: &str) -> Button {
 pub fn select_toggle(
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
 ) -> ToolbarButton {
     ToolbarButton::new(
         "select",
@@ -84,6 +85,15 @@ pub fn select_toggle(
         },
         if active { "done" } else { "select" },
     )
+    .help(if active {
+        "stop selecting (esc)".to_owned()
+    } else {
+        crate::platform::actions::help(
+            "pick several to play or queue",
+            &crate::platform::actions::SelectAll,
+            cx,
+        )
+    })
     .selected(active)
     .on_click(on_click)
 }
@@ -524,9 +534,10 @@ pub fn selection_bar<V: Picking>(
         }
     };
     SelectionBar::new(count(n as u64, "picked", "picked"))
-        .verb(
+        .verb_help(
             "sel-play",
             "play",
+            "play the selection, replacing the queue",
             verb(|lib, p, cx| actions::play(lib, p, false, cx).detach()),
         )
         .verb(
@@ -534,9 +545,10 @@ pub fn selection_bar<V: Picking>(
             "play next",
             verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()),
         )
-        .verb(
+        .verb_help(
             "sel-queue",
             "add to queue",
+            "add the selection to the end of the queue",
             verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
         )
         .element(
@@ -578,6 +590,7 @@ pub fn selection_bar<V: Picking>(
         )
         .verb("sel-organise", "organise…", organise)
         .on_done(move |_, _, cx| end(cx))
+        .done_help("stop selecting (esc)")
 }
 
 #[cfg(test)]
