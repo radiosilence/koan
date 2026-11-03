@@ -761,12 +761,16 @@ fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<D
     } else {
         gap
     };
+    // A glyph's reach can pass its neighbour's at small gaps: each item
+    // blocks the ones drawn before it, so a press in the overlap goes to
+    // one item, never two.
     base.flex()
         .items_center()
         .justify_center()
         .h(theme::HIT)
         .px(reach)
         .mx(-reach)
+        .occlude()
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
 }
