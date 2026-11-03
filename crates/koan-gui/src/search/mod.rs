@@ -1,8 +1,8 @@
 //! Search across the library: one query and three kinds of result. The
-//! sidebar's field types it, a panel under the field suggests a few of each
-//! kind, and the results page shows the search shelf (`koan_core::shelves`),
-//! whose headings open the browsers with the query as their search. The
-//! picker (⇧⌘K) is a separate sheet for building a queue.
+//! search box over the window (`bar`) types it and lists the answers, the
+//! sidebar's field shows the query and opens the box, and the results page
+//! shows the search shelf (`koan_core::shelves`), whose headings open the
+//! browsers with the query as their search.
 //!
 //! Every keystroke is answered off the main thread: the engine reads on its
 //! own pool, and an answer to an older query is dropped by generation when
@@ -23,8 +23,8 @@ use crate::navigator::{Listing, Navigator, Route, Shelf};
 
 const SETTLE: Duration = Duration::from_millis(90);
 
-/// How deep the search box's answers go, as the ⇧⌘K picker's did: enough
-/// to build a queue from.
+/// How deep the search box's answers go while it is open: enough to build
+/// a queue from.
 const DEEP_ARTISTS: u32 = 12;
 const DEEP_ALBUMS: u32 = 40;
 const DEEP_TRACKS: u32 = 60;

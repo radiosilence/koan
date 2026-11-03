@@ -104,9 +104,10 @@ History lists every play, most recent first, under a heading per day, with the t
 | Return | Play a track after the end of the queue, or open a record or an artist |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |
-| Tab | Tick the lit result; Return, ⌘Return and ⌥Return then act on everything ticked |
+| ⇧⌘Return | Replace the queue, asking first when it holds anything |
+| Tab, ⇧Tab | Tick or untick the lit result; Return, ⌘Return, ⌥Return and ⇧⌘Return then act on everything ticked, a single ticked record included |
 | ⇧Return | Every result, on a page of its own, whose headings open each kind's whole listing |
-| Escape | Empty the query, then close the box |
+| Escape | Clear the ticks, then empty the query, then close the box |
 
 A click on a result does what Return does, and ⌘-click ticks it.
 
