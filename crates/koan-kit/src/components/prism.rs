@@ -583,7 +583,14 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     // outside a spot goes on to the next before any colour is worked out.
     float lift = 0.22 + 0.25 * beat + 0.15 * u[2];
     float swell = 1.0 + 0.6 * beat;
-    for (int i = 0; i < 32; i++) {
+    // Only the spots reaching this pixel's seventh of the window's height,
+    // as a mask of them (`disco_prepare`).
+    const int masks[7] = { 3, 5, 7, 9, 13, 14, 15 };
+    int band = clamp(int(position.y * 7.0 / size.y), 0, 6);
+    uint mask = as_type<uint>(u[masks[band]]);
+    while (mask != 0u) {
+        int i = ctz(mask);
+        mask &= mask - 1u;
         float2 rel = position - float2(u[16 + 2 * i], u[17 + 2 * i]);
         float d2 = dot(rel, rel);
         float h1 = fract(float(i) * 0.6180340 + 0.31);
@@ -658,7 +665,13 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     var alpha = 0.0;
     let lift = 0.22 + 0.25 * beat + 0.15 * b[0].z;
     let swell = 1.0 + 0.6 * beat;
-    for (var i = 0u; i < 32u; i++) {
+    var masks = array<u32, 7>(3u, 5u, 7u, 9u, 13u, 14u, 15u);
+    let band = u32(clamp(i32(position.y * 7.0 / size.y), 0, 6));
+    let m = masks[band];
+    var mask = bitcast<u32>(b[m / 4u][m % 4u]);
+    while (mask != 0u) {
+        let i = countTrailingZeros(mask);
+        mask = mask & (mask - 1u);
         let pair = b[4u + i / 2u];
         let at = select(pair.xy, pair.zw, i % 2u == 1u);
         let rel = position - at;
@@ -742,8 +755,10 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 
 /// What every pixel of the disco layer shares, worked out once a present
 /// from the window's size (`Prism::window`, points in 13 and 14): the beat,
-/// the middle and high bands (0 to 2), and the 32 spots' centres in device
-/// pixels (16 to 79), where the tracks the program no longer reads were.
+/// the middle and high bands (0 to 2), the 32 spots' centres in device
+/// pixels (16 to 79), where the tracks the program no longer reads were,
+/// and for each seventh of the window's height, top down, a mask of the
+/// spots reaching it (3, 5, 7, 9, 13, 14, 15), so a pixel tests those alone.
 fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [_, middle, high, beat] = bands(u, time);
     let s = u[10];
@@ -754,14 +769,31 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     u[0] = beat.max(0.0).powf(1.6);
     u[1] = middle;
     u[2] = high;
+    let swell = 1.0 + 0.6 * u[0];
+    let band = size.1 / 7.0;
+    let mut masks = [0u32; 7];
     for i in 0..32 {
         let fi = i as f32;
         let h1 = (fi * 0.618_034 + 0.31).fract();
         let h2 = (fi * 0.754_877_7 + 0.57).fract();
         let (sin, cos) = (h1 * std::f32::consts::TAU + spin * (0.6 + 0.4 * h2)).sin_cos();
         let reach = far * (0.15 + 0.85 * h2);
-        u[16 + 2 * i] = ball.0 + cos * reach;
-        u[17 + 2 * i] = ball.1 + (sin * 0.6 + 0.35) * reach;
+        let at = (ball.0 + cos * reach, ball.1 + (sin * 0.6 + 0.35) * reach);
+        u[16 + 2 * i] = at.0;
+        u[17 + 2 * i] = at.1;
+        let radius = s * (10.0 + 14.0 * h1) * swell;
+        if band > 0.0 && at.0 + radius > 0.0 && at.0 - radius < size.0 {
+            let top = ((at.1 - radius) / band).floor().clamp(0.0, 6.0) as usize;
+            let foot = ((at.1 + radius) / band).floor().clamp(0.0, 6.0) as usize;
+            if at.1 + radius > 0.0 && at.1 - radius < size.1 {
+                for mask in &mut masks[top..=foot] {
+                    *mask |= 1 << i;
+                }
+            }
+        }
+    }
+    for (slot, mask) in [3, 5, 7, 9, 13, 14, 15].into_iter().zip(masks) {
+        u[slot] = f32::from_bits(mask);
     }
 }
 
