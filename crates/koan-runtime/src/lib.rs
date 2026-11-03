@@ -1165,19 +1165,21 @@ impl KoanEngine {
         };
         // Building a client blocks (and panics inside a tokio runtime), so it
         // is made off the caller's thread.
+        // The server the client is for, read with it: the cover is kept
+        // under it even if another is signed in before it arrives.
         let client = offload::offload(|| {
             let cfg = Config::cached();
             if !cfg.remote.enabled {
                 return Ok(None);
             }
             koan_core::helpers::subsonic_client(&cfg)
-                .map(Some)
+                .map(|client| Some((client, cfg.remote.url.clone())))
                 .ok_or_else(|| KoanError::Remote {
                     message: koan_core::helpers::remote_unavailable(&cfg),
                 })
         })
         .await?;
-        let Some(client) = client else {
+        let Some((client, server)) = client else {
             return Ok(None);
         };
         let track_id = row.id;
@@ -1194,7 +1196,7 @@ impl KoanEngine {
         let answer = offload::cancellable(async move {
             let answer = client.get_cover_art_cancellable(&remote_id, size).await;
             if let Ok(data) = &answer {
-                koan_core::remote::covers::keep_later(remote_id, size, data.clone());
+                koan_core::remote::covers::keep_later(server, remote_id, size, data.clone());
             }
             answer
         })
@@ -3073,6 +3075,31 @@ impl KoanEngine {
         // A renderer still opening for an earlier pick is not used.
         koan_core::upnp::choose();
         offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name))).await
+    }
+
+    /// Forgets the copy of `album_id`'s server cover kept on this device, so
+    /// the next ask reaches the server: what an app does with bytes that
+    /// would not decode.
+    pub async fn discard_album_cover(self: Arc<Self>, album_id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let row = queries::cover_track_for_album(&db.conn, album_id).map_err(db_err)?;
+            if let Some(remote_id) = row.and_then(|r| r.remote_id) {
+                koan_core::remote::covers::discard(&Config::cached(), &remote_id);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Forgets every cover kept from the server on this device: the person
+    /// cleared an app's artwork, or its eviction mark is too old to trust.
+    pub async fn forget_kept_covers(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(|| {
+            koan_core::remote::covers::forget(&Config::cached());
+            Ok(())
+        })
+        .await
     }
 
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned

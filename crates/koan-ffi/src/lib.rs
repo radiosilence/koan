@@ -1377,6 +1377,19 @@ impl KoanEngine {
         self.0.clone().set_device(name).await
     }
 
+    /// Forgets the copy of `album_id`'s server cover kept on this device, so
+    /// the next ask reaches the server: what an app does with bytes that
+    /// would not decode.
+    pub async fn discard_album_cover(self: Arc<Self>, album_id: i64) -> Result<(), KoanError> {
+        self.0.clone().discard_album_cover(album_id).await
+    }
+
+    /// Forgets every cover kept from the server on this device: the person
+    /// cleared an app's artwork, or its eviction mark is too old to trust.
+    pub async fn forget_kept_covers(self: Arc<Self>) -> Result<(), KoanError> {
+        self.0.clone().forget_kept_covers().await
+    }
+
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
     /// a freed id, and art cached under it would show for another record. Also
