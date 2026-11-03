@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{MenuPanel, MenuRow};
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What choosing an entry does.
 pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -167,7 +167,7 @@ pub fn menu(
                 .into_any_element(),
             Item::Rule => div()
                 .my(look.space(Space::Xs))
-                .h(HAIRLINE)
+                .h(look.hairline)
                 .bg(look.palette.rule.hsla())
                 .into_any_element(),
         });

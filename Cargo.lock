@@ -5494,6 +5494,7 @@ dependencies = [
 name = "koan-kit"
 version = "0.69.6"
 dependencies = [
+ "ashpd",
  "block2 0.6.2",
  "futures",
  "gpui-kit",

@@ -34,7 +34,7 @@ The Swift app fixed its glitches one at a time: a seek bar that snapped back, me
 | Layer | Where | Owns |
 |---|---|---|
 | Tokens | `koan-kit/theme/tokens.rs` | The palette, `TypeRole` (sizes, weights, line heights), `Space`, `Scale` (text size), `Motion`, `HAIRLINE`, `HIT` |
-| Environment | `koan-kit/theme`: `Look::of(window, cx)` | The tokens resolved for this window: appearance, text size, icons on or off, the record's accent |
+| Environment | `koan-kit/theme`: `Look::of(window, cx)` | The tokens resolved for this window: appearance, text size, icons on or off, the record's accent, and the system's contrast and transparency settings |
 | Roles | `koan-kit/theme` | `text_role`, `Tone`, `label()` (app words lowercase), `KoanIcon` and the glyph set |
 | Controls | `koan-kit/components` | One interactive thing each: buttons, toggles, fields, sliders, steppers, pickers, badges, spinner, placeholder |
 | Containers | `koan-kit/components` | Layout: page, page header, toolbar, form, table and rows, menu, empty state, sheet, scroll area |
@@ -45,6 +45,15 @@ Each layer reads only the ones above it. A page never reaches into tokens for a 
 ## How theme values reach components
 
 As SwiftUI's environment reaches a view: from one place, inherited, never passed by hand. Every component calls `Look::of(window, cx)` in its `render`. The window's appearance, the text size, "show icons" and the accent all live there. A component takes semantic parameters (a `Tone`, a `TypeRole`, a `RowKind`, a `ButtonKind`) and never a colour, a size in points or a font. A cached view that draws the accent calls `theme::observe_accent` so an accent change reaches it. Nothing in a page computes a size from the scale; the containers do (`RowMetrics`, `Look::space`, `Look::spaced`).
+
+### The system's settings
+
+The theme follows what the system asks for, read where the platform says it and again on its change notifications, never polled:
+
+- **Reduce Motion** (macOS): every transition, fade and ease lands at once, the wash and the spinner stand still, and an unknown amount of progress is a still arc. Low Power Mode does the same for decorative motion.
+- **Increase Contrast** (macOS) and high contrast (the desktop portal's `contrast`, which GNOME sets): `Look` takes the contrast palettes (`Palette::DARK_CONTRAST`, `LIGHT_CONTRAST`), where every text token reaches 7:1 on `bg` and `surface` and `rule` 3:1; the accent is held to 7:1 on both grounds (`Shade::held`); rules are twice as thick (`Look::hairline`); and a picked row is outlined as well as filled. `every_text_token_reads_on_every_ground` checks the palettes.
+- **Reduce Transparency** (macOS): no wash, the window's ground in its place, and the veils behind sheets and the artwork viewer near opaque (`Look::veil`).
+- **Text size** (GNOME's `text-scaling-factor`, through the portal): the app's own text size multiplies it, so 100 % is the system's size (`Scale::at`). macOS has no system-wide size, and the app's setting is the control there.
 
 ## What pages decide, and what they may not
 

@@ -6,7 +6,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Motion, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Motion, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
 /// one `ink` and underlined in the accent 5 points below. Each option's
@@ -64,7 +64,7 @@ impl RenderOnce for Segmented {
             .aria_position_in_set(index + 1)
             .aria_size_of_set(count)
             .pb(px(5.0))
-            .border_b(HAIRLINE)
+            .border_b(look.hairline)
             .border_color(accent.opacity(chosen))
             .text_role(TypeRole::Control, &look)
             .text_color(mix(

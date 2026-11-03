@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use crate::components::{Button, ButtonKind, TextField};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
 // gpui-component's focus and click extensions, for the shell's own handling.
@@ -360,7 +360,7 @@ impl Sheets {
             .gap(look.space(Space::S))
             .p(look.space(Space::L))
             .bg(look.palette.bg.hsla())
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.rule.hsla())
             .child(
                 div()
@@ -399,7 +399,7 @@ impl Sheets {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(look.palette.bg.hsla().opacity(0.6))
+                .bg(look.veil(0.6))
                 // Every click on the window behind goes nowhere.
                 .occlude()
                 .child(panel)

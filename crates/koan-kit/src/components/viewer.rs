@@ -87,7 +87,7 @@ impl RenderOnce for Viewer {
             .items_center()
             .justify_center()
             .gap(look.space(Space::L))
-            .bg(p.bg.hsla().opacity(0.85))
+            .bg(look.veil(0.85))
             .occlude()
             .cursor_pointer()
             .child(Cover::new(self.art, side))

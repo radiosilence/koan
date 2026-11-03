@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::Handler;
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// The theme's popover and menu: a square `bg` panel in a hairline `rule`,
 /// with no arrow, no shadow and no material. What it holds is its own; a
@@ -47,7 +47,7 @@ impl RenderOnce for MenuPanel {
             .min_w(look.spaced(180.))
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.rule.hsla())
             .children(self.children)
     }
@@ -64,7 +64,7 @@ pub fn popover_panel(points: f32, look: &Look) -> gpui_kit::Div {
         .flex_col()
         .gap(look.space(Space::S))
         .bg(look.palette.bg.hsla())
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(look.palette.rule.hsla())
         .text_role(TypeRole::Body, look)
         .text_color(look.palette.ink.hsla())
@@ -362,7 +362,7 @@ impl RenderOnce for MenuSeparator {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         div()
-            .h(HAIRLINE)
+            .h(look.hairline)
             .my(look.space(Space::Xs))
             .bg(look.palette.rule.hsla())
     }
@@ -400,7 +400,7 @@ impl Render for Tooltip {
             .px(look.space(Space::S))
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.rule.hsla())
             .text_role(TypeRole::Fine, &look)
             .text_color(look.palette.ink.hsla())
