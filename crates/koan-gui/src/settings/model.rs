@@ -269,6 +269,11 @@ impl SettingsModel {
                         }
                     }
                 }
+                // Kept running as the file says now, edited here or by
+                // the terminal UI or by hand.
+                if let Some(shown) = model.draft.as_ref().map(Draft::drawn) {
+                    crate::platform::residency::adopt(shown.devices_keep_running, cx);
+                }
                 model.redraw(cx);
             })
             .ok();
@@ -298,7 +303,7 @@ impl SettingsModel {
 
     /// Runs `then` once the edits made so far are in the file: now, if none
     /// are waiting.
-    fn when_written(
+    pub(crate) fn when_written(
         &mut self,
         cx: &mut Context<Self>,
         then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
