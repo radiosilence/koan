@@ -91,6 +91,9 @@ fn leave(
     }
     let _syncs = crate::helpers::hold_syncs();
     Config::persist(change).inspect_err(|_| crate::remote::sync::restore_left(left))?;
+    // An order not yet sent names the playlists about to be forgotten: sent
+    // to the next account, it would overwrite that account's order.
+    crate::playlists::forget_unsent_order();
     let hook = ON_LEAVE.read().clone();
     if let Some(hook) = hook {
         hook();

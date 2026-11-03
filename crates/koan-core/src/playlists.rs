@@ -662,6 +662,14 @@ pub fn reconcile_playlists(
 /// server's order, as an edit from another device would.
 static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
 
+/// A server being left: the reorder not yet sent is dropped with the
+/// playlists it names, so the next account's order is adopted, not
+/// overwritten.
+pub(crate) fn forget_unsent_order() {
+    let _lane = ORDER_LANE.lock();
+    ORDER_UNSENT.store(false, Ordering::Relaxed);
+}
+
 /// Held while the order goes either way, and while a reorder is written, so
 /// a sync never adopts the server's order over a reorder on its way there,
 /// and two sends land in the order they were made.
@@ -1651,12 +1659,49 @@ mod tests {
         }
     }
 
-    /// A listing asked for before this device made or sent a reorder is
-    /// older than that order, and is not adopted over it.
-    /// Held by the tests that read or move `ORDER_GENERATION`, which is the
-    /// process's: run side by side, one's bump lands in the other's sync.
+    /// Held by the tests that read or move `ORDER_GENERATION` and
+    /// `ORDER_UNSENT`, which are the process's: run side by side, one's
+    /// change lands in the other's sync.
     static ORDER_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+    /// A reorder left unsent when a server is left is not sent to the next
+    /// account: its order is adopted.
+    #[test]
+    fn an_order_unsent_when_leaving_is_not_sent_to_the_next_account() {
+        let _order = ORDER_TESTS.lock();
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        forget_unsent_order();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(
+            order,
+            [id("p1"), id("p2")],
+            "the account's order is adopted"
+        );
+        assert!(!ORDER_UNSENT.load(Ordering::Relaxed));
+    }
+
+    /// A listing asked for before this device made or sent a reorder is
+    /// older than that order, and is not adopted over it.
     #[test]
     fn a_listing_older_than_a_send_is_not_adopted() {
         let _order = ORDER_TESTS.lock();
