@@ -875,7 +875,9 @@ fn row_menu(
         return menu;
     };
     let ids = this.acting_on(row, cx);
-    let grouped = this.queue.read(cx).grouped;
+    // What was asked for, not what is laid out: a regroup lands on the
+    // background executor, and a second toggle before it would undo the first.
+    let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
@@ -1506,7 +1508,8 @@ impl QueueView {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
-        let grouped = queue.grouped;
+        // What was asked for, not what is laid out yet.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();
