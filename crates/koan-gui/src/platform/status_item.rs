@@ -234,7 +234,7 @@ fn mark(mtm: MainThreadMarker) -> Retained<NSImage> {
         return image;
     }
     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-    let icon = app.applicationIconImage().unwrap_or_else(NSImage::new);
+    let icon = app.applicationIconImage().unwrap_or_default();
     icon.setSize(NSSize::new(18.0, 18.0));
     icon
 }

@@ -319,7 +319,7 @@ mod tests {
     fn a_running_transfer_says_its_rate_and_how_far() {
         assert_eq!(
             rate_and_size(&figure(3_000_000, 9_000_000, 1_500_000)),
-            "2 MB/s · 3 MB of 9 MB"
+            "1.5 MB/s · 3 MB of 9 MB"
         );
         assert_eq!(rate_and_size(&figure(3_000_000, 0, 0)), "stalled · 3 MB");
         assert_eq!(rate_and_size(&figure(0, 0, 0)), "stalled");

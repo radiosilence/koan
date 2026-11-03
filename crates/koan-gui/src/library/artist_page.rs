@@ -1123,10 +1123,10 @@ mod tests {
             shape,
             [
                 "header",
-                "[albums]",
+                "[Albums]",
                 "0..3",
                 "3..4",
-                "[live]",
+                "[Live]",
                 "4..5",
                 "[features]",
                 "0..1",
@@ -1141,6 +1141,6 @@ mod tests {
             appearances: Vec::new(),
         };
         let items = ArtistPage::cut(&alone, grid);
-        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "albums"));
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums"));
     }
 }
