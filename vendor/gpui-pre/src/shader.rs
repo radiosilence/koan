@@ -437,6 +437,10 @@ pub struct ShaderUniforms {
     /// when a writer holds the block, so the present path never waits.
     /// Touched only by presents.
     presented: parking_lot::Mutex<Option<Taken>>,
+    /// The last present showed `presented` in place of a block a writer
+    /// held: live until a present reads it whole, so the frames keep coming
+    /// whatever the writer wakes.
+    stale: AtomicBool,
 }
 
 /// The block as one publish left it: the origin, every value, and the slot
@@ -495,6 +499,7 @@ impl Default for ShaderUniforms {
             writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
             owner: AtomicU64::new(0),
             presented: parking_lot::Mutex::new(None),
+            stale: AtomicBool::new(false),
         }
     }
 }
@@ -644,6 +649,8 @@ impl ShaderUniforms {
             || self.track_landing.load(Ordering::Relaxed)
             || self.colors_moving(present_now())
             || self.colors_moved.load(Ordering::Relaxed)
+            // KOAN: shown stale while a writer held the block (#1859).
+            || self.stale.load(Ordering::Relaxed)
     }
 
     /// Whether a deadline was set and has passed.
@@ -674,7 +681,9 @@ impl ShaderUniforms {
     /// Whether this refresh should present: changed since the last time
     /// this was asked, or live and continuous.
     pub fn take_present(&self) -> bool {
-        let changed = self.changed.swap(false, Ordering::Relaxed);
+        // KOAN: the last present was stale: present again (#1859).
+        let changed = self.changed.swap(false, Ordering::Relaxed)
+            || self.stale.load(Ordering::Relaxed);
         let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
         // KOAN: a track moves with time; the present after its end lands it
         // (#1859).
@@ -836,9 +845,12 @@ impl ShaderUniforms {
     fn presented_at(&self, now: Instant) -> (i64, [f32; SHADER_UNIFORMS]) {
         let mut presented = self.presented.lock();
         let taken = match self.try_read(|| self.take_unpublished()) {
-            Some(taken) => taken,
+            Some(taken) => {
+                self.stale.store(false, Ordering::Relaxed);
+                taken
+            }
             None => {
-                self.changed.store(true, Ordering::Relaxed);
+                self.stale.store(true, Ordering::Relaxed);
                 match *presented {
                     Some(taken) => taken,
                     // Never presented: nothing to show in its place.

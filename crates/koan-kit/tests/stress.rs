@@ -682,8 +682,21 @@ fn a_present_never_waits_on_a_writer() {
         values[0], 1.0,
         "the last present's copy, not half a publish"
     );
+    // A shader at rest: nothing moves it, so only the stale present keeps
+    // the window refreshing, whatever the writer wakes.
+    assert!(
+        uniforms.is_live(),
+        "a stale present keeps the frames coming"
+    );
     assert!(uniforms.take_present(), "the next refresh presents again");
     release.send(()).unwrap();
     writer.join().unwrap();
+    // No wake follows the release: the refresh the stale present keeps
+    // coming shows what was written, and then the shader rests.
+    assert!(uniforms.is_live());
+    assert!(uniforms.take_present());
     assert_eq!(uniforms.present_at(present_now()).1[0], 2.0);
+    uniforms.take_present();
+    assert!(!uniforms.is_live(), "whole again: at rest");
+    assert!(!uniforms.take_present());
 }
