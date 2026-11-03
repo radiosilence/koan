@@ -115,9 +115,16 @@ impl RenderOnce for Stepper {
                     Ease::QuickOut,
                     Repeat::Once,
                 );
+                // A step taken while the last still rolls fades on from where
+                // the value stands, never out and back in.
+                let shown = if r.animated.moving() {
+                    r.animated.at(0, at).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 r.animated.segment(
                     0,
-                    0.0,
+                    shown,
                     1.0,
                     at,
                     Motion::SETTLE,
