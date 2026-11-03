@@ -102,9 +102,11 @@ impl TableRow {
         self
     }
 
-    /// Run when a screen reader moves to the row: the list scrolls it, and
-    /// its neighbours, on screen, so the reader can go on past what was
-    /// drawn (`RowListState::reveal_around`).
+    /// Run when a screen reader moves to the row: the list scrolls the
+    /// neighbour the reader is heading for on screen, so it can go on past
+    /// what was drawn (`RowListState::reveal_around`, `reveal_around`), and
+    /// the view that drew the row is drawn again so the neighbour reaches the
+    /// tree even on an idle window.
     pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.reveal = Some(std::sync::Arc::new(move |_, window, cx| reveal(window, cx)));
         self
@@ -380,10 +382,17 @@ impl RenderOnce for TableRow {
             }),
             None => base,
         };
+        // The list holding the row is drawn again once it has scrolled: a
+        // scroll handle's change asks for no frame, and on an idle window the
+        // neighbour would never be drawn, so never reach the tree.
+        let list_view = window.current_view();
         let base = match self.reveal {
             Some(reveal) => base.on_a11y_action(
                 gpui_kit::AccessibleAction::ScrollIntoView,
-                move |_, window, cx| reveal(&(), window, cx),
+                move |_, window, cx| {
+                    reveal(&(), window, cx);
+                    cx.notify(list_view);
+                },
             ),
             None => base,
         };

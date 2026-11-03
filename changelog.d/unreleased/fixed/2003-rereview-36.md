@@ -1,0 +1,1 @@
+- **The chosen row in a menu shows the keyboard and holds its contrast.** In the kōan GUI app the ticked row in Output, Play on and other menus brightens when the arrow keys reach it, as under the pointer, and with Increase Contrast on it stands on an opaque ground rather than a faint tint.

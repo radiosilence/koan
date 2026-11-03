@@ -53,6 +53,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
+/// What writes a layer's placement uniforms: its bounds and the window's scale.
+type Placed = Box<dyn Fn(Bounds<Pixels>, f32)>;
+
 /// `child` drawn as a layer whose opacity, offset and reveal `animated`'s
 /// tracks move (`LAYER`). Decorative: under Reduce Motion it stands at its
 /// tracks' ends.
@@ -66,7 +69,7 @@ pub struct AnimatedLayer {
     informative: bool,
     /// Writes the uniforms that depend on where it is painted, given its
     /// bounds and the window's scale, each time it paints.
-    placed: Option<Box<dyn Fn(Bounds<Pixels>, f32)>>,
+    placed: Option<Placed>,
 }
 
 impl AnimatedLayer {

@@ -20,7 +20,7 @@ pub use gpui_kit::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement,
     PathPromptOptions, Pixels, Point, QuitMode, ReadGlobal, Render, RenderOnce, ScrollEvent,
     SharedString, Size, Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity,
-    Window, WindowBounds, WindowHandle, WindowId, WindowVisibility, actions, div,
+    Window, WindowBounds, WindowHandle, WindowId, WindowVisibility, actions, div, relative,
 };
 
 /// What the app asks of the platform beyond its windows' content: starting

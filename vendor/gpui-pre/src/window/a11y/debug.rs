@@ -91,6 +91,12 @@ impl A11yDebug {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    // KOAN: (#1899) Wormhole's a11y replay, for tests.
+    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
+        self.last_tree_update.as_ref()
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn capture_node_info(&mut self, node_info: &FxHashMap<NodeId, NodeDebugInfo>) {
         self.last_node_info = node_info.clone();
