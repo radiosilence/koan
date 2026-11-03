@@ -509,9 +509,9 @@ mod tests {
                     RunRole::Continues
                 },
                 album: format!("A record title {}", i / 10),
-                year: Some(1999),
+                year: Some("1999".into()),
                 codec: Some("FLAC".into()),
-                track_number: Some((i % 10) as u32 + 1),
+                track_number: Some((i % 10) as i64 + 1),
                 disc: Some(1),
                 duration_ms: Some(240_000),
                 status: EntryStatus::Queued,
