@@ -3,7 +3,7 @@
 # koan-kit's components drops its entry. See docs/design/koan-kit.md.
 
 ["dsp/graph.rs"]
-number = 39
+number = 38
 fixed = 1
 raw = 17
 
