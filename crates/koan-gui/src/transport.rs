@@ -1232,7 +1232,7 @@ impl Render for Transport {
                             "prev",
                             help("previous track", &Previous, cx),
                         )
-                        .answer(crate::components::Answer::Streak(false))
+                        .answer(crate::components::Answer::Nudge(false))
                         .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
@@ -1243,7 +1243,7 @@ impl Render for Transport {
                             "next",
                             help("next track", &Next, cx),
                         )
-                        .answer(crate::components::Answer::Streak(true))
+                        .answer(crate::components::Answer::Nudge(true))
                         .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(

@@ -105,13 +105,29 @@ impl RenderOnce for TransportControl {
         } else {
             Answer::Sweep
         };
-        // Shuffle or repeat turned on by a shortcut or another device rings
-        // as a click does.
-        match self.on {
-            Some(true) => answers.follow(1, ringing, look.accent.hsla(), window, cx),
-            Some(false) => answers.note(0, cx),
-            None => {}
+        // A glyph that answers through itself (shuffle, repeat) moves from
+        // the state it stood in to the new one, whoever changed it: a click,
+        // a shortcut, another device.
+        let morphing = look.icons && super::answer::morphs(self.icon);
+        if morphing {
+            let mark = super::answer::glyph_mark(self.icon, self.on);
+            let answer = answers
+                .seen(cx)
+                .and_then(|from| super::answer::glyph_motion(from, mark))
+                .unwrap_or(ringing);
+            answers.follow(mark, answer, look.accent.hsla(), window, cx);
+        } else {
+            // Shuffle or repeat turned on by a shortcut or another device
+            // rings as a click does.
+            match self.on {
+                Some(true) => answers.follow(1, ringing, look.accent.hsla(), window, cx),
+                Some(false) => answers.note(0, cx),
+                None => {}
+            }
         }
+        let glyph_side = glyph;
+        let drawn = answers.glyph_layer(glyph_side, color, window, cx);
+        let hidden = answers.glyph_live(cx);
         // A stop in the window's Tab order, which Return and Space click.
         let handle = focus(&self.id, window, cx);
         let accent = look.accent.hsla();
@@ -119,6 +135,8 @@ impl RenderOnce for TransportControl {
         let on = self.on;
         let answer = match self.answer {
             Answer::Ring => ringing,
+            // Drawn as a word, a glyph's own motion is a line under it.
+            answer if answer.glyph() && !look.icons => Answer::Sweep,
             answer => answer,
         };
         super::track(
@@ -145,7 +163,8 @@ impl RenderOnce for TransportControl {
         .child(
             div()
                 .relative()
-                .child(face)
+                .child(div().when(hidden, |d| d.invisible()).child(face))
+                .children(drawn)
                 // The on-mark outside the layout: shuffle and repeat stand
                 // level with previous and next.
                 .children(underline.map(|accent| super::toggle::on_mark(accent, &look)))
@@ -155,7 +174,10 @@ impl RenderOnce for TransportControl {
         .when_some(self.on_click, move |d, on_click| {
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                answers.start(answer, accent, cx);
+                // A glyph that morphs answers as its state lands, not here.
+                if !morphing {
+                    answers.start(answer, accent, cx);
+                }
                 on_click(event, window, cx)
             });
             answers_click(d, press.clone())
