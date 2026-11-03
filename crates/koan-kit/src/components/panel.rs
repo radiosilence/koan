@@ -263,7 +263,7 @@ struct MenuAction {
     icon: Icon,
     help: SharedString,
     lit: bool,
-    run: Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    run: super::Handler<ClickEvent>,
 }
 
 impl MenuAction {

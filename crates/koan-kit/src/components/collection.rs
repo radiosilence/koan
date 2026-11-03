@@ -307,6 +307,8 @@ mod tests {
         });
         let columns = columns.expect("measured after the first frame");
         assert!(columns > 1);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
         let first = cx.debug_bounds("tile-0").expect("tiles drawn");
         let second = cx.debug_bounds("tile-1").unwrap();
         let wrapped = cx
