@@ -9,8 +9,8 @@
 //! it lands. Typing settles briefly first, which only spares the engine a
 //! round of queries per keystroke from a fast typist.
 
+pub mod bar;
 pub mod field;
-pub mod picker;
 
 use std::rc::Rc;
 use std::sync::Arc;

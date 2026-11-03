@@ -1,4 +1,6 @@
-//! The sidebar's search field, and its suggestions under it. The field keeps
+//! The sidebar's search field, and its suggestions under it. Taking the
+//! keyboard, it opens the search box over the window (`search::bar`) on the
+//! same query. The field keeps
 //! the keyboard while the suggestions follow what is typed: the arrows light
 //! one, Return takes the lit one or, with none lit, opens every result, and
 //! Escape empties the field (koan-kit's `FilterField`). ⌘K and `/` reach it
@@ -41,19 +43,31 @@ impl SearchField {
     ) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("search"));
         let subscriptions = vec![
-            cx.subscribe_in(&input, window, |this, input, event: &InputEvent, _, cx| {
-                match event {
-                    InputEvent::Change => {
-                        this.lit = None;
-                        let text = input.read(cx).value().to_string();
-                        this.search.update(cx, |s, cx| s.set_query(&text, cx));
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, input, event: &InputEvent, window, cx| {
+                    match event {
+                        InputEvent::Change => {
+                            this.lit = None;
+                            let text = input.read(cx).value().to_string();
+                            this.search.update(cx, |s, cx| s.set_query(&text, cx));
+                        }
+                        InputEvent::PressEnter { .. } => this.enter(cx),
+                        // The sidebar's field is a way into the search box over
+                        // the window, which takes the keyboard with the query.
+                        InputEvent::Focus => {
+                            this.focused = true;
+                            window.dispatch_action(
+                                crate::platform::actions::Search.boxed_clone(),
+                                cx,
+                            );
+                        }
+                        InputEvent::Blur => this.focused = false,
                     }
-                    InputEvent::PressEnter { .. } => this.enter(cx),
-                    InputEvent::Focus => this.focused = true,
-                    InputEvent::Blur => this.focused = false,
-                }
-                cx.notify();
-            }),
+                    cx.notify();
+                },
+            ),
             cx.subscribe_in(&search, window, |this, _, _: &Cleared, window, cx| {
                 this.input
                     .update(cx, |input, cx| input.set_value("", window, cx));
