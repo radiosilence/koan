@@ -189,12 +189,27 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git a/src/color.rs b/src/color.rs
+index 3bd893f..e757f27 100644
+--- a/src/color.rs
++++ b/src/color.rs
+@@ -193,6 +193,10 @@ impl Serialize for Rgba {
+ 
+ impl From<Hsla> for Rgba {
+     fn from(color: Hsla) -> Self {
++        // KOAN: a colour naming a slot is the colour the slot shows now (#1859).
++        if let Some(index) = crate::color_slot_of(&color) {
++            return crate::color_slot_rgba(index, color.a);
++        }
+         let h = color.h;
+         let s = color.s;
+         let l = color.l;
 diff --git b/src/color_slots.rs b/src/color_slots.rs
 new file mode 100644
-index 0000000..df9fef2
+index 0000000..46a38b1
 --- /dev/null
 +++ b/src/color_slots.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,338 @@
 +// KOAN: colours that move on the GPU (#1859).
 +//
 +// A colour slot is one entry of an app-wide table of moving colours: a
@@ -294,17 +309,7 @@ index 0000000..df9fef2
 +
 +    /// The colour the slot shows at `at`.
 +    pub fn at(&self, at: Instant) -> Rgba {
-+        with_table(|table| {
-+            let slot = &table.data[self.0 as usize];
-+            let t = Track::decode(&slot[8..16]).at(seconds(table, at));
-+            let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
-+            Rgba {
-+                r: mix(0),
-+                g: mix(1),
-+                b: mix(2),
-+                a: mix(3),
-+            }
-+        })
++        with_table(|table| shown(table, self.0 as usize, at))
 +    }
 +
 +    /// Moves from the colour shown now to `to`, along `track`'s curve over
@@ -335,6 +340,39 @@ index 0000000..df9fef2
 +        GENERATION.fetch_add(1, Ordering::Relaxed);
 +    }
 +
++    /// Moves from the colour shown now to `to` as `to` does, mixed in OKLab:
++    /// the hue turns rather than passing through grey, as the accent does
++    /// when a record arrives.
++    pub fn to_oklab(&self, to: Rgba, track: Track) {
++        let now = present_now();
++        let from = self.at(now);
++        with_table(|table| {
++            rebase(table, now);
++            let start = seconds(table, now);
++            let track = Track {
++                from: 0.0,
++                to: 1.0,
++                start,
++                ..track
++            };
++            let index = self.0 as usize;
++            table.ends[index] = match track.repeat {
++                _ if track.length <= 0.0 => -1.0,
++                TrackRepeat::Once => start + track.length,
++                _ => f32::INFINITY,
++            };
++            let [fl, fa, fb] = srgb_to_oklab([from.r, from.g, from.b]);
++            let [tl, ta, tb] = srgb_to_oklab([to.r, to.g, to.b]);
++            let mut encoded = track.encode();
++            encoded[4] += 16.0;
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&[fl, fa, fb, from.a]);
++            slot[4..8].copy_from_slice(&[tl, ta, tb, to.a]);
++            slot[8..16].copy_from_slice(&encoded);
++        });
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++    }
++
 +    /// Stands at `color`.
 +    pub fn hold(&self, color: Rgba) {
 +        self.to(color, Track::hold(1.0));
@@ -353,6 +391,20 @@ index 0000000..df9fef2
 +            table.ends[self.0 as usize] = -1.0;
 +        });
 +    }
++}
++
++fn shown(table: &Table, index: usize, at: Instant) -> Rgba {
++    let slot = &table.data[index];
++    let t = Track::decode(&slot[8..16]).at(seconds(table, at));
++    let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
++    let mixed = [mix(0), mix(1), mix(2)];
++    // KOAN: ends held as OKLab, flagged by 16 in the track's code.
++    let [r, g, b] = if slot[12] as u32 >= 16 {
++        oklab_to_srgb(mixed)
++    } else {
++        mixed
++    };
++    Rgba { r, g, b, a: mix(3) }
 +}
 +
 +/// Track starts are seconds from the table's origin, in f32: an hour on, the
@@ -375,6 +427,14 @@ index 0000000..df9fef2
 +/// The slot a colour names, if it names one.
 +pub fn color_slot_of(color: &Hsla) -> Option<usize> {
 +    (color.h >= SLOT_HUE).then(|| ((color.h - SLOT_HUE) as usize).min(COLOR_SLOTS - 1))
++}
++
++/// The colour slot `index` shows now, its alpha scaled by `alpha`: what a
++/// colour naming a slot is wherever the CPU reads it.
++pub fn color_slot_rgba(index: usize, alpha: f32) -> Rgba {
++    let mut rgba = with_table(|table| shown(table, index, present_now()));
++    rgba.a *= alpha;
++    rgba
 +}
 +
 +/// Bytes of a frame's table.
@@ -447,6 +507,46 @@ index 0000000..df9fef2
 +/// Moves whenever any slot is written.
 +pub fn color_slots_generation() -> u64 {
 +    GENERATION.load(Ordering::Relaxed)
++}
++
++// KOAN: sRGB and OKLab, for slots mixed in OKLab (#1859): the same
++// matrices as the stock shaders' `koan_oklab_to_srgb`.
++fn srgb_to_oklab(c: [f32; 3]) -> [f32; 3] {
++    let linear = c.map(|v| {
++        if v <= 0.04045 {
++            v / 12.92
++        } else {
++            ((v + 0.055) / 1.055).powf(2.4)
++        }
++    });
++    let [r, g, b] = linear;
++    let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
++    let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
++    let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
++    [
++        0.2104542553 * l + 0.7936177850 * m - 0.0040720426 * s,
++        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
++        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
++    ]
++}
++
++fn oklab_to_srgb([l0, a, b]: [f32; 3]) -> [f32; 3] {
++    let l = (l0 + 0.3963377774 * a + 0.2158037573 * b).powi(3);
++    let m = (l0 - 0.1055613458 * a - 0.0638541728 * b).powi(3);
++    let s = (l0 - 0.0894841775 * a - 1.2914855480 * b).powi(3);
++    let linear = [
++        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
++        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
++        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
++    ];
++    linear.map(|v| {
++        let v = v.clamp(0.0, 1.0);
++        if v <= 0.0031308 {
++            12.92 * v
++        } else {
++            1.055 * v.powf(1.0 / 2.4) - 0.055
++        }
++    })
 +}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
 index 11f0b72..2c5b9ec 100644
@@ -1755,7 +1855,7 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..161492e 100644
+index c559412..dbcc309 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1281,6 +1281,10 @@ pub struct Window {
@@ -1977,7 +2077,21 @@ index c559412..161492e 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7226,22 @@ impl Window {
+@@ -4777,7 +4929,12 @@ impl Window {
+         let content_mask = self.content_mask();
+         let opacity = self.element_opacity();
+         path.content_mask = content_mask;
+-        let color: Background = color.into();
++        let mut color: Background = color.into();
++        // KOAN: paths are rasterised without the slot table, so a colour
++        // naming a slot is drawn as it stands now (#1859).
++        if crate::color_slot_of(&color.solid).is_some() {
++            color.solid = crate::Rgba::from(color.solid).into();
++        }
+         path.color = color.opacity(opacity);
+         self.next_frame
+             .scene
+@@ -7074,6 +7231,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  

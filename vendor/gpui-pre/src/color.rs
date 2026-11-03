@@ -193,6 +193,10 @@ impl Serialize for Rgba {
 
 impl From<Hsla> for Rgba {
     fn from(color: Hsla) -> Self {
+        // KOAN: a colour naming a slot is the colour the slot shows now (#1859).
+        if let Some(index) = crate::color_slot_of(&color) {
+            return crate::color_slot_rgba(index, color.a);
+        }
         let h = color.h;
         let s = color.s;
         let l = color.l;

@@ -97,19 +97,7 @@ impl ColorSlot {
 
     /// The colour the slot shows at `at`.
     pub fn at(&self, at: Instant) -> Rgba {
-        with_table(|table| {
-            let slot = &table.data[self.0 as usize];
-            let t = Track::decode(&slot[8..16]).at(seconds(table, at));
-            let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
-            let mixed = [mix(0), mix(1), mix(2)];
-            // KOAN: ends held as OKLab, flagged by 16 in the track's code.
-            let [r, g, b] = if slot[12] as u32 >= 16 {
-                oklab_to_srgb(mixed)
-            } else {
-                mixed
-            };
-            Rgba { r, g, b, a: mix(3) }
-        })
+        with_table(|table| shown(table, self.0 as usize, at))
     }
 
     /// Moves from the colour shown now to `to`, along `track`'s curve over
@@ -193,6 +181,20 @@ impl Drop for ColorSlot {
     }
 }
 
+fn shown(table: &Table, index: usize, at: Instant) -> Rgba {
+    let slot = &table.data[index];
+    let t = Track::decode(&slot[8..16]).at(seconds(table, at));
+    let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
+    let mixed = [mix(0), mix(1), mix(2)];
+    // KOAN: ends held as OKLab, flagged by 16 in the track's code.
+    let [r, g, b] = if slot[12] as u32 >= 16 {
+        oklab_to_srgb(mixed)
+    } else {
+        mixed
+    };
+    Rgba { r, g, b, a: mix(3) }
+}
+
 /// Track starts are seconds from the table's origin, in f32: an hour on, the
 /// origin moves to now and every slot with it, so the table keeps its
 /// precision for a koan open for days.
@@ -213,6 +215,14 @@ fn rebase(table: &mut Table, now: Instant) {
 /// The slot a colour names, if it names one.
 pub fn color_slot_of(color: &Hsla) -> Option<usize> {
     (color.h >= SLOT_HUE).then(|| ((color.h - SLOT_HUE) as usize).min(COLOR_SLOTS - 1))
+}
+
+/// The colour slot `index` shows now, its alpha scaled by `alpha`: what a
+/// colour naming a slot is wherever the CPU reads it.
+pub fn color_slot_rgba(index: usize, alpha: f32) -> Rgba {
+    let mut rgba = with_table(|table| shown(table, index, present_now()));
+    rgba.a *= alpha;
+    rgba
 }
 
 /// Bytes of a frame's table.
