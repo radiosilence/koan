@@ -34,6 +34,7 @@ mod filter_field;
 mod form;
 mod heart;
 mod inspector;
+mod layer;
 mod level;
 mod link_text;
 mod list_keys;
@@ -116,6 +117,7 @@ pub use form::{
 };
 pub use heart::Heart;
 pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{

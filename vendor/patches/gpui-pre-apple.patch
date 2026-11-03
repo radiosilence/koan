@@ -1,8 +1,8 @@
 diff --git a/src/metal_renderer.rs b/src/metal_renderer.rs
-index 862e62a..e768532 100644
+index 862e62a..91388e4 100644
 --- a/src/metal_renderer.rs
 +++ b/src/metal_renderer.rs
-@@ -126,6 +126,18 @@ pub struct MetalRenderer {
+@@ -126,6 +126,22 @@ pub struct MetalRenderer {
      monochrome_sprites_pipeline_state: metal::RenderPipelineState,
      polychrome_sprites_pipeline_state: metal::RenderPipelineState,
      surfaces_pipeline_state: metal::RenderPipelineState,
@@ -15,28 +15,39 @@ index 862e62a..e768532 100644
 +    // KOAN: the last frame drawn as the layers its shaders are drawn
 +    // between, which each present composes with the shaders (#1641).
 +    shader_layers: ShaderLayerTextures,
++    // KOAN: each layer group's texture, and the frame they were drawn for
++    // (#1859).
++    group_textures: Vec<Option<metal::Texture>>,
++    group_generation: u64,
 +    compose_pipelines: Option<ComposePipelines>,
 +    /// What a shader with no image is given to sample.
 +    blank_texture: Option<metal::Texture>,
      unit_vertices: metal::Buffer,
      #[allow(clippy::arc_with_non_send_sync)]
      instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-@@ -423,6 +435,10 @@ impl MetalRenderer {
+@@ -423,6 +439,12 @@ impl MetalRenderer {
              path_sprites_pipeline_state,
              shadows_pipeline_state,
              quads_pipeline_state,
 +            shader_pipelines: Default::default(), // KOAN: #1641.
 +            shader_layers: Default::default(), // KOAN: #1641.
++            group_textures: Vec::new(),        // KOAN: #1859.
++            group_generation: 0,
 +            compose_pipelines: None,           // KOAN: #1641.
 +            blank_texture: None,               // KOAN: #1641.
              underlines_pipeline_state,
              monochrome_sprites_pipeline_state,
              polychrome_sprites_pipeline_state,
-@@ -542,7 +558,17 @@ impl MetalRenderer {
+@@ -542,7 +564,22 @@ impl MetalRenderer {
              return;
          };
  
 -        let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size) {
++        // KOAN: each layer group drawn into its texture, once per frame
++        // drawn (#1859).
++        if let Err(error) = self.draw_layer_groups(scene, viewport_size) {
++            log::error!("failed to draw layer groups: {error:#}");
++        }
 +        // KOAN: a scene with shaders is drawn once as the layers they are
 +        // drawn between, and each present composes the layers with the
 +        // shaders, so re-presenting a moving shader costs the shaders and a
@@ -51,7 +62,7 @@ index 862e62a..e768532 100644
              Ok(command_buffer) => command_buffer,
              Err(error) => {
                  log::error!("failed to render: {error:#}");
-@@ -565,6 +591,7 @@ impl MetalRenderer {
+@@ -565,6 +602,7 @@ impl MetalRenderer {
          scene: &Scene,
          texture: &metal::TextureRef,
          viewport_size: Size<DevicePixels>,
@@ -59,7 +70,7 @@ index 862e62a..e768532 100644
      ) -> Result<metal::CommandBuffer> {
          let mut writer = InstanceBufferWriter::new(
              &self.device,
-@@ -589,6 +616,7 @@ impl MetalRenderer {
+@@ -589,6 +627,7 @@ impl MetalRenderer {
              &mut writer,
              texture,
              viewport_size,
@@ -67,7 +78,7 @@ index 862e62a..e768532 100644
          )?;
  
          let instance_buffer_pool = self.instance_buffer_pool.clone();
-@@ -627,7 +655,7 @@ impl MetalRenderer {
+@@ -627,7 +666,7 @@ impl MetalRenderer {
              .next_drawable()
              .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
  
@@ -76,7 +87,15 @@ index 862e62a..e768532 100644
  
          // Commit and wait for completion without presenting
          command_buffer.commit();
-@@ -674,7 +702,7 @@ impl MetalRenderer {
+@@ -655,6 +694,7 @@ impl MetalRenderer {
+         objc2::rc::autoreleasepool(|_| {
+             // Update path intermediate textures for this size
+             self.update_path_intermediate_textures(size);
++            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
+ 
+             // Create an offscreen texture as render target
+             let texture_descriptor = metal::TextureDescriptor::new();
+@@ -674,7 +714,7 @@ impl MetalRenderer {
              });
              let target_texture = self.device.new_texture(&texture_descriptor);
  
@@ -85,7 +104,7 @@ index 862e62a..e768532 100644
  
              // Managed textures require an explicit blit synchronize before the CPU
              // can read back the rendered data. Without this, get_bytes returns
-@@ -693,6 +721,52 @@ impl MetalRenderer {
+@@ -693,6 +733,53 @@ impl MetalRenderer {
          })
      }
  
@@ -101,6 +120,7 @@ index 862e62a..e768532 100644
 +    ) -> Result<RgbaImage> {
 +        objc2::rc::autoreleasepool(|_| {
 +            self.update_path_intermediate_textures(size);
++            self.draw_layer_groups(scene, size)?; // KOAN: #1859.
 +            let texture_descriptor = metal::TextureDescriptor::new();
 +            texture_descriptor.set_width(size.width.0 as u64);
 +            texture_descriptor.set_height(size.height.0 as u64);
@@ -138,7 +158,7 @@ index 862e62a..e768532 100644
      /// Renders a scene to a reused offscreen texture without reading pixels
      /// back or blocking on GPU completion.
      ///
-@@ -728,7 +802,7 @@ impl MetalRenderer {
+@@ -728,7 +815,7 @@ impl MetalRenderer {
                  .clone()
                  .expect("just ensured the render target exists");
  
@@ -147,7 +167,7 @@ index 862e62a..e768532 100644
  
              // Commit without waiting, mirroring presentation to a real window where
              // the CPU doesn't block on the GPU.
-@@ -744,10 +818,11 @@ impl MetalRenderer {
+@@ -744,10 +831,11 @@ impl MetalRenderer {
          writer: &mut InstanceBufferWriter,
          texture: &metal::TextureRef,
          viewport_size: Size<DevicePixels>,
@@ -160,7 +180,7 @@ index 862e62a..e768532 100644
  
          let mut command_encoder = new_command_encoder_for_texture(
              command_buffer,
-@@ -813,6 +888,19 @@ impl MetalRenderer {
+@@ -813,6 +901,21 @@ impl MetalRenderer {
                          viewport_size,
                          command_encoder,
                      ),
@@ -168,10 +188,12 @@ index 862e62a..e768532 100644
 +                PrimitiveBatch::Shaders {
 +                    program,
 +                    texture,
++                    group,
 +                    range,
 +                } => self.draw_shaders(
 +                    program,
 +                    texture,
++                    group,
 +                    range,
 +                    instance_bindings,
 +                    viewport_size,
@@ -180,7 +202,7 @@ index 862e62a..e768532 100644
                  PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                      &scene.surfaces[range.clone()],
                      range.start,
-@@ -911,6 +999,12 @@ impl MetalRenderer {
+@@ -911,6 +1014,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
@@ -193,7 +215,7 @@ index 862e62a..e768532 100644
          command_encoder.set_vertex_buffer(
              ShadowInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -941,6 +1035,259 @@ impl MetalRenderer {
+@@ -941,6 +1050,310 @@ impl MetalRenderer {
          );
      }
  
@@ -338,15 +360,16 @@ index 862e62a..e768532 100644
 +            while start < group.end {
 +                let head = &scene.shaders[start];
 +                let key = |s: &gpui::PaintShader| {
-+                    (s.program.name, s.image.as_ref().map(|t| t.texture_id))
++                    (s.program.name, s.image.as_ref().map(|t| t.texture_id), s.group)
 +                };
 +                let end = scene.shaders[start..group.end]
 +                    .iter()
-+                    .position(|s| key(s) != key(head))
-+                    .map_or(group.end, |n| start + n);
++                    .position(|s| key(s) != key(head) || s.group.is_some())
++                    .map_or(group.end, |n| (start + n).max(start + 1));
 +                self.draw_shaders(
 +                    head.program,
 +                    head.image.as_ref().map(|t| t.texture_id),
++                    head.group,
 +                    start..end,
 +                    &bindings,
 +                    viewport_size,
@@ -372,6 +395,53 @@ index 862e62a..e768532 100644
 +            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
 +        }
 +        Ok(command_buffer)
++    }
++
++    // KOAN: (#1859) each layer group's scene drawn into a texture the size
++    // of the window, transparent, its content where it was painted; kept
++    // for the frame's presents.
++    fn draw_layer_groups(&mut self, scene: &Scene, viewport_size: Size<DevicePixels>) -> Result<()> {
++        if scene.layer_groups.is_empty() {
++            self.group_textures.clear();
++            return Ok(());
++        }
++        let width = i32::from(viewport_size.width) as u64;
++        let height = i32::from(viewport_size.height) as u64;
++        let fits = self.group_textures.iter().flatten().all(|t| {
++            t.width() == width && t.height() == height
++        });
++        if self.group_generation == scene.generation && fits {
++            return Ok(());
++        }
++        let mut pool: Vec<metal::Texture> = if fits {
++            std::mem::take(&mut self.group_textures).into_iter().flatten().collect()
++        } else {
++            Vec::new()
++        };
++        let mut drawn = Vec::with_capacity(scene.layer_groups.len());
++        for group in &scene.layer_groups {
++            if group.is_blank() {
++                drawn.push(None);
++                continue;
++            }
++            let target = pool.pop().unwrap_or_else(|| {
++                let descriptor = metal::TextureDescriptor::new();
++                descriptor.set_width(width);
++                descriptor.set_height(height);
++                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
++                descriptor.set_usage(
++                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
++                );
++                descriptor.set_storage_mode(metal::MTLStorageMode::Private);
++                self.device.new_texture(&descriptor)
++            });
++            // The same queue runs these before whatever samples them.
++            self.render_frame(group, &target, viewport_size, true)?.commit();
++            drawn.push(Some(target));
++        }
++        self.group_textures = drawn;
++        self.group_generation = scene.generation;
++        Ok(())
 +    }
 +
 +    // KOAN: shader quads (#1641). A program's pipeline is compiled from its
@@ -412,6 +482,7 @@ index 862e62a..e768532 100644
 +        &self,
 +        program: &'static gpui::ShaderProgram,
 +        texture: Option<AtlasTextureId>,
++        group: Option<usize>,
 +        shaders: Range<usize>,
 +        instance_bindings: &impl HasShaders,
 +        viewport_size: Size<DevicePixels>,
@@ -428,8 +499,10 @@ index 862e62a..e768532 100644
 +        command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
 +        command_encoder.set_vertex_buffer(1, Some(&binding.buffer), binding.offset as u64);
 +        command_encoder.set_fragment_buffer(1, Some(&binding.buffer), binding.offset as u64);
-+        let image = texture
-+            .and_then(|id| self.sprite_atlas.metal_texture(id))
++        // KOAN: a layer group's texture, drawn this frame (#1859).
++        let image = group
++            .and_then(|group| self.group_textures.get(group).cloned().flatten())
++            .or_else(|| texture.and_then(|id| self.sprite_atlas.metal_texture(id)))
 +            .or_else(|| self.blank_texture.clone());
 +        command_encoder.set_fragment_texture(0, image.as_deref());
 +        let viewport = [
@@ -453,7 +526,7 @@ index 862e62a..e768532 100644
      fn draw_quads(
          &self,
          quads: Range<usize>,
-@@ -953,6 +1300,12 @@ impl MetalRenderer {
+@@ -953,6 +1366,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
@@ -466,7 +539,7 @@ index 862e62a..e768532 100644
          command_encoder.set_vertex_buffer(
              QuadInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1066,6 +1419,12 @@ impl MetalRenderer {
+@@ -1066,6 +1485,12 @@ impl MetalRenderer {
          }
  
          command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
@@ -479,7 +552,7 @@ index 862e62a..e768532 100644
          command_encoder.set_vertex_buffer(
              UnderlineInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1116,6 +1475,12 @@ impl MetalRenderer {
+@@ -1116,6 +1541,12 @@ impl MetalRenderer {
              DevicePixels(texture.height() as i32),
          );
          command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
@@ -492,7 +565,7 @@ index 862e62a..e768532 100644
          command_encoder.set_vertex_buffer(
              SpriteInputIndex::Vertices as u64,
              Some(&self.unit_vertices),
-@@ -1486,8 +1851,277 @@ struct InstanceBindings {
+@@ -1486,8 +1917,277 @@ struct InstanceBindings {
      monochrome_sprites: InstanceBinding,
      polychrome_sprites: InstanceBinding,
      surfaces: InstanceBinding,
@@ -516,8 +589,8 @@ index 862e62a..e768532 100644
 +    /// KOAN: whether each layer's colour slots were moving when it was
 +    /// last drawn (#1859).
 +    moving: Vec<bool>,
- }
- 
++}
++
 +impl ShaderLayerTextures {
 +    fn holds(&self, generation: u64, width: u64, height: u64) -> bool {
 +        self.generation == generation
@@ -679,8 +752,8 @@ index 862e62a..e768532 100644
 +        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
 +    }
 +    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
-+}
-+
+ }
+ 
 +// Track `k` of the uniforms at `time`.
 +float koan_track(constant float *u, uint k, float time) {
 +    constant float *t = u + 16 + k * 8;
@@ -770,7 +843,7 @@ index 862e62a..e768532 100644
  fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
      Ok(InstanceBindings {
          quads: writer.write(&scene.quads)?,
-@@ -1499,6 +2133,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
+@@ -1499,6 +2199,30 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
              bounds: surface.bounds,
              content_mask: surface.content_mask,
          }))?,
@@ -801,7 +874,7 @@ index 862e62a..e768532 100644
      })
  }
  
-@@ -1799,4 +2457,284 @@ mod tests {
+@@ -1799,4 +2523,287 @@ mod tests {
              assert_eq!(*alpha, 255);
          }
      }
@@ -860,6 +933,7 @@ index 862e62a..e768532 100644
 +            program: &PROGRAM,
 +            uniforms: uniforms.clone(),
 +            image: None,
++            group: None,
 +        });
 +        scene.finish();
 +        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
@@ -924,6 +998,7 @@ index 862e62a..e768532 100644
 +                program: &PROGRAM,
 +                uniforms: uniforms.clone(),
 +                image: None,
++                group: None,
 +            });
 +            let over = if cover {
 +                rect(30.0, 10.0, 20.0, 4.0)
@@ -1001,6 +1076,7 @@ index 862e62a..e768532 100644
 +            program: &PROGRAM,
 +            uniforms: Arc::new(gpui::ShaderUniforms::new()),
 +            image: None,
++            group: None,
 +        });
 +        // A menu over the shader, and its text over the menu, clear of it.
 +        scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));

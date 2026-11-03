@@ -559,6 +559,10 @@ pub struct PaintShader {
     pub uniforms: std::sync::Arc<ShaderUniforms>,
     /// The image the program samples, in the sprite atlas.
     pub image: Option<AtlasTile>,
+    // KOAN: the layer group the shader composes, as its image: what was
+    // painted inside `Window::paint_layer_group`, drawn into a texture of
+    // its own (#1859).
+    pub group: Option<usize>,
 }
 
 impl From<PaintShader> for Primitive {
@@ -616,15 +620,21 @@ impl ShaderInstance {
             clip: rect(&shader.content_mask.bounds),
             uniforms,
             time: [time, 0.0, 0.0, 0.0],
-            tile: shader.image.as_ref().map_or([0.0; 4], |tile| {
-                let b = tile.bounds;
-                [
-                    b.origin.x.0 as f32,
-                    b.origin.y.0 as f32,
-                    b.size.width.0 as f32,
-                    b.size.height.0 as f32,
-                ]
-            }),
+            // A group's texture is the window's size, its content where it
+            // was painted: the tile is the quad's own bounds.
+            tile: match (&shader.image, shader.group) {
+                (Some(tile), _) => {
+                    let b = tile.bounds;
+                    [
+                        b.origin.x.0 as f32,
+                        b.origin.y.0 as f32,
+                        b.size.width.0 as f32,
+                        b.size.height.0 as f32,
+                    ]
+                }
+                (None, Some(_)) => rect(&shader.bounds),
+                (None, None) => [0.0; 4],
+            },
         }
     }
 }
