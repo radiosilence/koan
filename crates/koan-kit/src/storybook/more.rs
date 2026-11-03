@@ -37,7 +37,7 @@ impl State {
         let rows = RowListState::new();
         rows.reset(LIST.len() * 4, RowKind::Text);
         let bars = BarLevels::new();
-        bars.set([0.7, 0.45, 0.25]);
+        bars.hold([0.7, 0.45, 0.25]);
         Self {
             collection: CollectionWidth::default(),
             filter: cx.new(|cx| InputState::new(window, cx).default_value("low")),
