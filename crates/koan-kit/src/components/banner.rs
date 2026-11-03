@@ -65,10 +65,15 @@ impl RenderOnce for Banner {
                     .line_clamp(2)
                     .child(self.message),
             )
-            .children(self.actions.into_iter().enumerate().map(|(i, (label, run))| {
-                Button::new(("banner-action", i), ButtonKind::Compact)
-                    .label(label)
-                    .on_click(move |e, window, cx| run(e, window, cx))
-            }))
+            .children(
+                self.actions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (label, run))| {
+                        Button::new(("banner-action", i), ButtonKind::Compact)
+                            .label(label)
+                            .on_click(move |e, window, cx| run(e, window, cx))
+                    }),
+            )
     }
 }

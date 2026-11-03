@@ -812,7 +812,10 @@ impl Player {
     }
 
     fn forget_waiting(&mut self) {
-        if matches!(self.transport, Transport::Waiting(_) | Transport::Opening(_)) {
+        if matches!(
+            self.transport,
+            Transport::Waiting(_) | Transport::Opening(_)
+        ) {
             self.transport = Transport::Idle;
         }
     }
@@ -1308,15 +1311,14 @@ impl Player {
     /// another format asks again when its answer comes (`on_output_opened`).
     fn request_output(&mut self, key: OpenKey) {
         if let Some(flight) = &self.opening {
-            self.shared_state.set_output_opening(Some(
-                crate::player::state::OutputOpening {
+            self.shared_state
+                .set_output_opening(Some(crate::player::state::OutputOpening {
                     device: flight.key.device.clone(),
                     since: self
                         .shared_state
                         .output_opening()
                         .map_or_else(std::time::Instant::now, |o| o.since),
-                },
-            ));
+                }));
             return;
         }
         self.spawn_open(key);
@@ -1375,7 +1377,11 @@ impl Player {
     /// wherever the commands since left it. A late answer to an ask since
     /// abandoned is dropped, its output with it.
     fn on_output_opened(&mut self, ready: OutputReady) {
-        if self.opening.as_ref().is_none_or(|f| f.ticket != ready.ticket) {
+        if self
+            .opening
+            .as_ref()
+            .is_none_or(|f| f.ticket != ready.ticket)
+        {
             return;
         }
         self.opening = None;
@@ -3344,102 +3350,98 @@ fn open_output(
     key: &OpenKey,
     consumer: rtrb::Consumer<f32>,
 ) -> Result<OpenedOutput, PlayerError> {
-        let device = resolve_device_on(ctx.backend.as_ref(), key.device.as_deref())?;
-        let device_rate = ctx.backend.get_device_sample_rate(&device)?;
-        // Read once, here: the session's decoder is handed this same setup
-        // (`start_session`), so the engine and the decoder agree on its rate.
-        let dsp = ctx.dsp_for(&device.name);
-        // The rate the decode thread writes at: the source's, unless DSP
-        // resamples it to reach an impulse response.
-        let source_rate =
-            dsp.as_ref()
-                .map_or(key.sample_rate, |d| d.output_rate(key.sample_rate)) as f64;
+    let device = resolve_device_on(ctx.backend.as_ref(), key.device.as_deref())?;
+    let device_rate = ctx.backend.get_device_sample_rate(&device)?;
+    // Read once, here: the session's decoder is handed this same setup
+    // (`start_session`), so the engine and the decoder agree on its rate.
+    let dsp = ctx.dsp_for(&device.name);
+    // The rate the decode thread writes at: the source's, unless DSP
+    // resamples it to reach an impulse response.
+    let source_rate = dsp
+        .as_ref()
+        .map_or(key.sample_rate, |d| d.output_rate(key.sample_rate)) as f64;
 
-        // Anything read between here and the switch landing would pair this
-        // track with the last one's output rate, and a rate switch is not
-        // instant. Say nothing instead.
-        ctx.state.clear_output_sample_rate();
+    // Anything read between here and the switch landing would pair this
+    // track with the last one's output rate, and a rate switch is not
+    // instant. Say nothing instead.
+    ctx.state.clear_output_sample_rate();
 
-        // DSP and ReplayGain hand the output floats of their own making: no
-        // source bit depth survives them.
-        let gained = crate::config::Config::cached().playback.replaygain
-            != crate::config::ReplayGainMode::Off;
-        let bit_depth = if dsp.is_some() || gained {
-            None
-        } else {
-            key.bit_depth
-        };
-        if (device_rate - source_rate).abs() > 0.1 {
-            log::info!(
-                "switching device sample rate: {}Hz → {}Hz",
-                device_rate,
-                source_rate
-            );
-        }
-        let settled = match ctx.backend.prepare_output(
-            &device,
+    // DSP and ReplayGain hand the output floats of their own making: no
+    // source bit depth survives them.
+    let gained =
+        crate::config::Config::cached().playback.replaygain != crate::config::ReplayGainMode::Off;
+    let bit_depth = if dsp.is_some() || gained {
+        None
+    } else {
+        key.bit_depth
+    };
+    if (device_rate - source_rate).abs() > 0.1 {
+        log::info!(
+            "switching device sample rate: {}Hz → {}Hz",
             device_rate,
-            source_rate,
-            key.channels,
-            bit_depth,
-        ) {
+            source_rate
+        );
+    }
+    let settled =
+        match ctx
+            .backend
+            .prepare_output(&device, device_rate, source_rate, key.channels, bit_depth)
+        {
             Ok(rate) => rate,
             Err(e) => {
                 log::warn!("failed to set device sample rate: {}", e);
                 device_rate
             }
         };
-        if (settled - source_rate).abs() > 0.1 {
-            log::warn!(
-                "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
-                settled,
-                source_rate
-            );
-        }
-
-        // The front ends compare this against the source rate to say whether
-        // anything had to resample.
-        ctx.state
-            .set_output_sample_rate(settled.round() as u32);
-
-        // koan is not the only client of this device. Subscribe so the front
-        // ends learn about a rate someone else moved instead of trusting the
-        // reading above until the next track happens to build an engine.
-        let watch_state = ctx.state.clone();
-        let watch_name = device.name.clone();
-        let rate_watch = ctx.backend.watch_device_sample_rate(
-            &device,
-            Box::new(move |rate| {
-                log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
-                watch_state.set_output_sample_rate(rate.round() as u32);
-            }),
-        );
-
-        let engine = ctx.backend.create_engine(
-            &device,
-            source_rate,
-            key.channels as u32,
-            consumer,
-            ctx.samples_played.clone(),
-        )?;
-        // Said of the stream as it opened, which may have fallen back to the
-        // system mixer after asking for more: then the rate is the mixer's.
-        let mixed = ctx.backend.output_mixed();
-        ctx.state.set_output_mixed(mixed);
-        if mixed == Some(true)
-            && let Ok(rate) = ctx.backend.get_device_sample_rate(&device)
-        {
-            ctx.state
-                .set_output_sample_rate(rate.round() as u32);
-        }
-        Ok(OpenedOutput {
-            device,
-            dsp,
-            engine,
-            rate_watch,
-            device_rate,
+    if (settled - source_rate).abs() > 0.1 {
+        log::warn!(
+            "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
             settled,
-        })
+            source_rate
+        );
+    }
+
+    // The front ends compare this against the source rate to say whether
+    // anything had to resample.
+    ctx.state.set_output_sample_rate(settled.round() as u32);
+
+    // koan is not the only client of this device. Subscribe so the front
+    // ends learn about a rate someone else moved instead of trusting the
+    // reading above until the next track happens to build an engine.
+    let watch_state = ctx.state.clone();
+    let watch_name = device.name.clone();
+    let rate_watch = ctx.backend.watch_device_sample_rate(
+        &device,
+        Box::new(move |rate| {
+            log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
+            watch_state.set_output_sample_rate(rate.round() as u32);
+        }),
+    );
+
+    let engine = ctx.backend.create_engine(
+        &device,
+        source_rate,
+        key.channels as u32,
+        consumer,
+        ctx.samples_played.clone(),
+    )?;
+    // Said of the stream as it opened, which may have fallen back to the
+    // system mixer after asking for more: then the rate is the mixer's.
+    let mixed = ctx.backend.output_mixed();
+    ctx.state.set_output_mixed(mixed);
+    if mixed == Some(true)
+        && let Ok(rate) = ctx.backend.get_device_sample_rate(&device)
+    {
+        ctx.state.set_output_sample_rate(rate.round() as u32);
+    }
+    Ok(OpenedOutput {
+        device,
+        dsp,
+        engine,
+        rate_watch,
+        device_rate,
+        settled,
+    })
 }
 
 impl OpenContext {
@@ -6959,7 +6961,9 @@ mod tests {
         let (mut player, ids, _dir) = opening_player(&backend, 2);
         let state = player.shared_state.clone();
 
-        quick("play", || player.process_command(PlayerCommand::Play(ids[0])));
+        quick("play", || {
+            player.process_command(PlayerCommand::Play(ids[0]))
+        });
         assert!(matches!(player.transport, Transport::Opening(_)));
         assert_eq!(state.playback_state(), PlaybackState::Playing);
         assert_eq!(state.track_info().map(|t| t.id), Some(ids[0]));
@@ -6968,7 +6972,9 @@ mod tests {
 
         quick("skip", || player.process_command(PlayerCommand::NextTrack));
         assert_eq!(state.track_info().map(|t| t.id), Some(ids[1]));
-        quick("seek", || player.process_command(PlayerCommand::Seek(3_000)));
+        quick("seek", || {
+            player.process_command(PlayerCommand::Seek(3_000))
+        });
         assert_eq!(state.position_ms(), 3_000);
         quick("pause", || player.process_command(PlayerCommand::Pause));
         assert_eq!(state.playback_state(), PlaybackState::Paused);
@@ -7028,7 +7034,9 @@ mod tests {
             state.output_opening().and_then(|o| o.device).as_deref(),
             Some("Busy DAC")
         );
-        quick("cancel", || player.process_command(PlayerCommand::CancelOutput));
+        quick("cancel", || {
+            player.process_command(PlayerCommand::CancelOutput)
+        });
         take_opened(&mut player);
         assert!(player.session().is_some(), "playing on the default");
         assert_eq!(*backend.made.lock().unwrap(), ["Built-in"]);
@@ -7067,7 +7075,11 @@ mod tests {
         player.process_command(PlayerCommand::Play(ids[0]));
         assert_eq!(player.open_threads.load(Ordering::Acquire), 1);
         player.process_command(PlayerCommand::RetryOutput);
-        assert_eq!(player.open_threads.load(Ordering::Acquire), 2, "asked again");
+        assert_eq!(
+            player.open_threads.load(Ordering::Acquire),
+            2,
+            "asked again"
+        );
         player.process_command(PlayerCommand::RetryOutput);
         assert_eq!(
             player.open_threads.load(Ordering::Acquire),
@@ -7079,10 +7091,7 @@ mod tests {
         let ticket = player.open_ticket;
         player.process_command(PlayerCommand::CancelOutput);
         assert_eq!(player.open_ticket, ticket, "nothing more opened");
-        assert_eq!(
-            player.shared_state.playback_state(),
-            PlaybackState::Stopped
-        );
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
 
         open_gate(&backend.gate);
         take_opened(&mut player);
