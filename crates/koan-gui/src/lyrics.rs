@@ -247,7 +247,10 @@ impl Render for LyricsPanel {
         let lyrics = self.lyrics(cx).cloned();
         let mut panel = Inspector::new("lyrics").clear(washed);
         if loading {
-            panel = panel.trailing(Spinner::new(look.font_size(crate::theme::TypeRole::Fine)));
+            panel = panel.trailing(
+                Spinner::new(look.font_size(crate::theme::TypeRole::Fine))
+                    .announced("lyrics-loading", "looking up lyrics"),
+            );
         } else if let Some(source) = lyrics.as_ref().and_then(|l| l.source.clone()) {
             panel = panel.trailing(source);
         }
