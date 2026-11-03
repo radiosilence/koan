@@ -239,15 +239,6 @@ impl Queue {
             .map(|(k, _)| *k)
     }
 
-    /// Fetches running for records no longer asked for: scrolled away.
-    fn abandoned(&self) -> Vec<Art> {
-        self.fetching
-            .iter()
-            .filter(|art| !self.wanted_arts.contains(art))
-            .copied()
-            .collect()
-    }
-
     /// Every request, replacing the last: the keys and the records they are
     /// of, worked out once here rather than at every wake of a lane.
     fn set_wanted(&mut self, wanted: HashMap<Key, Priority>) {
@@ -1278,7 +1269,7 @@ fn fetch_lane(
                     && queue.next_fetch().is_none()
                     && shared
                         .fetchers
-                        .fetch_update(
+                        .try_update(
                             std::sync::atomic::Ordering::AcqRel,
                             std::sync::atomic::Ordering::Acquire,
                             |n| (n > WINDOW_START).then(|| n - 1),

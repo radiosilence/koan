@@ -22,7 +22,7 @@ use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
+use super::tile::{Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 
@@ -471,7 +471,13 @@ impl AlbumGrid {
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
-        for (index, record) in (start..).zip(records.get(start..end).unwrap_or_default()) {
+        let count = records.len();
+        for (ix, record) in records
+            .get(start..end)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let item = Playable::Album(record.id);
             let selected = self.selection.contains(item);
             let (drag, pick, after) = match (&pick, selected) {
@@ -507,13 +513,14 @@ impl AlbumGrid {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&record.id),
-                cursor: self.keyed && self.cursor.at == Some(index),
+                cursor: self.keyed && self.cursor.at == Some(start + ix),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
                 drag,
                 pick,
                 after,
+                place: (start + ix, count),
             };
             tiles.push(self.tiles.tile(record, state, height, cx));
         }
@@ -727,6 +734,20 @@ impl actions::Menus for AlbumGrid {
 }
 
 impl TileHost for AlbumGrid {
+    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+        if let (Some(grid), Some(ix)) = (
+            self.grid,
+            self.records.iter().position(|record| record.id == album),
+        ) {
+            let columns = grid.columns.max(1);
+            crate::components::reveal_around(
+                &self.scroll,
+                ix / columns,
+                self.records.len().div_ceil(columns),
+            );
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -883,6 +904,11 @@ impl Render for AlbumGrid {
             .pt(grid.margin)
             .pb(grid.margin)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("albums-list", "albums")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element(),
             None => div().into_any_element(),
         };

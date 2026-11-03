@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, Icon, KoanStyled, KoanTheme, Look};
+use crate::theme::{Icon, KoanStyled, KoanTheme, Look};
 
 /// The toolbar's figures, the Mac's unified toolbar measured at 2x: 52
 /// tall, its buttons 36-point cells. Gaps are fixed points, as AppKit's.
@@ -97,7 +97,7 @@ impl Toolbar {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        super::accessible(div().id("toolbar"), gpui_kit::Role::Toolbar, None)
             .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()
@@ -111,7 +111,8 @@ impl RenderOnce for Toolbar {
             // `bg`, flush with the page.
             .map(|d| {
                 if KoanTheme::washes_window(cx) {
-                    d.border_b(HAIRLINE).border_color(look.palette.rule.hsla())
+                    d.border_b(look.hairline)
+                        .border_color(look.palette.rule.hsla())
                 } else {
                     d.bg(look.palette.bg.hsla())
                 }

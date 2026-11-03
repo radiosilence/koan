@@ -33,6 +33,7 @@ pub struct MenuEntry {
     trailing: Vec<Trailing>,
     keys: Option<SharedString>,
     run: Option<Run>,
+    stays_open: bool,
 }
 
 impl MenuEntry {
@@ -51,7 +52,15 @@ impl MenuEntry {
             trailing: Vec::new(),
             keys: None,
             run: None,
+            stays_open: false,
         }
+    }
+
+    /// Choosing it leaves the menu open: a choice among outputs or devices,
+    /// whose tick and details the menu shows moving as it is refilled.
+    pub fn stays_open(mut self) -> Self {
+        self.stays_open = true;
+        self
     }
 
     /// The keys that do the same, at the row's end in `muted`: a menu drawn
@@ -405,7 +414,9 @@ impl Menu {
         match &self.entries[index] {
             Entry::Item(item) if !item.disabled => {
                 if let Some(run) = item.run.clone() {
-                    cx.emit(DismissEvent);
+                    if !item.stays_open {
+                        cx.emit(DismissEvent);
+                    }
                     run(&ClickEvent::default(), window, cx);
                 }
             }

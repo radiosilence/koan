@@ -27,7 +27,7 @@ use super::drag::{Playable, PlayableDrag};
 use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
+use super::tile::{Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
@@ -591,6 +591,8 @@ impl ArtistPage {
                     cursor: self.keyed
                         && self.cursor.at
                             == Some(record.albums.len() + record.features.len() + index),
+                    place: Some((index, record.appearances.len())),
+                    reveal: None,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -629,7 +631,8 @@ impl ArtistPage {
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(albums.len());
-        for (index, album) in (first..).zip(albums) {
+        let count = albums.len();
+        for (ix, album) in albums.iter().enumerate() {
             let record = self
                 .records
                 .entry(album.id)
@@ -654,13 +657,14 @@ impl ArtistPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
-                cursor: self.keyed && self.cursor.at == Some(index),
+                cursor: self.keyed && self.cursor.at == Some(first + ix),
                 show_artist,
                 side: grid.side,
                 sleeve,
                 drag,
                 pick,
                 after,
+                place: (ix, count),
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }
@@ -1250,6 +1254,7 @@ mod tests {
                 Item::FeaturesHeading => "[features]".into(),
                 Item::Tiles { range, .. } => format!("{}..{}", range.start, range.end),
                 Item::Track(i) => format!("track {i}"),
+                Item::About => "about".into(),
             })
             .collect();
         assert_eq!(
@@ -1262,7 +1267,8 @@ mod tests {
                 "[live]",
                 "4..5",
                 "[features]",
-                "0..1"
+                "0..1",
+                "about"
             ]
         );
         // Albums alone are headed too.

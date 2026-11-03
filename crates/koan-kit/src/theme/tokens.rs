@@ -70,8 +70,48 @@ impl Palette {
         on_selection: Hex(0xFFFFFF),
     };
 
+    /// Increase Contrast, or a desktop's high-contrast setting: muted text
+    /// drawn towards ink, rules that read as lines rather than shading. Every
+    /// text token reaches 7:1 on `bg` and `surface`, and `rule` 3:1.
+    pub const DARK_CONTRAST: Palette = Palette {
+        bg: Hex(0x1E1E1E),
+        surface: Hex(0x2A2A2A),
+        rule: Hex(0x8A8A8A),
+        hover: Hex(0x5A5A5A),
+        ink: Hex(0xF0F0F0),
+        strong: Hex(0xFFFFFF),
+        muted: Hex(0xC8C8C8),
+        bad: Hex(0xFF9EA4),
+        selection: Hex(0x000000),
+        on_selection: Hex(0xFFFFFF),
+    };
+
+    pub const LIGHT_CONTRAST: Palette = Palette {
+        bg: Hex(0xFFFFFF),
+        surface: Hex(0xF2F2F2),
+        rule: Hex(0x767676),
+        hover: Hex(0xB8B8B8),
+        ink: Hex(0x111111),
+        strong: Hex(0x000000),
+        muted: Hex(0x3D3D3D),
+        bad: Hex(0x9E1F1F),
+        selection: Hex(0x2E2E2E),
+        on_selection: Hex(0xFFFFFF),
+    };
+
     pub fn of(dark: bool) -> Palette {
-        if dark { Self::DARK } else { Self::LIGHT }
+        Self::for_look(dark, false)
+    }
+
+    /// The tokens for an appearance, in their contrast variant when the
+    /// system asks for more.
+    pub fn for_look(dark: bool, contrast: bool) -> Palette {
+        match (dark, contrast) {
+            (true, false) => Self::DARK,
+            (false, false) => Self::LIGHT,
+            (true, true) => Self::DARK_CONTRAST,
+            (false, true) => Self::LIGHT_CONTRAST,
+        }
     }
 }
 
@@ -86,7 +126,8 @@ pub const ROW_HOVER_OPACITY: f32 = 0.3;
 pub const DISABLED_OPACITY: f32 = 0.4;
 
 /// One rule's width: a point, not a device pixel, which at `rule`'s contrast
-/// is too faint on a 2× display.
+/// is too faint on a 2× display. Twice that with more contrast asked for
+/// (`Look::hairline`).
 pub const HAIRLINE: Pixels = px(1.0);
 
 /// The width of the accent rule on a selected navigation row's leading edge,
@@ -118,7 +159,14 @@ pub struct Scale {
 
 impl Scale {
     pub fn of(text_size: u32) -> Scale {
-        let size = text_size.clamp(*TEXT_SIZES.start(), *TEXT_SIZES.end()) as f32 / 100.0;
+        Self::at(text_size, 1.0)
+    }
+
+    /// The app's text size on top of the system's (GNOME's text scaling
+    /// factor; 1 where the system has none): 100 % is the system's size.
+    pub fn at(text_size: u32, system: f32) -> Scale {
+        let chosen = text_size.clamp(*TEXT_SIZES.start(), *TEXT_SIZES.end()) as f32 / 100.0;
+        let size = chosen * system.clamp(0.5, 3.0);
         let text = MAC_FIT * size;
         Scale {
             text,
@@ -286,6 +334,54 @@ mod tests {
         assert!((at_100.space - 0.93).abs() < 1e-6);
         assert_eq!(Scale::of(500).size, 1.3);
         assert_eq!(Scale::of(10).size, 0.8);
+    }
+
+    fn contrast(a: Hex, b: Hex) -> f64 {
+        let y =
+            |h: Hex| crate::theme::accent::oklch::luminance(h.channels().map(|v| v as f64 / 255.0));
+        let (a, b) = (y(a), y(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// Every text token on every ground text sits on, in each palette: 4.5:1
+    /// as drawn, 7:1 with more contrast asked for, where rules reach 3:1 too.
+    #[test]
+    fn every_text_token_reads_on_every_ground() {
+        for dark in [true, false] {
+            for more in [false, true] {
+                let p = Palette::for_look(dark, more);
+                let minimum = if more { 7.0 } else { 4.5 };
+                for (name, text) in [
+                    ("ink", p.ink),
+                    ("strong", p.strong),
+                    ("muted", p.muted),
+                    ("bad", p.bad),
+                ] {
+                    for (ground, on) in [("bg", p.bg), ("surface", p.surface)] {
+                        let ratio = contrast(text, on);
+                        assert!(
+                            ratio >= minimum,
+                            "{name} on {ground}, dark {dark}, contrast {more}: {ratio:.2}"
+                        );
+                    }
+                }
+                let ratio = contrast(p.on_selection, p.selection);
+                assert!(
+                    ratio >= minimum,
+                    "on_selection, dark {dark}, contrast {more}: {ratio:.2}"
+                );
+                if more {
+                    assert!(contrast(p.rule, p.bg) >= 3.0, "rule, dark {dark}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_system_text_size_scales_the_apps() {
+        assert!((Scale::at(100, 1.25).size - 1.25).abs() < 1e-6);
+        assert!((Scale::at(120, 1.25).size - 1.5).abs() < 1e-6);
+        assert_eq!(Scale::at(100, 1.0), Scale::of(100));
     }
 
     #[test]

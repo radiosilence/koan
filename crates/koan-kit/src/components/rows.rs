@@ -264,7 +264,8 @@ impl NavNote {
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        let id = SharedString::from(format!("note-{}", self.text));
+        super::announced(div().id(id), self.text.clone(), self.tone)
             .w_full()
             .min_w_0()
             .overflow_hidden()

@@ -551,7 +551,9 @@ fn skip(engine: &Arc<KoanEngine>, by_ms: i64, cx: &mut App) {
     let Some(now) = super::media::Playhead::now(cx) else {
         return;
     };
-    send(cx, engine.clone().seek(now.saturating_add_signed(by_ms)));
+    let target = now.saturating_add_signed(by_ms);
+    crate::transport::land(target, cx);
+    send(cx, engine.clone().seek(target));
 }
 
 #[cfg(test)]

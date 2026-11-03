@@ -19,7 +19,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
@@ -369,6 +369,10 @@ impl TrackBrowser {
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
             kind: crate::components::RowKind::Art,
+            place: Some((index, self.total as usize)),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), index, self.total as usize)),
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }
@@ -559,6 +563,11 @@ impl Render for TrackBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("tracks-list", "tracks")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
         self.keyed = self.focus.is_focused(window);

@@ -15,7 +15,7 @@ use koan_kit::app::*;
 use super::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::tokens::Paint;
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::sheet::{Confirm, confirm};
@@ -326,6 +326,8 @@ impl HistoryPage {
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
                     cursor: self.keyed && self.cursor.at == Some(ix),
+                    place: Some((ix, self.entries.len())),
+                    reveal: p.a11y.then(|| Reveal::Rows(self.list.clone(), i)),
                 };
                 let row = rows::track_row(p, &track, ix, state, sleeve, None, cx);
                 let plays: Vec<i64> = self.acting_on(ix).iter().map(|e| e.id).collect();
@@ -546,7 +548,6 @@ impl HistoryPage {
 
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {

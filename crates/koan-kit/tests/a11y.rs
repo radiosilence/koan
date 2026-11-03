@@ -7,14 +7,15 @@ use std::rc::Rc;
 
 use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Context, IntoElement, ParentElement, Render, Styled,
-    TestAppContext, Window, div, px,
+    AnyWindowHandle, Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
+    div, px,
 };
 use koan_kit::components::{
-    Badge, Button, ButtonKind, EmptyState, IconToggle, NavRow, PageHeader, PlayButton, ProgressRow,
-    SectionHeading, Segmented, ShuffleButton, Slider, Stepper, Toggle,
+    Badge, Banner, Button, ButtonKind, EmptyState, IconToggle, NavNote, NavRow, PageHeader,
+    PlayButton, ProgressRow, RowKind, RowList, RowListState, SectionHeading, Segmented,
+    ShuffleButton, Slider, Stepper, TableRow, Toggle, Toolbar, spoken,
 };
-use koan_kit::theme::{self, Icon};
+use koan_kit::theme::{self, Icon, Tone};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -91,9 +92,17 @@ fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Rc<Cell<u32>>, Rc<Cell<f32
     });
     let page = Page::default();
     let (queued, seek) = (page.queued.clone(), page.seek.clone());
-    let window = cx.add_window(|_, _| page);
+    let window: AnyWindowHandle = cx.add_window(|_, _| page).into();
+    attach(window, cx);
+    (window, queued, seek)
+}
+
+/// A screen reader attaching: GPUI builds the tree only while one is.
+fn attach(window: AnyWindowHandle, cx: &mut TestAppContext) {
+    window
+        .update(cx, |_, window, _| window.set_a11y_active_for_test(true))
+        .expect("the window");
     cx.run_until_parked();
-    (window.into(), queued, seek)
 }
 
 fn tree(window: AnyWindowHandle, cx: &mut TestAppContext) -> String {
@@ -197,4 +206,90 @@ fn components_answer_a_screen_reader_s_actions(cx: &mut TestAppContext) {
     assert_eq!(queued.get(), 1);
     send(window, cx, Action::Increment, node(&tree, "seek").0);
     assert!((seek.get() - 0.30).abs() < 1e-4, "seek at {}", seek.get());
+}
+
+/// A queue as the app draws one: a record's heading over its tracks, each
+/// row one node, in a list that draws only what is on screen; the toolbar
+/// over it and what the app says on its own.
+struct Queue {
+    list: RowListState,
+    revealed: Rc<Cell<Option<usize>>>,
+}
+
+impl Render for Queue {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let revealed = self.revealed.clone();
+        div()
+            .size(px(800.))
+            .flex()
+            .flex_col()
+            .child(Toolbar::new())
+            .child(Banner::new(
+                Icon::WarningFilled,
+                "the server can't be reached",
+                Tone::Bad,
+            ))
+            .child(NavNote::new("Waiting for the TV to wake", Tone::Muted))
+            .child(
+                div().h(px(400.)).child(
+                    RowList::new(&self.list, move |ix, _, _| {
+                        let revealed = revealed.clone();
+                        let row = if ix == 0 {
+                            TableRow::new(("row", ix), RowKind::Heading).spoken(spoken([
+                                "Hounds of Love",
+                                "Kate Bush",
+                                "",
+                                "1985",
+                            ]))
+                        } else {
+                            TableRow::new(("row", ix), RowKind::Text)
+                                .spoken(spoken([format!("track {ix}"), "4:01".into()]))
+                        };
+                        row.place(ix, 3)
+                            .on_reveal(move |_, _| revealed.set(Some(ix)))
+                            .into_any_element()
+                    })
+                    .named("queue"),
+                ),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn rows_lists_and_announcements(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let list = RowListState::new();
+    list.reset(3, RowKind::Text);
+    let revealed = Rc::new(Cell::new(None));
+    let queue = Queue {
+        list,
+        revealed: revealed.clone(),
+    };
+    let window: AnyWindowHandle = cx.add_window(|_, _| queue).into();
+    attach(window, cx);
+    let tree = tree(window, cx);
+
+    let (_, list) = node(&tree, "queue");
+    assert_eq!(list["role"], "List");
+    let (_, heading) = node(&tree, "Hounds of Love, Kate Bush, 1985");
+    assert_eq!(heading["role"], "Heading");
+    let (row, track) = node(&tree, "track 2, 4:01");
+    assert_eq!(track["role"], "ListItem");
+    assert_eq!(track["position_in_set"], 3);
+    assert_eq!(track["size_of_set"], 3);
+    assert!(tree.contains("\"Toolbar\""), "no toolbar in:\n{tree}");
+
+    let (_, banner) = node(&tree, "the server can't be reached");
+    assert_eq!(banner["role"], "Alert");
+    assert_eq!(banner["live"], "Assertive");
+    assert_eq!(banner["value"], "the server can't be reached");
+    let (_, note) = node(&tree, "Waiting for the TV to wake");
+    assert_eq!(note["role"], "Status");
+    assert_eq!(note["live"], "Polite");
+
+    send(window, cx, Action::ScrollIntoView, row);
+    assert_eq!(revealed.get(), Some(2));
 }
