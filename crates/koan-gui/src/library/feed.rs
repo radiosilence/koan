@@ -60,7 +60,7 @@ pub struct Feed {
     /// again when it lands.
     favourites_reading: bool,
     favourites_stale: bool,
-    _observe: [Subscription; 5],
+    _observe: [Subscription; 6],
 }
 
 impl Feed {

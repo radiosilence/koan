@@ -259,6 +259,7 @@ pub fn bars(color: Hsla) -> AnyElement {
         Some(bars)
     })
     .prism(prism)
+    .into_any_element()
 }
 
 /// Paints this window's bars over everything drawn before it, where they
