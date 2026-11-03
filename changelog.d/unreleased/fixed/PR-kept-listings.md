@@ -1,0 +1,1 @@
+- **Coming back to a library browser.** The albums, artists and tracks browsers in the desktop app no longer draw a listing kept from the last visit after the filter changed elsewhere or the library moved, so the scroll position no longer lands on other records. A listing that cannot be read says why and offers to try again, instead of showing an empty library.
