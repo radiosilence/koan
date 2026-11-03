@@ -189,6 +189,262 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git b/src/color_slots.rs b/src/color_slots.rs
+new file mode 100644
+index 0000000..23c2c1a
+--- /dev/null
++++ b/src/color_slots.rs
+@@ -0,0 +1,250 @@
++// KOAN: colours that move on the GPU (#1859).
++//
++// A colour slot is one entry of an app-wide table of moving colours: a
++// colour at each end and a track from 0 to 1 between them. Any quad, shadow,
++// underline or monochrome sprite may name a slot instead of a fixed colour,
++// by an `Hsla` whose hue is 2 or more (`ColorSlot::hsla`): the stock shaders
++// read the table at present time and mix the two ends by the track, so a
++// colour fading moves on a present with no frame drawn. The alpha of that
++// `Hsla` still scales the colour's, so element opacity composes with it.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::Instant;
++
++use parking_lot::Mutex;
++
++use crate::{Hsla, Rgba, Track, TrackRepeat, present_now};
++
++/// How many slots the table holds: as many as fit, with the header, in the
++/// 16 KiB every renderer guarantees a uniform buffer.
++pub const COLOR_SLOTS: usize = 255;
++/// Floats per slot: the `from` colour, the `to` colour, then the track.
++pub const COLOR_SLOT_FLOATS: usize = 16;
++/// Floats before the slots in a frame's table: the time, then padding.
++pub const COLOR_SLOTS_HEADER: usize = 4;
++
++/// The hue at which slot hues start.
++const SLOT_HUE: f32 = 2.0;
++
++struct Table {
++    data: Box<[[f32; COLOR_SLOT_FLOATS]; COLOR_SLOTS]>,
++    used: Box<[bool; COLOR_SLOTS]>,
++    /// When the slot's track stops moving, in table seconds; `f32::INFINITY`
++    /// for one that repeats, and negative for one at rest.
++    ends: Box<[f32; COLOR_SLOTS]>,
++    origin: Instant,
++}
++
++static TABLE: Mutex<Option<Table>> = Mutex::new(None);
++/// Moves whenever a slot is written, so a renderer uploads the table only
++/// when it changed and a window presents once more for the change.
++static GENERATION: AtomicU64 = AtomicU64::new(1);
++
++fn with_table<R>(f: impl FnOnce(&mut Table) -> R) -> R {
++    let mut table = TABLE.lock();
++    let table = table.get_or_insert_with(|| Table {
++        data: Box::new([[0.0; COLOR_SLOT_FLOATS]; COLOR_SLOTS]),
++        used: Box::new([false; COLOR_SLOTS]),
++        ends: Box::new([-1.0; COLOR_SLOTS]),
++        origin: Instant::now(),
++    });
++    f(table)
++}
++
++fn seconds(table: &Table, at: Instant) -> f32 {
++    match at.checked_duration_since(table.origin) {
++        Some(after) => after.as_secs_f32(),
++        None => -table.origin.duration_since(at).as_secs_f32(),
++    }
++}
++
++/// One slot of the table, held while something draws with it, and freed
++/// when dropped.
++#[derive(Debug)]
++pub struct ColorSlot(u16);
++
++impl ColorSlot {
++    /// A free slot standing at `color`, or `None` when every slot is taken.
++    pub fn claim(color: Rgba) -> Option<Self> {
++        let index = with_table(|table| {
++            let Some(index) = table.used.iter().position(|used| !used) else {
++                log::error!("every colour slot is taken: a colour drawn now does not move");
++                return None;
++            };
++            table.used[index] = true;
++            table.ends[index] = -1.0;
++            let rgba = [color.r, color.g, color.b, color.a];
++            let track = Track::hold(1.0).encode();
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&rgba);
++            slot[4..8].copy_from_slice(&rgba);
++            slot[8..16].copy_from_slice(&track);
++            Some(index)
++        })?;
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++        Some(Self(index as u16))
++    }
++
++    /// The colour to draw with: this slot, its alpha scaled by `alpha`.
++    pub fn hsla(&self, alpha: f32) -> Hsla {
++        Hsla {
++            h: SLOT_HUE + self.0 as f32,
++            s: 0.0,
++            l: 0.0,
++            a: alpha,
++        }
++    }
++
++    /// The colour the slot shows at `at`.
++    pub fn at(&self, at: Instant) -> Rgba {
++        with_table(|table| {
++            let slot = &table.data[self.0 as usize];
++            let t = Track::decode(&slot[8..16]).at(seconds(table, at));
++            let mix = |k: usize| slot[k] + (slot[k + 4] - slot[k]) * t;
++            Rgba {
++                r: mix(0),
++                g: mix(1),
++                b: mix(2),
++                a: mix(3),
++            }
++        })
++    }
++
++    /// Moves from the colour shown now to `to`, along `track`'s curve over
++    /// its length, starting now; `track`'s ends and start are replaced.
++    pub fn to(&self, to: Rgba, track: Track) {
++        let now = present_now();
++        let from = self.at(now);
++        with_table(|table| {
++            rebase(table, now);
++            let start = seconds(table, now);
++            let track = Track {
++                from: 0.0,
++                to: 1.0,
++                start,
++                ..track
++            };
++            let index = self.0 as usize;
++            table.ends[index] = match track.repeat {
++                _ if track.length <= 0.0 => -1.0,
++                TrackRepeat::Once => start + track.length,
++                _ => f32::INFINITY,
++            };
++            let slot = &mut table.data[index];
++            slot[0..4].copy_from_slice(&[from.r, from.g, from.b, from.a]);
++            slot[4..8].copy_from_slice(&[to.r, to.g, to.b, to.a]);
++            slot[8..16].copy_from_slice(&track.encode());
++        });
++        GENERATION.fetch_add(1, Ordering::Relaxed);
++    }
++
++    /// Stands at `color`.
++    pub fn hold(&self, color: Rgba) {
++        self.to(color, Track::hold(1.0));
++    }
++
++    /// Whether the slot moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        with_table(|table| table.ends[self.0 as usize] > seconds(table, at))
++    }
++}
++
++impl Drop for ColorSlot {
++    fn drop(&mut self) {
++        with_table(|table| {
++            table.used[self.0 as usize] = false;
++            table.ends[self.0 as usize] = -1.0;
++        });
++    }
++}
++
++/// Track starts are seconds from the table's origin, in f32: an hour on, the
++/// origin moves to now and every slot with it, so the table keeps its
++/// precision for a koan open for days.
++fn rebase(table: &mut Table, now: Instant) {
++    let shift = seconds(table, now);
++    if shift < 3600.0 {
++        return;
++    }
++    table.origin = now;
++    for (slot, end) in table.data.iter_mut().zip(table.ends.iter_mut()) {
++        slot[10] -= shift;
++        if end.is_finite() && *end >= 0.0 {
++            *end -= shift;
++        }
++    }
++}
++
++/// The slot a colour names, if it names one.
++pub fn color_slot_of(color: &Hsla) -> Option<usize> {
++    (color.h >= SLOT_HUE).then(|| ((color.h - SLOT_HUE) as usize).min(COLOR_SLOTS - 1))
++}
++
++/// Bytes of a frame's table.
++pub const COLOR_SLOTS_BYTES: usize = (COLOR_SLOTS_HEADER + COLOR_SLOTS * COLOR_SLOT_FLOATS) * 4;
++
++/// The slots a scene draws with, as a bit set.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct ColorSlotSet(Box<[u64; COLOR_SLOTS.div_ceil(64)]>);
++
++impl ColorSlotSet {
++    /// Notes the slot `color` names, if any.
++    pub fn note(&mut self, color: &Hsla) {
++        if let Some(index) = color_slot_of(color) {
++            self.0[index / 64] |= 1 << (index % 64);
++        }
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.0.iter().all(|word| *word == 0)
++    }
++
++    pub fn clear(&mut self) {
++        *self.0 = [0; COLOR_SLOTS.div_ceil(64)];
++    }
++
++    pub fn extend(&mut self, other: &Self) {
++        for (a, b) in self.0.iter_mut().zip(other.0.iter()) {
++            *a |= *b;
++        }
++    }
++
++    /// Whether any slot in the set moves at `at`.
++    pub fn moving(&self, at: Instant) -> bool {
++        if self.is_empty() {
++            return false;
++        }
++        with_table(|table| {
++            let now = seconds(table, at);
++            self.0.iter().enumerate().any(|(w, word)| {
++                let mut bits = *word;
++                while bits != 0 {
++                    let index = w * 64 + bits.trailing_zeros() as usize;
++                    if table.ends[index] > now {
++                        return true;
++                    }
++                    bits &= bits - 1;
++                }
++                false
++            })
++        })
++    }
++}
++
++/// The table as the stock shaders read it at `at`: the time, padding, then
++/// every slot. Written into `out`, which is cleared first.
++pub fn color_slots_frame(at: Instant, out: &mut Vec<f32>) {
++    out.clear();
++    with_table(|table| {
++        out.push(seconds(table, at));
++        out.extend([0.0; COLOR_SLOTS_HEADER - 1]);
++        for slot in table.data.iter() {
++            out.extend_from_slice(slot);
++        }
++    });
++}
++
++/// Moves whenever any slot is written.
++pub fn color_slots_generation() -> u64 {
++    GENERATION.load(Ordering::Relaxed)
++}
 diff --git a/src/elements/div.rs b/src/elements/div.rs
 index 11f0b72..2c5b9ec 100644
 --- a/src/elements/div.rs
@@ -241,30 +497,32 @@ index 11f0b72..2c5b9ec 100644
              node.set_numeric_value(value);
          }
 diff --git a/src/gpui.rs b/src/gpui.rs
-index 2328e95..5b5e7bc 100644
+index 2328e95..f00ef65 100644
 --- a/src/gpui.rs
 +++ b/src/gpui.rs
-@@ -52,6 +52,7 @@ pub mod queue;
+@@ -52,6 +52,8 @@ pub mod queue;
  #[cfg(any(test, feature = "bench-support"))]
  pub mod randomized_element_tree;
  mod scene;
 +mod shader; // KOAN: #1641.
++mod color_slots; // KOAN: #1859.
  #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
  mod seeds;
  mod shared_uri;
-@@ -200,6 +201,7 @@ pub use profiler::*;
+@@ -200,6 +202,8 @@ pub use profiler::*;
  pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
  pub use refineable::*;
  pub use scene::*;
 +pub use shader::*; // KOAN: #1641.
++pub use color_slots::*; // KOAN: #1859.
  pub use shared_uri::*;
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..40e041a 100644
+index 6cb3387..3bbded2 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -50,6 +50,29 @@ pub struct Scene {
+@@ -50,6 +50,33 @@ pub struct Scene {
      pub subpixel_sprites: Vec<SubpixelSprite>,
      pub polychrome_sprites: Vec<PolychromeSprite>,
      pub surfaces: Vec<PaintSurface>,
@@ -277,6 +535,10 @@ index 6cb3387..40e041a 100644
 +    // re-present composes them rather than drawing the whole scene; `None`
 +    // where the shaders cannot be drawn apart from the rest (#1641).
 +    pub shader_layers: Option<Box<ShaderLayers>>,
++    // KOAN: the colour slots this scene draws with, so a window presents
++    // while one of them moves and a renderer redraws the layers holding it
++    // (#1859).
++    pub color_slots: crate::ColorSlotSet,
 +}
 +
 +/// A scene split where its shaders are drawn (#1641).
@@ -294,11 +556,43 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +89,22 @@ impl Scene {
+@@ -66,6 +93,54 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
 +        self.shaders.clear(); // KOAN: shader quads (#1641).
++        self.color_slots.clear(); // KOAN: #1859.
++    }
++
++    // KOAN: whether a colour slot this scene draws with moves at `at`
++    // (#1859).
++    pub fn color_slots_moving(&self, at: std::time::Instant) -> bool {
++        self.color_slots.moving(at)
++    }
++
++    // KOAN: the colour slots the primitives name (#1859).
++    fn collect_color_slots(&self) -> crate::ColorSlotSet {
++        let mut set = crate::ColorSlotSet::default();
++        for quad in &self.quads {
++            set.note(&quad.border_color);
++            set.note(&quad.background.solid);
++            for stop in &quad.background.colors {
++                set.note(&stop.color);
++            }
++        }
++        for shadow in &self.shadows {
++            set.note(&shadow.color);
++        }
++        for underline in &self.underlines {
++            set.note(&underline.color);
++        }
++        for sprite in &self.monochrome_sprites {
++            set.note(&sprite.color);
++        }
++        for sprite in &self.subpixel_sprites {
++            set.note(&sprite.color);
++        }
++        set
 +    }
 +
 +    // KOAN: whether a shader on screen asks for the window to present every
@@ -317,7 +611,7 @@ index 6cb3387..40e041a 100644
      }
  
      pub fn len(&self) -> usize {
-@@ -133,6 +172,11 @@ impl Scene {
+@@ -133,6 +208,11 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -329,7 +623,7 @@ index 6cb3387..40e041a 100644
          }
          self.paint_operations
              .push(PaintOperation::Primitive(primitive));
-@@ -160,6 +204,171 @@ impl Scene {
+@@ -160,6 +240,175 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -345,6 +639,7 @@ index 6cb3387..40e041a 100644
 +        // KOAN: (#1641).
 +        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 +        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        self.color_slots = self.collect_color_slots(); // KOAN: #1859.
 +        self.shader_layers = self.plan_shader_layers().map(Box::new);
 +    }
 +
@@ -497,11 +792,14 @@ index 6cb3387..40e041a 100644
 +            path.id = PathId(paths.len());
 +            paths.push(path);
 +        }
++        for layer in &mut layers {
++            layer.color_slots = layer.collect_color_slots(); // KOAN: #1859.
++        }
 +        Some(ShaderLayers { layers, groups })
      }
  
      #[cfg_attr(
-@@ -187,6 +396,8 @@ impl Scene {
+@@ -187,6 +436,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -510,7 +808,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -209,6 +420,7 @@ pub(crate) enum PrimitiveKind {
+@@ -209,6 +460,7 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -518,7 +816,7 @@ index 6cb3387..40e041a 100644
  }
  
  pub(crate) enum PaintOperation {
-@@ -228,6 +440,7 @@ pub enum Primitive {
+@@ -228,6 +480,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -526,7 +824,7 @@ index 6cb3387..40e041a 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +455,7 @@ impl Primitive {
+@@ -242,6 +495,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -534,7 +832,7 @@ index 6cb3387..40e041a 100644
          }
      }
  
-@@ -255,6 +469,7 @@ impl Primitive {
+@@ -255,6 +509,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -542,7 +840,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -283,6 +498,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +538,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -552,7 +850,7 @@ index 6cb3387..40e041a 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +534,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +574,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -564,7 +862,7 @@ index 6cb3387..40e041a 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +684,33 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +724,33 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
@@ -598,7 +896,7 @@ index 6cb3387..40e041a 100644
          }
      }
  }
-@@ -493,6 +743,12 @@ pub enum PrimitiveBatch {
+@@ -493,6 +783,12 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -611,7 +909,7 @@ index 6cb3387..40e041a 100644
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +781,10 @@ impl PrimitiveBatch {
+@@ -525,6 +821,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -624,7 +922,7 @@ index 6cb3387..40e041a 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..8aefad5
+index 0000000..e3e76d0
 --- /dev/null
 +++ b/src/shader.rs
 @@ -0,0 +1,609 @@
@@ -758,7 +1056,7 @@ index 0000000..8aefad5
 +        }
 +    }
 +
-+    fn encode(&self) -> [f32; TRACK_FLOATS] {
++    pub(crate) fn encode(&self) -> [f32; TRACK_FLOATS] {
 +        let repeat = match self.repeat {
 +            TrackRepeat::Once => 0.0,
 +            TrackRepeat::Loop => 1.0,
@@ -785,7 +1083,7 @@ index 0000000..8aefad5
 +        ]
 +    }
 +
-+    fn decode(f: &[f32]) -> Self {
++    pub(crate) fn decode(f: &[f32]) -> Self {
 +        let code = f[4] as u32;
 +        let repeat = match code / 4 {
 +            1 => TrackRepeat::Loop,
@@ -1275,10 +1573,21 @@ index 5b63821..d5794cd 100644
          self.focus_ids.insert(node_id, focus_id);
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..de0eb09 100644
+index c559412..b60efa4 100644
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -1913,28 +1913,40 @@ impl Window {
+@@ -1281,6 +1281,10 @@ pub struct Window {
+         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
+     hovered: Rc<Cell<bool>>,
+     pub(crate) needs_present: Rc<Cell<bool>>,
++    // KOAN: the colour slot table's generation as last presented, and
++    // whether a slot the scene draws with was moving then (#1859).
++    color_slot_generation: Cell<u64>,
++    color_slot_moving: Cell<bool>,
+     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
+     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+@@ -1913,28 +1917,45 @@ impl Window {
                              })
                              .log_err();
                      })
@@ -1288,7 +1597,10 @@ index c559412..de0eb09 100644
 +                    // uniforms read afresh, with no frame drawn (#1641).
 +                    || handle
 +                        .update(&mut cx, |_, window, _| {
-+                            window.rendered_frame.scene.take_shader_present()
++                            // KOAN: or a colour slot it draws with moved
++                            // (#1859).
++                            let slots = window.take_color_slot_present();
++                            window.rendered_frame.scene.take_shader_present() | slots
 +                        })
 +                        .unwrap_or(false)
 +                {
@@ -1301,7 +1613,9 @@ index c559412..de0eb09 100644
 +                // KOAN: a live shader keeps the frames coming (#1641).
 +                let live = handle
                      .update(&mut cx, |_, window, _| {
-+                        let live = window.rendered_frame.scene.has_live_shaders();
++                        let live = window.rendered_frame.scene.has_live_shaders()
++                            // KOAN: so does a moving colour slot (#1859).
++                            || window.color_slot_moving.get();
                          if window.invalidator.is_dirty()
                              || !window.next_frame_callbacks.borrow().is_empty()
 +                            || live
@@ -1323,17 +1637,57 @@ index c559412..de0eb09 100644
                      invalidator.wake_platform();
                  }
                  #[cfg(feature = "profiler")]
-@@ -3624,6 +3636,9 @@ impl Window {
+@@ -2184,6 +2205,8 @@ impl Window {
+             visibility_observers: SubscriberSet::new(),
+             hovered,
+             needs_present,
++            color_slot_generation: Cell::new(0), // KOAN: #1859.
++            color_slot_moving: Cell::new(false), // KOAN: #1859.
+             input_rate_tracker,
+             #[cfg(feature = "profiler")]
+             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+@@ -3618,12 +3641,40 @@ impl Window {
+         self.invalidator.replace_views(views);
+     }
+ 
++    // KOAN: whether this refresh should present for the colour slots the
++    // scene draws with: one moves, one was written since the last present,
++    // or the motion has just ended and its last value is still to be shown
++    // (#1859).
++    fn take_color_slot_present(&self) -> bool {
++        let scene = &self.rendered_frame.scene;
++        if scene.color_slots.is_empty() {
++            self.color_slot_moving.set(false);
++            return false;
++        }
++        let generation = crate::color_slots_generation();
++        let changed = self.color_slot_generation.replace(generation) != generation;
++        let moving = scene.color_slots_moving(crate::present_now());
++        let landing = self.color_slot_moving.replace(moving) && !moving;
++        changed || moving || landing
++    }
++
+     #[profiling::function]
+     fn present(&mut self) {
+         #[cfg(feature = "profiler")]
          let _foreground_turn = profiler::journal::foreground_turn();
          #[cfg(feature = "profiler")]
          let present_start = Instant::now();
 +        // KOAN: what this present shows of the shaders is taken as shown
 +        // (#1641).
 +        self.rendered_frame.scene.take_shader_present();
++        // KOAN: the colour slots as this present shows them (#1859).
++        self.color_slot_generation
++            .set(crate::color_slots_generation());
++        let scene = &self.rendered_frame.scene;
++        let moving = !scene.color_slots.is_empty() && scene.color_slots_moving(crate::present_now());
++        if moving {
++            self.color_slot_moving.set(true);
++        }
          self.platform_window.draw(&self.rendered_frame.scene);
          #[cfg(feature = "profiler")]
          self.window_profiler.record_present(
-@@ -4690,6 +4705,75 @@ impl Window {
+@@ -4690,6 +4741,75 @@ impl Window {
          }
      }
  
@@ -1409,7 +1763,7 @@ index c559412..de0eb09 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -7074,6 +7158,22 @@ impl Window {
+@@ -7074,6 +7194,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  
