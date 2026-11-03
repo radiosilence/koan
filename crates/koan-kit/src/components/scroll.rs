@@ -115,7 +115,13 @@ impl RenderOnce for ScrollArea {
             .size_full()
             .child(match self.content {
                 Content::Column(column) => scrolled.child(*column),
-                Content::Items(items) => scrolled.flex().flex_col().children(items),
+                // Each item at its own height: a column taller than the
+                // view scrolls, and no item (an empty spacer least of all)
+                // is shrunk to fit.
+                Content::Items(items) => scrolled
+                    .flex()
+                    .flex_col()
+                    .children(items.into_iter().map(|item| div().flex_none().child(item))),
             })
             .children(follow)
             .child(Scrollbar::vertical(&handle))

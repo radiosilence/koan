@@ -162,7 +162,7 @@ impl ArtistBrowser {
             starting: HashSet::new(),
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
@@ -547,7 +547,7 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
-        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None));
+        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None, None));
     }
 }
 

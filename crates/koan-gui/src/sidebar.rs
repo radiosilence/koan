@@ -87,7 +87,7 @@ impl Sidebar {
             reorders: 0,
             search: None,
             searching: false,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: ListCursor::default(),
             import_problem: None,
             running: running(&transfers.read(cx).0),

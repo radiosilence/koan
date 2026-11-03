@@ -232,18 +232,22 @@ pub struct MenuTarget {
 
 /// What the menu key's menu acts on: the pick when the item under the
 /// keyboard's cursor is in it, the item alone otherwise. `album` is the
-/// record of a single track, for "go to album".
+/// record of a single track, for "go to album"; `after` ends the pick once
+/// a verb has run on it, as a right click's menu over the pick does.
 pub fn keyed_target(
     selection: &super::selection::Selection,
     item: Playable,
     album: Option<i64>,
+    after: After,
 ) -> MenuTarget {
     let items = selection.dragging(item);
-    let album = album.filter(|_| items.len() == 1);
+    let single = items.len() == 1;
     MenuTarget {
         items: items.into(),
-        album,
-        after: None,
+        album: album.filter(|_| single),
+        // What a menu verb on the pick runs after it: on the item alone,
+        // nothing.
+        after: if single { None } else { after },
     }
 }
 

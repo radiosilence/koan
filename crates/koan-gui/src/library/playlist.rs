@@ -167,7 +167,7 @@ impl PlaylistPage {
             menu_row: None,
             playing,
             note: None,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,

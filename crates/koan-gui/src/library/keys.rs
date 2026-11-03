@@ -53,7 +53,7 @@ pub trait KeyedList: Sized + 'static {
     /// column of a grid, held at the ends. A page whose rows are not all the
     /// same length (an artist's sections) says where each one starts.
     fn below(&self, at: usize, rows: isize) -> usize {
-        at.saturating_add_signed(rows * self.columns().max(1) as isize)
+        row_below(at, rows, self.columns())
     }
 }
 
@@ -150,12 +150,25 @@ pub fn keyed<V: KeyedList, E: InteractiveElement>(element: E, cx: &mut Context<V
         }))
 }
 
+/// Item `at`, `rows` rows down a grid `columns` wide (up, negative). Past
+/// the top, the top row in the same column, so ↑ on the top row stays
+/// where it is; past the end is the caller's to hold.
+fn row_below(at: usize, rows: isize, columns: usize) -> usize {
+    let columns = columns.max(1);
+    let target = at as isize + rows * columns as isize;
+    if target < 0 {
+        at % columns
+    } else {
+        target as usize
+    }
+}
+
 /// A grid's or a mixed page's pick from `from` to `to` of `order`: one item
 /// alone is marked without starting a pick, as a plain click marks a row, so
 /// a click on a tile still plays it; a range starts one.
 pub fn mark_range(selection: &mut Selection, order: &[Playable], from: usize, to: usize) {
     if from == to {
-        selection.mark(order[from]);
+        selection.arrow(order[from]);
     } else {
         selection.only(order[from]);
         selection.click(order[to], true, order);
@@ -195,5 +208,15 @@ mod tests {
         assert_eq!(line_below(&lines, 6, -2), 4);
         assert_eq!(line_below(&lines, 2, -1), 2, "held at the top");
         assert_eq!(line_below(&lines, 99, 1), 99, "outside every line");
+    }
+
+    #[test]
+    fn up_from_the_top_row_keeps_its_column() {
+        assert_eq!(row_below(4, -1, 5), 4, "the top row stays put");
+        assert_eq!(row_below(13, -1, 5), 8);
+        assert_eq!(row_below(13, -10, 5), 3, "a page up stops in its column");
+        assert_eq!(row_below(2, 1, 5), 7);
+        assert_eq!(row_below(2, -1, 1), 1, "a list moves one");
+        assert_eq!(row_below(0, -1, 1), 0);
     }
 }

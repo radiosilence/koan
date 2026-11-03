@@ -215,7 +215,7 @@ impl QueueView {
         });
         let mut view = Self {
             queue,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             list,
             whole: 0,
             selected: HashSet::new(),

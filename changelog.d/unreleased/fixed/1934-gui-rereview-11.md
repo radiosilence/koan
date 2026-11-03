@@ -1,0 +1,1 @@
+- **Keyboard and the wash in the kōan GUI app.** Tab reaches the sidebar and the page's list again, a menu or question opened over a list keeps the arrow keys and Return, and setting the wash's drift to nothing lets it come to rest rather than stopping dead.

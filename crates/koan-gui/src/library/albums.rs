@@ -242,7 +242,7 @@ impl AlbumGrid {
             starting: HashSet::new(),
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
@@ -1061,9 +1061,22 @@ impl super::keys::KeyedList for AlbumGrid {
             .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
     }
 
-    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+    fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
-            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Album(self.records[ix].id),
+                None,
+                Some(std::rc::Rc::new(move |cx: &mut App| {
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
+                })),
+            )
         });
     }
 }

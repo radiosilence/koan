@@ -557,8 +557,9 @@ impl KoanTheme {
     }
 
     /// The wash's drift: its pace in percent (0 still, up to 200) and how far
-    /// it turns either way, in degrees (up to 10). The wash observes the
-    /// theme, so it takes them at once.
+    /// it turns either way, in degrees (up to 10). The wash reads them when it
+    /// is next drawn: whoever calls this draws the windows' washes again, as
+    /// koan-gui's roots do when the pair changes.
     pub fn set_wash_drift(percent: u32, degrees: u32, cx: &mut App) {
         let theme = cx.global_mut::<KoanTheme>();
         theme.wash_drift = percent.min(200);

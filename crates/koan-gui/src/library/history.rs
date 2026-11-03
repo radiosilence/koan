@@ -116,7 +116,7 @@ impl HistoryPage {
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             search,
             _loading: None,
             _subscriptions: subscriptions,
