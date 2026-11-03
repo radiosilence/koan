@@ -141,6 +141,9 @@ pub fn start(
 struct MainWindowSlot {
     handle: Option<AnyWindowHandle>,
     ready: bool,
+    /// Its saved bounds are being read to open it again: asked again
+    /// meanwhile, it is not opened twice.
+    opening: bool,
 }
 
 impl Global for MainWindowSlot {}
@@ -184,12 +187,19 @@ pub fn show_window(cx: &mut App) -> bool {
             .ok();
         return true;
     }
+    let slot = cx.global_mut::<MainWindowSlot>();
+    if std::mem::replace(&mut slot.opening, true) {
+        return true;
+    }
     let saved = cx
         .background_executor()
         .spawn(async { window_state::read() });
     cx.spawn(async move |cx| {
         let saved = saved.await;
-        cx.update(|cx| open_window(saved, cx));
+        cx.update(|cx| {
+            cx.global_mut::<MainWindowSlot>().opening = false;
+            open_window(saved, cx)
+        });
     })
     .detach();
     true
