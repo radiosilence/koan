@@ -1,0 +1,1 @@
+- **The keyboard's cursor in the kōan GUI app.** On a shelf, the search results and the downloads page the arrows bring the item they reach into view, a pill or a record tile included, and pressing a key that stays on the same item still does; the menu key opens under the item from where it was laid out.
