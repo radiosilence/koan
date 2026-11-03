@@ -13,6 +13,7 @@
 
 mod animated;
 mod answer;
+mod arrive;
 mod availability;
 mod badge;
 mod banner;
@@ -20,6 +21,7 @@ mod bars;
 mod button;
 pub mod choice;
 mod collection;
+mod command_bar;
 mod copy;
 mod cover;
 mod dense;
@@ -71,22 +73,27 @@ mod viewer;
 mod window;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui_kit::{
-    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Global, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
-    Styled, Window, canvas, div, px,
+    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
+    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
 
-pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
+pub use animated::{
+    Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
+    ShaderProgram, Track,
+};
 pub use answer::{ANSWER, Answer, Answerer};
+pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
+pub use command_bar::{CommandBar, CommandSection};
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
@@ -220,58 +227,110 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
     ElementId::NamedChild(Arc::new(id.clone()), SharedString::new_static(name))
 }
 
-/// A state moving between off (0) and on (1) over a motion token, from
-/// wherever it stood. Instant with Reduce Motion.
-struct Fade {
+/// A colour moving between its off and on colours on the GPU, through a
+/// colour slot (#1859): the control draws once with the slot's colour as a
+/// leave fade starts, and the presents that follow move it with no frame
+/// drawn. The slot is held only for the fade, and let go at the control's
+/// next draw after it lands; at rest the control draws a plain colour.
+struct ColorFade {
     on: bool,
-    from: f32,
-    started: Option<Instant>,
-    duration: Duration,
+    /// The slot fading and when it lands, while a leave fade runs.
+    fading: Option<(ColorSlot, Instant)>,
 }
 
-impl Fade {
-    fn at(&self, now: Instant) -> f32 {
-        let target = if self.on { 1.0 } else { 0.0 };
-        let Some(started) = self.started else {
-            return target;
-        };
-        let t = now.duration_since(started).as_secs_f32() / self.duration.as_secs_f32();
-        if t >= 1.0 {
-            return target;
-        }
-        self.from + (target - self.from) * Motion::quick_out(t)
-    }
-}
-
-/// How far a state has moved toward `on`, kept under `key`. The first frame
-/// a control is drawn it stands where it is, with nothing to animate; frames
-/// are asked for only while a change is under way.
+/// The colour a control's text, glyph or edge draws in, `on_color` when `on`
+/// and `off_color` otherwise, kept under `key`. Arriving is at once and
+/// leaving lingers: a hover lights a control as the pointer reaches it and
+/// fades over `Motion::LEAVE` once it has gone. Instant with Reduce Motion,
+/// and when every slot is taken.
 pub(crate) fn fade(
     key: ElementId,
     on: bool,
-    duration: Duration,
+    off_color: Hsla,
+    on_color: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> Hsla {
+    let reduce = cx.reduce_motion();
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade { on, fading: None });
+    state.update(cx, |fade, _| {
+        let now = Animated::now();
+        if fade.on != on {
+            fade.on = on;
+            fade.fading = (!on && !reduce)
+                .then(|| ColorSlot::claim(Rgba::from(on_color)))
+                .flatten()
+                .map(|slot| {
+                    slot.to(
+                        Rgba::from(off_color),
+                        Track {
+                            from: 0.0,
+                            to: 1.0,
+                            start: 0.0,
+                            length: Motion::LEAVE.as_secs_f32(),
+                            curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                            repeat: Repeat::Once,
+                        },
+                    );
+                    (slot, now + Motion::LEAVE)
+                });
+        } else if fade.fading.as_ref().is_some_and(|(_, lands)| now >= *lands) {
+            fade.fading = None;
+        }
+        match &fade.fading {
+            Some((slot, _)) => slot.hsla(1.0),
+            None if on => on_color,
+            None => off_color,
+        }
+    })
+}
+
+/// A panel's openness between 0 and 1, eased toward `on` over `duration`
+/// from wherever it stood and kept under `key`: what `Slide` and
+/// `SplitView::shown` lay a width out by. Layout moves on the CPU, frame by
+/// frame while it eases, until panels slide as animated layers the GPU
+/// composes. Instant with Reduce Motion.
+pub(crate) fn ease(
+    key: ElementId,
+    on: bool,
+    duration: std::time::Duration,
     window: &mut Window,
     cx: &mut App,
 ) -> f32 {
+    struct Ease {
+        on: bool,
+        from: f32,
+        started: Option<Instant>,
+    }
     let now = Instant::now();
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| Fade {
+    let at = |e: &Ease| {
+        let target = if e.on { 1.0 } else { 0.0 };
+        match e.started {
+            Some(started) => {
+                let t = now.duration_since(started).as_secs_f32() / duration.as_secs_f32();
+                if t >= 1.0 {
+                    target
+                } else {
+                    e.from + (target - e.from) * Motion::quick_out(t)
+                }
+            }
+            None => target,
+        }
+    };
+    let state = window.use_keyed_state(key, cx, |_, _| Ease {
         on,
         from: 0.0,
         started: None,
-        duration,
     });
-    let (value, moving) = state.update(cx, |fade, _| {
-        if fade.on != on {
-            fade.from = fade.at(now);
-            fade.on = on;
-            fade.started = (!reduce).then_some(now);
+    let (value, moving) = state.update(cx, |e, _| {
+        if e.on != on {
+            e.from = at(e);
+            e.on = on;
+            e.started = (!reduce).then_some(now);
         }
-        let value = fade.at(now);
-        let moving = fade
-            .started
-            .is_some_and(|started| now.duration_since(started) < fade.duration);
-        (value, moving)
+        let moving = e.started.is_some_and(|s| now.duration_since(s) < duration);
+        (at(e), moving)
     });
     if moving {
         window.request_animation_frame();
@@ -337,96 +396,53 @@ pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
 
 impl Global for CursorAt {}
 
-/// Two colours mixed, `t` of the way from `a` to `b`.
-pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
-    let (a, b) = (gpui_kit::Rgba::from(a), gpui_kit::Rgba::from(b));
-    let at = |x: f32, y: f32| x + (y - x) * t;
-    gpui_kit::Rgba {
-        r: at(a.r, b.r),
-        g: at(a.g, b.g),
-        b: at(a.b, b.b),
-        a: at(a.a, b.a),
-    }
-    .into()
-}
-
-/// A fill or an outline faded in and out with a control's state by the GPU:
-/// the ramp is handed over when the state changes and eased at each present,
-/// running for the motion's length and then stopping by itself. Instant with
-/// Reduce Motion. Uniforms: 0 from, 1 to, 2 the start in seconds of shader
-/// time, 3 the length in seconds, 4..8 the colour, 8 the outline's width in
-/// device pixels (0 for a fill); `prepare` writes the amount (9).
+/// A fill or an outline following a control's state on the GPU: lit at once
+/// as the state comes on (the pointer arrives), and faded out over
+/// `Motion::LEAVE` as it goes off, by its track. Uniforms: 0..4 the colour,
+/// 4 the outline's width in device pixels (0 for a fill); track 0 the amount.
 static TRANSITION: ShaderProgram = ShaderProgram {
     name: "koan-transition",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    if (u[8] > 0.0) {
+    if (u[4] > 0.0) {
         float2 edge = min(position, size - position);
-        if (min(edge.x, edge.y) > u[8]) {
+        if (min(edge.x, edge.y) > u[4]) {
             return float4(0.0);
         }
     }
-    return float4(u[4], u[5], u[6], u[7] * u[9]);
+    return float4(u[0], u[1], u[2], u[3] * koan_track(u, 0, time));
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
-    if (u[2].x > 0.0) {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    if (u[1].x > 0.0) {
         let edge = min(position, size - position);
-        if (min(edge.x, edge.y) > u[2].x) {
+        if (min(edge.x, edge.y) > u[1].x) {
             return vec4<f32>(0.0);
         }
     }
-    return vec4<f32>(u[1].xyz, u[1].w * u[2].y);
+    return vec4<f32>(u[0].xyz, u[0].w * koan_track(u, 0u, time));
 }
 "#,
-    prepare: Some(|u, time| {
-        let t = if u[3] > 0.0 {
-            ((time - u[2]) / u[3]).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        u[9] = u[0] + (u[1] - u[0]) * Motion::quick_out(t);
-    }),
+    prepare: None,
 };
 
-/// A state's transition between off and on, kept under `key`: what draws it
-/// on the GPU. The first frame a control is drawn it stands where it is.
-pub(crate) fn transition(
-    key: ElementId,
-    on: bool,
-    duration: Duration,
-    window: &mut Window,
-    cx: &mut App,
-) -> Animated {
-    let now = Instant::now();
-    let reduce = cx.reduce_motion();
+/// A state's transition between off and on, kept under `key`: its amount
+/// as track 0, on at once and off over `Motion::LEAVE`. The first frame a
+/// control is drawn it stands where it is.
+pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut App) -> Animated {
     let state = window.use_keyed_state(key, cx, |_, _| {
         let animated = Animated::new();
-        let at = if on { 1.0 } else { 0.0 };
-        animated.set_all(0, &[at, at, 0.0, 0.0]);
-        (
-            Fade {
-                on,
-                from: at,
-                started: None,
-                duration,
-            },
-            now,
-            animated,
-        )
+        animated.hold(0, if on { 1.0 } else { 0.0 });
+        (on, animated)
     });
-    state.update(cx, |(fade, origin, animated), _| {
-        if fade.on != on {
-            fade.from = fade.at(now);
-            fade.on = on;
-            fade.started = (!reduce).then_some(now);
-            let start = now.duration_since(*origin).as_secs_f32();
-            let length = if reduce { 0.0 } else { duration.as_secs_f32() };
-            animated.set_origin(*origin);
-            animated.set_all(0, &[fade.from, if on { 1.0 } else { 0.0 }, start, length]);
-            if !reduce {
-                animated.run_for(duration);
+    state.update(cx, |(was, animated), _| {
+        if *was != on {
+            *was = on;
+            if on {
+                animated.hold(0, 1.0);
+            } else {
+                animated.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
             }
         }
         animated.clone()
@@ -436,7 +452,7 @@ pub(crate) fn transition(
 /// A fill under a control, in `color`, faded with `transition`.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     if !SHADED {
-        let amount = transition.get(1);
+        let amount = transition.at(0, Animated::now());
         return div()
             .absolute()
             .size_full()
@@ -444,8 +460,9 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
             .into_any_element();
     }
     let rgba = color.to_rgb();
-    transition.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
+    transition.set_all(0, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
     AnimatedQuad::new(&TRANSITION, transition)
+        .decorative()
         .absolute()
         .size_full()
         .into_any_element()

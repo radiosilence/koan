@@ -149,14 +149,8 @@ impl WindowRoot {
                 // A hidden window's bars leave the analyser at rest.
                 Some(
                     cx.observe_window_visibility(window, |this, visibility, window, cx| {
-                        let fps = crate::levels::display_fps(window, cx);
                         let visible = visibility == WindowVisibility::Visible;
-                        crate::levels::visibility(
-                            window.window_handle().window_id(),
-                            visible,
-                            fps,
-                            cx,
-                        );
+                        crate::levels::visibility(window.window_handle().window_id(), visible, cx);
                         this.visible = visible;
                         this.feed_prism(cx);
                     }),

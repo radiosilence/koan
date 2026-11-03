@@ -94,6 +94,10 @@ pub const DSP_DELETED: &str = "koanDspDeleted";
 /// lists them in it, and `/rest/koanPlaylistOrder` sets it from a client's
 /// reorder. See `crate::playlists::push_order`.
 pub const PLAYLIST_ORDER: &str = "koanPlaylistOrder";
+/// Many records' covers in one answer: `/rest/koanCovers` streams the covers
+/// the server already holds at a size, and says which it does not. What the
+/// preload asks first (`crate::remote::covers`).
+pub const COVERS: &str = "koanCovers";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

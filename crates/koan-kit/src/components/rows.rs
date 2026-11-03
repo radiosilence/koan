@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, accessible, answers_click, child, fade, fill, transition};
-use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
+use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Space, TypeRole, label};
 
 /// The hover group a nav row's glyph brightens by.
 const NAV_ROW: &str = "koan-nav-row";
@@ -34,6 +34,7 @@ pub struct NavRow {
     cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
     accepts: Vec<Accept>,
+    arrivals: Option<u64>,
 }
 
 /// A drop a row takes, attached as the row draws so the drop answers.
@@ -67,7 +68,16 @@ impl NavRow {
             cursor: false,
             on_click: None,
             accepts: Vec::new(),
+            arrivals: None,
         }
+    }
+
+    /// How many times something has arrived at the place (music queued or
+    /// added to a playlist from a menu): each new arrival seen while the
+    /// row is drawn answers as a drop does.
+    pub fn arrivals(mut self, count: u64) -> Self {
+        self.arrivals = Some(count);
+        self
     }
 
     /// Something dropped on the row (tracks on the queue, a record on a
@@ -136,17 +146,21 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let on = fade(
+        let color = fade(
             child(&self.id, "selected"),
             self.selected,
-            Motion::FAST,
+            look.palette.muted.hsla(),
+            look.text_color(crate::theme::Tone::Accent),
             window,
             cx,
         );
-        let color = super::mix(
-            look.palette.muted.hsla(),
-            look.text_color(crate::theme::Tone::Accent),
-            on,
+        let mark = fade(
+            child(&self.id, "mark"),
+            self.selected,
+            look.accent.hsla().opacity(0.0),
+            look.accent.hsla(),
+            window,
+            cx,
         );
         let on_click = self.on_click;
         let answers = super::Answerer::of(&self.id, window, cx);
@@ -154,6 +168,9 @@ impl RenderOnce for NavRow {
         let mut base = self.base;
         for accept in self.accepts {
             base = accept(base, answers.clone(), accent);
+        }
+        if let Some(count) = self.arrivals {
+            answers.follow(count, super::Answer::Sweep, accent, window, cx);
         }
         let ink = look.palette.ink.hsla();
         let name = self.label.clone();
@@ -187,7 +204,7 @@ impl RenderOnce for NavRow {
                     .top_0()
                     .bottom_0()
                     .w(MARK)
-                    .bg(look.accent.hsla().opacity(on)),
+                    .bg(mark),
             )
             .children(
                 self.icon
@@ -295,6 +312,7 @@ impl RenderOnce for NavHeading {
 pub struct NavNote {
     text: SharedString,
     tone: crate::theme::Tone,
+    said: Option<(ElementId, u64)>,
 }
 
 impl NavNote {
@@ -302,15 +320,31 @@ impl NavNote {
         Self {
             text: text.into(),
             tone,
+            said: None,
         }
+    }
+
+    /// A line the app says things in, under `id` whatever it says: each new
+    /// thing said (`count` moving), a link copied, answers with a line
+    /// drawn under it as it appears, so a notice replacing one like it is
+    /// seen to.
+    pub fn said(mut self, id: impl Into<ElementId>, count: u64) -> Self {
+        self.said = Some((id.into(), count));
+        self
     }
 }
 
 impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let answer = self.said.map(|(id, count)| {
+            let answers = super::Answerer::of(&id, window, cx);
+            answers.announce(count, super::Answer::Sweep, look.accent.hsla(), window, cx);
+            answers.layer(window, cx)
+        });
         let id = SharedString::from(format!("note-{}", self.text));
         super::announced(div().id(id), self.text.clone(), self.tone)
+            .relative()
             .w_full()
             .min_w_0()
             .overflow_hidden()
@@ -321,13 +355,15 @@ impl RenderOnce for NavNote {
             .text_role(TypeRole::Fine, &look)
             .text_color(look.text_color(self.tone))
             .child(self.text)
+            .children(answer.flatten())
     }
 }
 
 /// A list row: no rule between rows; `hover` at 30 % behind it under the
-/// pointer, `surface` when selected, and the playing row's title and number
-/// in the accent. The caller lays out the row's parts with `ListRow::title`,
-/// `ListRow::detail` and `ListRow::number` or its own children.
+/// pointer, `selection` when selected with its text in `on_selection`, and
+/// the playing row's title and number in the accent. The caller lays out the
+/// row's parts with `ListRow::title`, `ListRow::detail` and `ListRow::number`
+/// or its own children.
 #[derive(IntoElement)]
 pub struct ListRow {
     id: ElementId,
@@ -417,19 +453,18 @@ impl RenderOnce for FigureCell {
 impl RenderOnce for ListRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let selected = transition(
-            child(&self.id, "selected"),
-            self.selected,
-            Motion::FAST,
-            window,
-            cx,
-        );
-        let lead = if self.playing {
+        let selected = transition(child(&self.id, "selected"), self.selected, window, cx);
+        let on = look.palette.on_selection.hsla();
+        let lead = if self.selected {
+            on
+        } else if self.playing {
             look.text_color(crate::theme::Tone::Accent)
         } else {
             look.palette.ink.hsla()
         };
-        let number_color = if self.playing {
+        let number_color = if self.selected {
+            on
+        } else if self.playing {
             look.text_color(crate::theme::Tone::Accent)
         } else {
             look.palette.muted.hsla()
@@ -444,7 +479,7 @@ impl RenderOnce for ListRow {
             .px(look.space(Space::M))
             .py(look.spaced(12.0))
             .min_h(HIT)
-            .child(fill(look.palette.surface.hsla(), &selected))
+            .child(fill(look.palette.selection.hsla(), &selected))
             .children(self.number.map(|number| {
                 div()
                     .relative()

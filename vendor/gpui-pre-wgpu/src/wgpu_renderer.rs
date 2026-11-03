@@ -74,6 +74,83 @@ fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
     return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
 }
+
+// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
+fn koan_bezier_curve(a: f32, b: f32, s: f32) -> f32 {
+    let u = 1.0 - s;
+    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+fn koan_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    if (t <= 0.0 || t >= 1.0) {
+        return clamp(t, 0.0, 1.0);
+    }
+    var s = t;
+    for (var i = 0; i < 6; i++) {
+        let u = 1.0 - s;
+        let d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+        if (abs(d) < 1e-5) {
+            break;
+        }
+        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+    }
+    return koan_bezier_curve(y1, y2, s);
+}
+
+fn koan_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
+    let w = sqrt(max(k, 1e-3));
+    let z = c / (2.0 * w);
+    if (z < 1.0) {
+        let wd = w * sqrt(1.0 - z * z);
+        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    if (z > 1.0001) {
+        let root = sqrt(z * z - 1.0);
+        let r1 = -w * (z - root);
+        let r2 = -w * (z + root);
+        let c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+    }
+    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+// Track `k` of the uniforms at `time`.
+fn koan_track(u: array<vec4<f32>, KOAN_UNIFORM_BLOCKS>, k: u32, time: f32) -> f32 {
+    var blocks = u;
+    let ends = blocks[4u + k * 2u];
+    let shape = blocks[5u + k * 2u];
+    let from = ends.x;
+    let to = ends.y;
+    let length = ends.w;
+    if (length <= 0.0) {
+        return to;
+    }
+    let e = max(time - ends.z, 0.0);
+    let code = u32(shape.x);
+    let kind = code % 4u;
+    let repeat = code / 4u;
+    if (kind == 2u) {
+        if (e >= length) {
+            return to;
+        }
+        return to + koan_spring(from - to, shape.w, shape.y, shape.z, e);
+    }
+    var p = e / length;
+    if (repeat == 0u) {
+        p = min(p, 1.0);
+    } else if (repeat == 1u) {
+        p = fract(p);
+    } else {
+        let q = p - 2.0 * floor(p / 2.0);
+        p = select(q, 2.0 - q, q > 1.0);
+    }
+    if (kind == 1u) {
+        let a = unpack2x16float(bitcast<u32>(shape.y));
+        let b = unpack2x16float(bitcast<u32>(shape.z));
+        p = koan_bezier(a.x, a.y, b.x, b.y, p);
+    }
+    return from + (to - from) * p;
+}
 "#;
 
 const KOAN_SHADER_MAIN: &str = r#"
@@ -305,6 +382,7 @@ struct WgpuResources {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
+    color_slots_buffer: wgpu::Buffer, // KOAN: #1859.
     instance_data: InstanceData,
     path_intermediate_texture: Option<wgpu::Texture>,
     path_intermediate_view: Option<wgpu::TextureView>,
@@ -327,8 +405,12 @@ struct WgpuResources {
 #[derive(Default)]
 struct KoanLayers {
     generation: u64,
+    slot_generation: u64, // KOAN: #1859.
     size: (u32, u32),
     layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
+    /// KOAN: whether each layer's colour slots were moving when it was
+    /// last drawn (#1859).
+    moving: Vec<bool>,
 }
 
 struct CachedTextureBindGroup {
@@ -654,6 +736,17 @@ impl WgpuRendererCore {
                             min_binding_size: NonZeroU64::new(
                                 std::mem::size_of::<GammaParams>() as u64
                             ),
+                        },
+                        count: None,
+                    },
+                    // KOAN: colour slots (#1859).
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(gpui::COLOR_SLOTS_BYTES as u64),
                         },
                         count: None,
                     },
@@ -1395,6 +1488,13 @@ impl WgpuRendererCore {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // KOAN: colour slots (#1859).
+        let color_slots_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("koan_color_slots"),
+            size: gpui::COLOR_SLOTS_BYTES as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let (
             instance_data,
             instance_data_capacity,
@@ -1454,6 +1554,11 @@ impl WgpuRendererCore {
                         size: NonZeroU64::new(gamma_size),
                     }),
                 },
+                // KOAN: colour slots (#1859).
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: color_slots_buffer.as_entire_binding(),
+                },
             ],
         });
         let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1475,6 +1580,11 @@ impl WgpuRendererCore {
                         offset: gamma_offset,
                         size: NonZeroU64::new(gamma_size),
                     }),
+                },
+                // KOAN: colour slots (#1859).
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: color_slots_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1524,6 +1634,7 @@ impl WgpuRendererCore {
                 globals_buffer,
                 globals_bind_group,
                 path_globals_bind_group,
+                color_slots_buffer, // KOAN: #1859.
                 instance_data,
                 path_intermediate_texture: None,
                 path_intermediate_view: None,
@@ -1648,6 +1759,7 @@ impl WgpuRendererCore {
             self.gamma_offset,
             bytemuck::bytes_of(&gamma_params),
         );
+        self.write_color_slots(); // KOAN: #1859.
 
         self.record_frame(scene, target_view, clear_color)
             .inspect_err(|_| {
@@ -1685,7 +1797,8 @@ impl WgpuRendererCore {
             for shader in &scene.shaders {
                 self.prepare_shader_pipeline(shader.program);
             }
-            let now = std::time::Instant::now();
+            // KOAN: the present clock (#1859).
+            let now = gpui::present_now();
             let instances: Vec<gpui::ShaderInstance> = scene
                 .shaders
                 .iter()
@@ -2031,6 +2144,23 @@ impl WgpuRendererCore {
     // KOAN: shader quads (#1641). Composes the scene's layers and shaders
     // into `target`, drawing the layers first if this scene's are not drawn
     // yet, with the shaders' uniforms as they are now.
+    // KOAN: the colour slots as they stand when the frame is presented
+    // (#1859).
+    fn write_color_slots(&self) {
+        thread_local! {
+            static TABLE: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        TABLE.with(|table| {
+            let mut table = table.borrow_mut();
+            gpui::color_slots_frame(gpui::present_now(), &mut table);
+            self.resources.queue.write_buffer(
+                &self.resources.color_slots_buffer,
+                0,
+                bytemuck::cast_slice(&table),
+            );
+        });
+    }
+
     fn compose_frame(
         &mut self,
         scene: &Scene,
@@ -2041,7 +2171,18 @@ impl WgpuRendererCore {
         let plan = scene.shader_layers.as_deref().context("no shader layers")?;
         let extent = (size.width.0 as u32, size.height.0 as u32);
         let held = &self.resources.shader_layers;
-        if held.generation != scene.generation || held.size != extent || held.layers.is_empty() {
+        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
+        // while one of its slots moves, when the table was written since it
+        // was drawn, and once more after its slots stop, so the last value
+        // lands; the other layers are kept.
+        let now = gpui::present_now();
+        let slot_generation = gpui::color_slots_generation();
+        let written = held.slot_generation != slot_generation;
+        if held.generation != scene.generation
+            || held.size != extent
+            || held.layers.is_empty()
+            || held.layers.len() != plan.layers.len()
+        {
             let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
                 if self.resources.shader_layers.size == extent {
                     std::mem::take(&mut self.resources.shader_layers.layers)
@@ -2089,9 +2230,32 @@ impl WgpuRendererCore {
             }
             self.resources_mut().shader_layers = KoanLayers {
                 generation: scene.generation,
+                slot_generation,
                 size: extent,
                 layers: drawn,
+                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
             };
+        } else {
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.color_slots.is_empty() {
+                    continue;
+                }
+                let moving = layer.color_slots_moving(now);
+                let was_moving =
+                    std::mem::replace(&mut self.resources_mut().shader_layers.moving[k], moving);
+                if !(written || moving || was_moving) {
+                    continue;
+                }
+                let Some(view) = self.resources().shader_layers.layers[k]
+                    .as_ref()
+                    .map(|(texture, _)| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+                else {
+                    continue;
+                };
+                // After the last compose that read it: the same queue.
+                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+            }
+            self.resources_mut().shader_layers.slot_generation = slot_generation;
         }
         if self.resources().compose_pipelines.is_none() {
             let pipelines = self.create_compose_pipelines();
@@ -2113,7 +2277,8 @@ impl WgpuRendererCore {
         for shader in &scene.shaders {
             self.prepare_shader_pipeline(shader.program);
         }
-        let now = std::time::Instant::now();
+        // KOAN: the present clock (#1859).
+        let now = gpui::present_now();
         let instances: Vec<gpui::ShaderInstance> = scene
             .shaders
             .iter()
@@ -3516,7 +3681,7 @@ mod tests {
             name: "koan-test-half",
             msl: "",
             wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     if (position.x < size.x * u[0].x) {
         return vec4<f32>(1.0, 0.0, 0.0, 1.0);
     }
@@ -3555,6 +3720,80 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         Ok(())
     }
 
+    // KOAN: (#1859) the WGSL prelude's `koan_track` draws each curve where
+    // `Track::at` says it stands: the twin of Metal's test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_tracks_draw_where_the_cpu_says() -> anyhow::Result<()> {
+        use gpui::{Track, TrackCurve, TrackRepeat};
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-tracks",
+            msl: "",
+            wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let k = u32(position.x / size.x * 7.0);
+    return vec4<f32>(koan_track(u, k, time), 0.0, 0.0, 1.0);
+}
+"#,
+            prepare: None,
+        };
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        let now = uniforms.time_at(gpui::present_now());
+        let track = |t: f32, length: f32, curve, repeat| Track {
+            from: 0.1,
+            to: 0.9,
+            start: now - t,
+            length,
+            curve,
+            repeat,
+        };
+        let spring = |stiffness, damping| TrackCurve::Spring { stiffness, damping, velocity: 0.0 };
+        let tracks = [
+            track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
+            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(170.0, 12.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(100.0, 20.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(100.0, 40.0), TrackRepeat::Once),
+            track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
+            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
+        ];
+        for (k, t) in tracks.iter().enumerate() {
+            uniforms.set_track(k, *t);
+        }
+        let bounds = Bounds {
+            origin: Point { x: ScaledPixels(0.0), y: ScaledPixels(0.0) },
+            size: Size { width: ScaledPixels(7.0), height: ScaledPixels(1.0) },
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds },
+            program: &PROGRAM,
+            uniforms: uniforms.clone(),
+            image: None,
+        });
+        scene.finish();
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let before = uniforms.time_at(gpui::present_now());
+        let image = renderer
+            .render_scene_to_image(&scene, Size { width: DevicePixels(7), height: DevicePixels(1) })?;
+        let after = uniforms.time_at(gpui::present_now());
+        for (k, t) in tracks.iter().enumerate() {
+            let levels = (0..=64).map(|i| {
+                let at = before + (after - before) * i as f32 / 64.0;
+                (t.at(at) * 255.0).round() as i32
+            });
+            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
+            assert!(
+                drawn >= low - 2 && drawn <= high + 2,
+                "track {k}: drawn {drawn}, expected {low}..={high}"
+            );
+        }
+        Ok(())
+    }
+
     // KOAN: (#1641) a composed present gives the pixels a whole render does,
     // with a quad over the shader and without, and follows the uniforms.
     #[cfg(target_os = "linux")]
@@ -3562,7 +3801,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         name: "koan-test-solid",
         msl: "",
         wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     if (position.x < size.x * u[0].x) {
         return vec4<f32>(1.0, 0.0, 0.0, 0.5);
     }

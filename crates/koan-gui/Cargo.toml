@@ -40,9 +40,9 @@ koan-kit = { path = "../koan-kit" }
 gpui = { package = "gpui-kit", version = "0.8.1" }
 # The platform cache directory for artwork.
 dirs = "7"
-# Decoding and resizing sleeves for the library, the accent and the wash, and
-# the frames GPUI draws, in the version GPUI itself builds against; PNG for
-# offscreen renders; JPEG, WebP and GIF for sleeves.
+# Decoding sleeves for the library's covers, and the playing record's,
+# scaled down, for its accent and the wash, in the version GPUI itself builds against; PNG for the examples' offscreen
+# renders; JPEG, WebP and GIF for sleeves.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 koan-core = { workspace = true }
 log = "0.4"
@@ -74,16 +74,18 @@ tempfile = "3"
 name = "album_grid"
 harness = false
 
-# Reduce Motion and Low Power Mode, which GPUI does not read, and the
-# notifications that say when either changes.
+# The About panel, the menu bar's status item and whether the app shows in
+# the Dock, which GPUI does not reach.
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", features = [
-  "NSNotification",
-  "NSOperation",
-  "NSProcessInfo",
-  "NSString",
-  "block2",
+objc2-app-kit = { version = "0.3.2", features = [
+  "NSApplication",
+  "NSImage",
+  "NSMenu",
+  "NSMenuItem",
+  "NSResponder",
+  "NSRunningApplication",
+  "NSStatusBar",
+  "NSStatusItem",
 ] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString"] }

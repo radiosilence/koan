@@ -6,12 +6,11 @@ use gpui_kit::{
 };
 
 use super::{
-    Handler, accessible, answers_click, child, fade, fill, focus, mix, pointer, ring, track,
-    transition,
+    Handler, accessible, answers_click, child, fade, fill, focus, pointer, ring, track, transition,
 };
 use crate::theme::{
-    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TOOLBAR_BUTTON, Tone,
-    TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TOOLBAR_BUTTON, Tone, TypeRole,
+    label,
 };
 
 /// A button's weight and shape. The rules for which a screen uses are the
@@ -223,34 +222,26 @@ impl RenderOnce for Button {
         };
         let handle = focus(&self.id, window, cx);
         let answers = super::Answerer::of(&self.id, window, cx);
-        // Text colour fades on the CPU, for the kinds whose text changes;
-        // fills are the GPU's (`transition`).
-        let hover = if kind == ButtonKind::Text {
-            fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx)
-        } else {
-            0.0
-        };
-        let press = if kind == ButtonKind::Link {
-            fade(
-                child(&self.id, "press"),
-                pressed || self.selected,
-                Motion::FAST,
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
-
         let tone = if self.destructive {
             Tone::Bad
         } else {
             self.tone.unwrap_or_else(|| kind.tone())
         };
         let rest = look.text_color(tone);
+        let ink = look.palette.ink.hsla();
+        // Text colour fades through a colour slot, for the kinds whose text
+        // changes; fills are shader quads (`transition`). Both move on the
+        // GPU.
         let color = match kind {
-            ButtonKind::Text => mix(rest, look.palette.ink.hsla(), hover),
-            ButtonKind::Link => mix(rest, look.palette.ink.hsla(), press),
+            ButtonKind::Text => fade(child(&self.id, "hover"), hovered, rest, ink, window, cx),
+            ButtonKind::Link => fade(
+                child(&self.id, "press"),
+                pressed || self.selected,
+                rest,
+                ink,
+                window,
+                cx,
+            ),
             _ => rest,
         };
         let outline = match kind {
@@ -301,6 +292,7 @@ impl RenderOnce for Button {
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
                 let answer = kind.answer();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     if let Some(answer) = answer {
                         answers.start(answer, accent, cx);
@@ -319,24 +311,16 @@ impl RenderOnce for Button {
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );
                 button = button.child(fill(look.palette.hover.hsla(), &press));
             }
             ButtonKind::Toolbar => {
-                let hover = transition(
-                    child(&self.id, "hover-fill"),
-                    hovered,
-                    Motion::FAST,
-                    window,
-                    cx,
-                );
+                let hover = transition(child(&self.id, "hover-fill"), hovered, window, cx);
                 let press = transition(
                     child(&self.id, "press-fill"),
                     pressed || self.selected,
-                    Motion::FAST,
                     window,
                     cx,
                 );

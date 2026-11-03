@@ -6,16 +6,16 @@
 //!
 //! Subtle by rule: one shader quad over the control and a little past its
 //! edge, in the accent at low opacity, never over the control's text, for
-//! no longer than `Motion::SETTLE`. The clock runs only while an answer is
-//! drawn and the quad leaves the scene when it ends, so a control at rest,
-//! or off screen, costs nothing. Under Reduce Motion nothing is drawn.
+//! no longer than `Motion::SETTLE`. Its progress is one track the GPU moves,
+//! and the quad leaves the scene when it ends, so a control at rest, or off
+//! screen, costs nothing. Under Reduce Motion nothing is drawn.
 
 use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Animated, AnimatedQuad, SHADED, child};
+use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, child};
 use crate::theme::{KoanTheme, Motion};
 
 /// What an answer draws.
@@ -64,13 +64,14 @@ impl Answer {
     }
 }
 
-/// The answers as one program. Uniforms: 0 the answer, 1 its length in
-/// seconds, 2..6 the colour, 6 the spill and 7 a point, in device pixels.
+/// The answers as one program. Uniforms: 0 the answer, 2..6 the colour, 6
+/// the spill and 7 a point, in device pixels; track 0 the answer's progress
+/// from 0 to 1.
 pub static ANSWER: ShaderProgram = ShaderProgram {
     name: "koan-answer",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = clamp(time / max(u[1], 0.001), 0.0, 1.0);
+    float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
     if (t >= 1.0) { return float4(0.0); }
     float e = 1.0 - (1.0 - t) * (1.0 - t);
     float spill = u[6];
@@ -107,8 +108,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
-    let t = clamp(time / max(u[0].y, 0.001), 0.0, 1.0);
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
     if (t >= 1.0) { return vec4<f32>(0.0); }
     let e = 1.0 - (1.0 - t) * (1.0 - t);
     let spill = u[1].z;
@@ -154,6 +155,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
 struct State {
     animated: Animated,
     live: Option<Answer>,
+    started: Option<Instant>,
+    /// The mark `follow` was last given.
+    seen: Option<u64>,
     _end: Option<Task<()>>,
 }
 
@@ -177,16 +181,24 @@ impl Answerer {
         }
         let rgba = color.to_rgb();
         self.0.update(cx, |s, cx| {
-            s.animated
-                .set_all(0, &[answer.code(), answer.duration().as_secs_f32()]);
+            s.animated.set_all(0, &[answer.code(), 0.0]);
             s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
-            s.animated.set_origin(Instant::now());
-            s.animated.run(true);
+            let now = Instant::now();
+            s.animated.segment(
+                0,
+                0.0,
+                1.0,
+                Animated::now(),
+                answer.duration(),
+                Ease::Linear,
+                Repeat::Once,
+            );
             s.live = Some(answer);
+            s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
+                // The quad leaves the scene once the answer has run.
                 this.update(cx, |s, cx| {
-                    s.animated.run(false);
                     s.live = None;
                     cx.notify();
                 })
@@ -194,6 +206,64 @@ impl Answerer {
             }));
             cx.notify();
         });
+    }
+
+    /// Answers a change the control is told of rather than one done to it
+    /// (a favourite set from a shortcut, music arriving from a menu), as
+    /// the control draws: `mark` names the state, and a draw that finds it
+    /// moved starts `answer`. The first draw only notes it, so a control
+    /// scrolled in or drawn fresh shows its state still, and a change the
+    /// control answered from its own handler a moment ago is not answered
+    /// twice.
+    pub fn follow(
+        &self,
+        mark: u64,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.moved(mark, false, answer, color, window, cx);
+    }
+
+    /// As `follow`, for something whose appearing is the news (a notice):
+    /// its first draw answers too.
+    pub fn announce(
+        &self,
+        mark: u64,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.moved(mark, true, answer, color, window, cx);
+    }
+
+    fn moved(
+        &self,
+        mark: u64,
+        first: bool,
+        answer: Answer,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let s = self.0.read(cx);
+        let seen = s.seen;
+        if seen == Some(mark) {
+            return;
+        }
+        let answered = s.started.is_some_and(|at| at.elapsed() < answer.duration());
+        self.0.update(cx, |s, _| s.seen = Some(mark));
+        if (first || seen.is_some()) && !answered {
+            self.start(answer, color, cx);
+            window.request_animation_frame();
+        }
+    }
+
+    #[cfg(test)]
+    fn seen(&self, cx: &App) -> Option<u64> {
+        self.0.read(cx).seen
     }
 
     /// The answer being drawn, as a quad over the control and a little past
@@ -223,6 +293,51 @@ impl Answerer {
 mod tests {
     use super::*;
     use core::prelude::v1::test;
+    use gpui_kit::{TestAppContext, VisualTestContext, div, red};
+
+    /// Two controls side by side, each following its own mark.
+    struct Two {
+        marks: [u64; 2],
+        answers: Vec<Answerer>,
+    }
+
+    impl Render for Two {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.answers = (0..2)
+                .map(|i| {
+                    let answers = Answerer::of(&ElementId::from(("control", i)), window, cx);
+                    answers.follow(self.marks[i], Answer::Sweep, red(), window, cx);
+                    answers
+                })
+                .collect();
+            div()
+        }
+    }
+
+    /// A control's answers are its own: one control's mark moving leaves
+    /// its neighbour's state where it was.
+    #[gpui_kit::test]
+    fn each_control_follows_its_own_mark(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Two {
+            marks: [0, 0],
+            answers: Vec::new(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        view.update(cx, |two, cx| {
+            two.marks[0] = 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let seen = view.update(cx, |two, cx| {
+            two.answers.iter().map(|a| a.seen(cx)).collect::<Vec<_>>()
+        });
+        assert_eq!(seen, [Some(1), Some(0)]);
+    }
 
     #[test]
     fn every_answer_is_within_the_motion_tokens() {

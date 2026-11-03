@@ -72,8 +72,9 @@ fn koan_prism_hash(p: vec2<f32>) -> f32 {
     };
 }
 
-// The uniforms every `Prism` program reads: 0..3 the bands (low, middle,
-// high, 0 to 1), 3 the last beat's strength, 4 brat's palette, 5 a dark
+// The uniforms every `Prism` program reads: tracks 0..3 the bands (low,
+// middle, high, 0 to 1, gliding between analyser frames); plain 3 the last
+// beat's strength, 4 brat's palette, 5 a dark
 // appearance, 6 the strength, 7 the low band's running average (the CPU's),
 // 8 whether a window is in front (the mirror ball turns), 9 when the last
 // beat landed, in seconds of shader time, 10 device pixels to a point.
@@ -94,11 +95,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     a = abs(fmod(a, seg) - seg * 0.5);
     float2 k = float2(cos(a), sin(a)) * r;
     float v = sin(k.x * 5.0 + time * 0.7) + sin(k.y * 6.0 - time * 0.55)
-        + sin((p.x + p.y) * 3.0 + time * 0.25 + u[1] * 2.0)
-        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + u[0]);
+        + sin((p.x + p.y) * 3.0 + time * 0.25 + koan_track(u, 1, time) * 2.0)
+        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + koan_track(u, 0, time));
     float3 colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[4]);
     float glow = 0.5 + 0.5 * sin(v * 3.14159);
-    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * u[2]) + pulse * 0.18;
+    float alpha = (u[5] > 0.5 ? 0.42 : 0.30) * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2, time)) + pulse * 0.18;
     if (u[5] < 0.5) {
         colour = mix(colour, float3(1.0), 0.35);
     }
@@ -109,7 +110,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let p = (position - size * 0.5) / size.y;
     let pulse = u[0].w * exp(-max(time - u[2].y, 0.0) * 5.0);
     let r = length(p);
@@ -118,12 +119,12 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
     a = abs(a % seg - seg * 0.5);
     let k = vec2<f32>(cos(a), sin(a)) * r;
     let v = sin(k.x * 5.0 + time * 0.7) + sin(k.y * 6.0 - time * 0.55)
-        + sin((p.x + p.y) * 3.0 + time * 0.25 + u[0].y * 2.0)
-        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + u[0].x);
+        + sin((p.x + p.y) * 3.0 + time * 0.25 + koan_track(u, 1u, time) * 2.0)
+        + sin(r * 14.0 - time * 2.6 - pulse * 3.0) * (0.4 + koan_track(u, 0u, time));
     var colour = koan_prism(v * 0.12 + time * 0.04 + r * 0.3, u[1].x);
     let glow = 0.5 + 0.5 * sin(v * 3.14159);
     let base = select(0.30, 0.42, u[1].y > 0.5);
-    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * u[0].z) + pulse * 0.18;
+    let alpha = base * (0.55 + 0.45 * glow) * (0.7 + 0.3 * koan_track(u, 2u, time)) + pulse * 0.18;
     if (u[1].y < 0.5) {
         colour = mix(colour, vec3<f32>(1.0), 0.35);
     }
@@ -144,7 +145,7 @@ static PRISM_PULSE: ShaderProgram = ShaderProgram {
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
     float pulse = u[3] * exp(-max(time - u[9], 0.0) * 4.0);
-    float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * u[0]);
+    float width = u[10] * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0, time));
     float glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
         return float4(0.0);
@@ -158,10 +159,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let d = min(min(position.x, size.x - position.x), min(position.y, size.y - position.y));
     let pulse = u[0].w * exp(-max(time - u[2].y, 0.0) * 4.0);
-    let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * u[0].x);
+    let width = u[2].z * (10.0 + 30.0 * pulse + 8.0 * koan_track(u, 0u, time));
     let glow = exp(-d / max(width, 1.0));
     if (glow < 0.004) {
         return vec4<f32>(0.0);
@@ -210,7 +211,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let radius = min(size.x, size.y) * 0.5 - u[2].z;
     let p = (position - size * 0.5) / radius;
     let r2 = dot(p, p);
@@ -250,10 +251,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     if (i < 0 || i > 2 || position.x - float(i) * pitch > u[8]) {
         return float4(0.0);
     }
-    float top = size.y * (1.0 - max(u[i], u[10]));
+    float top = size.y * (1.0 - max(koan_track(u, uint(i), time), u[10]));
     float cover = clamp(position.y - top + 0.5, 0.0, 1.0);
     float up = 1.0 - position.y / size.y;
-    float3 colour = koan_prism(float(i) / 3.0 + up * 0.4 + u[i] * 0.2, u[12]);
+    float3 colour = koan_prism(float(i) / 3.0 + up * 0.4 + koan_track(u, uint(i), time) * 0.2, u[12]);
     return float4(colour, u[7] * cover);
 }
 "#
@@ -261,17 +262,16 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let pitch = u[2].x + u[2].y;
     let i = i32(floor(position.x / pitch));
     if (i < 0 || i > 2 || position.x - f32(i) * pitch > u[2].x) {
         return vec4<f32>(0.0);
     }
-    var bands = u[0];
-    let top = size.y * (1.0 - max(bands[i], u[2].z));
+    let top = size.y * (1.0 - max(koan_track(u, u32(i), time), u[2].z));
     let cover = clamp(position.y - top + 0.5, 0.0, 1.0);
     let up = 1.0 - position.y / size.y;
-    let colour = koan_prism(f32(i) / 3.0 + up * 0.4 + bands[i] * 0.2, u[3].x);
+    let colour = koan_prism(f32(i) / 3.0 + up * 0.4 + koan_track(u, u32(i), time) * 0.2, u[3].x);
     return vec4<f32>(colour, u[1].w * cover);
 }
 "#
@@ -290,8 +290,7 @@ pub(crate) static PRISM_GLIDE: ShaderProgram = ShaderProgram {
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float width = size.x - 2.0 * u[4];
     float x = position.x - u[4];
-    float easing = u[7] > 0.0 ? 1.0 - smoothstep(0.0, 1.0, (time - u[6]) / u[7]) : 0.0;
-    float end = clamp(u[0] + u[1] * time + u[5] * easing, 0.0, 1.0) * width;
+    float end = clamp(koan_track(u, 0, time) + koan_track(u, 1, time), 0.0, 1.0) * width;
     float dy = abs(position.y - size.y * 0.5);
     if (u[3] > 0.0 && abs(x - end) <= u[3] * 0.5 && dy <= u[3] * 0.5) {
         return float4(u[12], u[13], u[14], u[15]);
@@ -309,14 +308,10 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let width = size.x - 2.0 * u[1].x;
     let x = position.x - u[1].x;
-    var easing = 0.0;
-    if (u[1].w > 0.0) {
-        easing = 1.0 - smoothstep(0.0, 1.0, (time - u[1].z) / u[1].w);
-    }
-    let end = clamp(u[0].x + u[0].y * time + u[1].y * easing, 0.0, 1.0) * width;
+    let end = clamp(koan_track(u, 0u, time) + koan_track(u, 1u, time), 0.0, 1.0) * width;
     let dy = abs(position.y - size.y * 0.5);
     if (u[0].w > 0.0 && abs(x - end) <= u[0].w * 0.5 && dy <= u[0].w * 0.5) {
         return u[3];
@@ -384,7 +379,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = time;
     if (t < 0.0 || t > u[1].y) {
         return vec4<f32>(0.0);
@@ -453,7 +448,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = time / u[1].y;
     if (t < 0.0 || t > 1.0) {
         return vec4<f32>(0.0);
@@ -505,7 +500,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let s = (position.x + position.y * 0.6) / (size.x + size.y);
     let sweep = fract(s * 0.8 - time * 0.35);
     let band = smoothstep(0.0, 0.25, sweep) * (1.0 - smoothstep(0.25, 0.55, sweep));
@@ -563,7 +558,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float radius = s * (10.0 + 14.0 * h1) * (1.0 + 0.6 * beat);
         float spot = 1.0 - smoothstep(radius * 0.4, radius, distance(position, at));
         float3 c = mix(float3(1.0), koan_prism(h1 + time * 0.1, u[4]), 0.55);
-        koan_disco_blend(colour, alpha, c, spot * (0.22 + 0.25 * beat + 0.15 * u[2]));
+        koan_disco_blend(colour, alpha, c, spot * (0.22 + 0.25 * beat + 0.15 * koan_track(u, 2, time)));
     }
     // Stage beams sweeping up from the foot of the window.
     for (int i = 0; i < 4; i++) {
@@ -577,7 +572,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             float across = abs(rel.x * dir.y - rel.y * dir.x);
             float width = s * 14.0 + along * 0.08;
             float beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
-            koan_disco_blend(colour, alpha, koan_prism(fi * 0.25 + time * 0.07, u[4]), beam * (0.10 + 0.18 * beat + 0.08 * u[1]));
+            koan_disco_blend(colour, alpha, koan_prism(fi * 0.25 + time * 0.07, u[4]), beam * (0.10 + 0.18 * beat + 0.08 * koan_track(u, 1, time)));
         }
     }
     // Glimmers: four-pointed stars twinkling in and out on a grid.
@@ -613,7 +608,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let s = u[2].z;
     let spin = time * 0.35 * u[2].x;
     let beat = u[0].w * exp(-max(time - u[2].y, 0.0) * 8.0);
@@ -630,7 +625,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         let radius = s * (10.0 + 14.0 * h1) * (1.0 + 0.6 * beat);
         let spot = 1.0 - smoothstep(radius * 0.4, radius, distance(position, at));
         let c = mix(vec3<f32>(1.0), koan_prism(h1 + time * 0.1, u[1].x), 0.55);
-        let a = spot * (0.22 + 0.25 * beat + 0.15 * u[0].z);
+        let a = spot * (0.22 + 0.25 * beat + 0.15 * koan_track(u, 2u, time));
         if (a > 0.0) {
             colour = mix(colour, c, a / max(alpha + a, 1e-4));
             alpha = max(alpha, a);
@@ -647,7 +642,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
             let across = abs(rel.x * dir.y - rel.y * dir.x);
             let width = s * 14.0 + along * 0.08;
             let beam = (1.0 - smoothstep(width * 0.3, width, across)) * max(1.0 - along / (far * 1.1), 0.0);
-            let a = beam * (0.10 + 0.18 * beat + 0.08 * u[0].y);
+            let a = beam * (0.10 + 0.18 * beat + 0.08 * koan_track(u, 1u, time));
             if (a > 0.0) {
                 colour = mix(colour, koan_prism(fi * 0.25 + time * 0.07, u[1].x), a / max(alpha + a, 1e-4));
                 alpha = max(alpha, a);
@@ -714,7 +709,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     wgsl: concat!(
         prism_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let x = position.x / max(size.x, 1.0);
     let colour = koan_prism(x * 0.8 - time * 0.2, u[0].x);
     let glint = pow(max(0.0, 1.0 - abs(fract(x * 0.5 - time * 0.35) - 0.5) * 6.0), 4.0);
@@ -821,7 +816,7 @@ fn koan_brat_word(p: vec2<f32>) -> f32 {
     return 1.0 - smoothstep(6.0, 7.5, d);
 }
 
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = time;
     if (t < 0.0 || t > u[1].y) {
         return vec4<f32>(0.0);
@@ -900,10 +895,14 @@ impl Prism {
 
     /// A frame from the analyser: the three bands, each 0 to 1. A low band
     /// well over its running average is a beat.
-    pub fn hear(&self, bands: [f32; 3]) {
+    pub fn hear(&self, bands: [f32; 3], over: Duration) {
         let a = &self.animated;
         let average = a.get(7);
-        a.set_all(0, &bands);
+        // Tracks, each gliding to its band over the gap between frames, so
+        // the layers move at the display's rate between the analyser's.
+        for (i, band) in bands.into_iter().enumerate() {
+            a.to(i, band, over, super::Ease::Linear);
+        }
         a.set(7, average * 0.92 + bands[0] * 0.08);
         let onset = ((bands[0] - average * 1.25 - 0.04) * 4.0).min(1.0);
         let now = self.origin.elapsed().as_secs_f32();
@@ -912,6 +911,13 @@ impl Prism {
         if onset > 0.05 && onset > held && rested {
             a.set(9, now);
             a.set(3, onset);
+        }
+    }
+
+    /// The bands standing where they are, for a prism newly fed.
+    pub fn hold_bands(&self, bands: [f32; 3]) {
+        for (i, band) in bands.into_iter().enumerate() {
+            self.animated.hold(i, band);
         }
     }
 

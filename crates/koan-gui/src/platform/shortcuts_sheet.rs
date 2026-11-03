@@ -21,7 +21,8 @@ actions!(shortcuts_sheet, [Dismiss]);
 
 const CONTEXT: &str = "ShortcutsSheet";
 
-/// The sheet asks to be closed: escape, or its done button.
+/// The sheet asks to be closed: escape, return (its done button is the
+/// default), or the button.
 pub struct Dismissed;
 
 pub struct ShortcutsSheet {
@@ -38,7 +39,10 @@ impl Focusable for ShortcutsSheet {
 
 /// Bind the sheet's own keys. Once, at launch.
 pub fn bind(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("escape", Dismiss, Some(CONTEXT))]);
+    cx.bind_keys([
+        KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
+        KeyBinding::new("enter", Dismiss, Some(CONTEXT)),
+    ]);
 }
 
 impl ShortcutsSheet {

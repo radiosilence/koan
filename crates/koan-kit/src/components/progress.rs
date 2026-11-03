@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Animated, AnimatedQuad, Handler, SHADED, ShaderProgram};
+use super::{Animated, AnimatedQuad, Ease, Handler, Repeat, SHADED, ShaderProgram};
 use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, TypeRole};
 
 /// The bar's thickness.
@@ -18,14 +18,13 @@ const BAR: f32 = 2.0;
 /// One run of an unmeasured bar's segment along it.
 const RUN: Duration = Duration::from_millis(1200);
 
-/// An unmeasured bar's segment, run by the GPU. Uniforms: 0 a run's length
-/// in seconds, 1 the segment's share of the bar, 4..8 the colour.
+/// An unmeasured bar's segment, run by the GPU. Uniforms: 1 the segment's
+/// share of the bar, 4..8 the colour; track 0 a run along it, looping.
 static RUNNING: ShaderProgram = ShaderProgram {
     name: "koan-progress-running",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = fract(time / u[0]);
-    float left = -u[1] + (1.0 + u[1]) * smoothstep(0.0, 1.0, t);
+    float left = -u[1] + (1.0 + u[1]) * koan_track(u, 0, time);
     float x = position.x / size.x;
     float cover = clamp((x - left) * size.x + 0.5, 0.0, 1.0)
         * clamp((left + u[1] - x) * size.x + 0.5, 0.0, 1.0);
@@ -33,9 +32,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
-    let t = fract(time / u[0].x);
-    let left = -u[0].y + (1.0 + u[0].y) * smoothstep(0.0, 1.0, t);
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let left = -u[0].y + (1.0 + u[0].y) * koan_track(u, 0u, time);
     let x = position.x / size.x;
     let cover = clamp((x - left) * size.x + 0.5, 0.0, 1.0)
         * clamp((left + u[0].y - x) * size.x + 0.5, 0.0, 1.0);
@@ -54,6 +52,7 @@ static START: OnceLock<Instant> = OnceLock::new();
 pub struct ProgressBar {
     id: ElementId,
     fraction: Option<f32>,
+    glide: Option<super::Glide>,
 }
 
 impl ProgressBar {
@@ -61,7 +60,16 @@ impl ProgressBar {
         Self {
             id: id.into(),
             fraction,
+            glide: None,
         }
+    }
+
+    /// Filled to `glide`'s value as it moves, on the GPU, where the renderer
+    /// draws shaders: a transfer's bar, fed by its reports, with no frame
+    /// drawn between them. Elsewhere the bar shows `fraction`.
+    pub fn glide(mut self, glide: &super::Glide) -> Self {
+        self.glide = Some(glide.clone());
+        self
     }
 }
 
@@ -75,6 +83,11 @@ impl RenderOnce for ProgressBar {
             .bg(look.palette.rule.hsla())
             .relative()
             .overflow_hidden();
+        if let Some(glide) = self.glide.filter(|_| SHADED) {
+            return track
+                .child(super::slider::glide_fill(glide, accent, BAR))
+                .into_any_element();
+        }
         match self.fraction {
             Some(fraction) => {
                 let prism = KoanTheme::prism_gradient(cx);
@@ -93,10 +106,17 @@ impl RenderOnce for ProgressBar {
             None if SHADED && KoanTheme::motion_allowed(cx) => {
                 let rgba = accent.to_rgb();
                 let running = Animated::new();
-                running.set_all(0, &[RUN.as_secs_f32(), 0.3, 0.0, 0.0]);
+                running.set_all(0, &[0.0, 0.3, 0.0, 0.0]);
                 running.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
-                running.set_origin(*START.get_or_init(Instant::now));
-                running.run(true);
+                running.segment(
+                    0,
+                    0.0,
+                    1.0,
+                    *START.get_or_init(Instant::now),
+                    RUN,
+                    Ease::InOut,
+                    Repeat::Loop,
+                );
                 track
                     .child(
                         AnimatedQuad::new(&RUNNING, &running)

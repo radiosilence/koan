@@ -20,12 +20,12 @@ use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
 /// The sleeve as a tile shows it.
 pub enum TileSleeve {
-    /// The picture, `shown` from 0 to 1 while it fades in over `ground`,
-    /// the record's colour shown before it, or over the loading ensō where
-    /// no colour stood in.
+    /// The picture, fading in by `arrival` over `ground`, the record's
+    /// colour shown before it, or over the loading ensō where no colour
+    /// stood in.
     Image {
         image: Arc<RenderImage>,
-        shown: f32,
+        arrival: Option<super::Arrival>,
         ground: Option<Hsla>,
     },
     /// The picture's average colour, standing in while it uploads.
@@ -58,6 +58,7 @@ pub struct TileArt {
     playing: Option<AnyElement>,
     on_device: Option<f32>,
     heart: Option<(bool, bool)>,
+    id: ElementId,
     pick: Option<bool>,
     sheen: Option<(ElementId, bool)>,
     cursor: bool,
@@ -85,10 +86,18 @@ impl TileArt {
             playing: None,
             on_device: None,
             heart: None,
+            id: ElementId::Name("tile-art".into()),
             pick: None,
             sheen: None,
             cursor: false,
         }
+    }
+
+    /// Which record's art this is, for its heart's answer: tiles drawn
+    /// side by side in one view each need their own.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = id.into();
+        self
     }
 
     /// The codec, top right: at tile size a rate is unreadable, and the
@@ -170,23 +179,31 @@ impl RenderOnce for TileArt {
         match self.sleeve {
             TileSleeve::Image {
                 image,
-                shown,
+                arrival,
                 ground,
             } => {
                 // Arriving: over the record's colour where it stood in, or
-                // over the ensō that was drawing itself.
-                if shown < 1.0 {
-                    art = match ground {
-                        Some(ground) => art.bg(ground),
-                        None => art.child(
+                // over the ensō that was drawing itself, on the GPU.
+                match arrival {
+                    Some(arrival) => {
+                        art = match ground {
+                            Some(ground) => art.bg(ground),
+                            None => art.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(Placeholder::new(side).loading(true)),
+                            ),
+                        };
+                        art = art.child(
                             div()
                                 .absolute()
                                 .inset_0()
-                                .child(Placeholder::new(side).loading(true)),
-                        ),
-                    };
+                                .child(super::arriving(image, &arrival)),
+                        );
+                    }
+                    None => art = art.child(img(ImageSource::Render(image)).size_full()),
                 }
-                art = art.child(img(ImageSource::Render(image)).size_full().opacity(shown));
             }
             TileSleeve::Colour(colour) => art = art.bg(colour),
             TileSleeve::Loading => art = art.child(Placeholder::new(side).loading(true)),
@@ -261,15 +278,10 @@ impl RenderOnce for TileArt {
             );
         }
         if let (Some((favourite, hovered)), None) = (self.heart, self.pick) {
-            let glyph = if favourite {
-                KoanIcon::new(Icon::Favourited)
-                    .role(TypeRole::Meta)
-                    .color(look.accent.hsla())
-            } else {
-                KoanIcon::new(Icon::Favourite)
-                    .role(TypeRole::Meta)
-                    .color(pal.ink.hsla())
-            };
+            // A mark inside the tile, which takes the click itself and tells
+            // the heart from the sleeve by where it lands.
+            let glyph = super::Heart::new(super::child(&self.id, "heart"), favourite)
+                .rest(crate::theme::Tone::Ink);
             art = art.child(
                 div()
                     .absolute()
@@ -358,6 +370,8 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 
