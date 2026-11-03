@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row |
-//! | Return | play a track (after the queue's end), open a record or an artist |
+//! | Return | with no row lit, every result on the results page; on a lit row, play a track (after the queue's end) or open a record or an artist |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -69,10 +69,17 @@ fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
+/// How many of each kind the box lists, as the Mac's search suggestions
+/// do: enough to recognise what was meant. Everything else is behind
+/// Return, on the results page.
+const TRACKS: usize = 5;
+const ALBUMS: usize = 4;
+const ARTISTS: usize = 4;
+
 /// The search's answer as rows, in the order they are listed: tracks,
-/// records, artists.
+/// records, artists, each kind capped.
 fn items(s: &ShelfSummary) -> Vec<Item> {
-    let tracks = s.tracks.iter().map(|t| Item {
+    let tracks = s.tracks.iter().take(TRACKS).map(|t| Item {
         kind: Kind::Track,
         id: t.id,
         album: t.album_id,
@@ -80,7 +87,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
         detail: Some(format!("{} · {}", credit(&t.artist_credit), t.album_title).into()),
         length: Some(crate::library::format::duration(t.duration_ms).into()),
     });
-    let albums = s.albums.iter().map(|a| Item {
+    let albums = s.albums.iter().take(ALBUMS).map(|a| Item {
         kind: Kind::Album,
         id: a.id,
         album: Some(a.id),
@@ -88,7 +95,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
         detail: Some(credit(&a.artist_credit).into()),
         length: None,
     });
-    let artists = s.artists.iter().map(|a| Item {
+    let artists = s.artists.iter().take(ARTISTS).map(|a| Item {
         kind: Kind::Artist,
         id: a.id,
         album: None,
@@ -294,9 +301,17 @@ impl SearchBar {
         }
         let rows = self.rows(cx);
         let picking = !self.ticked.is_empty();
+        // Return with no row lit and nothing ticked is the query itself:
+        // every result, as the Mac's search field submits.
+        if verb == Verb::Take && !picking && self.lit.is_none() {
+            if !self.input.read(cx).value().trim().is_empty() {
+                self.search.update(cx, |s, cx| s.submit(cx));
+                cx.emit(Dismissed);
+            }
+            return;
+        }
         let targets: Vec<Item> = if !picking {
             self.lit
-                .or((!rows.is_empty()).then_some(0))
                 .and_then(|i| rows.get(i))
                 .cloned()
                 .into_iter()
@@ -486,10 +501,15 @@ impl Render for SearchBar {
         if !self.input.read(cx).value().trim().is_empty() && self.answered(cx) {
             bar = bar.empty("nothing found");
         }
-        // What the keys do with a row, once there is one to do it to: with
-        // nothing yet found, only Escape does anything.
-        let acting = !rows.is_empty();
-        let bar = if acting {
+        // What the keys do: with nothing lit or ticked, Return is the query
+        // and the arrows choose a row; on a row, or a pick, the verbs act on
+        // it. With nothing yet found, only Escape does anything.
+        let chosen = picking || self.lit.is_some();
+        let bar = if rows.is_empty() {
+            bar
+        } else if !chosen {
+            bar.key("↩", "all results").key("↑↓", "choose")
+        } else {
             bar.key(
                 "↩",
                 if picking {
@@ -503,8 +523,6 @@ impl Render for SearchBar {
             .key("⇧⌘↩", "replace the queue")
             .key("tab", "tick")
             .key("⇧↩", "all results")
-        } else {
-            bar
         };
         let bar = bar
             .key(

@@ -107,9 +107,13 @@ impl RenderOnce for CommandBar {
             }
         }
         let body = if found {
+            // Takes what the panel has left after the query and the keys, and
+            // scrolls within it: the rows never draw past the panel, over
+            // the keys or the page behind.
             div()
                 .flex_1()
                 .min_h_0()
+                .overflow_hidden()
                 .pb(look.space(Space::Xs))
                 .child(
                     // The results, a list box for a screen reader.
@@ -134,6 +138,7 @@ impl RenderOnce for CommandBar {
                 .into_any_element()
         };
         let foot = div()
+            .flex_none()
             .flex()
             .flex_wrap()
             .items_center()
@@ -170,6 +175,7 @@ impl RenderOnce for CommandBar {
                 )
                 .w(look.spaced(Self::WIDTH))
                 .max_h(relative(0.7))
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .bg(p.bg.hsla())
@@ -182,6 +188,7 @@ impl RenderOnce for CommandBar {
                         gpui_kit::Role::ComboBox,
                         Some(label("search")),
                     )
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(look.space(Space::M))
