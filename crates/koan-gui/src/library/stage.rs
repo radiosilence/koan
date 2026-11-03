@@ -79,6 +79,7 @@ impl LibraryStage {
                 | Page::Search
                 | Page::History
                 | Page::Playlist(_)
+                | Page::Shelved(..)
         )
     }
 
@@ -160,6 +161,29 @@ impl LibraryStage {
                 let page = cx.new(|cx| super::shelf::ShelfPage::results(lib, window, cx));
                 held(page, cx)
             }
+            // A shelf's "see all": the browser on the shelf's own filter, with
+            // no controls to change it.
+            Page::Shelved(shelf, listing) => {
+                use crate::navigator::Listing;
+                match listing {
+                    Listing::Albums => held(
+                        cx.new(|cx| AlbumGrid::scoped(lib, Some(shelf), window, cx)),
+                        cx,
+                    ),
+                    Listing::Artists => held(
+                        cx.new(|cx| {
+                            super::artists::ArtistBrowser::scoped(lib, Some(shelf), window, cx)
+                        }),
+                        cx,
+                    ),
+                    Listing::Tracks => held(
+                        cx.new(|cx| {
+                            super::tracks::TrackBrowser::scoped(lib, Some(shelf), window, cx)
+                        }),
+                        cx,
+                    ),
+                }
+            }
             page => {
                 // The shell draws its own pages for every other route.
                 let shelf = super::shelf::shelf_of(page)?;
@@ -168,7 +192,10 @@ impl LibraryStage {
             }
         };
         if super::shelf::shelf_of(current).is_some()
-            || matches!(current, Page::Album(_) | Page::Artist(_) | Page::Search)
+            || matches!(
+                current,
+                Page::Album(_) | Page::Artist(_) | Page::Search | Page::Shelved(..)
+            )
         {
             slot.update(cx, |s, cx| s.clear(cx));
         }

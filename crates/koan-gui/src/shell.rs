@@ -17,7 +17,7 @@ use koan_kit::raw::deferred;
 use koan_kit::raw::{Decorations, WindowControlArea};
 
 use crate::components::sheet as ask;
-use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
+use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
@@ -71,9 +71,11 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
-    /// The lyrics beside the page, while they show. Dropped when hidden, so
-    /// a closed panel follows no song.
+    /// The lyrics beside the page, while they show or slide away; dropped
+    /// once gone, so a closed panel follows no song.
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
+    lyrics_shown: bool,
+    lyrics_slide: crate::components::SlideState,
     /// ⇧⌘K's picker, while it is open.
     picker: Option<(Entity<crate::search::picker::PickerSheet>, Subscription)>,
     /// Watches the window's one question host, which draws over everything.
@@ -114,8 +116,9 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
-                let feed = lib.feed.clone();
-                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
+                let for_queue = lib.clone();
+                this.queue
+                    .update(cx, |queue, cx| queue.set_lib(for_queue, cx));
                 let covers = lib.covers.clone();
                 let search = lib.search.clone();
                 this.sidebar.update(cx, |sidebar, cx| {
@@ -151,6 +154,8 @@ impl Shell {
             shortcuts: None,
             picker: None,
             lyrics: None,
+            lyrics_shown: false,
+            lyrics_slide: Default::default(),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -237,10 +242,10 @@ impl Shell {
 
     /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
     fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
-        self.lyrics = match self.lyrics.take() {
-            Some(_) => None,
-            None => Some(cx.new(crate::lyrics::LyricsPanel::new)),
-        };
+        self.lyrics_shown = !self.lyrics_shown;
+        if self.lyrics_shown && self.lyrics.is_none() {
+            self.lyrics = Some(cx.new(crate::lyrics::LyricsPanel::new));
+        }
         cx.notify();
     }
 
@@ -284,6 +289,8 @@ impl Shell {
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
+        } else if route == Route::Downloads {
+            window.focus(&self.downloads(cx).focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
             // A library page is made as the stage draws it, and takes the
@@ -295,12 +302,22 @@ impl Shell {
         cx.notify();
     }
 
+    /// The downloads page, made when first shown and dropped on leaving.
+    fn downloads(&mut self, cx: &mut Context<Self>) -> Entity<crate::downloads::DownloadsPage> {
+        let nav = self.nav.clone();
+        self.downloads
+            .get_or_insert_with(|| cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx)))
+            .clone()
+    }
+
     /// The window's regions in F6's order: the sidebar while it shows, the
     /// page, the transport.
     fn regions(&self, cx: &App) -> Vec<FocusHandle> {
         let route = self.nav.read(cx).current();
         let page = if route == Route::Queue {
             Some(self.queue.focus_handle(cx))
+        } else if route == Route::Downloads {
+            self.downloads.as_ref().map(|d| d.focus_handle(cx))
         } else {
             self.library
                 .as_ref()
@@ -339,6 +356,9 @@ impl Shell {
         self.queue.update(cx, |_, cx| cx.notify());
         if let Some(library) = &self.library {
             library.update(cx, |_, cx| cx.notify());
+        }
+        if let Some(downloads) = &self.downloads {
+            downloads.update(cx, |_, cx| cx.notify());
         }
         cx.notify();
     }
@@ -513,7 +533,7 @@ impl Shell {
             .when_some(page, |toolbar, page| toolbar.trailing(page))
             .trailing(
                 ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
-                    .selected(self.lyrics.is_some())
+                    .selected(self.lyrics_shown)
                     .help(help("lyrics panel", &ToggleLyrics, cx))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
@@ -556,6 +576,10 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The lyrics slid away: the panel goes with them.
+        if !self.lyrics_shown && self.lyrics.is_some() && self.lyrics_slide.closed() {
+            self.lyrics = None;
+        }
         let p = Paint::of(window, cx);
         let washed = theme::KoanTheme::washes_window(cx);
         let transport = {
@@ -574,16 +598,10 @@ impl Render for Shell {
             self.downloads = None;
         }
         let stage = match route {
-            Route::Downloads => {
-                let nav = self.nav.clone();
-                self.downloads
-                    .get_or_insert_with(|| {
-                        cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx))
-                    })
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element()
-            }
+            Route::Downloads => self
+                .downloads(cx)
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
             Route::Queue => self
                 .queue
                 .clone()
@@ -673,7 +691,8 @@ impl Render for Shell {
                         RowMetrics::SIDEBAR_MAX,
                         RowMetrics::SIDEBAR,
                     )
-                    .when(self.sidebar_shown, |split| {
+                    .shown(self.sidebar_shown)
+                    .map(|split| {
                         split.leading(
                             div()
                                 .size_full()
@@ -732,14 +751,29 @@ impl Render for Shell {
                                             .h_full()
                                             .child(stage),
                                     )
-                                    .children(self.lyrics.clone().map(|lyrics| {
-                                        lyrics.cached(
-                                            StyleRefinement::default()
-                                                .w(RowMetrics::inspector(&p.look))
-                                                .h_full()
-                                                .flex_none(),
+                                    // Drawn while empty too, so the first
+                                    // showing slides in rather than snapping.
+                                    .child(
+                                        Slide::new(
+                                            "lyrics-slide",
+                                            &self.lyrics_slide,
+                                            self.lyrics_shown,
+                                            RowMetrics::inspector(&p.look),
                                         )
-                                    })),
+                                        .when_some(
+                                            self.lyrics.clone(),
+                                            |slide, lyrics| {
+                                                slide.child(
+                                                    lyrics.cached(
+                                                        StyleRefinement::default()
+                                                            .w(RowMetrics::inspector(&p.look))
+                                                            .h_full()
+                                                            .flex_none(),
+                                                    ),
+                                                )
+                                            },
+                                        ),
+                                    ),
                             )
                             .when(!washed, |d| d.child(transport())),
                     )

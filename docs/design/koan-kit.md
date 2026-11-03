@@ -172,7 +172,7 @@ Menu::build(window, cx, |m, window, cx| {
 
 Built from entries, separators, sections and submenus; an entry's `keys` shows the keys that do the same at the row's end, for menus drawn where there is no menu bar; the panel, rows, glyph column, check, padding and keyboard handling are the menu's. Every verb carries the glyph the Mac's menu gives it.
 
-`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there. An entry that is `stays_open` leaves the menu open when chosen, for a choice among outputs or devices, where the tick and the details moving are the answer.
+`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there. An entry that is `stays_open` leaves the menu open when chosen, for a choice among outputs or devices, where the tick and the details moving are the answer. A rich entry's second line is one line, ending in an ellipsis with the rest in its tooltip, so a long one never widens the menu. What acts on a row without choosing it is an `action`: a quiet glyph with a tooltip naming it (`lit_action` in the accent while on, as an output's EQ), or a `text_action`, a word or two ("move here"). Where a row's last action is words, a choice's tick shares that last slot with it, as what is chosen is never moved to; beside glyphs the tick keeps its own column. Ticks are in the accent, and the chosen row of a menu of choices stands on the accent at 12%, inset from the panel's edges and rounded, as the Mac's picker draws it; every row's ground is inset and rounded alike. A rich row keeps two lines' height without a second line, its title centred. A menu whose rows change while it is open keeps a `min_width`; pickers of places (outputs, devices) take `Menu::PICKER_WIDTH`, sized for a rich row with its detail and a "move here", so they hold their size. Every row keeps as many slots at its end as the most any row of the menu has, filled from the end, so the actions line up whichever rows have them.
 
 ### Controls
 
@@ -214,6 +214,19 @@ progress.set(0, fraction);                 // from any thread, as the engine rep
 - `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
+
+### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
+
+A control answers what was done to it, by itself, so every page that uses it answers alike: `Answerer::of(id)` taken as the control draws, `start(answer, colour)` from its own handler, and `layer()` as its last child, one `ANSWER` shader quad over the control and a little past it for `Motion::SETTLE` at most, in the accent at low opacity. The clock runs only while an answer is drawn and the quad leaves the scene when it ends; under Reduce Motion, or where the renderer draws no shaders, nothing is drawn.
+
+| Control | Answer |
+|---|---|
+| `Button` (glyph kinds, toolbar), `TransportControl`, `IconToggle` and `Toggle` turned on | a ring leaving the glyph or box |
+| `Button` (prominent, bordered), the stepper's buttons, `CopyButton` | the ground lifting and settling |
+| `Heart` | six dots leaving a heart that fills; a ring closing in on one that empties |
+| `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row) | a line drawn in under it |
+
+`SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
 
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
 

@@ -12,7 +12,7 @@ use koan_kit::app::*;
 use super::Lib;
 use super::drag::{Playable, sources};
 use super::nav::Page;
-use crate::theme::Icon;
+use crate::theme::{Icon, Tone};
 
 /// Put `items` in the queue. The returned task ends once the engine has the
 /// command, which is when a sleeve's "starting" mark can go.
@@ -202,6 +202,30 @@ pub struct MenuTarget {
     pub after: After,
 }
 
+/// What the menu key's menu acts on: the pick when the item under the
+/// keyboard's cursor is in it, the item alone otherwise. `album` is the
+/// record of a single track, for "go to album".
+pub fn keyed_target(
+    selection: &super::selection::Selection,
+    item: Playable,
+    album: Option<i64>,
+) -> MenuTarget {
+    let picked = selection.picked();
+    if selection.contains(item) && picked.len() > 1 {
+        MenuTarget {
+            items: picked.into(),
+            album: None,
+            after: None,
+        }
+    } else {
+        MenuTarget {
+            items: Arc::from([item]),
+            album,
+            after: None,
+        }
+    }
+}
+
 /// A page with one context menu over its list, rather than one per row: a
 /// row notes what was right-clicked, and the list's menu acts on it.
 pub trait Menus: Sized + 'static {
@@ -267,7 +291,6 @@ pub fn menu(
     let container =
         items.len() > 1 || matches!(single, Some(Playable::Album(_) | Playable::Artist(_)));
     let favourited = items.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
-    let playlists = lib.feed.read(cx).playlists.clone();
 
     let verb = |label: &'static str, icon: Icon, f: fn(&Lib, &[Playable], &mut App)| {
         let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
@@ -294,45 +317,13 @@ pub fn menu(
             play(lib, items, true, cx).detach()
         }));
     }
-    let (sub_lib, sub_items, sub_after) = (lib.clone(), items.clone(), after.clone());
-    menu = menu.separator().submenu_icon(
-        "add to playlist",
-        Icon::Playlist,
+    menu = playlist_submenu(
+        menu.separator(),
+        lib,
+        items.clone(),
+        after.clone(),
         window,
         cx,
-        move |mut menu, _, _| {
-            {
-                let (lib, items, after) = (sub_lib.clone(), sub_items.clone(), sub_after.clone());
-                menu = menu.item(MenuEntry::new("new playlist…").icon(Icon::Add).on_click(
-                    move |_, window, cx| {
-                        super::playlist::new_playlist(
-                            lib.engine.clone(),
-                            lib.nav.read(cx).navigator(),
-                            sources(&items),
-                            window,
-                            cx,
-                        );
-                        if let Some(after) = &after {
-                            after(cx);
-                        }
-                    },
-                ));
-            }
-            if !playlists.is_empty() {
-                menu = menu.separator();
-            }
-            for (id, name) in &playlists {
-                let (lib, items, after, id) =
-                    (sub_lib.clone(), sub_items.clone(), sub_after.clone(), *id);
-                menu = menu.item(MenuEntry::data(name.clone()).on_click(move |_, _, cx| {
-                    add_to_playlist(&lib, id, &items, cx);
-                    if let Some(after) = &after {
-                        after(cx);
-                    }
-                }));
-            }
-            menu
-        },
     );
     menu = menu.item(verb(
         if favourited {
@@ -347,6 +338,12 @@ pub fn menu(
         },
         favourite,
     ));
+    let (engine, sets) = (lib.engine.clone(), sources(&items));
+    menu = menu.item(
+        MenuEntry::new("copy share link")
+            .icon(Icon::Share)
+            .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
+    );
     // Moving the pick's files where a pattern puts them, previewed first.
     let (organise_lib, organise_items) = (lib.clone(), items.clone());
     menu = menu.separator().item(
@@ -359,9 +356,13 @@ pub fn menu(
     let (drop_lib, drop_items) = (lib.clone(), items.clone());
     menu = menu
         .item(
-            MenuEntry::new("download to cache")
-                .icon(Icon::Downloads)
-                .on_click(move |_, _, cx| download(&fetch_lib, &fetch_items, cx)),
+            MenuEntry::new(if container {
+                "download all to cache"
+            } else {
+                "download to cache"
+            })
+            .icon(Icon::Downloads)
+            .on_click(move |_, _, cx| download(&fetch_lib, &fetch_items, cx)),
         )
         .item(
             MenuEntry::new("remove downloaded files…")
@@ -400,4 +401,106 @@ pub fn menu(
         _ => {}
     }
     menu
+}
+
+/// "add to playlist": a new playlist holding `items`, then every playlist
+/// that takes tracks. One submenu for the library's menus and the queue's.
+pub fn playlist_submenu(
+    menu: Menu,
+    lib: &Lib,
+    items: Arc<[Playable]>,
+    after: After,
+    window: &mut Window,
+    cx: &mut Context<Menu>,
+) -> Menu {
+    let playlists = lib.feed.read(cx).playlists.clone();
+    let lib = lib.clone();
+    menu.submenu_icon(
+        "add to playlist",
+        Icon::Playlist,
+        window,
+        cx,
+        move |mut menu, _, _| {
+            {
+                let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
+                menu = menu.item(MenuEntry::new("new playlist…").icon(Icon::Add).on_click(
+                    move |_, window, cx| {
+                        super::playlist::new_playlist(
+                            lib.engine.clone(),
+                            lib.nav.read(cx).navigator(),
+                            sources(&items),
+                            window,
+                            cx,
+                        );
+                        if let Some(after) = &after {
+                            after(cx);
+                        }
+                    },
+                ));
+            }
+            if !playlists.is_empty() {
+                menu = menu.separator();
+            }
+            for (id, name) in &playlists {
+                let (lib, items, after, id) = (lib.clone(), items.clone(), after.clone(), *id);
+                menu = menu.item(MenuEntry::data(name.clone()).on_click(move |_, _, cx| {
+                    add_to_playlist(&lib, id, &items, cx);
+                    if let Some(after) = &after {
+                        after(cx);
+                    }
+                }));
+            }
+            menu
+        },
+    )
+}
+
+/// Asks the server for a public link to the tracks `sets` name and copies
+/// it: pasting it somewhere is the only thing anyone does with one. Only
+/// tracks the server holds can go in it; the notice says how many were left
+/// out. Said either way on the app's notice line, since a link copied in
+/// silence, or not at all, looks the same as a click that missed.
+pub fn copy_share_link(
+    engine: Arc<koan_ffi::KoanEngine>,
+    sets: Vec<koan_ffi::TrackSet>,
+    name: Option<String>,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        let said = |text: String, tone: Tone, cx: &mut AsyncApp| {
+            cx.update(|cx| crate::notice::show(text, tone, cx));
+        };
+        let what = name.clone().unwrap_or_else(|| "these tracks".to_owned());
+        let ids = match engine.clone().track_ids_of(sets).await {
+            Ok(ids) if !ids.is_empty() => ids,
+            Ok(_) => return said(format!("{what}: nothing to share"), Tone::Muted, cx),
+            Err(e) => {
+                log::warn!("share {what}: {e}");
+                return said(format!("Couldn't share {what}: {e}"), Tone::Bad, cx);
+            }
+        };
+        match engine.create_share(ids, name.clone()).await {
+            Ok(share) => cx.update(|cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(share.url));
+                let text = if share.skipped > 0 {
+                    format!(
+                        "A share link is copied: {} of {} tracks; the rest aren't on your server",
+                        share.shared,
+                        share.shared + share.skipped
+                    )
+                } else {
+                    match &name {
+                        Some(name) => format!("A link to {name} is copied"),
+                        None => "A share link is copied".to_owned(),
+                    }
+                };
+                crate::notice::show(text, Tone::Muted, cx);
+            }),
+            Err(e) => {
+                log::warn!("share {what}: {e}");
+                said(format!("Couldn't share {what}: {e}"), Tone::Bad, cx);
+            }
+        }
+    })
+    .detach();
 }

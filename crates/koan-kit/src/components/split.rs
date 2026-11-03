@@ -3,6 +3,11 @@
 //! the resize cursor; dragging it moves the column between its least and
 //! greatest widths, and a double click puts it back. The width is the
 //! owner's, which keeps it (with the window's bounds, for the sidebar).
+//!
+//! Hidden and shown again, the column slides: its width eases to nothing
+//! and back over `Motion::SETTLE`, its content laid out at full width and
+//! clipped, so nothing in it reflows as it goes. At once under Reduce
+//! Motion.
 
 use std::rc::Rc;
 
@@ -10,7 +15,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::child;
-use crate::theme::Look;
+use crate::theme::{Look, Motion};
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
@@ -22,6 +27,7 @@ pub struct SplitView {
     max: Pixels,
     reset: Pixels,
     leading: Option<AnyElement>,
+    shown: bool,
     trailing: Option<AnyElement>,
     on_resize: Option<OnWidth>,
     on_commit: Option<OnWidth>,
@@ -57,6 +63,7 @@ impl SplitView {
             max,
             reset,
             leading: None,
+            shown: true,
             trailing: None,
             on_resize: None,
             on_commit: None,
@@ -66,6 +73,13 @@ impl SplitView {
     /// The leading column; without one the trailing fills the view.
     pub fn leading(mut self, leading: impl IntoElement) -> Self {
         self.leading = Some(leading.into_any_element());
+        self
+    }
+
+    /// Whether the leading column shows; it slides in and out as this
+    /// changes, so the owner hands it over whether shown or not.
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.shown = shown;
         self
     }
 
@@ -92,9 +106,17 @@ impl RenderOnce for SplitView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let rule = look.palette.rule.hsla();
-        let Some(leading) = self.leading else {
+        let open = super::fade(
+            child(&self.id, "shown"),
+            self.shown,
+            Motion::SETTLE,
+            window,
+            cx,
+        );
+        let Some(leading) = self.leading.filter(|_| open > 0.0) else {
             return div().size_full().flex().children(self.trailing);
         };
+        let settled = self.shown && open >= 1.0;
         // Set on a press on the grip and cleared on release, without a
         // notify: nothing is drawn from it.
         let drag = window.use_keyed_state(child(&self.id, "drag"), cx, |_, _| None::<Drag>);
@@ -188,7 +210,14 @@ impl RenderOnce for SplitView {
             .relative()
             .size_full()
             .flex()
-            .child(div().w(width).h_full().flex_none().child(leading))
+            .child(
+                div()
+                    .w(width * open)
+                    .h_full()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(div().w(width).h_full().child(leading)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -198,7 +227,6 @@ impl RenderOnce for SplitView {
                     .border_color(rule)
                     .children(self.trailing),
             )
-            .child(follow)
-            .child(grip)
+            .when(settled, |d| d.child(follow).child(grip))
     }
 }

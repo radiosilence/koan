@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod answer;
 mod availability;
 mod badge;
 mod banner;
@@ -29,6 +30,7 @@ mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod heart;
 mod inspector;
 mod level;
 mod link_text;
@@ -51,6 +53,7 @@ mod scroll;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
+mod slide;
 mod slider;
 mod sparkline;
 mod spinner;
@@ -63,6 +66,7 @@ mod tabs;
 mod tile;
 mod toggle;
 mod toolbar;
+mod transport_control;
 mod viewer;
 mod window;
 
@@ -70,11 +74,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Global, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Window, canvas, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
+pub use answer::{ANSWER, Answer, Answerer};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
@@ -90,7 +96,8 @@ pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
-        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+        Activate, Down, ExtendDown, ExtendLeft, ExtendRight, ExtendUp, First, Last, Left, PageDown,
+        PageUp, Pick, Right, ShowMenu, Up,
     };
 }
 pub use empty::EmptyState;
@@ -101,6 +108,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
     form_text,
 };
+pub use heart::Heart;
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
@@ -130,6 +138,7 @@ pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use selection_bar::SelectionBar;
+pub use slide::{Slide, SlideState};
 pub use slider::{Glide, Slider};
 pub use sparkline::Sparkline;
 pub use spinner::Spinner;
@@ -145,6 +154,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
+pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::SecondaryWindow;
 
@@ -307,7 +317,25 @@ pub(crate) fn cursor_ring(look: &Look) -> Div {
         .inset_0()
         .border(MARK)
         .border_color(look.accent.hsla())
+        .child(
+            canvas(
+                |bounds, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
 }
+
+/// Where the keyboard's cursor ring was drawn, and in which window: what the
+/// menu key opens a context menu under. The key clears it and lets a frame
+/// draw, so only a ring drawn in that frame counts.
+#[derive(Default)]
+pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
+
+impl Global for CursorAt {}
 
 /// Two colours mixed, `t` of the way from `a` to `b`.
 pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {

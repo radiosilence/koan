@@ -60,6 +60,7 @@ pub struct TileArt {
     heart: Option<(bool, bool)>,
     pick: Option<bool>,
     sheen: Option<(ElementId, bool)>,
+    cursor: bool,
 }
 
 impl TileArt {
@@ -86,6 +87,7 @@ impl TileArt {
             heart: None,
             pick: None,
             sheen: None,
+            cursor: false,
         }
     }
 
@@ -137,6 +139,13 @@ impl TileArt {
     /// (brat's palette when `brat`): for the tile the pointer is on.
     pub fn sheen(mut self, sheen: Option<(ElementId, bool)>) -> Self {
         self.sheen = sheen;
+        self
+    }
+
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// the focus ring, inside the sleeve, once the keyboard was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -303,6 +312,9 @@ impl RenderOnce for TileArt {
                     .left(px(Self::HEART_INSET))
                     .child(tick.points(Self::TICK / 1.2).color(gpui_kit::white())),
             );
+        }
+        if self.cursor && window.last_input_was_keyboard() {
+            art = art.child(super::cursor_ring(&look));
         }
         art
     }

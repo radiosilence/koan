@@ -28,11 +28,16 @@ pub struct NavRow {
     icon: Option<Icon>,
     art: Option<AnyElement>,
     detail: Option<SharedString>,
+    trailing: Option<SharedString>,
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
+    accepts: Vec<Accept>,
 }
+
+/// A drop a row takes, attached as the row draws so the drop answers.
+type Accept = Box<dyn FnOnce(Stateful<Div>, super::Answerer, gpui_kit::Hsla) -> Stateful<Div>>;
 
 impl InteractiveElement for NavRow {
     fn interactivity(&mut self) -> &mut Interactivity {
@@ -57,10 +62,28 @@ impl NavRow {
             icon: None,
             art: None,
             detail: None,
+            trailing: None,
             selected: false,
             cursor: false,
             on_click: None,
+            accepts: Vec::new(),
         }
+    }
+
+    /// Something dropped on the row (tracks on the queue, a record on a
+    /// playlist): the row answers with a line drawn under it, so the person
+    /// sees where it went, then `handler` takes it.
+    pub fn accept<T: 'static>(
+        mut self,
+        handler: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.accepts.push(Box::new(move |base, answers, accent| {
+            base.on_drop(move |dropped: &T, window, cx| {
+                answers.start(super::Answer::Sweep, accent, cx);
+                handler(dropped, window, cx)
+            })
+        }));
+        self
     }
 
     /// Under the keyboard's cursor: its list holds the keyboard and the
@@ -81,6 +104,13 @@ impl NavRow {
     /// A line under the label, in `meta`, `muted`: a playlist's count.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// A figure at the trailing edge, in `fine`, `muted`: how many
+    /// downloads are running. Only while there is one to say.
+    pub fn trailing(mut self, figure: impl Into<SharedString>) -> Self {
+        self.trailing = Some(figure.into());
         self
     }
 
@@ -119,6 +149,12 @@ impl RenderOnce for NavRow {
             on,
         );
         let on_click = self.on_click;
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let accent = look.accent.hsla();
+        let mut base = self.base;
+        for accept in self.accepts {
+            base = accept(base, answers.clone(), accent);
+        }
         let ink = look.palette.ink.hsla();
         let name = self.label.clone();
         let label = div()
@@ -129,7 +165,7 @@ impl RenderOnce for NavRow {
             .child(self.label);
         let selected = self.selected;
         // A link to a screen reader: to its place, selected where it is.
-        accessible(self.base, gpui_kit::Role::Link, Some(name))
+        accessible(base, gpui_kit::Role::Link, Some(name))
             .aria_selected(selected)
             .group(NAV_ROW)
             .relative()
@@ -183,6 +219,15 @@ impl RenderOnce for NavRow {
                     ),
                 ),
             })
+            .children(self.trailing.map(|figure| {
+                div()
+                    .ml_auto()
+                    .flex_none()
+                    .text_role(TypeRole::Fine, &look)
+                    .text_color(look.palette.muted.hsla())
+                    .child(figure)
+            }))
+            .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
                 answers_click(row, on_click.clone())
                     .cursor_pointer()

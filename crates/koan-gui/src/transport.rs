@@ -17,8 +17,8 @@ use koan_kit::raw::StyleRefinement;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
-    MenuSlot, SHADED, Slider, TransportMetrics,
+    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
+    Slider, TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -482,6 +482,7 @@ struct OutputView {
 /// has its EQ button, in the accent while an EQ is in force there. Under the
 /// renderer in use, its own volume and what it is sent.
 fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
+    let menu = menu.min_width(ThemeMenu::PICKER_WIDTH);
     let mut menu = menu.section("output");
     let Some(outputs) = &view.outputs else {
         let name = view.controlled.as_deref().unwrap_or("That device");
@@ -498,21 +499,12 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
                 command(cx, "select output", move |e| e.select_output(choice));
             })
     };
-    let eq = |id: String, on: bool| {
-        move |_: &mut Window, _: &mut App| {
-            let device = id.clone();
-            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
-                .icon(Icon::Filters)
-                .label("eq")
-                .when(on, |b| b.tone(Tone::Accent))
-                // The EQ of the device this row names, which need not be the
-                // one in use.
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    crate::dsp::window::open(Some(device.clone()), cx);
-                })
-                .into_any_element()
-        }
+    // The EQ of the device a row names, which need not be the one in use;
+    // lit while it has one.
+    let eq = |entry: MenuEntry, id: String, on: bool| {
+        entry.lit_action(Icon::Filters, "eq for this output", on, move |_, _, cx| {
+            crate::dsp::window::open(Some(id.clone()), cx);
+        })
     };
     let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
         (Some(preset), true) => format!("{preset}, edited"),
@@ -544,11 +536,14 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = device.preset.is_some() || device.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(device.name.clone())
-                .icon(output_icon(&device.kind))
-                .rich(detail)
-                .warns(busy)
-                .trailing(eq(device.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(device.name.clone())
+                    .icon(output_icon(&device.kind))
+                    .rich(detail)
+                    .warns(busy),
+                device.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
@@ -575,12 +570,15 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         };
         let shaped = renderer.preset.is_some() || renderer.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(renderer.name.clone())
-                .icon(Icon::Speaker)
-                .reach(Icon::Wifi)
-                .rich(detail)
-                .warns(problem.is_some() || busy)
-                .trailing(eq(renderer.id.clone(), shaped)),
+            eq(
+                MenuEntry::data(renderer.name.clone())
+                    .icon(Icon::Speaker)
+                    .reach(Icon::Wifi)
+                    .rich(detail)
+                    .warns(problem.is_some() || busy),
+                renderer.id.clone(),
+                shaped,
+            ),
             chosen,
             id,
         ));
@@ -637,14 +635,6 @@ fn blocked_note() -> String {
     } else {
         "macOS isn't letting kōan on the local network, so no network speaker can be found. Started outside its app, it has the permission of the app that started it: allow that app in System Settings › Privacy & Security › Local Network, or run kōan from its bundle.".to_owned()
     }
-}
-
-/// A stable small number for an id string, for an element id.
-pub(crate) fn id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    id.hash(&mut h);
-    h.finish()
 }
 
 /// An output's glyph by how it is connected, as the Mac's picker gives it.
@@ -771,53 +761,6 @@ const TEXT_BUTTON: &str = "transport-text-button";
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = SharedString::from(text);
     move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
-}
-
-/// A transport control: `on` for the two that toggle, underlined in the
-/// accent while on and `muted` while off, as an icon toggle is.
-fn control(
-    id: &'static str,
-    icon: Icon,
-    label: &'static str,
-    on: Option<bool>,
-    p: &Paint,
-    window: &mut Window,
-    cx: &mut App,
-) -> Stateful<Div> {
-    // A stop in the window's Tab order, which Return and Space click.
-    let focus = crate::components::tab_stop(&id.into(), window, cx);
-    let ring = crate::components::focus_ring(&focus, window, cx);
-    let (color, underline) = match on {
-        Some(true) => (p.ink, Some(p.accent)),
-        Some(false) => (p.muted, None),
-        None => (p.ink, None),
-    };
-    // 44 points wide to hit, as the spec asks, but only the glyph's width in
-    // the layout: the rest of the hit area reaches into the gaps beside it,
-    // so the glyphs sit as far apart as the Mac's. As tall as the controls'
-    // row, which the transport's metrics keep clear of the seek bar.
-    let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
-    let reach = (theme::HIT - glyph) / 2.;
-    div()
-        .id(id)
-        .relative()
-        .track_focus(&focus)
-        .w(theme::HIT)
-        .mx(-reach)
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_role(TypeRole::Control, &p.look)
-        .text_color(color)
-        .hover(|s| s.opacity(0.8))
-        .child(
-            div()
-                .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
-        )
-        .children(ring)
 }
 
 fn format_badge(format: &StreamFormat) -> String {
@@ -978,10 +921,16 @@ impl Render for Transport {
 
         // The one control reached for without looking: outlined, as the
         // Mac's is.
-        let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
-            .icon(if playing { Icon::Pause } else { Icon::Play })
-            .label(if playing { "pause" } else { "play" })
-            .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
+        let play_pause = Button::icon_outlined(
+            "play-pause",
+            if playing { Icon::Pause } else { Icon::Play },
+            help(
+                if playing { "pause" } else { "play" },
+                &crate::platform::actions::TogglePlayPause,
+                cx,
+            ),
+        )
+        .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         // The controls and the seek bar placed by koan-kit's metrics: centred
         // in the bar as the Mac's, the controls' hit row never reaching the
@@ -1003,52 +952,52 @@ impl Render for Transport {
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        control(
+                        TransportControl::new(
                             "shuffle",
                             Icon::Shuffle,
                             "shuffle",
-                            Some(shuffle),
-                            &p,
-                            window,
-                            cx,
+                            theme::label(if shuffle {
+                                "shuffle: on"
+                            } else {
+                                "shuffle: off"
+                            }),
                         )
-                        .tooltip(tip(if shuffle {
-                            "shuffle: on"
-                        } else {
-                            "shuffle: off"
-                        }
-                        .to_owned()))
+                        .on(shuffle)
                         .on_click(move |_, _, cx| {
                             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
                         }),
                     )
                     .child(
-                        control("previous", Icon::Previous, "prev", None, &p, window, cx)
-                            .tooltip(tip(help("previous track", &Previous, cx)))
-                            .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
+                        TransportControl::new(
+                            "previous",
+                            Icon::Previous,
+                            "prev",
+                            help("previous track", &Previous, cx),
+                        )
+                        .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", Icon::Next, "next", None, &p, window, cx)
-                            .tooltip(tip(help("next track", &Next, cx)))
-                            .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
+                        TransportControl::new(
+                            "next",
+                            Icon::Next,
+                            "next",
+                            help("next track", &Next, cx),
+                        )
+                        .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
-                        control(
+                        TransportControl::new(
                             "repeat",
                             repeat_icon,
                             repeat_label,
-                            Some(now.repeat_mode != RepeatMode::Off),
-                            &p,
-                            window,
-                            cx,
+                            theme::label(match now.repeat_mode {
+                                RepeatMode::Off => "repeat: off",
+                                RepeatMode::Queue => "repeat: the queue",
+                                RepeatMode::One => "repeat: this track",
+                            }),
                         )
-                        .tooltip(tip(match now.repeat_mode {
-                            RepeatMode::Off => "repeat: off",
-                            RepeatMode::Queue => "repeat: the queue",
-                            RepeatMode::One => "repeat: this track",
-                        }
-                        .to_owned()))
+                        .on(now.repeat_mode != RepeatMode::Off)
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
                         }),
