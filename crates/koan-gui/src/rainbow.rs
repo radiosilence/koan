@@ -298,6 +298,9 @@ pub fn set_active(active: bool, cx: &mut App) {
 /// windows, and sets the accent now.
 fn refresh(cx: &mut App) {
     let drawn = Rainbow::drawn(cx);
+    // The sheen is a wash whatever "colours from the record" says, so the
+    // panels clear for it as they do for the record's.
+    KoanTheme::set_painted_wash(drawn, cx);
     let cycling = drawn && cx.global::<Rainbow>().active && KoanTheme::motion_allowed(cx);
     if drawn {
         let r = cx.global::<Rainbow>();

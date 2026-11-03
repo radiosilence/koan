@@ -1,0 +1,1 @@
+- **Closed windows leave nothing behind for the playing bars.** The kōan GUI app no longer keeps an entry per window ever opened (Settings, the EQ, About) in what feeds the playing bars.

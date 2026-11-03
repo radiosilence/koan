@@ -2035,6 +2035,24 @@ impl KoanEngine {
         .await
     }
 
+    /// LRCLIB asked by tags, for a queue entry the library no longer has: it
+    /// plays from its own metadata, and nothing is cached for it.
+    pub async fn lyrics_by_tags(
+        self: Arc<Self>,
+        artist: String,
+        title: String,
+        album: String,
+        duration_ms: Option<u64>,
+    ) -> Option<Lyrics> {
+        offload::offload(move || {
+            let duration_secs = duration_ms.unwrap_or(0) / 1000;
+            koan_core::lyrics::fetch_from_lrclib(&artist, &title, &album, duration_secs)
+                .ok()
+                .map(Into::into)
+        })
+        .await
+    }
+
     // --- Artist info -------------------------------------------------------
 
     /// Cached only — never the network, so a page can ask on every draw.

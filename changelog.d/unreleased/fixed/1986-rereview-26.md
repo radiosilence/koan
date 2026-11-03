@@ -1,0 +1,1 @@
+- **Library menu questions, notices and the artist page.** In the kōan GUI app, Clear Downloaded Files and Rebuild Index ask in the main window, brought forward, rather than behind Settings or the EQ; a notice cut short at the sidebar's foot shows its whole text under the pointer; and an artist page scrolled down to its biography keeps its place.

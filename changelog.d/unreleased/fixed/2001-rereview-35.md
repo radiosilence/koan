@@ -1,0 +1,1 @@
+- **Credits, grouping and the EQ graph.** In the kōan GUI app a long credit cuts its names rather than the joins between them, the queue's grouping toggle answers a second press before the first has been laid out, a closed window's album page no longer holds the other windows' colours, and the EQ overview's graph is no longer clipped.
