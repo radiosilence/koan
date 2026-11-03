@@ -11155,6 +11155,143 @@ mod tests {
         }
     }
 
+    /// What the cover preload costs one cover at a time, six at a time and
+    /// through `koanCovers`, against this server on a port with 20 ms added
+    /// to every answer, as across the internet, for a library of a thousand
+    /// albums whose 600 px covers are made. Run by hand:
+    /// `cargo test -p koan-server --release --lib preload_timings -- --ignored --nocapture`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn preload_timings() {
+        const ALBUMS: usize = 1000;
+        const LATENCY: std::time::Duration = std::time::Duration::from_millis(20);
+        let (state, dir) = test_state();
+        // A photograph's worth of detail, so the JPEG is a sleeve's size.
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
+            .encode_image(&image::RgbImage::from_fn(600, 600, |x, y| {
+                let n = x.wrapping_mul(2654435761) ^ y.wrapping_mul(40503);
+                image::Rgb([(n >> 3) as u8, (n >> 11) as u8, (n >> 19) as u8])
+            }))
+            .unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..ALBUMS {
+            let album = dir.path().join(format!("Album {i}"));
+            std::fs::create_dir_all(&album).unwrap();
+            let track = album.join("01.flac");
+            std::fs::write(&track, b"no tags here").unwrap();
+            std::fs::write(album.join("folder.jpg"), &jpeg).unwrap();
+            queries::upsert_track(
+                &db.conn,
+                &track_meta(track.to_str().unwrap(), "Song", &format!("Album {i}"), 1),
+            )
+            .unwrap();
+            let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
+                .unwrap()
+                .unwrap();
+            let album_id = queries::get_track_row(&db.conn, track_id)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap();
+            ids.push(format!("al-{album_id}"));
+        }
+        let app = build_test_router(state);
+        // Made once, as the warm makes them.
+        for id in &ids {
+            let made = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/rest/getCoverArt?{}&id={id}&size=600",
+                            auth_query("")
+                        ))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            axum::body::to_bytes(made.into_body(), usize::MAX)
+                .await
+                .unwrap();
+        }
+        let slow = app.layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                tokio::time::sleep(LATENCY).await;
+                next.run(req).await
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, slow).await.unwrap() });
+        let report = tokio::task::spawn_blocking(move || {
+            use koan_core::remote::client::SubsonicClient;
+            let client = SubsonicClient::new(&url, "testuser", "testpass");
+            let rate = |n: usize, took: std::time::Duration| n as f64 / took.as_secs_f64();
+            let mut report = Vec::new();
+            // One at a time, as before: a tenth of the library, which says
+            // the rate.
+            let started = std::time::Instant::now();
+            let tenth = &ids[..ALBUMS / 10];
+            let mut bytes = 0;
+            for id in tenth {
+                bytes += client
+                    .get_cover_art_background(id, Some(600))
+                    .unwrap()
+                    .len();
+            }
+            let took = started.elapsed();
+            report.push(format!(
+                "one at a time: {} in {took:.2?} ({:.0} a second, {} KB each)",
+                tenth.len(),
+                rate(tenth.len(), took),
+                bytes / tenth.len() / 1024
+            ));
+            // Six at a time.
+            let started = std::time::Instant::now();
+            let next = parking_lot::Mutex::new(ids.iter());
+            std::thread::scope(|scope| {
+                for _ in 0..6 {
+                    scope.spawn(|| {
+                        while let Some(id) = next.lock().next() {
+                            client.get_cover_art_background(id, Some(600)).unwrap();
+                        }
+                    });
+                }
+            });
+            let took = started.elapsed();
+            report.push(format!(
+                "six at a time: {ALBUMS} in {took:.2?} ({:.0} a second)",
+                rate(ALBUMS, took)
+            ));
+            // koanCovers, two hundred to a request.
+            let started = std::time::Instant::now();
+            let mut covers = 0;
+            for chunk in ids.chunks(koan_core::remote::covers::BULK_MAX) {
+                client
+                    .get_covers(chunk, 600, &mut |_, cover| {
+                        if matches!(cover, koan_core::remote::covers::BulkCover::Cover(_)) {
+                            covers += 1;
+                        }
+                    })
+                    .unwrap();
+            }
+            let took = started.elapsed();
+            report.push(format!(
+                "koanCovers: {covers} of {ALBUMS} in {took:.2?} ({:.0} a second)",
+                rate(covers, took)
+            ));
+            report
+        })
+        .await
+        .unwrap();
+        for line in report {
+            println!("preload timings: {line}");
+        }
+    }
+
     /// `koanCovers` answers from the covers already made: not held before
     /// any has been asked for, then the cover `getCoverArt` made, and an id
     /// it cannot place as not held, every id in the order asked.
