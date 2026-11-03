@@ -23,6 +23,7 @@ const WIDTH: f32 = 2560.0;
 const HEIGHT: f32 = 1600.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") else {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
     };

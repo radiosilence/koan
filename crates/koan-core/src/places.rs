@@ -13,6 +13,11 @@
 //! - `runtime`: locks. `$XDG_RUNTIME_DIR` on Linux, else `state`.
 //! - `cache`: anything that may be deleted. `$XDG_CACHE_HOME` on Linux,
 //!   `~/Library/Caches` on macOS.
+//!
+//! `KOAN_PLACES_DIR` puts all three under one directory instead
+//! (`<dir>/state`, `<dir>/runtime`, `<dir>/cache`): what a throwaway
+//! configuration's tools and examples set, so removing the throwaway removes
+//! everything it wrote.
 
 use std::path::{Path, PathBuf};
 
@@ -61,14 +66,39 @@ fn under(base: Option<PathBuf>) -> PathBuf {
         .join(key())
 }
 
+/// For a tool run against a throwaway `KOAN_CONFIG_DIR` (the GUI's examples
+/// and benches): keeps its runtime places in `places` inside that directory,
+/// unless `KOAN_PLACES_DIR` already says where, so deleting the throwaway
+/// deletes them too. Does nothing without a `KOAN_CONFIG_DIR`. Call it first
+/// in `main`, before any thread starts: it sets an environment variable.
+pub fn keep_with_config() {
+    if std::env::var_os("KOAN_PLACES_DIR").is_some() {
+        return;
+    }
+    if let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") {
+        // SAFETY: documented as called before any other thread starts.
+        unsafe { std::env::set_var("KOAN_PLACES_DIR", PathBuf::from(config).join("places")) };
+    }
+}
+
+/// `KOAN_PLACES_DIR`'s `kind` directory, where it is set.
+fn overridden(kind: &str) -> Option<PathBuf> {
+    std::env::var_os("KOAN_PLACES_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| PathBuf::from(dir).join(kind))
+}
+
 /// Kept across launches, for this config directory.
 pub fn state() -> PathBuf {
-    under(dirs::state_dir().or_else(dirs::data_dir))
+    overridden("state").unwrap_or_else(|| under(dirs::state_dir().or_else(dirs::data_dir)))
 }
 
 /// Where locks go, for this config directory: cleared at log-out where the
 /// platform has such a place.
 pub fn runtime() -> PathBuf {
+    if let Some(dir) = overridden("runtime") {
+        return dir;
+    }
     match dirs::runtime_dir() {
         Some(dir) => under(Some(dir)),
         None => state(),
@@ -77,7 +107,7 @@ pub fn runtime() -> PathBuf {
 
 /// What may be deleted at any time, for this config directory.
 pub fn cache() -> PathBuf {
-    under(dirs::cache_dir())
+    overridden("cache").unwrap_or_else(|| under(dirs::cache_dir()))
 }
 
 /// Moves `name` from the config directory into `to`, once: when it is still
