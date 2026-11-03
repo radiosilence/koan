@@ -98,10 +98,17 @@ impl RenderOnce for TransportControl {
             div().child(self.label.clone()).into_any_element()
         };
         let answers = Answerer::of(&self.id, window, cx);
+        // A ring leaves a glyph; drawn as a word, the control is answered
+        // by a line under it, never a ring through its letters.
+        let ring = if look.icons {
+            Answer::Ring
+        } else {
+            Answer::Sweep
+        };
         // Shuffle or repeat turned on by a shortcut or another device rings
         // as a click does.
         match self.on {
-            Some(true) => answers.follow(1, Answer::Ring, look.accent.hsla(), window, cx),
+            Some(true) => answers.follow(1, ring, look.accent.hsla(), window, cx),
             Some(false) => answers.note(0, cx),
             None => {}
         }
@@ -110,7 +117,10 @@ impl RenderOnce for TransportControl {
         let accent = look.accent.hsla();
         let tip = self.help.clone();
         let on = self.on;
-        let answer = self.answer;
+        let answer = match self.answer {
+            Answer::Ring => ring,
+            answer => answer,
+        };
         super::track(
             accessible(
                 div().id(self.id.clone()),

@@ -120,7 +120,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         // appearance and a full hold.
         animated.set_all(
             0,
-            &[1.0, if dark { 1.0 } else { 0.0 }, bg.r, bg.g, bg.b, 1.0],
+            &[
+                1.0,
+                if dark { 1.0 } else { 0.0 },
+                bg.r,
+                bg.g,
+                bg.b,
+                1.0,
+                wash::tone_limit(dark),
+            ],
         );
         animated.hold(0, 0.0);
         animated.hold(1, 1.0);
