@@ -42,6 +42,8 @@ pub struct WindowRoot {
     /// Less transparency asked for: the window's ground in place of the wash.
     opaque: bool,
     wash_tint: u32,
+    /// The wash's pace and turn as last drawn.
+    drift: (u32, u32),
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
     /// The wash shows the rainbow's sheen.
@@ -81,6 +83,7 @@ impl WindowRoot {
         let playback = cx.global::<Mirror>().playback.clone();
         let theme = cx.global::<KoanTheme>();
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
+        let drift = (theme.wash_drift, theme.wash_turn);
         let followed = playback.clone();
         let shown = playback.clone();
         let painted = playback.clone();
@@ -91,6 +94,7 @@ impl WindowRoot {
             record_colours,
             opaque: KoanTheme::opaque(cx),
             wash_tint,
+            drift,
             fetching: None,
             rainbow: false,
             prism: Prism::new(),
@@ -195,6 +199,11 @@ impl WindowRoot {
         }
         let theme = cx.global::<KoanTheme>();
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
+        let drift = (theme.wash_drift, theme.wash_turn);
+        if drift != self.drift {
+            self.drift = drift;
+            self.wash.update(cx, |_, cx| cx.notify());
+        }
         if wash_tint != self.wash_tint {
             self.wash_tint = wash_tint;
             self.wash

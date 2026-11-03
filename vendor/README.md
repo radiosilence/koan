@@ -8,7 +8,7 @@ Copies of published crates carried with patches until the patches are taken upst
 
 | Crate | Version | Patches |
 |---|---|---|
-| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Tracks and the present clock (#1859): `src/shader.rs`. Colour slots (#1859): `src/color_slots.rs`, `scene.rs`, `window.rs`. Accessibility (#1776, #1778): `aria_disabled` and `aria_live` in `elements/div.rs` and the debug tree; `Window::dispatch_a11y_action` and `set_a11y_active_for_test` for tests (`window.rs`, `window/a11y.rs`) |
+| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Tracks and the present clock (#1859): `src/shader.rs`. Colour slots (#1859): `src/color_slots.rs`, `scene.rs`, `window.rs`. Cached views redrawn alone (#1815): `view.rs`. Accessibility (#1776, #1778): `aria_disabled` and `aria_live` in `elements/div.rs` and the debug tree; `Window::dispatch_a11y_action` and `set_a11y_active_for_test` for tests (`window.rs`, `window/a11y.rs`) |
 | `gpui-pre-apple` | 0.3.10 | Shader quads drawn by Metal (#1641), and `koan_track` in their prelude (#1859): `metal_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.metal` |
 | `gpui-pre-wgpu` | 0.3.10 | Shader quads drawn by wgpu, and the layered compose (#1641), and `koan_track` in their prelude (#1859): `wgpu_renderer.rs`. Colour slots in the stock shaders (#1859): `shaders.wgsl`, `shaders_subpixel.wgsl` |
 | `gpui-pre-macos` | 0.3.10 | Idle frames (#1609): `window.rs`, `display_link.rs`. The present lead from the display link's output time (#1859): `display_link.rs` |
@@ -36,6 +36,10 @@ A colour that moves without a frame drawn: an app-wide table of 255 colours (`co
 The block of uniforms is 80 floats: 16 plain values written when they change, then eight tracks of eight. A track is one segment of a moving value (`from`, `to`, `start` in seconds of shader time, `length`, a curve, a repeat), which the program evaluates at present time through the prelude's `koan_track(u, k, time)`; `Track::at` in `shader.rs` is the same evaluation on the CPU, which a retarget samples so it starts from what is on screen, and `tracks_draw_where_the_cpu_says` in `metal_renderer.rs` holds the two together. Curves are linear, a CSS cubic Bézier (its control points as half-float pairs) and a damped spring in closed form; a track holds its end, loops or alternates. A shader presents while a track moves and once more as the last comes to rest, with no `live` or `continuous` set by hand: the app writes keyframes when its data changes and the GPU draws every frame.
 
 `time` is reckoned at the present clock (`present_now`): now plus the lead the platform reports between encoding a frame and its showing (on macOS, the display link's output time), so motion does not jitter with encode latency, and the app's retarget reads the same clock.
+
+### Cached views redrawn alone (#1815)
+
+Upstream, a cached view drawn again sets the window's `refreshing` flag for everything inside it, so every cached view nested in it misses its cache and is drawn again too. A notify marks the view's ancestors dirty, so a change anywhere drew every cached view under its highest cached ancestor: in koan, the seek bar's tick each second drew the whole window. The patch leaves the flag as it was (`view.rs`): a view drawn again reuses the cached views inside it that are neither dirty nor moved, as the window's root already does for its cached children, so a change draws its own view and its ancestors only. `Window::refresh` still draws everything.
 
 ## gpui-pre-macos, gpui-pre-linux (0.3.10)
 

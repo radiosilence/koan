@@ -25,11 +25,8 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use koan_ffi::KoanEngine;
+use koan_kit::app::image::{RenderImage, Rgba};
 use koan_kit::app::*;
-// decoded images handed to the renderer.
-use koan_kit::raw::RenderImage;
-// a sleeve's average colour, computed from its pixels.
-use koan_kit::raw::Rgba;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 

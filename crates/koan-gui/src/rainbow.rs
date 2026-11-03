@@ -389,8 +389,7 @@ mod tests {
     use crate::components::list_actions as list;
     use core::prelude::v1::test;
 
-    // GPUI's test harness: a window driven with simulated input.
-    use koan_kit::raw::TestAppContext;
+    use koan_kit::app::test::TestAppContext;
 
     static TYPED: AtomicUsize = AtomicUsize::new(0);
 
@@ -423,12 +422,10 @@ mod tests {
 
     /// The code is heard while a list holds the keyboard, with B and A typed
     /// as capitals too, and holds back the arrows that carry it on.
-    // GPUI's test harness: a window driven with simulated input.
-    #[koan_kit::raw::test]
+    #[koan_kit::app::test::test]
     fn the_code_is_heard_over_a_list(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-            koan_kit::raw::init(cx);
+            koan_kit::app::platform::init(cx);
             cx.bind_keys([
                 KeyBinding::new("up", list::Up, Some("List")),
                 KeyBinding::new("down", list::Down, Some("List")),

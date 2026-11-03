@@ -10,6 +10,7 @@
 //! alone.
 
 mod more;
+mod playground;
 
 use std::sync::Arc;
 
@@ -50,10 +51,11 @@ pub enum Story {
     Panels,
     Motion,
     Rainbow,
+    Playground,
 }
 
 impl Story {
-    pub const ALL: [Story; 17] = [
+    pub const ALL: [Story; 18] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -71,6 +73,7 @@ impl Story {
         Story::Panels,
         Story::Motion,
         Story::Rainbow,
+        Story::Playground,
     ];
 
     /// Its name in the sidebar, and its PNG's.
@@ -93,6 +96,7 @@ impl Story {
             Story::Panels => "panels and sheets",
             Story::Motion => "motion and drag",
             Story::Rainbow => "rainbow",
+            Story::Playground => "motion playground",
         }
     }
 
@@ -184,6 +188,7 @@ pub struct StoryContent {
     tooltip: Entity<Tooltip>,
     outputs: Entity<Menu>,
     more: more::State,
+    playground: playground::State,
     _accent: Subscription,
 }
 
@@ -234,6 +239,7 @@ impl StoryContent {
                     .note("Living room plays the original files. ReplayGain and fades don't apply.")
             }),
             more: more::State::new(window, cx),
+            playground: playground::State::new(),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -360,6 +366,7 @@ impl StoryContent {
                 .gap(look.space(Space::M))
         };
         match self.story {
+            Story::Playground => self.playground(look, window, cx),
             Story::Collections | Story::Lists | Story::Panels | Story::Motion | Story::Rainbow => {
                 self.more(look, window, cx)
             }

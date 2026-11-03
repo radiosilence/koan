@@ -1,0 +1,1 @@
+- **The desktop app's Settings strip zooms the window on a double click**, as the main window's toolbar does. Internally, every page outside the EQ graph is now built from koan-kit's components.

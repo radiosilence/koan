@@ -56,6 +56,11 @@ pub struct KoanTheme {
     /// "Theme tint", in percent: how far the wash is held to its contrast
     /// limit.
     pub wash_tint: u32,
+    /// How fast the wash drifts, in percent of its own pace: 0 holds it
+    /// still.
+    pub wash_drift: u32,
+    /// How far the wash turns either way as it drifts, in degrees.
+    pub wash_turn: u32,
     /// "Wash the whole window": the wash runs under the sidebar and the
     /// toolbar as well as the page, and they draw no ground of their own.
     pub wash_window: bool,
@@ -88,6 +93,8 @@ impl Default for KoanTheme {
             icons: true,
             record_colours: true,
             wash_tint: 100,
+            wash_drift: 100,
+            wash_turn: 3,
             wash_window: true,
             low_power: false,
             contrast: false,
@@ -501,6 +508,15 @@ impl KoanTheme {
         cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
     }
 
+    /// The wash's drift: its pace in percent (0 still, up to 200) and how far
+    /// it turns either way, in degrees (up to 10). The wash observes the
+    /// theme, so it takes them at once.
+    pub fn set_wash_drift(percent: u32, degrees: u32, cx: &mut App) {
+        let theme = cx.global_mut::<KoanTheme>();
+        theme.wash_drift = percent.min(200);
+        theme.wash_turn = degrees.min(10);
+    }
+
     /// Moves the window's grounds, which sit in cached views: every window
     /// is drawn again.
     pub fn set_wash_window(on: bool, cx: &mut App) {
@@ -643,6 +659,12 @@ impl Look {
     /// that are not steps of the scale (a prominent button's 12 × 20).
     pub fn spaced(&self, points: f32) -> Pixels {
         px(points * self.scale.space)
+    }
+
+    /// A width that holds text, in points at 100 %, grown with the text
+    /// size rather than the spacing.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.scale.size)
     }
 
     pub fn font_size(&self, role: TypeRole) -> Pixels {

@@ -4,7 +4,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, ClickEvent, Context, ElementId, InteractiveElement,
     IntoElement, ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, div,
+    Styled, Window, anchored, deferred, div,
 };
 
 use super::Handler;
@@ -629,4 +629,27 @@ impl Render for Tooltip {
             .text_color(look.palette.ink.hsla())
             .child(self.text.clone())
     }
+}
+
+/// A panel standing by the control that opened it (a row's "more" menu),
+/// over the page and kept inside the window; a press anywhere else calls
+/// `on_dismiss`.
+pub fn anchored_panel(
+    id: impl Into<ElementId>,
+    content: impl IntoElement,
+    on_dismiss: impl Fn(&mut App) + 'static,
+    look: &Look,
+) -> impl IntoElement {
+    deferred(
+        anchored()
+            .snap_to_window_with_margin(look.space(Space::S))
+            .child(
+                div()
+                    .id(id)
+                    .occlude()
+                    .on_mouse_down_out(move |_, _, cx| on_dismiss(cx))
+                    .child(content),
+            ),
+    )
+    .with_priority(1)
 }

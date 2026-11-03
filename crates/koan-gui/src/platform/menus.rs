@@ -4,9 +4,8 @@
 //! from the shortcut table and its keys from the bindings, so the menus, the
 //! keys and the shortcuts sheet say the same thing.
 
+use koan_kit::app::platform::{Menu as BarMenu, MenuItem, OsAction, SystemMenuType};
 use koan_kit::app::{Action, App, Context, Window};
-// the platform's menu bar and Dock menu, which koan-kit does not draw.
-use koan_kit::raw::{Menu as BarMenu, MenuItem, OsAction, SystemMenuType};
 
 use super::actions::{self, APPLICATION, MENU, Shortcut};
 use crate::components::{Menu, MenuEntry};

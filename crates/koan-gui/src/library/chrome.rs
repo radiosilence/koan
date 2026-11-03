@@ -6,8 +6,6 @@
 use koan_ffi::BrowseChoices;
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's popover, the panel koan-kit's menus are built in.
-use koan_kit::raw::component::popover::Popover;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
@@ -142,48 +140,6 @@ impl Render for SearchField {
     }
 }
 
-/// A control that opens a panel: what a popover takes as its trigger.
-#[derive(IntoElement)]
-pub struct Trigger {
-    id: ElementId,
-    label: SharedString,
-    open: bool,
-}
-
-impl Trigger {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            open: false,
-        }
-    }
-}
-
-// gpui-component's focus and click extensions, for the shell's own handling.
-impl koan_kit::raw::base::Selectable for Trigger {
-    fn selected(mut self, selected: bool) -> Self {
-        self.open = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.open
-    }
-}
-
-impl RenderOnce for Trigger {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
-        div()
-            .id(self.id)
-            .cursor_pointer()
-            .typeset(p, Type::Control, if self.open { p.ink } else { p.muted })
-            .hover(|s| s.text_color(p.ink))
-            .child(self.label)
-    }
-}
-
 pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_album_sort();
     let browse = lib.browse.clone();
@@ -259,10 +215,9 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl IntoElement {
     let active = lib.browse.read(cx).active_filters();
     let panel = panel.clone();
-    Popover::new("filters")
-        .appearance(false)
-        .arrow(false)
-        .trigger(ToolbarButton::new(
+    crate::components::opens_panel(
+        "filters",
+        ToolbarButton::new(
             "filters-trigger",
             Icon::Filters,
             if active > 0 {
@@ -270,8 +225,9 @@ pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl I
             } else {
                 "filters".into()
             },
-        ))
-        .content(move |_, _, _| panel.clone())
+        ),
+        move |_, _, _| panel.clone().into_any_element(),
+    )
 }
 
 /// The browsers' filters, at a fixed 300 points wide: the toggles, then codec
@@ -388,32 +344,33 @@ impl FilterPanel {
         set: fn(&mut Browse, Option<String>),
     ) -> impl IntoElement {
         let browse = self.lib.browse.clone();
-        FormRow::new(label).compact().control(
-            Popover::new(id)
-                .appearance(false)
-                .arrow(false)
-                .trigger(Trigger::new(
+        FormRow::new(label)
+            .compact()
+            .control(crate::components::opens_panel(
+                id,
+                crate::components::TextTrigger::new(
                     SharedString::from(format!("{id}-trigger")),
                     current.clone().unwrap_or_else(|| "any".into()),
-                ))
-                .content(move |_, _, cx| {
+                ),
+                move |dismiss, _, _| {
                     let rows = std::iter::once(None).chain(options.iter().cloned().map(Some));
-                    MenuPanel::new().children(rows.enumerate().map(|(i, option)| {
-                        let browse = browse.clone();
-                        let ticked = option == current;
-                        let row = match &option {
-                            Some(label) => MenuRow::data((id, i), label.clone()),
-                            None => MenuRow::new((id, i), "any"),
-                        };
-                        row.checked(ticked)
-                            .on_click(cx.listener(move |state, _, window, cx| {
+                    MenuPanel::new()
+                        .children(rows.enumerate().map(|(i, option)| {
+                            let (browse, dismiss) = (browse.clone(), dismiss.clone());
+                            let ticked = option == current;
+                            let row = match &option {
+                                Some(label) => MenuRow::data((id, i), label.clone()),
+                                None => MenuRow::new((id, i), "any"),
+                            };
+                            row.checked(ticked).on_click(move |_, window, cx| {
                                 let option = option.clone();
                                 browse.update(cx, |b, cx| b.update(cx, |b| set(b, option)));
-                                state.dismiss(window, cx);
-                            }))
-                    }))
-                }),
-        )
+                                dismiss(window, cx);
+                            })
+                        }))
+                        .into_any_element()
+                },
+            ))
     }
 }
 
@@ -551,32 +508,29 @@ pub fn selection_bar<V: Picking>(
             "add the selection to the end of the queue",
             verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
         )
-        .element(
-            Popover::new("sel-playlist")
-                .appearance(false)
-                .arrow(false)
-                .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
-                .content(move |_, _, cx| {
-                    if playlists.is_empty() {
-                        return MenuPanel::new()
-                            .child(MenuRow::new("sel-pl-none", "no playlists").disabled(true))
-                            .into_any_element();
-                    }
-                    MenuPanel::new()
-                        .children(playlists.iter().enumerate().map(|(i, (id, name))| {
-                            let (lib, picked, end, id) =
-                                (lib2.clone(), picked2.clone(), end2.clone(), *id);
-                            MenuRow::data(("sel-pl", i), name.clone()).on_click(cx.listener(
-                                move |state, _, window, cx| {
-                                    actions::add_to_playlist(&lib, id, &picked, cx);
-                                    end(cx);
-                                    state.dismiss(window, cx);
-                                },
-                            ))
-                        }))
-                        .into_any_element()
-                }),
-        )
+        .element(crate::components::opens_panel(
+            "sel-playlist",
+            crate::components::TextTrigger::new("sel-playlist-trigger", "add to playlist"),
+            move |dismiss, _, _| {
+                if playlists.is_empty() {
+                    return MenuPanel::new()
+                        .child(MenuRow::new("sel-pl-none", "no playlists").disabled(true))
+                        .into_any_element();
+                }
+                MenuPanel::new()
+                    .children(playlists.iter().enumerate().map(|(i, (id, name))| {
+                        let (lib, picked, end, id) =
+                            (lib2.clone(), picked2.clone(), end2.clone(), *id);
+                        let dismiss = dismiss.clone();
+                        MenuRow::data(("sel-pl", i), name.clone()).on_click(move |_, window, cx| {
+                            actions::add_to_playlist(&lib, id, &picked, cx);
+                            end(cx);
+                            dismiss(window, cx);
+                        })
+                    }))
+                    .into_any_element()
+            },
+        ))
         // As the context menu says it: a pick of favourites only is
         // unfavourited.
         .verb(
@@ -598,17 +552,14 @@ mod tests {
     use super::*;
     use core::prelude::v1::test;
 
-    // GPUI's test harness: a window driven with simulated input.
-    use koan_kit::raw::TestAppContext;
+    use koan_kit::app::test::TestAppContext;
 
     /// Typing in the filter field narrows the browsers: what is typed
     /// reaches the browse model they all listen to.
-    // GPUI's test harness: a window driven with simulated input.
-    #[koan_kit::raw::test]
+    #[koan_kit::app::test::test]
     fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-            koan_kit::raw::init(cx);
+            koan_kit::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let browse = cx.new(|_| Browse::fresh());
