@@ -8,7 +8,6 @@ use crate::remote::client::{
     SubsonicAlbum, SubsonicAlbumFull, SubsonicArtist, SubsonicClient, SubsonicError, SubsonicSong,
 };
 
-use rayon::prelude::*;
 use rusqlite::params;
 use thiserror::Error;
 
@@ -707,17 +706,21 @@ fn sync_by_album(
     for batch in albums.chunks(ALBUM_BATCH) {
         check(cancel)?;
         let failures = AtomicUsize::new(0);
-        let fetched: Vec<SubsonicAlbumFull> = batch
-            .par_iter()
-            .filter_map(|album| match client.get_album(&album.id) {
-                Ok(full) => Some(full),
-                Err(e) => {
-                    log::warn!("failed to fetch album {}: {}", album.id, e);
-                    failures.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
-            })
-            .collect();
+        // In the lanes one server gets, not the shared pool a library scan
+        // uses: these wait on the network.
+        let fetched: Vec<SubsonicAlbumFull> =
+            super::lanes::in_lanes(batch, cancel, |album| client.get_album(&album.id))
+                .into_iter()
+                .zip(batch)
+                .filter_map(|(answer, album)| match answer? {
+                    Ok(full) => Some(full),
+                    Err(e) => {
+                        log::warn!("failed to fetch album {}: {}", album.id, e);
+                        failures.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                })
+                .collect();
         result.albums_failed += failures.into_inner();
         result.albums_synced += fetched.len();
 
