@@ -277,9 +277,7 @@ impl RenderOnce for SyncedLines {
             let on_line = self.on_line.clone();
             // Drawn whole for the program to set its opacity; without
             // shaders, in the colour its place gives it.
-            let color = if SHADED {
-                p.strong.hsla()
-            } else if active == Some(ix) {
+            let color = if SHADED || active == Some(ix) {
                 p.strong.hsla()
             } else {
                 p.muted.hsla()

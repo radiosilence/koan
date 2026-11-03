@@ -128,8 +128,12 @@ impl Render for LibraryPane {
                             .min_w_0()
                             .text_role(TypeRole::Meta, &look)
                             .text_color(look.palette.ink.hsla())
-                            .truncate()
-                            .child(folder.path.clone()),
+                            // Cut in the middle, so the folder's own name at
+                            // the end stays in view however deep it lies.
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
+                            .child(homely(&folder.path)),
                     )
                     .child(text(
                         format!("{} tracks", count(folder.tracks)),
@@ -227,5 +231,20 @@ impl Render for LibraryPane {
                 ),
             ],
         )
+    }
+}
+
+/// A path as people write it: the home directory as `~`.
+fn homely(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            let rest = &path[home.len()..];
+            if rest.is_empty() || rest.starts_with('/') {
+                format!("~{rest}")
+            } else {
+                path.to_owned()
+            }
+        }
+        _ => path.to_owned(),
     }
 }

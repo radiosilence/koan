@@ -1,0 +1,1 @@
+- **Rainbow mode rests when koan is behind, and its beat is softer.** The wash's and the disco's brightening on each beat is lower. A window behind another app no longer animates to the music, and closing a window no longer leaves the analyser running for good.

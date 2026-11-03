@@ -823,19 +823,28 @@ impl StoryContent {
                     SectionHeader::new("Record tiles").into_any_element(),
                     row()
                         .child(
-                            TileArt::new(side, TileSleeve::Colour(warm))
+                            TileArt::new(("story-tile", 1usize), side, TileSleeve::Colour(warm))
                                 .codec(Some("FLAC".into()))
                                 .badge(Some("Deluxe".into()))
-                                .heart(Some((true, false))),
+                                .heart(true, false, true),
                         )
-                        .child(TileArt::new(side, TileSleeve::Loading).mark(Some(TileMark::Play)))
                         .child(
-                            TileArt::new(side, TileSleeve::Missing)
+                            TileArt::new(("story-tile", 2usize), side, TileSleeve::Loading)
+                                .mark(Some(TileMark::Play)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 3usize), side, TileSleeve::Missing)
                                 .on_device(Some(0.4))
                                 .mark(Some(TileMark::Starting)),
                         )
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(true)))
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(false)))
+                        .child(
+                            TileArt::new(("story-tile", 4usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(true)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 5usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(false)),
+                        )
                         .into_any_element(),
                 ]
             }

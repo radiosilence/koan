@@ -1,0 +1,1 @@
+- **Accents and screen readers in the kōan GUI app.** Accent text held for Increase Contrast follows each record again, the seek bar is named to a screen reader, and a disabled shuffle or a loading play button is reported as unavailable.

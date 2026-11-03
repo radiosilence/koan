@@ -33,7 +33,7 @@ impl Arrivals {
 }
 
 /// Music reached the queue, or `playlist`.
-fn arrived(playlist: Option<i64>, cx: &mut App) {
+pub(crate) fn arrived(playlist: Option<i64>, cx: &mut App) {
     let arrivals = cx.default_global::<Arrivals>();
     match playlist {
         None => arrivals.queue += 1,
@@ -232,18 +232,20 @@ pub struct MenuTarget {
 
 /// What the menu key's menu acts on: the pick when the item under the
 /// keyboard's cursor is in it, the item alone otherwise. `album` is the
-/// record of a single track, for "go to album".
+/// record of a single track, for "go to album"; `after` ends the pick once
+/// a verb has run on it, as a right click's menu over the pick does.
 pub fn keyed_target(
     selection: &super::selection::Selection,
     item: Playable,
     album: Option<i64>,
+    after: After,
 ) -> MenuTarget {
     let picked = selection.picked();
     if selection.contains(item) && picked.len() > 1 {
         MenuTarget {
             items: picked.into(),
             album: None,
-            after: None,
+            after,
         }
     } else {
         MenuTarget {

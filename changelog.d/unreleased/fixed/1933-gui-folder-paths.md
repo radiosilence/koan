@@ -1,0 +1,1 @@
+- **A long library folder in Settings keeps its name in view.** The path is cut in the middle rather than at its end, and the home directory is written as ~.

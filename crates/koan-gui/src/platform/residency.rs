@@ -19,6 +19,13 @@ pub struct Residency {
     pub keep_running: bool,
     /// Why the system last refused to change the login item, for Settings.
     pub login_error: Option<String>,
+    /// Whether the system opens kōan at login, as last read: asking is an
+    /// XPC round trip on macOS and a file read on Linux, which no frame
+    /// waits on.
+    login: Option<Login>,
+    /// The last read or change of the login item, which the next waits for:
+    /// they reach the system and land in the order asked.
+    login_lane: Option<Task<()>>,
     #[cfg(target_os = "macos")]
     status: Option<super::status_item::StatusItem>,
 }
@@ -49,6 +56,10 @@ pub enum Login {
 pub fn init(engine: &std::sync::Arc<koan_ffi::KoanEngine>, cx: &mut App) {
     cx.set_global(Residency::default());
     set(false, cx);
+    read_login(cx);
+    // Whether kōan sits in the Dock follows its windows: kept running with
+    // none open, it leaves for the menu bar, whichever window closed last.
+    cx.on_window_closed(|cx, _| settle_dock(cx)).detach();
     let engine = engine.clone();
     cx.spawn(async move |cx| {
         let keep = engine.settings().await.devices_keep_running;
@@ -71,6 +82,7 @@ pub fn apply(keep: bool, cx: &mut App) {
     if !keep && crate::app::main_window(cx).is_none() {
         let _ = crate::app::show_window(cx);
     }
+    settle_dock(cx);
 }
 
 /// The quit rule and the menu bar item for `keep`.
@@ -93,12 +105,36 @@ fn set(keep: bool, cx: &mut App) {
     }
 }
 
-/// The main window is closing: kept running, kōan leaves the Dock and the
-/// app switcher for the menu bar.
-pub fn window_closing(cx: &mut App) {
-    if keep_running(cx) {
-        log::info!("window closed; staying in the menu bar");
+/// What launching read of `devices.keep_running`, applied at once: the
+/// launch decides by it, and what this module read for itself may not have
+/// landed yet, so both go by the one value.
+pub fn adopt(keep: bool, cx: &mut App) {
+    if cx.has_global::<Residency>() {
+        set(keep, cx);
+    }
+}
+
+/// What the configuration file says now, read again by Settings: turned off
+/// elsewhere (the terminal UI, an edit by hand) while the main window is
+/// closed, the main window opens, as from the toggle, so closing Settings
+/// does not quit kōan with nothing to bring back.
+pub fn follow_file(keep: bool, cx: &mut App) {
+    if !cx.has_global::<Residency>() || keep_running(cx) == keep {
+        return;
+    }
+    apply(keep, cx);
+}
+
+/// In the Dock and the app switcher while any of kōan's windows is open
+/// (the main window, Settings, EQ), or while it is not kept running; kept
+/// running with none, the menu bar only.
+pub fn settle_dock(cx: &mut App) {
+    let windows = !cx.windows().is_empty();
+    if keep_running(cx) && !windows {
+        log::info!("no window open; staying in the menu bar");
         set_in_dock(false);
+    } else if windows {
+        set_in_dock(true);
     }
 }
 
@@ -129,17 +165,57 @@ fn set_in_dock(_: bool) {}
 
 /// Whether the system opens kōan at login, as it says now: it can be turned
 /// off in the system's settings without kōan being told.
-pub fn login() -> Login {
-    login_item::status()
+pub fn login(cx: &App) -> Login {
+    cx.try_global::<Residency>()
+        .and_then(|r| r.login.clone())
+        .unwrap_or(Login::Unavailable)
 }
 
-/// Asks the system to open kōan at login, or not, keeping why it refused
-/// for Settings to show.
+/// Asks the system whether it opens kōan at login, off the main thread, and
+/// redraws what shows it. Settings asks again as it comes to the front: the
+/// item can be turned off in the system's settings without kōan being told.
+pub fn read_login(cx: &mut App) {
+    on_login_lane(None, cx);
+}
+
+/// Asks the system to open kōan at login, or not, off the main thread,
+/// keeping why it refused for Settings to show, then reads what it says now.
 pub fn set_login(on: bool, cx: &mut App) {
-    let refused = login_item::set(on).err();
-    if cx.has_global::<Residency>() {
-        cx.global_mut::<Residency>().login_error = refused;
+    on_login_lane(Some(on), cx);
+}
+
+/// A change of the login item (`Some`), or none, then a read of it, after
+/// whatever was asked before has landed: two quick toggles reach the system
+/// in order, and the status shown is the last one read.
+fn on_login_lane(change: Option<bool>, cx: &mut App) {
+    if !cx.has_global::<Residency>() {
+        return;
     }
+    let before = cx.global_mut::<Residency>().login_lane.take();
+    let lane = cx.spawn(async move |cx| {
+        if let Some(before) = before {
+            before.await;
+        }
+        // Started only now, so the system is asked one thing at a time.
+        let (changed, refused, login) = cx
+            .background_executor()
+            .spawn(async move {
+                let refused = change.and_then(|on| login_item::set(on).err());
+                (change.is_some(), refused, login_item::status())
+            })
+            .await;
+        cx.update(|cx| {
+            if cx.has_global::<Residency>() {
+                let residency = cx.global_mut::<Residency>();
+                if changed {
+                    residency.login_error = refused;
+                }
+                residency.login = Some(login);
+                cx.refresh_windows();
+            }
+        });
+    });
+    cx.global_mut::<Residency>().login_lane = Some(lane);
 }
 
 /// Why the system last refused to change the login item.
@@ -182,15 +258,19 @@ mod login_item {
     }
 
     /// The launch's Apple event says it was opened as a login item
-    /// (`keyAELaunchedAsLogInItem`). Read as the app finishes launching,
+    /// (`keyAEPropData` holding `keyAELaunchedAsLogInItem`). Read as the app finishes launching,
     /// while that event is still the current one.
     pub fn launched_at_login() -> bool {
         static AT_LOGIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *AT_LOGIN.get_or_init(|| {
-            // 'lgit', keyAELaunchedAsLogInItem.
+            // The open-application event carries how it was launched as the
+            // enum in its `keyAEPropData` ('prop') parameter, which is
+            // `keyAELaunchedAsLogInItem` ('lgit') for a login item.
+            const PROP_DATA: u32 = u32::from_be_bytes(*b"prop");
             const LOGIN_ITEM: u32 = u32::from_be_bytes(*b"lgit");
             // SAFETY: the shared Apple event manager's current event, and a
-            // parameter of it, each an object or nil.
+            // parameter of it, each an object or nil; `enumCodeValue` is an
+            // OSType (u32) property of a descriptor.
             unsafe {
                 let manager: *mut AnyObject =
                     msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
@@ -198,8 +278,12 @@ mod login_item {
                 if event.is_null() {
                     return false;
                 }
-                let param: *mut AnyObject = msg_send![event, paramDescriptorForKeyword: LOGIN_ITEM];
-                !param.is_null()
+                let param: *mut AnyObject = msg_send![event, paramDescriptorForKeyword: PROP_DATA];
+                if param.is_null() {
+                    return false;
+                }
+                let code: u32 = msg_send![param, enumCodeValue];
+                code == LOGIN_ITEM
             }
         })
     }
@@ -276,12 +360,53 @@ mod login_item {
             .or_else(|| Some(std::env::current_exe().ok()?.display().to_string()))
     }
 
+    /// On only where the entry is there, the session has not been told to
+    /// skip it (`Hidden`, GNOME's own switch) and it starts this kōan: an
+    /// AppImage moved since leaves an entry that starts nothing.
     pub fn status() -> Login {
-        match entry() {
-            Some(path) if path.exists() => Login::On,
-            Some(_) => Login::Off,
-            None => Login::Unavailable,
+        let Some(path) = entry() else {
+            return Login::Unavailable;
+        };
+        match std::fs::read_to_string(path) {
+            Ok(text) if starts(&text, exec().as_deref()) => Login::On,
+            _ => Login::Off,
         }
+    }
+
+    /// Whether an entry `text` starts `exec` at login.
+    fn starts(text: &str, exec: Option<&str>) -> bool {
+        let value = |key: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+                .map(str::trim)
+        };
+        value("Hidden") != Some("true")
+            && value("X-GNOME-Autostart-enabled") != Some("false")
+            && exec.is_some_and(|exec| {
+                value("Exec").is_some_and(|line| line.starts_with(&quoted(exec)))
+            })
+    }
+
+    /// `path` as a quoted argument of a desktop entry's `Exec`, as the Desktop
+    /// Entry specification asks: `"`, `` ` ``, `$` and `\` escaped inside
+    /// the quotes and `%` doubled, then every backslash escaped again for the
+    /// value's string escaping, which a reader undoes first.
+    fn quoted(path: &str) -> String {
+        let mut arg = String::from("\"");
+        for c in path.chars() {
+            match c {
+                '"' | '`' | '$' | '\\' => {
+                    arg.push('\\');
+                    arg.push(c);
+                }
+                '%' => arg.push_str("%%"),
+                c => arg.push(c),
+            }
+        }
+        arg.push('"');
+        // The value's own escaping comes first when it is read: every
+        // backslash the quoting put in is itself escaped.
+        arg.replace('\\', "\\\\")
     }
 
     pub fn set(on: bool) -> Result<(), String> {
@@ -295,10 +420,46 @@ mod login_item {
         }
         let exec = exec().ok_or("could not tell where kōan is")?;
         let text = format!(
-            "[Desktop Entry]\nType=Application\nName=kōan\nExec=\"{exec}\" {BACKGROUND}\nIcon=koan-gui\nX-GNOME-Autostart-enabled=true\n"
+            "[Desktop Entry]\nType=Application\nName=kōan\nExec={} {BACKGROUND}\nIcon=koan-gui\nX-GNOME-Autostart-enabled=true\n",
+            quoted(&exec)
         );
         std::fs::create_dir_all(path.parent().unwrap_or(&path))
             .and_then(|()| std::fs::write(&path, text))
             .map_err(|e| e.to_string())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn an_exec_path_is_quoted_as_the_spec_asks() {
+            assert_eq!(quoted("/opt/kōan/koan-gui"), "\"/opt/kōan/koan-gui\"");
+            assert_eq!(
+                quoted("/home/a b/50%/$x\"`\\"),
+                "\"/home/a b/50%%/\\\\$x\\\\\"\\\\`\\\\\\\\\""
+            );
+        }
+
+        #[test]
+        fn an_entry_is_on_only_where_it_starts_this_koan() {
+            let exec = "/opt/koan/koan-gui";
+            let entry = |extra: &str| {
+                format!(
+                    "[Desktop Entry]\nExec={} --background\n{extra}",
+                    quoted(exec)
+                )
+            };
+            assert!(starts(&entry(""), Some(exec)));
+            assert!(!starts(&entry("Hidden=true\n"), Some(exec)));
+            assert!(!starts(
+                &entry("X-GNOME-Autostart-enabled=false\n"),
+                Some(exec)
+            ));
+            assert!(
+                !starts(&entry(""), Some("/elsewhere/koan-gui")),
+                "moved since"
+            );
+        }
     }
 }

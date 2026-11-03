@@ -874,7 +874,7 @@ impl Render for Transport {
                         // The rainbow's shimmer through the playing title,
                         // over it while the rainbow is drawn; the title
                         // otherwise stands as it is.
-                        match crate::rainbow::Painted::palette(cx) {
+                        match crate::theme::KoanTheme::prism(cx) {
                             Some(brat) => div()
                                 .relative()
                                 .min_w_0()
@@ -1100,7 +1100,7 @@ impl Render for Transport {
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
             .bg(p.bg)
-            .border_t(theme::HAIRLINE)
+            .border_t(p.look.hairline)
             .border_color(p.rule)
             .child(left)
             .child(centre)
@@ -1361,13 +1361,14 @@ impl Render for Seek {
             .and_then(|e| e.track_id)
             .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
+            .named("seek")
             .compact()
             // An arrow key moves five seconds, not a twentieth of the track.
             .when(duration > 0, |s| {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
-            .prism(crate::rainbow::Painted::palette(cx).is_some())
+            .prism(crate::theme::KoanTheme::prism(cx))
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
