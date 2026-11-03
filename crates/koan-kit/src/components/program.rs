@@ -57,7 +57,7 @@ impl ShaderProgram {
             wgsl: Box::leak(format!("{TRACKS_WGSL}\n{}", self.wgsl).into_boxed_str()),
             prepare: Some(prepare),
         }));
-        *MADE.lock().entry(key).or_insert(made)
+        MADE.lock().entry(key).or_insert(made)
     }
 }
 
