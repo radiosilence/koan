@@ -475,3 +475,72 @@ fn idle() -> NowPlaying {
         start_failure: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::prelude::v1::test;
+
+    use koan_ffi::{EntryStatus, QueueItem, RunRole};
+    use koan_kit::app::test::TestAppContext;
+
+    use super::*;
+
+    /// A queue of `n` rows, ten to a record, with words the length a library's
+    /// are, so a clone costs what it would.
+    fn items(n: usize) -> Vec<QueueItem> {
+        (0..n)
+            .map(|i| QueueItem {
+                queue_item_id: format!("0190a3f2-7c4e-7b9a-8d1e-{i:012}"),
+                track_id: Some(i as i64),
+                album_id: Some((i / 10) as i64),
+                artist_id: Some(1),
+                album_artist_id: Some(1),
+                title: format!("A track title of some length {i}"),
+                artist: "An Artist Name".into(),
+                album_artist: "An Artist Name".into(),
+                artist_credit: Vec::new(),
+                album_artist_credit: Vec::new(),
+                credit_differs: false,
+                run: if i % 10 == 0 {
+                    RunRole::Opens
+                } else {
+                    RunRole::Continues
+                },
+                album: format!("A record title {}", i / 10),
+                year: Some(1999),
+                codec: Some("FLAC".into()),
+                track_number: Some((i % 10) as u32 + 1),
+                disc: Some(1),
+                duration_ms: Some(240_000),
+                status: EntryStatus::Queued,
+                playlist_entry_id: None,
+                failure_reason: None,
+                on_server: false,
+                on_disk: true,
+            })
+            .collect()
+    }
+
+    /// What a regroup of 50,000 rows costs the main thread: the hand-off,
+    /// not the layout, which is the background executor's.
+    #[koan_kit::app::test::test]
+    fn a_regroup_hands_the_queue_off_at_no_cost(cx: &mut TestAppContext) {
+        let queue = cx.update(|cx| cx.new(|_| Queue::prepare(items(50_000), 1)));
+        let mut spent = Vec::new();
+        for i in 0..10 {
+            let took = cx.update(|cx| {
+                let start = std::time::Instant::now();
+                regroup(&queue, i % 2 == 0, cx);
+                start.elapsed()
+            });
+            spent.push(took);
+            cx.run_until_parked();
+        }
+        spent.sort();
+        println!(
+            "regroup of 50,000 rows, main thread: median {:?}, most {:?}",
+            spent[spent.len() / 2],
+            spent[spent.len() - 1]
+        );
+    }
+}
