@@ -266,11 +266,8 @@ fn bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
     curve(y1, y2, s)
 }
 
-// KOAN: (#2034) public, for a program's `prepare` packing pairs into the
-// uniforms its pixels read.
-/// Two numbers as half floats in one float's bits: a Bézier's control point,
-/// or a direction a program reads as `half2` (`unpack2x16float` in WGSL).
-pub fn pack_halves(a: f32, b: f32) -> f32 {
+/// Two numbers as half floats in one float's bits: a Bézier's control point.
+fn pack_halves(a: f32, b: f32) -> f32 {
     f32::from_bits(to_half(a) as u32 | (to_half(b) as u32) << 16)
 }
 

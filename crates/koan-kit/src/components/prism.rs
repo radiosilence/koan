@@ -533,11 +533,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     // outside a spot goes on to the next before any colour is worked out.
     float lift = 0.22 + 0.25 * beat + 0.15 * u[2];
     float swell = 1.0 + 0.6 * beat;
-    // Only the spots reaching this pixel's sixth of the window's height,
-    // as a mask of them (`disco_prepare`).
-    const int masks[6] = { 3, 5, 7, 9, 13, 14 };
-    int band = clamp(int(position.y * 6.0 / size.y), 0, 5);
-    uint mask = as_type<uint>(u[masks[band]]);
+    // Only the spots reaching this pixel's fifth of the window's height,
+    // as a mask of them in two 16-bit halves (`disco_prepare`).
+    const int halves[10] = { 3, 5, 7, 8, 9, 11, 12, 13, 14, 15 };
+    int band = clamp(int(position.y * 5.0 / size.y), 0, 4);
+    uint mask = uint(u[halves[2 * band]]) | (uint(u[halves[2 * band + 1]]) << 16);
     while (mask != 0u) {
         int i = ctz(mask);
         mask &= mask - 1u;
@@ -557,8 +557,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     for (int i = 0; i < 4; i++) {
         float fi = float(i);
         float2 foot = float2(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        const int beams[4] = { 8, 11, 12, 15 };
-        float2 dir = float2(as_type<half2>(u[beams[i]]));
+        float angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
+        float2 dir = float2(cos(angle), -sin(angle));
         float2 rel = position - foot;
         float along = dot(rel, dir);
         if (along > 0.0) {
@@ -617,10 +617,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     var alpha = 0.0;
     let lift = 0.22 + 0.25 * beat + 0.15 * b[0].z;
     let swell = 1.0 + 0.6 * beat;
-    var masks = array<u32, 6>(3u, 5u, 7u, 9u, 13u, 14u);
-    let band = u32(clamp(i32(position.y * 6.0 / size.y), 0, 5));
-    let m = masks[band];
-    var mask = bitcast<u32>(b[m / 4u][m % 4u]);
+    var halves = array<u32, 10>(3u, 5u, 7u, 8u, 9u, 11u, 12u, 13u, 14u, 15u);
+    let band = u32(clamp(i32(position.y * 5.0 / size.y), 0, 4));
+    let lo = halves[2u * band];
+    let hi = halves[2u * band + 1u];
+    var mask = u32(b[lo / 4u][lo % 4u]) | (u32(b[hi / 4u][hi % 4u]) << 16u);
     while (mask != 0u) {
         let i = countTrailingZeros(mask);
         mask = mask & (mask - 1u);
@@ -645,9 +646,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     for (var i = 0u; i < 4u; i++) {
         let fi = f32(i);
         let foot = vec2<f32>(size.x * (0.15 + 0.233 * fi), size.y + 20.0 * s);
-        var beams = array<u32, 4>(8u, 11u, 12u, 15u);
-        let k = beams[i];
-        let dir = unpack2x16float(bitcast<u32>(b[k / 4u][k % 4u]));
+        let angle = 1.5708 + sin(time * (0.5 + 0.13 * fi) + fi * 1.7) * 0.55;
+        let dir = vec2<f32>(cos(angle), -sin(angle));
         let rel = position - foot;
         let along = dot(rel, dir);
         if (along > 0.0) {
@@ -710,9 +710,11 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// from the window's size (`Prism::window`, points in 13 and 14): the beat,
 /// the middle and high bands (0 to 2), the 32 spots' centres in device
 /// pixels (16 to 79), where the tracks the program no longer reads were,
-/// for each sixth of the window's height, top down, a mask of the spots
-/// reaching it (3, 5, 7, 9, 13, 14), so a pixel tests those alone, and the
-/// beams' directions as pairs of half floats (8, 11, 12, 15).
+/// and for each fifth of the window's height, top down, a mask of the spots
+/// reaching it, so a pixel tests those alone: its low and high 16 bits as
+/// whole numbers (3 and 5, 7 and 8, 9 and 11, 12 and 13, 14 and 15), which
+/// every backend carries exactly, where a mask's own bits as a float could
+/// be a NaN or a denormal some would change.
 fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [_, middle, high, beat] = bands(u, time);
     let s = u[10];
@@ -724,8 +726,8 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     u[1] = middle;
     u[2] = high;
     let swell = 1.0 + 0.6 * u[0];
-    let band = size.1 / 6.0;
-    let mut masks = [0u32; 6];
+    let band = size.1 / 5.0;
+    let mut masks = [0u32; 5];
     for i in 0..32 {
         let fi = i as f32;
         let h1 = (fi * 0.618_034 + 0.31).fract();
@@ -737,8 +739,8 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
         u[17 + 2 * i] = at.1;
         let radius = s * (10.0 + 14.0 * h1) * swell;
         if band > 0.0 && at.0 + radius > 0.0 && at.0 - radius < size.0 {
-            let top = ((at.1 - radius) / band).floor().clamp(0.0, 5.0) as usize;
-            let foot = ((at.1 + radius) / band).floor().clamp(0.0, 5.0) as usize;
+            let top = ((at.1 - radius) / band).floor().clamp(0.0, 4.0) as usize;
+            let foot = ((at.1 + radius) / band).floor().clamp(0.0, 4.0) as usize;
             if at.1 + radius > 0.0 && at.1 - radius < size.1 {
                 for mask in &mut masks[top..=foot] {
                     *mask |= 1 << i;
@@ -746,14 +748,17 @@ fn disco_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
             }
         }
     }
-    for (slot, mask) in [3, 5, 7, 9, 13, 14].into_iter().zip(masks) {
-        u[slot] = f32::from_bits(mask);
+    let slots = [(3, 5), (7, 8), (9, 11), (12, 13), (14, 15)];
+    for ((lo, hi), mask) in slots.into_iter().zip(masks) {
+        (u[lo], u[hi]) = mask_halves(mask);
     }
-    for (i, slot) in [8, 11, 12, 15].into_iter().enumerate() {
-        let fi = i as f32;
-        let angle = 1.5708 + (time * (0.5 + 0.13 * fi) + fi * 1.7).sin() * 0.55;
-        u[slot] = pack_halves(angle.cos(), -angle.sin());
-    }
+}
+
+/// A mask as two whole numbers, its low and high 16 bits: floats every
+/// backend carries exactly, as a program reads them (`uint(u[lo]) |
+/// uint(u[hi]) << 16`).
+fn mask_halves(mask: u32) -> (f32, f32) {
+    ((mask & 0xffff) as f32, (mask >> 16) as f32)
 }
 
 /// The three bands and the beat, where their tracks stand at `time`.
@@ -1028,7 +1033,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     // seventh of the window's height.
     const int masks[7] = { 0, 1, 2, 3, 5, 7, 9 };
     int band = clamp(int(position.y * 7.0 / size.y), 0, 6);
-    uint mask = as_type<uint>(u[masks[band]]);
+    uint mask = uint(u[masks[band]]);
     while (mask != 0u) {
         int j = ctz(mask);
         mask &= mask - 1u;
@@ -1142,7 +1147,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     }
     var masks = array<u32, 7>(0u, 1u, 2u, 3u, 5u, 7u, 9u);
     let band = u32(clamp(i32(position.y * 7.0 / size.y), 0, 6));
-    var mask = bitcast<u32>(koan_uniform(&b, masks[band]));
+    var mask = u32(koan_uniform(&b, masks[band]));
     while (mask != 0u) {
         let j = countTrailingZeros(mask);
         mask = mask & (mask - 1u);
@@ -1206,7 +1211,7 @@ const HEARTS: [[f32; 3]; 14] = [
 /// each flame's height as a share of the tallest (32 to 36), each heart's
 /// centre in device pixels (38 to 65) and size (66 to 79), and for each
 /// seventh of the window's height, top down, a mask of the hearts reaching
-/// it (0, 1, 2, 3, 5, 7, 9).
+/// it, as a whole number (0, 1, 2, 3, 5, 7, 9).
 fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [low, _, high, beat] = bands(u, time);
     let s = u[10];
@@ -1248,8 +1253,9 @@ fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
             }
         }
     }
+    // Fourteen bits: a whole number a float holds exactly.
     for (slot, mask) in [0, 1, 2, 3, 5, 7, 9].into_iter().zip(masks) {
-        u[slot] = f32::from_bits(mask);
+        u[slot] = mask as f32;
     }
 }
 
@@ -1764,5 +1770,40 @@ mod tests {
             "the sticker flies"
         );
         assert!(confetti.live() && sticker.live());
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::*;
+
+    /// A mask reaches the program as it was made, whatever its bits look
+    /// like as a float: bit 31, a NaN's pattern, a denormal's.
+    #[test]
+    fn masks_cross_as_whole_numbers() {
+        for mask in [
+            0,
+            1,
+            1 << 31,
+            0x7fc0_0000,
+            0x7f80_0001,
+            0xff80_0000,
+            0x0000_0001,
+            0x007f_ffff,
+            0x7f80_0000 | (0xff << 23),
+            u32::MAX,
+        ] {
+            let (lo, hi) = mask_halves(mask);
+            assert!(lo.is_normal() || lo == 0.0, "{mask:#x}");
+            assert!(hi.is_normal() || hi == 0.0, "{mask:#x}");
+            assert_eq!((lo as u32) | ((hi as u32) << 16), mask, "{mask:#x}");
+        }
+    }
+
+    /// The party's hearts, fourteen of them, fit one float exactly.
+    #[test]
+    fn a_heart_mask_is_one_whole_number() {
+        let all = (1u32 << HEARTS.len()) - 1;
+        assert_eq!((all as f32) as u32, all);
     }
 }
