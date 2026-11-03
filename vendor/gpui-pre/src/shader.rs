@@ -342,14 +342,17 @@ static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
 /// The moment the frame being made now will reach the screen: what a
 /// shader's `time` is reckoned at, and what a retarget samples a track at,
 /// so motion neither jitters with encode latency nor jumps when retargeted.
+///
+/// Monotonic: displays at different refresh rates report different leads,
+/// and a frame's time never steps back when one link's report follows
+/// another's.
 pub fn present_now() -> Instant {
-    let lead = PRESENT_LEAD.load(Ordering::Relaxed);
-    let now = Instant::now();
-    if lead >= 0 {
-        now + std::time::Duration::from_nanos(lead as u64)
-    } else {
-        now
-    }
+    static LATEST: AtomicI64 = AtomicI64::new(i64::MIN);
+    let lead = PRESENT_LEAD.load(Ordering::Relaxed).max(0) as u64;
+    let at = Instant::now() + std::time::Duration::from_nanos(lead);
+    let nanos = since_epoch(at);
+    let latest = LATEST.fetch_max(nanos, Ordering::Relaxed).max(nanos);
+    shader_epoch() + std::time::Duration::from_nanos(latest.max(0) as u64)
 }
 
 /// How far ahead of now a frame encoded now is shown, as the platform's
