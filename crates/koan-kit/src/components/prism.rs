@@ -492,7 +492,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float gloss = pow(band, 10.0);
     float3 colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0]), float3(1.0, 0.75, 0.88), 0.25), float3(1.0), gloss);
     float alpha = clamp(band * u[1] + gloss * 0.6, 0.0, 1.0);
-    if (u[2] > 0.5 && fract(time / 5.0) < 0.035) {
+    if (u[2] > 0.5 && u[15] > 0.5 && fract(time / 5.0) < 0.035) {
         float slice = floor(position.y / max(size.y / 6.0, 1.0));
         float h = koan_prism_hash(float2(slice, floor(time / 5.0)));
         if (h > 0.45) {
@@ -514,7 +514,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let gloss = pow(band, 10.0);
     var colour = mix(mix(koan_prism(s * 1.5 + time * 0.2, u[0].x), vec3<f32>(1.0, 0.75, 0.88), 0.25), vec3<f32>(1.0), gloss);
     var alpha = clamp(band * u[0].y + gloss * 0.6, 0.0, 1.0);
-    if (u[0].z > 0.5 && fract(time / 5.0) < 0.035) {
+    if (u[0].z > 0.5 && u[3].w > 0.5 && fract(time / 5.0) < 0.035) {
         let slice = floor(position.y / max(size.y / 6.0, 1.0));
         let h = koan_prism_hash(vec2<f32>(slice, floor(time / 5.0)));
         if (h > 0.45) {
@@ -1086,6 +1086,11 @@ pub struct Prism {
     followers: Arc<Mutex<Vec<super::WeakAnimated>>>,
 }
 
+/// The uniform a follower of a prism is told in whether the clock runs: a
+/// sheen's glitch shows only then, so one stopped mid-blink as the music
+/// pauses does not stay over the title.
+const FOLLOWING: usize = 15;
+
 /// Each window's prism, for the sheens and gradients drawn in it to run
 /// with: registered by the window's root while the rainbow is drawn.
 #[derive(Default)]
@@ -1104,12 +1109,15 @@ impl Prisms {
     }
 
     /// Runs `animated` with the clock of the prism of the window being
-    /// drawn, or stands it still where the window has none.
-    fn follow(animated: &Animated, window: &Window, cx: &App) {
+    /// drawn, or stands it still where the window has none; whether it runs.
+    fn follow(animated: &Animated, window: &Window, cx: &App) -> bool {
         let id = window.window_handle().window_id();
         match cx.try_global::<Prisms>().and_then(|p| p.0.get(&id)) {
             Some(prism) => prism.follow(animated),
-            None => animated.run(false),
+            None => {
+                animated.run(false);
+                false
+            }
         }
     }
 }
@@ -1133,13 +1141,17 @@ impl Prism {
         }
     }
 
-    /// `animated` runs and stops with this prism's clock while it lasts.
-    fn follow(&self, animated: &Animated) {
+    /// `animated` runs and stops with this prism's clock while it lasts;
+    /// whether the clock runs now.
+    fn follow(&self, animated: &Animated) -> bool {
         let mut followers = self.followers.lock();
         if !followers.iter().any(|f| f.is(animated)) {
             followers.push(animated.downgrade());
         }
-        animated.run(self.running.load(std::sync::atomic::Ordering::Relaxed));
+        let running = self.running.load(std::sync::atomic::Ordering::Relaxed);
+        animated.run(running);
+        animated.set(FOLLOWING, running as u8 as f32);
+        running
     }
 
     /// A frame from the analyser: the three bands, each 0 to 1. A low band
@@ -1198,6 +1210,7 @@ impl Prism {
         self.followers.lock().retain(|f| match f.upgrade() {
             Some(animated) => {
                 animated.run(running);
+                animated.set(FOLLOWING, running as u8 as f32);
                 true
             }
             None => false,
@@ -1303,14 +1316,41 @@ impl Burst {
     /// `MIN_BEAT_GAP` of the last flash its gate saw, a beat or a burst, is
     /// dropped, so flashes start at most three times a second.
     pub fn fire(&self, at: Point<Pixels>, scale: f32, brat: bool) {
-        let now = Animated::now();
-        {
-            let mut fired = self.fired.lock();
-            if fired.is_some_and(|last| now.saturating_duration_since(last) < MIN_BEAT_GAP) {
-                return;
-            }
-            *fired = Some(now);
+        if self.opens_gate() {
+            self.throw(at, scale, brat);
         }
+    }
+
+    /// Throws it from `at` and `other` from `other_at` as one start: two
+    /// bursts landing together are one flash, so the gate is asked once and
+    /// either both fly or neither does. The confetti and the sticker as the
+    /// appearance comes out.
+    pub fn fire_with(
+        &self,
+        at: Point<Pixels>,
+        other: &Burst,
+        other_at: Point<Pixels>,
+        scale: f32,
+        brat: bool,
+    ) {
+        if self.opens_gate() {
+            self.throw(at, scale, brat);
+            other.throw(other_at, scale, brat);
+        }
+    }
+
+    /// Whether a flash may start now, and if so, that one did.
+    fn opens_gate(&self) -> bool {
+        let now = Animated::now();
+        let mut fired = self.fired.lock();
+        if fired.is_some_and(|last| now.saturating_duration_since(last) < MIN_BEAT_GAP) {
+            return false;
+        }
+        *fired = Some(now);
+        true
+    }
+
+    fn throw(&self, at: Point<Pixels>, scale: f32, brat: bool) {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos() % 997);
@@ -1410,14 +1450,16 @@ impl RenderOnce for Sheen {
             .read(cx)
             .clone();
         // Moving only while its window's prism runs: playing, in front and
-        // shown.
-        Prisms::follow(&animated, window, cx);
+        // shown. A still sheen holds no glitch: one caught mid-blink as the
+        // music pauses would stay over the title (`FOLLOWING`, which the
+        // prism writes as it stops, and this as it draws).
+        let running = Prisms::follow(&animated, window, cx);
         animated.set_all(
             0,
             &[
                 self.brat as u8 as f32,
                 self.strength,
-                self.glitch as u8 as f32,
+                (self.glitch && running) as u8 as f32,
             ],
         );
         div()
@@ -1505,5 +1547,32 @@ mod tests {
             before,
             "one gate for the window's flashes"
         );
+    }
+
+    /// The appearance coming out throws the confetti and the sticker as one
+    /// start on the window's gate: both fly, where two throws in a row would
+    /// drop the second.
+    #[test]
+    fn a_coming_out_throws_both() {
+        let prism = Prism::new();
+        let (confetti, sticker) = (
+            Burst::confetti().sharing(&prism.gate()),
+            Burst::sticker().sharing(&prism.gate()),
+        );
+        let at = Point::new(px(10.), px(10.));
+        let (spent_confetti, spent_sticker) =
+            (confetti.animated.track(0), sticker.animated.track(0));
+        confetti.fire_with(at, &sticker, at, 2.0, false);
+        assert_ne!(
+            confetti.animated.track(0),
+            spent_confetti,
+            "the confetti flies"
+        );
+        assert_ne!(
+            sticker.animated.track(0),
+            spent_sticker,
+            "the sticker flies"
+        );
+        assert!(confetti.live() && sticker.live());
     }
 }
