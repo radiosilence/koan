@@ -1,0 +1,1 @@
+- **Linux menus act on the page, and the queue follows.** In the kōan GUI app on Linux, the in-window menu's Edit items (Delete, Select All, Undo, Redo) reach the page they are for rather than stopping at the toolbar, and following the playing track keeps up when the track changes without the queue changing.

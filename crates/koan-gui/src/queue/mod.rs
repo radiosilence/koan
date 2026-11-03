@@ -179,6 +179,9 @@ impl QueueView {
                     this.shufflable = shufflable;
                     cx.notify();
                 }
+                // The cursor is the playback's: it can move in an update of
+                // its own, after the queue's rows already have.
+                this.follow(cx);
             }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
@@ -1446,8 +1449,8 @@ impl QueueView {
         cx.notify();
     }
 
-    /// While following, a new playing track is brought into view; with
-    /// nothing playing there is nothing to follow.
+    /// While following, a new playing track is brought into view; with no
+    /// track under the cursor there is nothing to follow.
     fn follow(&mut self, cx: &mut Context<Self>) {
         if !self.following {
             return;
@@ -1460,6 +1463,7 @@ impl QueueView {
                     self.list.reveal(row);
                     self.followed = Some(id);
                     self.followed_row = Some(row);
+                    cx.notify();
                 }
             }
         }
