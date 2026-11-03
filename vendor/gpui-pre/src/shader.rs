@@ -158,7 +158,9 @@ impl Track {
     }
 
     pub(crate) fn decode(f: &[f32]) -> Self {
-        let code = f[4] as u32;
+        // KOAN: 16 and above flags a colour slot mixed in OKLab, as the
+        // shaders read it (`code % 16`) (#1859).
+        let code = f[4] as u32 % 16;
         let repeat = match code / 4 {
             1 => TrackRepeat::Loop,
             2 => TrackRepeat::Alternate,
@@ -413,6 +415,9 @@ pub struct ShaderUniforms {
     /// one; 0 for a plain colour. Resolved as each present is made, so a
     /// slot's colour moves in the program with no frame drawn.
     colors: [AtomicU16; SHADER_PLAIN],
+    /// How many of `colors` name a slot: none, as for most shaders, and a
+    /// write or a present does no colour work at all.
+    colored: AtomicU32,
     /// Whether a slot the uniforms name was moving at the last present: the
     /// present after it stops lands it.
     colors_moved: AtomicBool,
@@ -488,6 +493,7 @@ impl Default for ShaderUniforms {
             moving_until: AtomicU64::new(0),
             track_landing: AtomicBool::new(false),
             colors: std::array::from_fn(|_| AtomicU16::new(0)),
+            colored: AtomicU32::new(0),
             colors_moved: AtomicBool::new(false),
             sequence: AtomicU64::new(0),
             writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
@@ -583,8 +589,10 @@ impl ShaderUniforms {
     fn set_unpublished(&self, index: usize, value: f32) -> bool {
         // KOAN: #1859.
         let mut moved = false;
-        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
-            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
+        if self.colored.load(Ordering::Relaxed) != 0 {
+            for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
+                moved |= self.put_color(colour, 0);
+            }
         }
         if moved {
             self.changed.store(true, Ordering::Relaxed);
@@ -764,13 +772,13 @@ impl ShaderUniforms {
         let mut changed = false;
         for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
             if other != index {
-                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
+                changed |= self.put_color(other, 0);
             }
         }
         for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
             changed |= self.write(index + i, value);
         }
-        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
+        changed |= self.put_color(index, slot);
         if changed {
             self.changed.store(true, Ordering::Relaxed);
         }
@@ -778,7 +786,26 @@ impl ShaderUniforms {
     }
 
     /// Whether a colour slot the uniforms draw is moving at `at`.
+    /// Names `slot` (plus one; 0 for none) at plain uniform `index`, keeping
+    /// `colored`'s count. Whether it changed.
+    fn put_color(&self, index: usize, slot: u16) -> bool {
+        let old = self.colors[index].swap(slot, Ordering::Relaxed);
+        match (old != 0, slot != 0) {
+            (false, true) => {
+                self.colored.fetch_add(1, Ordering::Relaxed);
+            }
+            (true, false) => {
+                self.colored.fetch_sub(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        old != slot
+    }
+
     fn colors_moving(&self, at: Instant) -> bool {
+        if self.colored.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
         self.colors.iter().any(|slot| {
             let slot = slot.load(Ordering::Relaxed);
             slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
@@ -792,10 +819,17 @@ impl ShaderUniforms {
     }
 
     fn take_unpublished(&self) -> Taken {
+        let colored = self.colored.load(Ordering::Relaxed) != 0;
         (
             self.origin.load(Ordering::Relaxed),
             self.snapshot_unpublished(),
-            std::array::from_fn(|i| self.colors[i].load(Ordering::Relaxed)),
+            std::array::from_fn(|i| {
+                if colored {
+                    self.colors[i].load(Ordering::Relaxed)
+                } else {
+                    0
+                }
+            }),
         )
     }
 

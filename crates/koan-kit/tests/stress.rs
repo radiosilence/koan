@@ -567,6 +567,51 @@ fn two_writers_publish_whole_tracks_and_rebase_once() {
     }
 }
 
+/// Draws the accent and counts its renders.
+struct Observer {
+    renders: Arc<std::sync::atomic::AtomicUsize>,
+    _accent: gpui_kit::Subscription,
+}
+
+impl Render for Observer {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders.fetch_add(1, Ordering::Relaxed);
+        div().size(px(10.)).bg(Look::of(window, cx).accent.hsla())
+    }
+}
+
+/// The accent turns on the GPU: a retarget, the rainbow's every step
+/// included, draws no view again, not even one observing the accent, since
+/// what it draws names the slots.
+#[gpui_kit::test]
+fn a_retarget_redraws_no_view(cx: &mut TestAppContext) {
+    let _clock = CLOCK.lock();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let renders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = renders.clone();
+    let (_, cx) = cx.add_window_view(|_, cx| Observer {
+        renders: counted,
+        _accent: theme::observe_accent(cx),
+    });
+    cx.run_until_parked();
+    let mut rng = Rng(9);
+    let before = renders.load(Ordering::Relaxed);
+    for _ in 0..5 {
+        cx.update(|_, cx| KoanTheme::set_accent(accent(&mut rng), true, cx));
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(Motion::DISSOLVE * 2);
+    cx.run_until_parked();
+    assert_eq!(
+        renders.load(Ordering::Relaxed),
+        before,
+        "a retarget drew the view again"
+    );
+}
+
 /// A writer that panics mid-publish (on a background thread, say) leaves the
 /// block whole for the presenter: reads finish, and the next publish, on any
 /// thread, is seen.

@@ -704,7 +704,7 @@ index 2328e95..f00ef65 100644
  use std::{any::Any, future::Future};
  pub use style::*;
 diff --git a/src/scene.rs b/src/scene.rs
-index 6cb3387..d63fece 100644
+index 6cb3387..fc3b2d5 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
@@ -762,7 +762,7 @@ index 6cb3387..d63fece 100644
  }
  
  #[expect(missing_docs)]
-@@ -66,6 +107,146 @@ impl Scene {
+@@ -66,6 +107,149 @@ impl Scene {
          self.subpixel_sprites.clear();
          self.polychrome_sprites.clear();
          self.surfaces.clear();
@@ -800,6 +800,9 @@ index 6cb3387..d63fece 100644
 +        }
 +        for sprite in &self.subpixel_sprites {
 +            set.note(&sprite.color);
++        }
++        for path in &self.paths {
++            set.note(&path.color.solid);
 +        }
 +        set
 +    }
@@ -909,7 +912,7 @@ index 6cb3387..d63fece 100644
      }
  
      pub fn len(&self) -> usize {
-@@ -86,6 +267,16 @@ impl Scene {
+@@ -86,6 +270,16 @@ impl Scene {
  
      pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
          let mut primitive = primitive.into();
@@ -926,7 +929,7 @@ index 6cb3387..d63fece 100644
          let clipped_bounds = primitive
              .bounds()
              .intersect(&primitive.content_mask().bounds);
-@@ -133,17 +324,71 @@ impl Scene {
+@@ -133,17 +327,71 @@ impl Scene {
                  surface.order = order;
                  self.surfaces.push(surface.clone());
              }
@@ -998,7 +1001,7 @@ index 6cb3387..d63fece 100644
              }
          }
      }
-@@ -160,6 +405,197 @@ impl Scene {
+@@ -160,6 +408,197 @@ impl Scene {
          self.polychrome_sprites
              .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
@@ -1196,7 +1199,7 @@ index 6cb3387..d63fece 100644
      }
  
      #[cfg_attr(
-@@ -187,6 +623,8 @@ impl Scene {
+@@ -187,6 +626,8 @@ impl Scene {
              polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
              surfaces_start: 0,
              surfaces_iter: self.surfaces.iter().peekable(),
@@ -1205,7 +1208,7 @@ index 6cb3387..d63fece 100644
          }
      }
  }
-@@ -209,12 +647,17 @@ pub(crate) enum PrimitiveKind {
+@@ -209,12 +650,17 @@ pub(crate) enum PrimitiveKind {
      SubpixelSprite,
      PolychromeSprite,
      Surface,
@@ -1223,7 +1226,7 @@ index 6cb3387..d63fece 100644
  }
  
  #[derive(Clone)]
-@@ -228,6 +671,7 @@ pub enum Primitive {
+@@ -228,6 +674,7 @@ pub enum Primitive {
      SubpixelSprite(SubpixelSprite),
      PolychromeSprite(PolychromeSprite),
      Surface(PaintSurface),
@@ -1231,7 +1234,7 @@ index 6cb3387..d63fece 100644
  }
  
  #[expect(missing_docs)]
-@@ -242,6 +686,7 @@ impl Primitive {
+@@ -242,6 +689,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.bounds,
              Primitive::PolychromeSprite(sprite) => &sprite.bounds,
              Primitive::Surface(surface) => &surface.bounds,
@@ -1239,7 +1242,7 @@ index 6cb3387..d63fece 100644
          }
      }
  
-@@ -255,6 +700,7 @@ impl Primitive {
+@@ -255,6 +703,7 @@ impl Primitive {
              Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
              Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
              Primitive::Surface(surface) => &surface.content_mask,
@@ -1247,7 +1250,7 @@ index 6cb3387..d63fece 100644
          }
      }
  }
-@@ -283,6 +729,9 @@ struct BatchIterator<'a> {
+@@ -283,6 +732,9 @@ struct BatchIterator<'a> {
      polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
      surfaces_start: usize,
      surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
@@ -1257,7 +1260,7 @@ index 6cb3387..d63fece 100644
  }
  
  impl<'a> Iterator for BatchIterator<'a> {
-@@ -316,6 +765,11 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -316,6 +768,11 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_iter.peek().map(|s| s.order),
                  PrimitiveKind::Surface,
              ),
@@ -1269,7 +1272,7 @@ index 6cb3387..d63fece 100644
          ];
          orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
  
-@@ -461,6 +915,40 @@ impl<'a> Iterator for BatchIterator<'a> {
+@@ -461,6 +918,40 @@ impl<'a> Iterator for BatchIterator<'a> {
                  self.surfaces_start = surfaces_end;
                  Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
              }
@@ -1310,7 +1313,7 @@ index 6cb3387..d63fece 100644
          }
      }
  }
-@@ -493,6 +981,14 @@ pub enum PrimitiveBatch {
+@@ -493,6 +984,14 @@ pub enum PrimitiveBatch {
          range: Range<usize>,
      },
      Surfaces(Range<usize>),
@@ -1325,7 +1328,7 @@ index 6cb3387..d63fece 100644
  }
  
  impl PrimitiveBatch {
-@@ -525,6 +1021,10 @@ impl PrimitiveBatch {
+@@ -525,6 +1024,10 @@ impl PrimitiveBatch {
                  )
              }
              Self::Surfaces(range) => format!("surfaces ({})", range.len()),
@@ -1336,17 +1339,17 @@ index 6cb3387..d63fece 100644
          }
      }
  }
-@@ -947,3 +1447,4 @@ impl PathVertex<Pixels> {
+@@ -947,3 +1450,4 @@ impl PathVertex<Pixels> {
          }
      }
  }
 +
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..6d31d2c
+index 0000000..9e6cb57
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,1036 @@
+@@ -0,0 +1,1070 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -1507,7 +1510,9 @@ index 0000000..6d31d2c
 +    }
 +
 +    pub(crate) fn decode(f: &[f32]) -> Self {
-+        let code = f[4] as u32;
++        // KOAN: 16 and above flags a colour slot mixed in OKLab, as the
++        // shaders read it (`code % 16`) (#1859).
++        let code = f[4] as u32 % 16;
 +        let repeat = match code / 4 {
 +            1 => TrackRepeat::Loop,
 +            2 => TrackRepeat::Alternate,
@@ -1762,6 +1767,9 @@ index 0000000..6d31d2c
 +    /// one; 0 for a plain colour. Resolved as each present is made, so a
 +    /// slot's colour moves in the program with no frame drawn.
 +    colors: [AtomicU16; SHADER_PLAIN],
++    /// How many of `colors` name a slot: none, as for most shaders, and a
++    /// write or a present does no colour work at all.
++    colored: AtomicU32,
 +    /// Whether a slot the uniforms name was moving at the last present: the
 +    /// present after it stops lands it.
 +    colors_moved: AtomicBool,
@@ -1837,6 +1845,7 @@ index 0000000..6d31d2c
 +            moving_until: AtomicU64::new(0),
 +            track_landing: AtomicBool::new(false),
 +            colors: std::array::from_fn(|_| AtomicU16::new(0)),
++            colored: AtomicU32::new(0),
 +            colors_moved: AtomicBool::new(false),
 +            sequence: AtomicU64::new(0),
 +            writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
@@ -1932,8 +1941,10 @@ index 0000000..6d31d2c
 +    fn set_unpublished(&self, index: usize, value: f32) -> bool {
 +        // KOAN: #1859.
 +        let mut moved = false;
-+        for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
-+            moved |= self.colors[colour].swap(0, Ordering::Relaxed) != 0;
++        if self.colored.load(Ordering::Relaxed) != 0 {
++            for colour in index.saturating_sub(3)..=index.min(SHADER_PLAIN - 1) {
++                moved |= self.put_color(colour, 0);
++            }
 +        }
 +        if moved {
 +            self.changed.store(true, Ordering::Relaxed);
@@ -2113,13 +2124,13 @@ index 0000000..6d31d2c
 +        let mut changed = false;
 +        for other in index.saturating_sub(3)..(index + 4).min(SHADER_PLAIN) {
 +            if other != index {
-+                changed |= self.colors[other].swap(0, Ordering::Relaxed) != 0;
++                changed |= self.put_color(other, 0);
 +            }
 +        }
 +        for (i, value) in [rgba.r, rgba.g, rgba.b, rgba.a].into_iter().enumerate() {
 +            changed |= self.write(index + i, value);
 +        }
-+        changed |= self.colors[index].swap(slot, Ordering::Relaxed) != slot;
++        changed |= self.put_color(index, slot);
 +        if changed {
 +            self.changed.store(true, Ordering::Relaxed);
 +        }
@@ -2127,7 +2138,26 @@ index 0000000..6d31d2c
 +    }
 +
 +    /// Whether a colour slot the uniforms draw is moving at `at`.
++    /// Names `slot` (plus one; 0 for none) at plain uniform `index`, keeping
++    /// `colored`'s count. Whether it changed.
++    fn put_color(&self, index: usize, slot: u16) -> bool {
++        let old = self.colors[index].swap(slot, Ordering::Relaxed);
++        match (old != 0, slot != 0) {
++            (false, true) => {
++                self.colored.fetch_add(1, Ordering::Relaxed);
++            }
++            (true, false) => {
++                self.colored.fetch_sub(1, Ordering::Relaxed);
++            }
++            _ => {}
++        }
++        old != slot
++    }
++
 +    fn colors_moving(&self, at: Instant) -> bool {
++        if self.colored.load(Ordering::Relaxed) == 0 {
++            return false;
++        }
 +        self.colors.iter().any(|slot| {
 +            let slot = slot.load(Ordering::Relaxed);
 +            slot != 0 && crate::color_slot_moving(slot as usize - 1, at)
@@ -2141,10 +2171,17 @@ index 0000000..6d31d2c
 +    }
 +
 +    fn take_unpublished(&self) -> Taken {
++        let colored = self.colored.load(Ordering::Relaxed) != 0;
 +        (
 +            self.origin.load(Ordering::Relaxed),
 +            self.snapshot_unpublished(),
-+            std::array::from_fn(|i| self.colors[i].load(Ordering::Relaxed)),
++            std::array::from_fn(|i| {
++                if colored {
++                    self.colors[i].load(Ordering::Relaxed)
++                } else {
++                    0
++                }
++            }),
 +        )
 +    }
 +
@@ -3123,7 +3160,7 @@ index 5b63821..e2888a3 100644
          self.nodes_stack.last_mut()
      }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..b2a10e7 100644
+index c559412..464139e 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -70,9 +70,9 @@ mod prompts;
@@ -3526,21 +3563,7 @@ index c559412..b2a10e7 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-@@ -4777,7 +4996,12 @@ impl Window {
-         let content_mask = self.content_mask();
-         let opacity = self.element_opacity();
-         path.content_mask = content_mask;
--        let color: Background = color.into();
-+        let mut color: Background = color.into();
-+        // KOAN: paths are rasterised without the slot table, so a colour
-+        // naming a slot is drawn as it stands now (#1859).
-+        if crate::color_slot_of(&color.solid).is_some() {
-+            color.solid = crate::Rgba::from(color.solid).into();
-+        }
-         path.color = color.opacity(opacity);
-         self.next_frame
-             .scene
-@@ -7051,6 +7275,30 @@ impl Window {
+@@ -7051,6 +7270,30 @@ impl Window {
          self.a11y.is_active()
      }
  
@@ -3571,7 +3594,7 @@ index c559412..b2a10e7 100644
      /// Debug representation of the last frame's accessibility information.
      pub fn debug_a11y_tree_json(&self) -> Option<String> {
          self.a11y.debug_tree_json()
-@@ -7074,6 +7322,22 @@ impl Window {
+@@ -7074,6 +7317,22 @@ impl Window {
              .push((action, Box::new(listener)));
      }
  
