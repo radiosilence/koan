@@ -671,6 +671,34 @@ impl ClockStream {
     }
 }
 
+/// How high a playing indicator's bars stand, from the levels a `VizStream`
+/// delivers: koan-core's reading (`BarHeights`), each band against its own
+/// recent loudest, so every app draws the same bars.
+#[derive(uniffi::Object, Default)]
+pub struct BarHeights(parking_lot::Mutex<koan_core::audio::viz::BarHeights>);
+
+#[uniffi::export]
+impl BarHeights {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A frame as it arrives: the bars' heights, 0 to 1, low band to high,
+    /// or none when they did not move.
+    pub fn take(&self, levels: VizLevels) -> Option<Vec<f32>> {
+        let heard = koan_core::audio::viz::VizLevels {
+            low: levels.low,
+            mid: levels.mid,
+            high: levels.high,
+        };
+        self.0
+            .lock()
+            .take(heard, std::time::Instant::now())
+            .map(|heights| heights.to_vec())
+    }
+}
+
 /// One client's subscription to the levels of whatever it is showing as
 /// playing: this device's analyser, or, while another device is controlled,
 /// that device's levels over the link (`koan_core::remote::levels`).
@@ -4542,6 +4570,22 @@ impl KoanEngine {
         save_appearance("wash_tint", move |cfg| cfg.appearance.wash_tint = percent);
     }
 
+    /// How fast the kōan theme's wash drifts, in percent of its own pace (see
+    /// `appearance.wash_drift`). Saved in the background; the app redraws
+    /// from its own copy.
+    pub fn set_wash_drift(&self, percent: u16) {
+        let percent = percent.min(200);
+        save_appearance("wash_drift", move |cfg| cfg.appearance.wash_drift = percent);
+    }
+
+    /// How far the kōan theme's wash turns as it drifts, in degrees (see
+    /// `appearance.wash_turn`). Saved in the background; the app redraws from
+    /// its own copy.
+    pub fn set_wash_turn(&self, degrees: u8) {
+        let degrees = u16::from(degrees.min(10));
+        save_appearance("wash_turn", move |cfg| cfg.appearance.wash_turn = degrees);
+    }
+
     /// Wait for every setting still being saved to land. For the app to call as
     /// it quits, since a change made just before would otherwise go with the
     /// process: the theme, which takes effect on the next launch, most of all.
@@ -4567,6 +4611,8 @@ impl KoanEngine {
             rainbow: cfg.appearance.rainbow,
             text_size: cfg.appearance.text_size,
             wash_tint: cfg.appearance.wash_tint.min(100) as u8,
+            wash_drift: cfg.appearance.wash_drift.min(200),
+            wash_turn: cfg.appearance.wash_turn.min(10) as u8,
         }
     }
 

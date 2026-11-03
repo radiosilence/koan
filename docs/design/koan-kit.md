@@ -215,6 +215,7 @@ progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engin
 - **States** arrive at once and leave over `Motion::LEAVE` (130 ms): the pointer reaching a control lights it, and its fill fades out once the pointer has gone (`transition` and `fill` in `components/mod.rs`). Every control and row follows this rule; Reduce Motion makes both instant. Text, glyphs and edges fade the same way through colour slots: a control holds one only while its leave fade runs.
 - **Parking** is the kit's: a window presents while any track on screen moves and once more as the last comes to rest, then parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
 - **Reduce Motion:** a `.decorative()` quad's tracks stand at their ends, a repeating one at its start. Progress is not decorative.
+- **`AnimatedLayer`** moves what an element paints: its content is drawn into a texture of its own (a GPUI layer group) and composed at each present with opacity, offset and reveal tracks (`LAYER`). It is a layer only while a track moves, painted plainly once settled; shaders inside it are drawn over it at their own place. `FadeIn`, `Reveal`, `Slide` and `SplitView`'s column are built on it: a slot takes its size at once, so what is beside it moves in one step, and content sliding out takes no clicks.
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
 - `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
@@ -234,6 +235,8 @@ A change the control learns of rather than sees done (a favourite set by a short
 | `Segmented`, a `TextField` taking the keyboard, `NavRow::accept` (a drop on a sidebar row), `NavRow::arrivals` (music sent there from a menu), `CopyText`, `NavNote::said` (a notice appearing) | a line drawn in under it |
 
 `SplitView::shown(bool)` slides the leading column out and back, and `Slide::new(id, &state, shown, width)` does the same for a panel at a page's trailing edge (the lyrics), its owner letting the panel go once `SlideState::closed`. Both ease the width over `Motion::SETTLE` with the content laid out at full width and clipped, so nothing reflows; at once under Reduce Motion.
+
+The storybook's motion playground plays a value on one track as a component would: what it moves (position, opacity, scale, colour), the easing (linear, in-out, quick-out, a Bézier whose handles drag on the plotted curve, a spring with its stiffness and damping), the length and the repeat, on a sample drawn at the display's rate, with a scrubber and the `Animated::segment` call to copy. It doubles as a visual test of every easing.
 
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`. `renderer_mark(color)` takes the bars' place while the music plays on a renderer handed the file itself, where nothing passes through to measure.
 
@@ -271,7 +274,7 @@ A change the control learns of rather than sees done (a favourite set by a short
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
-`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view, window)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks, holding the keyboard while it does; `sheet::close` takes it away. `sheet::layered(Layer, element)` draws an overlay after the window's content, so a panel, a sheet or a question covers the playing bars the root paints over the page; `Layer` orders them (panel, sheet, question). `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
 
 The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
@@ -295,7 +298,11 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
-`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `open(cx, build)` (or `options(cx)`): a window beside the main one, centred at its size in points, its content under the root the kit's sheets, menus and fields draw in. `MainWindow::new(title, app_id).place(saved).min(size).buttons_at(origin).open(cx, build)` is the app's own window: put back where it was left, its content under the title bar on macOS with the window's buttons on the toolbar's ground. `moves_window(area)` makes bare space move the window and zoom it on a double click, as a title bar does; where the compositor leaves the decorations to the app (`draws_decorations`), `window_buttons(on_close)` and `close_button(on_close)` are the buttons a toolbar or a top strip carries.
+
+`opens_panel(id, trigger, content)` is a control that opens a panel under it, made each time it opens, with a `Dismiss` for its rows; `ToolbarMenu` is one with a toolbar button, `TextTrigger` the word that opens one in a form row or the selection bar. `anchored_panel` stands a panel by the control that opened it and keeps it in the window. `title_text` is a title outside a page's header (About, a confirmation). `TextArea` (with `AreaState`) is several lines of text on a field's ground. `sheet::trap_focus` keeps Tab inside a sheet its owner draws. `RowMetrics::lead_width(count)` is a number column measured in the face its numbers are drawn in.
+
+`koan_kit::app::platform` holds what the app asks of the platform beyond its windows' content (start-up, the menu bar and the Dock's menu, the system, the keymap, a scroll's phase), `app::image` the decoded sleeves the components draw, and `app::test` the test harness. koan-gui reaches `raw` only where it draws by hand: the EQ graph and the profiler's measurements.
 
 ## Accessibility
 

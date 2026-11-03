@@ -9,10 +9,6 @@ use koan_ffi::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, px};
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
 
 use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
@@ -790,7 +786,7 @@ impl Render for Transport {
 
         let left = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(p.space(Space::M))
@@ -844,7 +840,7 @@ impl Render for Transport {
                     })
                     .flex()
                     .flex_col()
-                    .min_w(px(0.))
+                    .min_w_0()
                     // The title and the record lead to the record, each
                     // credited artist to the artist.
                     .children(entry.map(|e| {
@@ -1000,7 +996,7 @@ impl Render for Transport {
 
         let right = div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w_0()
             .flex()
             .items_center()
             .justify_end()

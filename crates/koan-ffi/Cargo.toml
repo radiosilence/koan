@@ -9,9 +9,13 @@ keywords = ["audio", "music", "ffi", "uniffi"]
 categories = ["multimedia::audio"]
 publish = false
 
+# A Rust library only: the desktop app links it as one, and Cargo builds every
+# crate type a dependency lists. The native apps ask for theirs as they build
+# it, `staticlib` for the Apple apps (`just macos-ffi`, `ios-ffi`, `tv-ffi`)
+# and `cdylib` for Android (Gradle's `koanFfi`), with `cargo rustc
+# --crate-type`.
 [lib]
 name = "koan_ffi"
-crate-type = ["staticlib", "cdylib", "lib"]
 
 [dependencies]
 # Config is written back from the settings window.

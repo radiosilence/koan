@@ -564,6 +564,9 @@ pub struct Wash {
     /// The drift's clock: its phase is the time since, never a frame count,
     /// so frames the system skips (an occluded window) cost no motion.
     epoch: Instant,
+    /// The pace the drift was last drawn at: a change moves the epoch so the
+    /// drift carries on from where it stood.
+    pace: f32,
     hold: u32,
     /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
@@ -583,6 +586,7 @@ impl Wash {
             wanted: false,
             amplitude: Ramp::still(0.0),
             epoch: now,
+            pace: 1.0,
             hold: 100,
             released: Vec::new(),
             rest: None,
@@ -647,15 +651,29 @@ impl Wash {
             });
             return;
         }
+        let Some(texture) = texture else {
+            // Taken off: what shows fades out to the ground from where it
+            // stands, a record part-way through dissolving in and the one
+            // under it alike, so the window never jumps to the newer one
+            // first.
+            if let Some(previous) = self.previous.as_mut() {
+                previous.opacity = previous.opacity.toward(0.0, now);
+            }
+            self.current = outgoing.map(|mut layer| {
+                layer.opacity = layer.opacity.toward(0.0, now);
+                layer
+            });
+            return;
+        };
         if let Some(outgoing) = outgoing {
             // Held whole under the new record, however far its own
-            // dissolve had come, or faded out to the ground when there is
-            // none: a part-faded record held under the next would let the
-            // ground show through for the length of a dissolve.
-            let opacity = if texture.is_some() {
-                Ramp::still(1.0)
+            // dissolve had come: a part-faded record held under the next
+            // would let the ground show through for the length of a
+            // dissolve. One already fading out goes on fading as it was.
+            let opacity = if outgoing.opacity.to <= 0.0 {
+                outgoing.opacity
             } else {
-                Ramp::still(1.0).toward(0.0, now)
+                Ramp::still(1.0)
             };
             let held = Layer {
                 texture: outgoing.texture.image,
@@ -666,7 +684,7 @@ impl Wash {
                 .extend(self.previous.replace(held).map(|layer| layer.texture));
         }
         // With no record on before, `previous` keeps fading as it was.
-        self.current = texture.map(|texture| Layer {
+        self.current = Some(Layer {
             texture,
             opacity: Ramp::still(0.0).toward(1.0, now),
             shader: Animated::new(),
@@ -787,6 +805,15 @@ impl Render for Wash {
             self.released
                 .extend(self.previous.take().map(|layer| layer.texture));
         }
+        // Taken off and faded out to the ground: nothing left to draw.
+        let gone = self
+            .current
+            .as_ref()
+            .is_some_and(|layer| layer.opacity.to <= 0.0 && !layer.opacity.moving(now));
+        if gone {
+            self.released
+                .extend(self.current.take().map(|layer| layer.texture.image));
+        }
         for image in self.released.drain(..) {
             // After the frame that last drew it.
             window.on_next_frame(move |window, _| {
@@ -795,7 +822,8 @@ impl Render for Wash {
         }
 
         let shown = self.current.is_some() || self.previous.is_some();
-        let target = if self.wanted && shown && KoanTheme::motion_allowed(cx) {
+        let paced = cx.global::<KoanTheme>().wash_drift > 0;
+        let target = if self.wanted && shown && paced && KoanTheme::motion_allowed(cx) {
             1.0
         } else {
             0.0
@@ -895,11 +923,22 @@ impl Wash {
             self.amplitude.write(&shader, 0);
             opacity.write(&shader, 1);
             if drifting {
-                let half = Duration::from_secs_f32(TRAVEL_PERIOD / 2.0);
+                // The person's pace and turn (Settings → Appearance).
+                let theme = cx.global::<KoanTheme>();
+                let pace = theme.wash_drift.max(1) as f32 / 100.0;
+                if pace != self.pace {
+                    // The phase (now - epoch) * pace stays where it was.
+                    let since = now.saturating_duration_since(self.epoch).as_secs_f64();
+                    let kept = since * self.pace as f64 / pace as f64;
+                    self.epoch = now - Duration::from_secs_f64(kept);
+                    self.pace = pace;
+                }
+                let turn = theme.wash_turn as f32 * std::f32::consts::PI / 180.0;
+                let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
-                    (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD),
-                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD),
-                    (4, -TURN, TURN, self.epoch, TURN_PERIOD),
+                    (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
+                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD / pace),
+                    (4, -turn, turn, self.epoch, TURN_PERIOD / pace),
                 ] {
                     shader.segment(
                         k,
@@ -1073,6 +1112,47 @@ mod tests {
         let mut channel = vec![1.0; 32 * 32];
         blur(&mut channel, 32);
         assert!(channel.iter().all(|v| (v - 1.0).abs() < 1e-9));
+    }
+
+    fn texture(generation: u64) -> Texture {
+        let frame = image::Frame::new(image::RgbaImage::new(1, 1));
+        Texture {
+            image: Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1))),
+            generation,
+            dark: false,
+            hold: 0,
+        }
+    }
+
+    /// Taking the wash off while a record dissolves in fades what shows from
+    /// where it stands: the record coming in at its part-way opacity, the
+    /// one under it whole, both toward the ground.
+    #[test]
+    fn taken_off_mid_dissolve_it_fades_from_where_it_stands() {
+        let mut wash = Wash::new();
+        wash.install(Some(texture(1)), false);
+        wash.install(Some(texture(2)), true);
+        let now = Instant::now();
+        // Half-way in.
+        if let Some(current) = wash.current.as_mut() {
+            current.opacity.started = Some(now - EASE / 2);
+        }
+        let coming = wash.current.as_ref().unwrap().opacity.at(now);
+        assert!(coming > 0.2 && coming < 0.8);
+
+        wash.install(None, true);
+        let current = wash
+            .current
+            .as_ref()
+            .expect("the record coming in still shows");
+        let previous = wash.previous.as_ref().expect("and the one under it");
+        let then = Instant::now();
+        assert!(
+            (current.opacity.at(then) - coming).abs() < 0.05,
+            "no jump to the newer record"
+        );
+        assert!(previous.opacity.at(then) > 0.95);
+        assert_eq!((current.opacity.to, previous.opacity.to), (0.0, 0.0));
     }
 
     #[test]

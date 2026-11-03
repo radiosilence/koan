@@ -26,6 +26,13 @@ pub fn panel(look: &Look) -> Stateful<Div> {
         .border_color(look.palette.rule.hsla())
 }
 
+/// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
+/// sheet drawn by its owner rather than presented through `present`.
+pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement {
+    use gpui_kit::base::FocusTrapElement as _;
+    panel.focus_trap("sheet-trap", focus)
+}
+
 /// A sheet that holds a list to pick from (the picker): wider than a
 /// question's, and tall from the start, so the list growing as it is
 /// typed into moves nothing.
@@ -229,6 +236,26 @@ pub fn close(cx: &mut App) {
             cx.notify();
         }
     });
+}
+
+/// Where an overlay stands among the window's layers, lowest first. Every
+/// layer is drawn after the window's content and the playing bars painted
+/// over it, so nothing on a page shows through a panel or a sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layer {
+    /// A panel over a page: a track's details.
+    Panel = 1,
+    /// A sheet over the window: organise, the picker, the shortcuts, the
+    /// artwork viewer.
+    Sheet = 2,
+    /// A question asked over everything, sheets included.
+    Question = 3,
+}
+
+/// `element` drawn on `layer`, covering its parent: the parent lays it out,
+/// and it is painted once the window's content is.
+pub fn layered(layer: Layer, element: impl IntoElement) -> impl IntoElement {
+    deferred(div().absolute().inset_0().child(element)).with_priority(layer as usize)
 }
 
 /// The sheet presented, placed over the window, for the shell to draw under

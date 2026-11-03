@@ -7,16 +7,8 @@
 //! and the others are reused as they were.
 
 use koan_kit::app::*;
-// gpui-component's focus and click extensions, for the shell's own handling.
-use koan_kit::raw::base::InteractiveElementExt as _;
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
-// overlays placed against another element.
-use koan_kit::raw::deferred;
-// the platform window and its options.
-use koan_kit::raw::{Decorations, WindowControlArea};
 
-use crate::components::sheet as ask;
+use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
@@ -57,7 +49,6 @@ pub struct Shell {
     /// The kōan menu, drawn in the window where there is no menu bar.
     koan_menu: crate::components::MenuSlot<()>,
     /// The toolbar was pressed and the next move drags the window.
-    moving_window: bool,
     /// Whether the sidebar shows, and how wide; kept with the window's
     /// bounds.
     sidebar_shown: bool,
@@ -145,7 +136,6 @@ impl Shell {
             library: None,
             downloads: None,
             koan_menu: crate::components::MenuSlot::default(),
-            moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             sidebar_width: f32::from_bits(
                 window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
@@ -459,33 +449,7 @@ impl Shell {
         .detach();
     }
 
-    /// Bare space that moves the window, as a title bar's does.
-    fn moves_window(area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
-        area.window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = true),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = false),
-            )
-            .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
-            .on_mouse_move(cx.listener(|this, _, window, _| {
-                if std::mem::take(&mut this.moving_window) {
-                    window.start_window_move();
-                }
-            }))
-            .on_double_click(|_, window, _| {
-                if cfg!(target_os = "macos") {
-                    window.titlebar_double_click();
-                } else {
-                    window.zoom_window();
-                }
-            })
-    }
-
-    fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let nav = self.nav.read(cx);
         let (can_go_back, can_go_forward, route) =
             (nav.can_go_back(), nav.can_go_forward(), nav.current());
@@ -546,7 +510,7 @@ impl Shell {
             // The toolbar's bare space moves the window, and its buttons do
             // not: a press that wobbles on back is still a click.
             .principal(
-                Self::moves_window(div().id("toolbar-drag"), cx)
+                crate::components::moves_window(div().id("toolbar-drag"), window, cx)
                     .size_full()
                     .flex()
                     .items_center()
@@ -575,36 +539,15 @@ impl Shell {
             )
             // Where the compositor leaves decorations to the app (GNOME on
             // Wayland), the toolbar carries the window's buttons.
-            .when(
-                matches!(window.window_decorations(), Decorations::Client { .. }),
-                |toolbar| {
-                    toolbar
-                        .trailing(
-                            div().window_control_area(WindowControlArea::Min).child(
-                                ToolbarButton::new("minimise", Icon::Subtract, "minimise")
-                                    .on_click(|_, window, _| window.minimize_window()),
-                            ),
-                        )
-                        .trailing(
-                            div().window_control_area(WindowControlArea::Max).child(
-                                ToolbarButton::new("maximise", Icon::Expand, "maximise")
-                                    .on_click(|_, window, _| window.zoom_window()),
-                            ),
-                        )
-                        .trailing(
-                            div().window_control_area(WindowControlArea::Close).child(
-                                ToolbarButton::new("close", Icon::Close, "close")
-                                    // Removing the window skips the close
-                                    // request, so its bounds are saved here,
-                                    // now: the app quits with it.
-                                    .on_click(|_, window, _| {
-                                        window_state::write(window.window_bounds());
-                                        window.remove_window();
-                                    }),
-                            ),
-                        )
-                },
-            )
+            .when(crate::components::draws_decorations(window), |toolbar| {
+                // Removing the window skips the close request, so its bounds
+                // are saved as it closes: the app quits with it.
+                crate::components::window_buttons(|window, _| {
+                    window_state::write(window.window_bounds())
+                })
+                .into_iter()
+                .fold(toolbar, |toolbar, button| toolbar.trailing(button))
+            })
     }
 }
 
@@ -618,7 +561,7 @@ impl Render for Shell {
         let washed = theme::KoanTheme::washes_window(cx);
         // The strip above the sidebar: the traffic lights' room on macOS, a
         // title bar's where the app draws the window's decorations.
-        let strip = if matches!(window.window_decorations(), Decorations::Client { .. }) {
+        let strip = if crate::components::draws_decorations(window) {
             crate::components::ToolbarMetrics::HEIGHT
         } else {
             WINDOW_BUTTONS.height
@@ -749,9 +692,13 @@ impl Render for Shell {
                                 // toolbar, as a title bar would be.
                                 .when(strip > Pixels::ZERO && !window.is_fullscreen(), |d| {
                                     d.child(
-                                        Self::moves_window(div().id("sidebar-drag"), cx)
-                                            .h(strip)
-                                            .flex_shrink_0(),
+                                        crate::components::moves_window(
+                                            div().id("sidebar-drag"),
+                                            window,
+                                            cx,
+                                        )
+                                        .h(strip)
+                                        .flex_shrink_0(),
                                     )
                                 })
                                 .child(
@@ -833,24 +780,19 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
+            .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
+            .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
             .children(
-                ask::presented(window, cx)
-                    .map(|s| deferred(div().absolute().inset_0().child(s)).with_priority(2)),
+                self.shortcuts
+                    .as_ref()
+                    .map(|(sheet, _)| ask::layered(Layer::Sheet, sheet.clone())),
             )
             .children(
-                ask::overlay(window, cx)
-                    .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
+                self.search_bar
+                    .as_ref()
+                    .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
             )
-            .children(
-                crate::artwork::overlay(window, cx)
-                    .map(|v| deferred(div().absolute().inset_0().child(v)).with_priority(2)),
-            )
-            .children(self.shortcuts.as_ref().map(|(sheet, _)| {
-                deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
-            }))
-            .children(self.search_bar.as_ref().map(|(bar, _)| {
-                deferred(div().absolute().size_full().child(bar.clone())).with_priority(2)
-            }))
     }
 }
 

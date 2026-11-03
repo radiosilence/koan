@@ -2397,6 +2397,10 @@ pub struct Appearance {
     pub text_size: u16,
     /// How far the kōan theme holds the wash to its contrast limit, in percent.
     pub wash_tint: u8,
+    /// How fast the wash drifts, in percent of its own pace.
+    pub wash_drift: u16,
+    /// How far the wash turns either way as it drifts, in degrees.
+    pub wash_turn: u8,
 }
 
 /// Everything the settings window reads and writes.

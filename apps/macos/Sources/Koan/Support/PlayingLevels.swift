@@ -74,22 +74,11 @@ final class PlayingLevels: Observable {
     /// and nothing else. Silence is zero and reads flat.
     private var bands = [0.0, 0.0, 0.0]
 
-    private var stamp = Date().timeIntervalSinceReferenceDate
     private var follow: Task<Void, Never>?
 
-    /// The loudest each band has been lately. Each band is judged against its
-    /// own recent range rather than against full scale, which is what stops a
-    /// track mastered quiet getting a limper indicator than a loud one — and
-    /// incidentally undoes the analyser's A-weighting tilt, which otherwise
-    /// leaves the bass bar permanently the sluggish one.
-    private var ceiling = [quietest, quietest, quietest]
-
-    /// A band below this is room tone, and never sets a ceiling. It is also
-    /// what a silent passage is measured against, so silence stays flat rather
-    /// than being normalised back up into a dance.
-    private static let quietest = 0.12
-    /// How long a band takes to forget a loud passage.
-    private static let forget = 4.0
+    /// Each band measured against its own recent loudest, as koan-core reads
+    /// the levels for every app's bars.
+    private let heights = BarHeights()
 
     init(engine: KoanEngine) {
         self.engine = engine
@@ -196,27 +185,15 @@ final class PlayingLevels: Observable {
         follow = nil
     }
 
-    /// A frame, as it arrives. The only smoothing left here is the ceiling
-    /// each band is measured against — the fall is the analyser's, which is
-    /// also what decays the bars to flat when the music stops.
+    /// A frame, as it arrives. The fall is the analyser's, which is also what
+    /// decays the bars to flat when the music stops.
     private func take(_ levels: VizLevels) {
         // Every bar went without detaching — a table torn down with its rows.
         guard bars.anyObject != nil else { return stopFollowing() }
-        let now = Date().timeIntervalSinceReferenceDate
-        // Clamped: a machine that slept owes the bars nothing.
-        let elapsed = min(max(now - stamp, 0), 0.25)
-        stamp = now
-        let hold = pow(0.5, elapsed / Self.forget)
-
-        let heard = [Double(levels.low), Double(levels.mid), Double(levels.high)]
-        var next = bands
-        for band in heard.indices {
-            ceiling[band] = max(heard[band], max(ceiling[band] * hold, Self.quietest))
-            next[band] = min(heard[band] / ceiling[band], 1)
-        }
         // A frame that says what the last one said moves nothing. Silence is
         // most of a quiet passage, and it is not worth a commit a frame.
-        guard next != bands else { return }
+        guard let heights = self.heights.take(levels: levels) else { return }
+        let next = heights.map(Double.init)
         bands = next
         // Enumerated in place: `allObjects` would be an array per frame.
         for case let bar as LevelsView in bars.objectEnumerator() { bar.apply(next) }
