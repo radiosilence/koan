@@ -26,6 +26,7 @@ use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::library::drag::{Playable, PlayableDrag, PlaylistDrag};
 use crate::library::feed::Feed;
+use crate::library::{Lib, actions};
 use crate::links::{self, names};
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
@@ -74,6 +75,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", SelectNext, ctx),
         KeyBinding::new("shift-up", ExtendPrevious, ctx),
         KeyBinding::new("shift-down", ExtendNext, ctx),
+        KeyBinding::new("menu", crate::components::list_actions::ShowMenu, ctx),
+        KeyBinding::new("shift-f10", crate::components::list_actions::ShowMenu, ctx),
     ]
 }
 
@@ -86,13 +89,13 @@ struct RowRef {
     heading: bool,
 }
 
-/// Rows dragged within the queue. Named by the layout they were dragged from:
-/// a drop after the queue was sent whole again is ignored rather than applied
-/// to rows that have since moved.
+/// Rows dragged within the queue, by the row the drag began on. What moves
+/// is named by queue item as the drag begins (`QueueView::dragging`), so a
+/// queue sent whole while the drag lasts (a download landing, a library
+/// rescan) still takes the drop.
 #[derive(Clone)]
 struct DraggedRows {
     row: usize,
-    whole: u64,
 }
 
 /// What a drag of queue rows shows: the first row's sleeve and how many.
@@ -131,12 +134,15 @@ pub struct QueueView {
     drop_at: Option<usize>,
     /// The row a secondary click landed on, for the list's one context menu.
     menu_row: Option<usize>,
+    /// The queue items a drag of rows carries, named as it began.
+    dragging: Vec<String>,
     /// The navigator's rewinds of the queue already answered.
     rewinds: u32,
     /// Where the rows' links lead.
     nav: Entity<Navigator>,
-    /// The favourites, once the library has loaded.
-    feed: Option<(Entity<Feed>, Subscription)>,
+    /// The library, once it has loaded: the rows' hearts, and the verbs
+    /// the context menu shares with the library's.
+    lib: Option<(Lib, Subscription)>,
     /// Keeping the playing track in view as it changes, the Mac's: on from
     /// the crosshair, off by a scroll of the person's own or with nothing
     /// playing. For the session only.
@@ -209,8 +215,9 @@ impl QueueView {
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
+            dragging: Vec::new(),
             nav: nav.clone(),
-            feed: None,
+            lib: None,
             following: false,
             followed: None,
             followed_row: None,
@@ -229,6 +236,12 @@ impl QueueView {
         view
     }
 
+    /// Where row `row` was drawn last frame, in the window; `None` while it
+    /// is off screen. For tools that drive the window headlessly.
+    pub fn row_bounds(&self, row: usize) -> Option<Bounds<Pixels>> {
+        self.list.row_bounds(row)
+    }
+
     /// "Group by album": the rows under record headings, or flat.
     fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
         window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
@@ -236,11 +249,16 @@ impl QueueView {
         crate::mirror::regroup(&self.queue, grouped, cx);
     }
 
-    /// The rows' hearts read and toggle the library's favourites.
-    pub fn set_feed(&mut self, feed: Entity<Feed>, cx: &mut Context<Self>) {
-        let observed = cx.observe(&feed, |_, _, cx| cx.notify());
-        self.feed = Some((feed, observed));
+    /// The rows' hearts read and toggle the library's favourites; the
+    /// context menu offers the library's verbs on the rows' tracks.
+    pub fn set_lib(&mut self, lib: Lib, cx: &mut Context<Self>) {
+        let observed = cx.observe(&lib.feed, |_, _, cx| cx.notify());
+        self.lib = Some((lib, observed));
         cx.notify();
+    }
+
+    fn feed(&self) -> Option<&Entity<Feed>> {
+        self.lib.as_ref().map(|(lib, _)| &lib.feed)
     }
 
     /// The queue was sent whole: its rows were laid out off the main thread
@@ -493,15 +511,18 @@ impl QueueView {
     /// is the end of the queue. The layout the drag began in must still be
     /// the one on screen: the engine puts items whose target it cannot find
     /// at the end of the queue, so a stale target would move them there.
-    fn drop_rows(&mut self, dragged: &DraggedRows, dest: usize, cx: &mut Context<Self>) {
+    fn drop_rows(&mut self, dest: usize, cx: &mut Context<Self>) {
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
-        if dragged.whole != queue.whole || dragged.row >= queue.rows.len() {
+        // What is still queued of what was picked up.
+        let moving: Vec<String> = std::mem::take(&mut self.dragging)
+            .into_iter()
+            .filter(|id| queue.at.contains_key(id))
+            .collect();
+        if moving.is_empty() {
             return;
         }
-        let moving = self.acting_on(dragged.row, cx);
-        let queue = self.queue.read(cx);
         let Some((target, after)) = rows::drop_target(&queue.rows, dest, &moving, &queue.base)
         else {
             return;
@@ -573,7 +594,7 @@ impl QueueView {
         &mut self,
         row: usize,
         p: &Paint,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows(cx).len();
@@ -581,6 +602,8 @@ impl QueueView {
             return div().into_any_element();
         }
         let selected = self.is_selected(row, cx);
+        let cursor = self.focus.is_focused(window)
+            && self.cursor.as_ref().and_then(|r| self.row_of(r, cx)) == Some(row);
         // The insertion line keeps the accent over a picked row.
         let insertion = p.accent;
         let p = &p.picked(selected);
@@ -612,20 +635,20 @@ impl QueueView {
             let (status, track, on_server, on_disk) =
                 (item.status, item.track_id, item.on_server, item.on_disk);
             let mut transfer = None;
-            if let (Some(track), Some((feed, _))) = (track, &self.feed) {
+            if let (Some(track), Some(feed)) = (track, self.feed()) {
                 let feed = feed.read(cx);
                 favourite = Some(feed.is_favourite(Playable::Track(track)));
                 transfer = feed.transfers.get(&track).copied();
             }
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
-            if self.feed.is_none() && status == EntryStatus::Downloading {
+            if self.lib.is_none() && status == EntryStatus::Downloading {
                 transfer = Some(koan_ffi::TransferState::Running);
             }
             availability =
                 crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
         }
-        let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
+        let feed = self.feed().cloned();
         let queue = self.queue.read(cx);
         let (row_frame, _) = match r {
             Row::Heading { first, len } => {
@@ -682,10 +705,7 @@ impl QueueView {
                 (frame, id)
             }
         };
-        let dragged = DraggedRows {
-            row,
-            whole: queue.whole,
-        };
+        let dragged = DraggedRows { row };
         // The insertion line, while a drag in the queue is over this row: above
         // it, or below the last row for the end of the queue.
         let dragging = cx.has_active_drag();
@@ -695,6 +715,7 @@ impl QueueView {
         let list = self.list.clone();
         row_frame
             .selected(selected)
+            .cursor(cursor)
             .when(p.a11y, |frame| {
                 frame
                     .place(row, count)
@@ -729,8 +750,10 @@ impl QueueView {
             }))
             .on_drag(dragged, move |dragged, _, _, cx| {
                 let (label, album) = view.update(cx, |this, cx| {
-                    // A new drag starts from no insertion point.
+                    // A new drag starts from no insertion point, carrying
+                    // the queue items under it.
                     this.drop_at = None;
+                    this.dragging = this.acting_on(dragged.row, cx);
                     let queue = this.queue.read(cx);
                     let album = queue
                         .rows
@@ -754,9 +777,9 @@ impl QueueView {
                     }
                 },
             ))
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
@@ -783,7 +806,15 @@ impl QueueView {
     }
 }
 
-fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
+/// The queue's verbs on the rows a right click acts on, then the library's
+/// on their tracks: a playlist to add them to, a favourite, organising,
+/// their record, their files on this device, a share link.
+fn row_menu(
+    menu: Menu,
+    view: &Entity<QueueView>,
+    window: &mut Window,
+    cx: &mut Context<Menu>,
+) -> Menu {
     let this = view.read(cx);
     let Some(row) = this.menu_row.filter(|&row| row < this.rows(cx).len()) else {
         return menu;
@@ -800,97 +831,176 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
     // Named when the menu opens, as the rows it acts on are: the queue can be
     // sent whole while the menu is open.
     let first = this.row_items(row, cx).next().cloned();
-    // The library's tracks under the rows, for the verbs on their files.
-    let tracks: Vec<i64> = {
+    // The library's tracks under the rows, for the verbs on their files; the
+    // one item when the menu is over one track; the record when over its
+    // heading.
+    let (tracks, one, record) = {
         let queue = this.queue.read(cx);
-        ids.iter()
-            .filter_map(|id| queue.at.get(id).and_then(|&ix| queue.items[ix].track_id))
-            .collect()
+        let items: Vec<&QueueItem> = ids
+            .iter()
+            .filter_map(|id| queue.at.get(id).map(|&ix| &queue.items[ix]))
+            .collect();
+        let tracks: Vec<i64> = items.iter().filter_map(|item| item.track_id).collect();
+        let one = (ids.len() == 1 && !heading)
+            .then(|| items.first().map(|item| (*item).clone()))
+            .flatten();
+        let record = heading
+            .then(|| {
+                items
+                    .first()
+                    .map(|item| (item.album_id, item.album.clone(), item.album_artist.clone()))
+            })
+            .flatten();
+        (tracks, one, record)
     };
     let title = match tracks.len() {
         1 => "1 track".to_owned(),
         n => format!("{n} tracks"),
     };
+    let lib = this.lib.as_ref().map(|(lib, _)| lib.clone());
+    let nav = this.nav.clone();
+    // The record to go to: the heading's, or the one track's.
+    let album = record
+        .as_ref()
+        .and_then(|(album, _, _)| *album)
+        .or_else(|| one.as_ref().and_then(|item| item.album_id));
+    // What a share link is described as, as the Mac names it.
+    let share_name = match (&record, &one) {
+        (Some((_, album, artist)), _) => Some(format!("{artist} — {album}")),
+        (_, Some(item)) => Some(item.title.clone()),
+        _ => None,
+    };
+    let picked: std::sync::Arc<[Playable]> = tracks.iter().map(|&id| Playable::Track(id)).collect();
     let remove = view.clone();
-    menu.item(
-        MenuEntry::new("play")
-            .icon(Icon::Play)
-            .on_click(move |_, _, cx| {
-                if let Some(id) = first.clone() {
-                    command(cx, "play", move |e| e.play(id));
-                }
-            }),
-    )
-    .item(
-        MenuEntry::new(remove_label)
-            .icon(Icon::Remove)
-            .on_click(move |_, _, cx| {
-                let ids = ids.clone();
-                remove.update(cx, |this, cx| this.remove(ids, cx));
-            }),
-    )
-    .separator()
-    .item(
-        MenuEntry::new("undo")
-            .icon(Icon::Undo)
-            .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
-    )
-    .item(
-        MenuEntry::new("redo")
-            .icon(Icon::Redo)
-            .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
-    )
-    .separator()
-    .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
-        let (tracks, title) = (tracks.clone(), title.clone());
-        move |_, window, cx| crate::organize::open(title.clone(), tracks.clone(), window, cx)
-    }))
-    .item(
-        MenuEntry::new("download to cache")
-            .icon(Icon::Downloads)
-            .on_click({
-                let tracks = tracks.clone();
-                move |_, _, cx| {
+    let mut menu = menu
+        .item(
+            MenuEntry::new("play")
+                .icon(Icon::Play)
+                .on_click(move |_, _, cx| {
+                    if let Some(id) = first.clone() {
+                        command(cx, "play", move |e| e.play(id));
+                    }
+                }),
+        )
+        .item(
+            MenuEntry::new(remove_label)
+                .icon(Icon::Remove)
+                .on_click(move |_, _, cx| {
+                    let ids = ids.clone();
+                    remove.update(cx, |this, cx| this.remove(ids, cx));
+                }),
+        );
+    if let Some(lib) = lib.as_ref().filter(|_| !picked.is_empty()) {
+        menu = actions::playlist_submenu(menu.separator(), lib, picked, None, window, cx);
+    }
+    menu = menu
+        .separator()
+        .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
+            let (tracks, title) = (tracks.clone(), title.clone());
+            move |_, window, cx| crate::organize::open(title.clone(), tracks.clone(), window, cx)
+        }));
+    if let (Some(lib), Some(track)) = (lib, one.as_ref().and_then(|item| item.track_id)) {
+        let favourited = lib.feed.read(cx).is_favourite(Playable::Track(track));
+        menu = menu.item(
+            MenuEntry::new(if favourited {
+                "unfavourite"
+            } else {
+                "favourite"
+            })
+            .icon(if favourited {
+                Icon::Favourited
+            } else {
+                Icon::Favourite
+            })
+            .on_click(move |_, _, cx| actions::favourite(&lib, &[Playable::Track(track)], cx)),
+        );
+    }
+    if let Some(album) = album {
+        menu = menu.item(MenuEntry::new("go to album").icon(Icon::Album).on_click(
+            move |_, _, cx| {
+                nav.update(cx, |nav, cx| {
+                    if nav.go(Route::Album(album)) {
+                        cx.notify();
+                    }
+                })
+            },
+        ));
+    }
+    // One track says which of the two applies; a record or a pick is
+    // usually part of the way there, and both do.
+    let on_disk = one.as_ref().map(|item| item.on_disk);
+    if on_disk != Some(true) {
+        let tracks = tracks.clone();
+        menu = menu.item(
+            MenuEntry::new("download to cache")
+                .icon(Icon::Downloads)
+                .on_click(move |_, _, cx| {
                     let tracks = tracks.clone();
                     command(cx, "download to cache", move |e| {
                         e.download_to_cache(tracks)
                     })
-                }
-            }),
-    )
-    .item(
-        MenuEntry::new("remove downloaded files…")
+                }),
+        );
+    }
+    if on_disk != Some(false) {
+        let tracks = tracks.clone();
+        menu = menu.item(
+            MenuEntry::new(if on_disk.is_some() {
+                "remove downloaded file…"
+            } else {
+                "remove downloaded files…"
+            })
             .icon(Icon::Clear)
             .on_click(move |_, window, cx| {
-                crate::library::actions::ask_remove_downloads(
-                    crate::engine::engine(cx),
-                    title.clone(),
-                    tracks.clone(),
-                    window,
-                    cx,
-                )
+                actions::ask_remove_downloads(engine(cx), title.clone(), tracks.clone(), window, cx)
             }),
-    )
-    .separator()
-    .item(
-        MenuEntry::new("jump to playing")
-            .icon(Icon::JumpToPlaying)
-            .on_click({
-                let view = view.clone();
-                move |_, _, cx| view.update(cx, |this, cx| this.jump_to_playing(cx))
+        );
+    }
+    if !tracks.is_empty() {
+        let sets = vec![koan_ffi::TrackSet::Tracks { ids: tracks }];
+        menu = menu.item(
+            MenuEntry::new(if record.is_some() {
+                "copy album share link"
+            } else {
+                "copy share link"
+            })
+            .icon(Icon::Share)
+            .on_click(move |_, _, cx| {
+                actions::copy_share_link(engine(cx), sets.clone(), share_name.clone(), cx)
             }),
-    )
-    .item(
-        MenuEntry::new("group by album")
-            .icon(Icon::Album)
-            .checked(grouped)
-            .on_click({
-                let view = view.clone();
-                move |_, window, cx| {
-                    view.update(cx, |this, cx| this.set_grouped(!grouped, window, cx))
-                }
-            }),
-    )
+        );
+    }
+    menu.separator()
+        .item(
+            MenuEntry::new("undo")
+                .icon(Icon::Undo)
+                .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
+        )
+        .item(
+            MenuEntry::new("redo")
+                .icon(Icon::Redo)
+                .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+        )
+        .separator()
+        .item(
+            MenuEntry::new("jump to playing")
+                .icon(Icon::JumpToPlaying)
+                .on_click({
+                    let view = view.clone();
+                    move |_, _, cx| view.update(cx, |this, cx| this.jump_to_playing(cx))
+                }),
+        )
+        .item(
+            MenuEntry::new("group by album")
+                .icon(Icon::Album)
+                .checked(grouped)
+                .on_click({
+                    let view = view.clone();
+                    move |_, window, cx| {
+                        view.update(cx, |this, cx| this.set_grouped(!grouped, window, cx))
+                    }
+                }),
+        )
 }
 
 pub(crate) fn line(
@@ -1213,7 +1323,6 @@ pub(crate) fn track(
 /// The heart, as the Mac's: shown while the track is a favourite or the row
 /// is under the pointer, and toggling it.
 fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
-    let p = look.p;
     let slot = div().flex().justify_center();
     let (Some(track), Some(favourite), Some(feed)) =
         (item.track_id, extras.favourite, extras.feed.clone())
@@ -1221,31 +1330,18 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
         return slot.into_any_element();
     };
     slot.child(
-        div()
-            .id(look.id("heart", 0))
-            .cursor_pointer()
+        crate::components::Heart::new(look.id("heart", 0), favourite)
+            .role(TypeRole::Fine)
             .when(!favourite, |d| {
                 // The row's own group, which `TableRow` names for every row.
                 d.invisible()
                     .group_hover(crate::components::ROW_GROUP, |s| s.visible())
             })
             .on_click(move |_, _, cx| {
-                cx.stop_propagation();
                 feed.update(cx, |feed, cx| {
                     feed.toggle_favourite(Playable::Track(track), cx)
                 });
-            })
-            .child(glyph(
-                if favourite {
-                    Icon::Favourited
-                } else {
-                    Icon::Favourite
-                },
-                if favourite { "♥" } else { "♡" },
-                TypeRole::Fine,
-                if favourite { p.accent_text } else { p.muted },
-                p,
-            )),
+            }),
     )
     .into_any_element()
 }
@@ -1403,10 +1499,12 @@ impl QueueView {
             )
             .child(
                 ToolbarButton::new("queue-undo", Icon::Undo, "undo")
+                    .help(crate::platform::actions::help("undo", &Undo, cx))
                     .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
             )
             .child(
                 ToolbarButton::new("queue-redo", Icon::Redo, "redo")
+                    .help(crate::platform::actions::help("redo", &Redo, cx))
                     .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
             )
             .child(more(count, saveable))
@@ -1560,6 +1658,18 @@ impl Render for QueueView {
                     cx.notify();
                 }
             }))
+            // The menu key: the row under the cursor, before the list's menu
+            // on this element opens over it.
+            .capture_action(cx.listener(
+                |this, _: &crate::components::list_actions::ShowMenu, _, cx| {
+                    this.menu_row = this.cursor.as_ref().and_then(|r| this.row_of(r, cx));
+                    // On screen, so the menu opens over it.
+                    if let Some(row) = this.menu_row {
+                        this.list.reveal(row);
+                        cx.notify();
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::play_selected))
             .on_action(cx.listener(Self::remove_selected))
             .on_action(cx.listener(Self::select_previous))
@@ -1615,9 +1725,9 @@ impl Render for QueueView {
                 },
             ))
             // Below the last row: the end of the queue.
-            .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
+            .on_drop(cx.listener(move |this, _: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
-                this.drop_rows(dragged, dest, cx);
+                this.drop_rows(dest, cx);
             }))
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
@@ -1646,7 +1756,7 @@ impl Render for QueueView {
             }))
             .koan_context_menu("queue-menu", window, cx, {
                 let view = view.clone();
-                move |menu, _, cx| row_menu(menu, &view, cx)
+                move |menu, window, cx| row_menu(menu, &view, window, cx)
             })
     }
 }

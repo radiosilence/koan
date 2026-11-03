@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use koan_ffi::{EntryStatus, Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
@@ -140,19 +140,13 @@ pub fn reach(track: i64, cx: &App) -> Option<Glide> {
     (transfers.running.contains(&track) && partial).then(|| entry.reach.clone())
 }
 
-/// The downloads page bar's glide for `track`'s transfer, made now if the
-/// engine has not reported it yet.
-pub fn bar(track: i64, cx: &mut App) -> Glide {
-    let Some(handle) = cx.try_global::<TransfersHandle>().cloned() else {
-        return Glide::new();
-    };
-    handle.0.update(cx, |transfers, _| {
-        let entry = transfers.glides.entry(track).or_insert_with(Entry::new);
-        if let Some(last) = entry.last {
-            last.apply(&entry.bar);
-        }
-        entry.bar.clone()
-    })
+/// The downloads page bar's glide for `track`'s transfer, fed from its
+/// reports; a transfer not reported yet has an empty one until the page
+/// draws again for its first report.
+pub fn bar(track: i64, cx: &App) -> Glide {
+    cx.try_global::<TransfersHandle>()
+        .and_then(|handle| handle.0.read(cx).glides.get(&track).map(|e| e.bar.clone()))
+        .unwrap_or_default()
 }
 
 /// The entity to observe for transfers starting and ending.

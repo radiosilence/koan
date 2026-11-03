@@ -4,9 +4,10 @@
 //!
 //! A list is one stop in the window's Tab order; inside it, ↑ and ↓ move the
 //! cursor and pick the row under it, with ⇧ extending the pick, Home and End
-//! go to either end, Page Up and Page Down move a screenful, Return plays or
-//! opens the row, and Ctrl-Space adds it to the pick or takes it out (Space
-//! stays play and pause). The list
+//! go to either end, ← → move a tile in a grid (where ↑ ↓ move a row of
+//! it), Page Up and Page Down move a screenful, Return plays or
+//! opens the row, Ctrl-Space adds it to the pick or takes it out (Space
+//! stays play and pause), and the menu key or ⇧F10 opens its context menu. The list
 //! sets the `List` key context and handles the actions; `ListCursor` works
 //! out where each key leaves the cursor and what it picks. The app binds the
 //! keys, from the table its shortcuts sheet lists.
@@ -24,6 +25,14 @@ actions!(
         ExtendUp,
         /// The row below, the pick extended to it.
         ExtendDown,
+        /// In a grid, the tile before.
+        Left,
+        /// In a grid, the tile after.
+        Right,
+        /// In a grid, the tile before, the pick extended to it.
+        ExtendLeft,
+        /// In a grid, the tile after, the pick extended to it.
+        ExtendRight,
         /// The first row.
         First,
         /// The last row.
@@ -36,6 +45,9 @@ actions!(
         Activate,
         /// Add the row under the cursor to the pick, or take it out.
         Pick,
+        /// The context menu, for the row under the cursor: the menu key, or
+        /// ⇧F10.
+        ShowMenu,
     ]
 );
 

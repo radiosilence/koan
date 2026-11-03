@@ -408,6 +408,9 @@ struct KoanLayers {
     slot_generation: u64, // KOAN: #1859.
     size: (u32, u32),
     layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
+    /// KOAN: whether each layer's colour slots were moving when it was
+    /// last drawn (#1859).
+    moving: Vec<bool>,
 }
 
 struct CachedTextureBindGroup {
@@ -2168,18 +2171,17 @@ impl WgpuRendererCore {
         let plan = scene.shader_layers.as_deref().context("no shader layers")?;
         let extent = (size.width.0 as u32, size.height.0 as u32);
         let held = &self.resources.shader_layers;
-        // KOAN: a layer drawing with a colour slot that moves, or was
-        // written since the layers were drawn, is drawn again (#1859).
+        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
+        // while one of its slots moves, when the table was written since it
+        // was drawn, and once more after its slots stop, so the last value
+        // lands; the other layers are kept.
+        let now = gpui::present_now();
         let slot_generation = gpui::color_slots_generation();
-        let slots_moved = plan.layers.iter().any(|layer| {
-            !layer.color_slots.is_empty()
-                && (held.slot_generation != slot_generation
-                    || layer.color_slots_moving(gpui::present_now()))
-        });
-        if slots_moved
-            || held.generation != scene.generation
+        let written = held.slot_generation != slot_generation;
+        if held.generation != scene.generation
             || held.size != extent
             || held.layers.is_empty()
+            || held.layers.len() != plan.layers.len()
         {
             let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
                 if self.resources.shader_layers.size == extent {
@@ -2231,7 +2233,29 @@ impl WgpuRendererCore {
                 slot_generation,
                 size: extent,
                 layers: drawn,
+                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
             };
+        } else {
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.color_slots.is_empty() {
+                    continue;
+                }
+                let moving = layer.color_slots_moving(now);
+                let was_moving =
+                    std::mem::replace(&mut self.resources_mut().shader_layers.moving[k], moving);
+                if !(written || moving || was_moving) {
+                    continue;
+                }
+                let Some(view) = self.resources().shader_layers.layers[k]
+                    .as_ref()
+                    .map(|(texture, _)| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+                else {
+                    continue;
+                };
+                // After the last compose that read it: the same queue.
+                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+            }
+            self.resources_mut().shader_layers.slot_generation = slot_generation;
         }
         if self.resources().compose_pipelines.is_none() {
             let pipelines = self.create_compose_pipelines();
@@ -3693,6 +3717,80 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         uniforms.set(0, 1.0);
         let image = renderer.render_scene_to_image(&scene, size)?;
         assert!(image.get_pixel(48, 8).0[0] > 200, "the uniforms are read afresh");
+        Ok(())
+    }
+
+    // KOAN: (#1859) the WGSL prelude's `koan_track` draws each curve where
+    // `Track::at` says it stands: the twin of Metal's test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_tracks_draw_where_the_cpu_says() -> anyhow::Result<()> {
+        use gpui::{Track, TrackCurve, TrackRepeat};
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-tracks",
+            msl: "",
+            wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let k = u32(position.x / size.x * 7.0);
+    return vec4<f32>(koan_track(u, k, time), 0.0, 0.0, 1.0);
+}
+"#,
+            prepare: None,
+        };
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        let now = uniforms.time_at(gpui::present_now());
+        let track = |t: f32, length: f32, curve, repeat| Track {
+            from: 0.1,
+            to: 0.9,
+            start: now - t,
+            length,
+            curve,
+            repeat,
+        };
+        let spring = |stiffness, damping| TrackCurve::Spring { stiffness, damping, velocity: 0.0 };
+        let tracks = [
+            track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
+            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(170.0, 12.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(100.0, 20.0), TrackRepeat::Once),
+            track(0.3, 5.0, spring(100.0, 40.0), TrackRepeat::Once),
+            track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
+            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
+        ];
+        for (k, t) in tracks.iter().enumerate() {
+            uniforms.set_track(k, *t);
+        }
+        let bounds = Bounds {
+            origin: Point { x: ScaledPixels(0.0), y: ScaledPixels(0.0) },
+            size: Size { width: ScaledPixels(7.0), height: ScaledPixels(1.0) },
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds },
+            program: &PROGRAM,
+            uniforms: uniforms.clone(),
+            image: None,
+        });
+        scene.finish();
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let before = uniforms.time_at(gpui::present_now());
+        let image = renderer
+            .render_scene_to_image(&scene, Size { width: DevicePixels(7), height: DevicePixels(1) })?;
+        let after = uniforms.time_at(gpui::present_now());
+        for (k, t) in tracks.iter().enumerate() {
+            let levels = (0..=64).map(|i| {
+                let at = before + (after - before) * i as f32 / 64.0;
+                (t.at(at) * 255.0).round() as i32
+            });
+            let (low, high) = levels.fold((i32::MAX, i32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
+            assert!(
+                drawn >= low - 2 && drawn <= high + 2,
+                "track {k}: drawn {drawn}, expected {low}..={high}"
+            );
+        }
         Ok(())
     }
 

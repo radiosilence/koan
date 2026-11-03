@@ -98,6 +98,11 @@ pub struct ArtistPage {
     menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
     focus: FocusHandle,
+    /// The keyboard's place on the page, in `order`: the records, the
+    /// features, then the appearances.
+    cursor: crate::components::ListCursor,
+    /// The page holds the keyboard, as of the last frame.
+    keyed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -159,6 +164,8 @@ impl ArtistPage {
             menu: None,
             starting: HashSet::new(),
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -472,6 +479,31 @@ impl ArtistPage {
         self.pick.as_ref().map(|(_, drag)| drag.clone())
     }
 
+    /// The page's rows as the keys walk them: each list item holding tiles
+    /// or a track, and the part of `order` it shows.
+    fn lines(&self) -> Vec<(usize, std::ops::Range<usize>)> {
+        let Some(r) = &self.record else {
+            return Vec::new();
+        };
+        let (albums, features) = (r.albums.len(), r.albums.len() + r.features.len());
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, item)| match item {
+                Item::Tiles {
+                    features: false,
+                    range,
+                } => Some((ix, range.clone())),
+                Item::Tiles {
+                    features: true,
+                    range,
+                } => Some((ix, albums + range.start..albums + range.end)),
+                Item::Track(t) => Some((ix, features + t..features + t + 1)),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn order(&self) -> Vec<Playable> {
         let Some(r) = &self.record else {
             return Vec::new();
@@ -517,15 +549,15 @@ impl ArtistPage {
                     .into_any_element()
             }
             Item::Tiles { features, range } => {
-                let albums = if features {
-                    &record.features
+                let (albums, first) = if features {
+                    (&record.features, record.albums.len() + range.start)
                 } else {
-                    &record.albums
+                    (&record.albums, range.start)
                 };
                 let Some(albums) = albums.get(range) else {
                     return div().into_any_element();
                 };
-                self.tiles(albums, features, grid, scale, cx)
+                self.tiles(albums, first, features, grid, scale, cx)
                     .into_any_element()
             }
             Item::Track(index) => {
@@ -556,7 +588,9 @@ impl ArtistPage {
                     drag,
                     kind: crate::components::RowKind::Art,
                     note: None,
-                    cursor: false,
+                    cursor: self.keyed
+                        && self.cursor.at
+                            == Some(record.albums.len() + record.features.len() + index),
                     place: Some((index, record.appearances.len())),
                     reveal: None,
                 };
@@ -580,6 +614,7 @@ impl ArtistPage {
     fn tiles(
         &mut self,
         albums: &[Album],
+        first: usize,
         show_artist: bool,
         grid: Grid,
         scale: f32,
@@ -622,6 +657,7 @@ impl ArtistPage {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&album.id),
+                cursor: self.keyed && self.cursor.at == Some(first + ix),
                 show_artist,
                 side: grid.side,
                 sleeve,
@@ -850,6 +886,11 @@ impl TileHost for ArtistPage {
         window.focus(&self.focus, cx);
         let item = Playable::Album(album);
         let order = self.order();
+        // The keyboard carries on from the tile clicked.
+        if let Some(at) = order.iter().position(|p| *p == item) {
+            self.cursor.at = Some(at);
+            self.cursor.anchor = Some(at);
+        }
         if self
             .selection
             .take(item, modifiers.shift, modifiers.secondary(cx), &order)
@@ -911,6 +952,11 @@ impl TrackList for ArtistPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                if let Some(r) = &self.record {
+                    let at = r.albums.len() + r.features.len() + index;
+                    self.cursor.at = Some(at);
+                    self.cursor.anchor = Some(at);
+                }
                 let ids: Vec<i64> = self
                     .record
                     .as_ref()
@@ -945,6 +991,92 @@ impl TrackList for ArtistPage {
                 .feed
                 .update(cx, |f, cx| f.toggle_favourite(Playable::Track(track), cx)),
         }
+    }
+}
+
+impl super::keys::KeyedList for ArtistPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.record.as_ref().map_or(0, |r| {
+            r.albums.len() + r.features.len() + r.appearances.len()
+        })
+    }
+
+    fn columns(&self) -> usize {
+        self.grid.map_or(1, |grid| grid.columns)
+    }
+
+    /// Rows of a section's tiles hold the column; a section's last row may
+    /// be short, and a track row is one.
+    fn below(&self, at: usize, rows: isize) -> usize {
+        let lines = self.lines();
+        let Some(line) = lines.iter().position(|(_, range)| range.contains(&at)) else {
+            return at;
+        };
+        let column = at - lines[line].1.start;
+        let to = line
+            .saturating_add_signed(rows)
+            .min(lines.len().saturating_sub(1));
+        let range = &lines[to].1;
+        (range.start + column).min(range.end.saturating_sub(1))
+    }
+
+    /// One thing is marked, as a plain click marks a row, without starting
+    /// a pick: the tiles still play on a click. A range starts one.
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        if from == to {
+            self.selection.mark(order[from]);
+        } else {
+            self.selection.only(order[from]);
+            self.selection.click(order[to], true, &order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let order = self.order();
+        self.selection.click(order[ix], false, &order);
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        if let Some((item, _)) = self.lines().into_iter().find(|(_, r)| r.contains(&ix)) {
+            self.list.scroll_to_reveal_item(item);
+        }
+    }
+
+    /// Return opens a record, as a click on its title does, and plays the
+    /// appearances from a track, as a double click does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(r) = self.record.clone() else { return };
+        match self.order()[ix] {
+            Playable::Album(album) => self
+                .lib
+                .nav
+                .update(cx, |nav, cx| nav.open(Page::Album(album), cx)),
+            _ => {
+                let ids = r.appearances.iter().map(|t| t.id).collect();
+                let from = ix - r.albums.len() - r.features.len();
+                actions::play_list(&self.lib, ids, from, cx);
+            }
+        }
+    }
+
+    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+        self.menu = ix.map(|ix| {
+            let item = self.order()[ix];
+            let album = match (item, &self.record) {
+                (Playable::Track(id), Some(r)) => r
+                    .appearances
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.album_id),
+                _ => None,
+            };
+            actions::keyed_target(&self.selection, item, album)
+        });
     }
 }
 
@@ -1005,39 +1137,45 @@ impl Render for ArtistPage {
                 .size_full(),
             );
 
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .typeset(p, Type::Body, p.ink)
-            .child(measure)
-            .child(actions::list_menu(
-                div()
-                    .id("artist-page-list")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(body)
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(crate::components::list_scrollbar(&self.list)),
-                cx.weak_entity(),
-                window,
+        self.keyed = self.focus.is_focused(window);
+        let len = super::keys::KeyedList::len(self);
+        self.cursor.clamp(len);
+        actions::list_menu(
+            super::keys::keyed(
+                div().key_context("Library List").track_focus(&self.focus),
+                cx,
+            ),
+            cx.weak_entity(),
+            window,
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .relative()
+        .size_full()
+        .flex()
+        .flex_col()
+        .typeset(p, Type::Body, p.ink)
+        .child(measure)
+        .child(
+            div()
+                .id("artist-page-list")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(body)
+                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
+                .child(crate::components::list_scrollbar(&self.list)),
+        )
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
                 cx,
             ))
-            .when(self.selection.is_active(), |d| {
-                d.child(chrome::selection_bar(
-                    p,
-                    &self.lib,
-                    &self.selection,
-                    cx.entity(),
-                    cx,
-                ))
-            })
+        })
     }
 }
 
@@ -1123,10 +1261,10 @@ mod tests {
             shape,
             [
                 "header",
-                "[albums]",
+                "[Albums]",
                 "0..3",
                 "3..4",
-                "[live]",
+                "[Live]",
                 "4..5",
                 "[features]",
                 "0..1",
@@ -1141,6 +1279,6 @@ mod tests {
             appearances: Vec::new(),
         };
         let items = ArtistPage::cut(&alone, grid);
-        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "albums"));
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums"));
     }
 }

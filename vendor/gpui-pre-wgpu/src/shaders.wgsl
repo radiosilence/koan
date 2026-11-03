@@ -96,7 +96,7 @@ struct GammaParams {
 // KOAN: colour slots (#1859): the time, then per slot the `from` colour, the
 // `to` colour and a track from 0 to 1 in two blocks, as gpui's
 // `color_slots_frame` writes them.
-@group(0) @binding(2) var<uniform> koan_slots: array<vec4<f32>, 1021>;
+@group(0) @binding(2) var<uniform> koan_slots: array<vec4<f32>, 1021>;  // KOAN: colour slots (#1859).
 @group(2) @binding(0) var t_sprite: texture_2d<f32>;
 @group(2) @binding(1) var s_sprite: sampler;
 
@@ -558,11 +558,11 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     );
     out.background_solid = gradient.solid;
     if (quad.background.tag != 1u && quad.background.solid.h >= 2.0) {
-        out.background_solid = koan_rgba(quad.background.solid);
+        out.background_solid = koan_rgba(quad.background.solid);  // KOAN: colour slots (#1859).
     }
     out.background_color0 = gradient.color0;
     out.background_color1 = gradient.color1;
-    out.border_color = koan_rgba(quad.border_color);
+    out.border_color = koan_rgba(quad.border_color);  // KOAN: colour slots (#1859).
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
@@ -997,7 +997,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 
     var out = ShadowVarying();
     out.position = to_device_position(unit_vertex, geometry);
-    out.color = koan_rgba(shadow.color);
+    out.color = koan_rgba(shadow.color);  // KOAN: colour slots (#1859).
     out.shadow_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
     return out;
@@ -1179,7 +1179,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
     var out = UnderlineVarying();
     out.position = to_device_position(unit_vertex, underline.bounds);
-    out.color = koan_rgba(underline.color);
+    out.color = koan_rgba(underline.color);  // KOAN: colour slots (#1859).
     out.underline_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
     return out;
@@ -1246,7 +1246,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.color = koan_rgba(sprite.color);
+    out.color = koan_rgba(sprite.color);  // KOAN: colour slots (#1859).
     out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
@@ -1398,6 +1398,13 @@ fn koan_slot_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
     if (z < 1.0) {
         let wd = w * sqrt(1.0 - z * z);
         return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    if (z > 1.0001) {
+        let root = sqrt(z * z - 1.0);
+        let r1 = -w * (z - root);
+        let r2 = -w * (z + root);
+        let c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
     }
     return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 }

@@ -1,0 +1,1 @@
+- **Music sent from a menu is seen to arrive.** In the desktop app, the sidebar's queue or playlist row draws a short line when a menu, the selection bar or a record's header sends music there. A favourite changed anywhere answers on every heart showing it, the album tile's included. Copied text and each new notice answer the same way.

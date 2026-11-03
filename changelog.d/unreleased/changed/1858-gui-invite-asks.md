@@ -1,0 +1,1 @@
+- **Invite links ask in the kōan GUI app.** Opening one asks whether to sign in as its account on its server, and what happens to the current sign-in, before anything changes; a link for the account already signed in says so and does nothing.

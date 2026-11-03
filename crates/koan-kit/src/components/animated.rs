@@ -104,7 +104,7 @@ impl Animated {
         for k in 0..SHADER_TRACKS {
             let mut track = self.0.uniforms.track(k);
             track.start -= shift;
-            self.0.uniforms.set_track(k, track);
+            self.0.uniforms.set_track(k, anchored(track, 0.0));
         }
     }
 
@@ -133,6 +133,7 @@ impl Animated {
 
     /// Track `k` standing at `value`.
     pub fn hold(&self, k: usize, value: f32) {
+        self.rebase();
         self.put(k, Track::hold(value));
     }
 
@@ -140,6 +141,8 @@ impl Animated {
     /// retarget mid-flight starts from the value, and with a spring the
     /// velocity, it had reached.
     pub fn to(&self, k: usize, to: f32, length: Duration, ease: Ease) {
+        // Before any time is read, so the new track is in the new base.
+        self.rebase();
         let now = Self::now();
         let current = self.0.uniforms.track(k);
         let t = self.0.uniforms.time_at(now);
@@ -186,6 +189,7 @@ impl Animated {
         ease: Ease,
         repeat: Repeat,
     ) {
+        self.rebase();
         let (curve, length) = match ease {
             Ease::Spring { stiffness, damping } => (
                 TrackCurve::Spring {
@@ -196,6 +200,21 @@ impl Animated {
                 gpui_kit::spring_length(from - to, 0.0, stiffness, damping),
             ),
             ease => (curve(ease), length.as_secs_f32()),
+        };
+        // A repeat starts at its latest whole cycle, worked out on instants
+        // so a start long ago keeps its phase exactly.
+        let period = match repeat {
+            Repeat::Once => 0.0,
+            Repeat::Loop => length as f64,
+            Repeat::Alternate => 2.0 * length as f64,
+        };
+        let now = Instant::now();
+        let start = match now.checked_duration_since(start) {
+            Some(ago) if period > 0.0 => {
+                let cycles = (ago.as_secs_f64() / period).floor();
+                start + Duration::from_secs_f64(cycles * period)
+            }
+            _ => start,
         };
         self.put(
             k,
@@ -211,7 +230,6 @@ impl Animated {
     }
 
     fn put(&self, k: usize, track: Track) {
-        self.rebase();
         let track = if self.0.still.load(Ordering::Relaxed) {
             Track::hold(match track.repeat {
                 Repeat::Once => track.to,
@@ -285,6 +303,8 @@ impl Animated {
     /// motion is decorative, then `paint` it.
     pub fn attach(&self, decorative: bool, window: &mut Window, cx: &mut App) {
         *self.0.waker.lock() = Some(waker(window, cx));
+        // A track not written for hours keeps its precision.
+        self.rebase();
         let still = decorative && !motion_allowed(cx);
         self.0.still.store(still, Ordering::Relaxed);
         // Written before it was known: what moves stands at its end, or a
@@ -326,6 +346,21 @@ impl Animated {
             None => window.paint_shader(bounds, program, uniforms),
         }
     }
+}
+
+/// A repeating track's start moved up to its latest whole cycle at or
+/// before `now`, seconds of shader time: the same motion, with times kept
+/// small, so f32 reckons them to the frame however long ago it began.
+fn anchored(mut track: Track, now: f32) -> Track {
+    let period = match track.repeat {
+        Repeat::Once => return track,
+        Repeat::Loop => track.length,
+        Repeat::Alternate => 2.0 * track.length,
+    };
+    if period > 0.0 && track.start < now {
+        track.start += ((now - track.start) / period).floor() * period;
+    }
+    track
 }
 
 fn curve(ease: Ease) -> TrackCurve {

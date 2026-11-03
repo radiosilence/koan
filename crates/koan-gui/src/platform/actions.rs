@@ -176,7 +176,12 @@ macro_rules! shortcut {
 /// as well as ⌘+, as in every app with the item; the menu shows the first.
 pub const MENU: &[Shortcut] = &[
     shortcut!("Search…", ["secondary-k"], Navigation, Search),
-    shortcut!("Add Music…", ["secondary-shift-k"], Navigation, AddMusic),
+    shortcut!(
+        "Find and Play…",
+        ["secondary-shift-k"],
+        Navigation,
+        AddMusic
+    ),
     shortcut!("Queue", ["secondary-1"], Navigation, ShowQueue),
     shortcut!("Albums", ["secondary-2"], Navigation, ShowAlbums),
     shortcut!("Artists", ["secondary-3"], Navigation, ShowArtists),
@@ -247,7 +252,7 @@ pub const HOTKEYS: &[Shortcut] = &[
         Playback,
         FavouriteCurrentTrack
     ),
-    shortcut!("Add music", ["p"], Navigation, AddMusic),
+    shortcut!("Find and play", ["p"], Navigation, AddMusic),
     shortcut!("Search library", ["/"], Navigation, Search),
     shortcut!("Albums", ["l", "a"], Navigation, ShowAlbums),
     shortcut!("Artists", ["r"], Navigation, ShowArtists),
@@ -281,6 +286,18 @@ pub const LISTS: &[Shortcut] = &[
         Lists,
         list::ExtendDown
     ),
+    shortcut!(
+        "In a grid, the tile before or after",
+        ["left", "right"],
+        Lists,
+        list::Right
+    ),
+    shortcut!(
+        "In a grid, the pick extended across",
+        ["shift-left", "shift-right"],
+        Lists,
+        list::ExtendRight
+    ),
     shortcut!("The first or last row", ["home", "end"], Lists, list::Last),
     shortcut!(
         "A screenful up or down",
@@ -295,6 +312,12 @@ pub const LISTS: &[Shortcut] = &[
         Lists,
         list::Pick
     ),
+    shortcut!(
+        "The row's menu",
+        ["menu", "shift-f10"],
+        Lists,
+        list::ShowMenu
+    ),
 ];
 
 /// What each list key binds to: a line of `LISTS` can name two keys, one
@@ -302,6 +325,10 @@ pub const LISTS: &[Shortcut] = &[
 fn list_binding(key: &str) -> Box<dyn Action> {
     match key {
         "up" => Box::new(list::Up),
+        "left" => Box::new(list::Left),
+        "right" => Box::new(list::Right),
+        "shift-left" => Box::new(list::ExtendLeft),
+        "shift-right" => Box::new(list::ExtendRight),
         "shift-up" => Box::new(list::ExtendUp),
         "shift-down" => Box::new(list::ExtendDown),
         "home" => Box::new(list::First),
@@ -310,6 +337,7 @@ fn list_binding(key: &str) -> Box<dyn Action> {
         "pagedown" => Box::new(list::PageDown),
         "enter" => Box::new(list::Activate),
         "ctrl-space" => Box::new(list::Pick),
+        "menu" | "shift-f10" => Box::new(list::ShowMenu),
         _ => Box::new(list::Down),
     }
 }

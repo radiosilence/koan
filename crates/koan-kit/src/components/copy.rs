@@ -1,7 +1,9 @@
 //! Copying a value: a button that says what it copies ("copy link"), and a
 //! value that copies itself when clicked (a server's address). Each says
 //! "copied" for a moment after, so the click is seen to have done something,
-//! and keeps that moment itself: a page holds no state for it.
+//! and answers with a line drawn under it (the button's press answers as
+//! every button's does), keeping that moment itself: a page holds no state
+//! for it.
 
 use std::time::Duration;
 
@@ -132,11 +134,14 @@ impl RenderOnce for CopyText {
         let look = Look::of(window, cx);
         let state = moment(&self.id, window, cx);
         let copied = state.read(cx).copied;
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let accent = look.accent.hsla();
         let ink = look.palette.ink.hsla();
         let value = self.value;
         let help = self.help.unwrap_or_else(|| label("copy"));
         div()
             .id(self.id)
+            .relative()
             .cursor_pointer()
             .min_w_0()
             .overflow_hidden()
@@ -150,8 +155,12 @@ impl RenderOnce for CopyText {
             } else {
                 value.clone()
             })
+            .children(answers.layer(window, cx))
             .tooltip(move |window, cx| Tooltip::view(help.clone(), window, cx))
-            .on_click(move |_, _, cx| copy(&state, &value, cx))
+            .on_click(move |_, _, cx| {
+                answers.start(super::Answer::Sweep, accent, cx);
+                copy(&state, &value, cx)
+            })
     }
 }
 

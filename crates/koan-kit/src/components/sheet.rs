@@ -189,23 +189,43 @@ pub struct Asking {
     /// A sheet of the app's own, a view that lives while it shows (organise's
     /// preview), under any question it asks.
     sheet: Option<AnyView>,
+    /// The sheet's keys, so the window's bare keys (Space, the arrows) do
+    /// not reach the page under it, and what had them before it showed.
+    sheet_focus: Option<(FocusHandle, Option<FocusHandle>)>,
+    /// Given back on the next draw after the sheet closed, where closing
+    /// had no window to give it back in.
+    restore: Option<(FocusHandle, Option<FocusHandle>)>,
 }
 
 /// Shows `view` as the window's sheet, over the shell and under the
 /// question host, replacing any sheet showing. The view draws its own
-/// `panel`; the host draws the scrim and the placement.
-pub fn present(view: impl Into<AnyView>, cx: &mut App) {
+/// `panel`; the host draws the scrim and the placement, and holds the
+/// keyboard while it shows, as a question does.
+pub fn present(view: impl Into<AnyView>, window: &mut Window, cx: &mut App) {
     let view = view.into();
+    let before = window.focused(cx);
+    let focus = cx.focus_handle();
+    window.focus(&focus, cx);
     asking(cx).update(cx, |a, cx| {
+        // A sheet replacing another gives the keyboard back, when it goes,
+        // to what had it before the first.
+        let before = match a.sheet_focus.take() {
+            Some((_, earlier)) => earlier,
+            None => before,
+        };
         a.sheet = Some(view);
+        a.sheet_focus = Some((focus, before));
+        a.restore = None;
         cx.notify();
     });
 }
 
-/// Takes the sheet away.
+/// Takes the sheet away. The keyboard goes back to what had it before, on
+/// the window's next draw.
 pub fn close(cx: &mut App) {
     asking(cx).update(cx, |a, cx| {
         if a.sheet.take().is_some() {
+            a.restore = a.sheet_focus.take();
             cx.notify();
         }
     });
@@ -234,11 +254,28 @@ pub fn layered(layer: Layer, element: impl IntoElement) -> impl IntoElement {
 /// The sheet presented, placed over the window, for the shell to draw under
 /// `overlay`.
 pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-    let view = asking(cx).read(cx).sheet.clone()?;
+    let asking = asking(cx);
+    if let Some((sheet, before)) = asking.update(cx, |a, _| a.restore.take())
+        // Unless something in the sheet's last moments took it elsewhere.
+        && (sheet.contains_focused(window, cx) || window.focused(cx).is_none())
+        && let Some(before) = before
+    {
+        window.focus(&before, cx);
+    }
+    let (view, focus) = {
+        let a = asking.read(cx);
+        (
+            a.sheet.clone()?,
+            a.sheet_focus.as_ref().map(|(f, _)| f.clone()),
+        )
+    };
     let look = Look::of(window, cx);
     Some(
         div()
             .id("sheet")
+            // The window's bare keys are bound outside `Ask`.
+            .key_context("Ask")
+            .when_some(focus, |d, focus| d.track_focus(&focus))
             .absolute()
             .inset_0()
             .flex()

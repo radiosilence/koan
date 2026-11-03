@@ -715,43 +715,6 @@ impl Render for DevicesPane {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{ConnectedInfo, detail};
-
-    fn connection(via_server: bool, inbound: bool, own: bool) -> ConnectedInfo {
-        ConnectedInfo {
-            key: None,
-            via_server,
-            inbound,
-            name: "Den".into(),
-            addr: None,
-            own,
-            owner: None,
-            since: None,
-        }
-    }
-
-    #[test]
-    fn says_what_a_connection_is() {
-        assert_eq!(detail(&connection(true, false, false)), "Your server");
-        assert_eq!(
-            detail(&connection(true, true, true)),
-            "Your device, through the server"
-        );
-        assert_eq!(
-            detail(&connection(false, true, true)),
-            "Can control this device on this network, your device"
-        );
-        let mut shared = connection(false, false, false);
-        shared.owner = Some("sam".into());
-        assert_eq!(
-            detail(&shared),
-            "This device is connected to it on this network, shared by sam"
-        );
-    }
-}
-
 /// Staying reachable with the window closed, as the Mac's "In the
 /// background": kept running, and opening at login, which the system owns.
 fn background(
@@ -813,4 +776,41 @@ fn background(
         "With its window closed, kōan keeps running, signed in to your server and listening on this network, so your other devices can see and control this computer; opening kōan again brings its window back. A computer cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again."
     };
     section(Some("In the background"), rows, Some(footer.into()), look)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConnectedInfo, detail};
+
+    fn connection(via_server: bool, inbound: bool, own: bool) -> ConnectedInfo {
+        ConnectedInfo {
+            key: None,
+            via_server,
+            inbound,
+            name: "Den".into(),
+            addr: None,
+            own,
+            owner: None,
+            since: None,
+        }
+    }
+
+    #[test]
+    fn says_what_a_connection_is() {
+        assert_eq!(detail(&connection(true, false, false)), "Your server");
+        assert_eq!(
+            detail(&connection(true, true, true)),
+            "Your device, through the server"
+        );
+        assert_eq!(
+            detail(&connection(false, true, true)),
+            "Can control this device on this network, your device"
+        );
+        let mut shared = connection(false, false, false);
+        shared.owner = Some("sam".into());
+        assert_eq!(
+            detail(&shared),
+            "This device is connected to it on this network, shared by sam"
+        );
+    }
 }

@@ -53,7 +53,15 @@ pub fn playable_header(
         )
         .action(
             verb("header-share", Icon::Share, "copy share link")
-                .on_click(move |_, _, cx| copy_share_link(&share, item, name.to_string(), cx)),
+                .help("create a public link on your server and copy it")
+                .on_click(move |_, _, cx| {
+                    actions::copy_share_link(
+                        share.engine.clone(),
+                        vec![item.source()],
+                        Some(name.to_string()),
+                        cx,
+                    )
+                }),
         )
         .action(
             verb(
@@ -72,36 +80,4 @@ pub fn playable_header(
                     .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
             }),
         )
-}
-
-/// Asks the server for a public link to `item`'s tracks and copies it:
-/// pasting it somewhere is the only thing anyone does with one.
-fn copy_share_link(lib: &Lib, item: Playable, name: String, cx: &mut App) {
-    let engine = lib.engine.clone();
-    cx.spawn(async move |cx| {
-        // Said either way, on the app's notice line: a link copied in
-        // silence, or not at all, looks the same as a click that missed.
-        let said = |text: String, tone: Tone, cx: &mut AsyncApp| {
-            cx.update(|cx| crate::notice::show(text, tone, cx));
-        };
-        let ids = match engine.clone().track_ids_of(vec![item.source()]).await {
-            Ok(ids) if !ids.is_empty() => ids,
-            Ok(_) => return said(format!("{name} has nothing to share"), Tone::Muted, cx),
-            Err(e) => {
-                log::warn!("share {name}: {e}");
-                return said(format!("Couldn't share {name}: {e}"), Tone::Bad, cx);
-            }
-        };
-        match engine.create_share(ids, Some(name.clone())).await {
-            Ok(share) => cx.update(|cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(share.url));
-                crate::notice::show(format!("A link to {name} is copied"), Tone::Muted, cx);
-            }),
-            Err(e) => {
-                log::warn!("share {name}: {e}");
-                said(format!("Couldn't share {name}: {e}"), Tone::Bad, cx);
-            }
-        }
-    })
-    .detach();
 }

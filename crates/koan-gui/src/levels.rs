@@ -24,11 +24,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use futures::StreamExt as _;
 use koan_kit::app::*;
-use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
+use koan_kit::components::{
+    BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay, renderer_mark,
+};
 use parking_lot::Mutex;
 
 use koan_core::audio::viz::{BarHeights, VizLevels};
@@ -36,10 +39,6 @@ use koan_core::audio::viz::{BarHeights, VizLevels};
 use crate::engine::engine;
 
 use crate::theme::Hsla;
-
-/// The analyser's rate while bars are on screen: each frame is a keyframe
-/// the GPU glides the bars to by the next, at the display's rate.
-const RATE: u8 = 30;
 
 #[derive(Default)]
 struct Registry {
@@ -74,7 +73,43 @@ struct Levels {
 
 impl Global for Levels {}
 
+/// The music plays on a renderer handed the original file, which no bars
+/// can follow; with a processed stream, sent from here, they can.
+static HANDED_OFF: AtomicBool = AtomicBool::new(false);
+
+/// Follows whether the music is handed off, from the mirror's renderer
+/// output and stream format. Every window is drawn again when it changes,
+/// which is when an output is chosen.
+fn follow_hand_off(cx: &mut App) {
+    let Some(mirror) = cx.try_global::<crate::mirror::Mirror>().cloned() else {
+        return;
+    };
+    let update = move |cx: &mut App| {
+        let on_renderer = mirror.renderers.read(cx).0.output.is_some();
+        let processed = mirror
+            .playback
+            .read(cx)
+            .0
+            .format
+            .as_ref()
+            .is_some_and(|f| f.dsp.is_some());
+        let handed = on_renderer && !processed;
+        if HANDED_OFF.swap(handed, Ordering::Relaxed) != handed {
+            cx.refresh_windows();
+        }
+    };
+    update(cx);
+    let (renderers, playback) = {
+        let m = cx.global::<crate::mirror::Mirror>();
+        (m.renderers.clone(), m.playback.clone())
+    };
+    let again = update.clone();
+    cx.observe(&renderers, move |_, cx| update(cx)).detach();
+    cx.observe(&playback, move |_, cx| again(cx)).detach();
+}
+
 pub fn install(cx: &mut App) {
+    follow_hand_off(cx);
     let (gone, mut slots_gone) = futures::channel::mpsc::unbounded();
     let registry: Arc<Mutex<Registry>> = Arc::default();
     registry.lock().gone = Some(gone);
@@ -161,7 +196,12 @@ impl Drop for SlotState {
 
 /// The playing bars in `color`. Inside an element with an id, which keys the
 /// slot's state.
-pub fn bars(color: Hsla) -> impl IntoElement {
+pub fn bars(color: Hsla) -> AnyElement {
+    // Played on a renderer that is handed the file itself, nothing reaches
+    // the analyser: the slot shows where it plays instead.
+    if HANDED_OFF.load(Ordering::Relaxed) {
+        return renderer_mark(color).into_any_element();
+    }
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {
@@ -218,9 +258,7 @@ fn follow(levels: &Levels, cx: &mut App) {
     if std::mem::replace(&mut levels.registry.lock().following, true) {
         return;
     }
-    let engine = engine(cx);
-    engine.set_viz_fps(RATE);
-    let stream = engine.viz_stream();
+    let stream = engine(cx).viz_keyframes();
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<Vec<WindowId>>();
     cx.background_spawn(async move {
@@ -282,15 +320,17 @@ impl Registry {
     /// are written as it is taken.
     fn take(&mut self, heard: VizLevels) -> bool {
         let now = Instant::now();
+        // Clamped: a machine that slept owes the bars nothing.
         let elapsed = self
             .stamp
-            .map_or(0.0, |then| now.duration_since(then).as_secs_f32());
+            .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
         self.stamp = Some(now);
         let Some(next) = self.bars.take(heard, now) else {
             return false;
         };
-        // Glided to by the next frame's arrival.
-        let over = std::time::Duration::from_secs_f32(elapsed.clamp(1.0 / RATE as f32, 0.25));
+        // Glided to over the gap between the last two frames, so it is
+        // reached about as the next arrives; the first frame lands.
+        let over = std::time::Duration::from_secs_f32(elapsed);
         for (_, bars) in self.shaders.values() {
             bars.glide(next, over);
         }

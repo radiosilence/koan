@@ -1,0 +1,1 @@
+- **Links into the desktop app.** `koan://` invite and pairing links open the desktop app; it also declares automatic graphics switching, as the Mac app does.

@@ -4,7 +4,7 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
-float4 koan_rgba(Hsla hsla, constant float *slots);
+float4 koan_rgba(Hsla hsla, constant float *slots);  // KOAN: colour slots (#1859).
 float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
@@ -72,14 +72,14 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     [[buffer(QuadInputIndex_Quads)]],
                                     constant Size_DevicePixels *viewport_size
                                     [[buffer(QuadInputIndex_ViewportSize)]],
-                                    constant float *koan_slots [[buffer(20)]]) {
+                                    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position =
       to_device_position(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
-  float4 border_color = koan_rgba(quad.border_color, koan_slots);
+  float4 border_color = koan_rgba(quad.border_color, koan_slots);  // KOAN: colour slots (#1859).
 
   GradientColor gradient = prepare_fill_color(
     quad.background.tag,
@@ -89,7 +89,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
     quad.background.colors[1].color
   );
   if (quad.background.tag != 1 && quad.background.solid.h >= 2.0) {
-    gradient.solid = koan_rgba(quad.background.solid, koan_slots);
+    gradient.solid = koan_rgba(quad.background.solid, koan_slots);  // KOAN: colour slots (#1859).
   }
 
   return QuadVertexOutput{
@@ -470,7 +470,7 @@ vertex ShadowVertexOutput shadow_vertex(
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
     constant Size_DevicePixels *viewport_size
     [[buffer(ShadowInputIndex_ViewportSize)]],
-    constant float *koan_slots [[buffer(20)]]) {
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
@@ -491,7 +491,7 @@ vertex ShadowVertexOutput shadow_vertex(
       to_device_position(unit_vertex, bounds, viewport_size);
   float4 clip_distance =
       distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
-  float4 color = koan_rgba(shadow.color, koan_slots);
+  float4 color = koan_rgba(shadow.color, koan_slots);  // KOAN: colour slots (#1859).
 
   return ShadowVertexOutput{
       device_position,
@@ -579,14 +579,14 @@ vertex UnderlineVertexOutput underline_vertex(
     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
     constant Size_DevicePixels *viewport_size
     [[buffer(ShadowInputIndex_ViewportSize)]],
-    constant float *koan_slots [[buffer(20)]]) {
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
   float4 device_position =
       to_device_position(unit_vertex, underline.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                  underline.content_mask.bounds);
-  float4 color = koan_rgba(underline.color, koan_slots);
+  float4 color = koan_rgba(underline.color, koan_slots);  // KOAN: colour slots (#1859).
   return UnderlineVertexOutput{
       device_position,
       color,
@@ -647,7 +647,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     [[buffer(SpriteInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
     [[buffer(SpriteInputIndex_AtlasTextureSize)]],
-    constant float *koan_slots [[buffer(20)]]) {
+    constant float *koan_slots [[buffer(20)]]) {  // KOAN: colour slots (#1859).
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
@@ -655,7 +655,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-  float4 color = koan_rgba(sprite.color, koan_slots);
+  float4 color = koan_rgba(sprite.color, koan_slots);  // KOAN: colour slots (#1859).
   return MonochromeSpriteVertexOutput{
       device_position,
       tile_position,
@@ -1317,6 +1317,13 @@ float koan_slot_spring(float x0, float v0, float k, float c, float t) {
   if (z < 1.0) {
     float wd = w * sqrt(1.0 - z * z);
     return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+  }
+  if (z > 1.0001) {
+    float root = sqrt(z * z - 1.0);
+    float r1 = -w * (z - root);
+    float r2 = -w * (z + root);
+    float c1 = (v0 - r2 * x0) / (r1 - r2);
+    return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
   }
   return (x0 + (v0 + w * x0) * t) * exp(-w * t);
 }
