@@ -371,10 +371,6 @@ impl Transport {
         )
     }
 
-    /// The control button: the devices glyph, and while another device is
-    /// controlled its name beside it in an accent badge, since everything the
-    /// window shows is then that device's. A device out of reach turns the
-    /// glyph into a warning in `bad`.
     /// The playing track's heart reads and toggles the library's
     /// favourites, and follows them as they change elsewhere.
     pub fn set_feed(&mut self, feed: Entity<crate::library::feed::Feed>, cx: &mut Context<Self>) {
@@ -394,6 +390,10 @@ impl Transport {
         })
     }
 
+    /// The control button: the devices glyph, and while another device is
+    /// controlled its name beside it in an accent badge, since everything the
+    /// window shows is then that device's. A device out of reach turns the
+    /// glyph into a warning in `bad`.
     fn control_button(&self, p: &Paint, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let away = matches!(
             self.devices.read(cx).0.target_reach,
@@ -976,7 +976,9 @@ impl Render for Transport {
                                 let on = feed.read(cx).is_favourite(item);
                                 let feed = feed.clone();
                                 div().flex_shrink_0().child(
-                                    crate::components::Heart::new("np-heart", on)
+                                    // Keyed by the track, so its answer plays for a toggle, not
+                                    // for the next track's heart standing otherwise.
+                                    crate::components::Heart::new(("np-heart", track as u64), on)
                                         .role(TypeRole::Meta)
                                         .on_click(move |_, _, cx| {
                                             feed.update(cx, |feed, cx| {
