@@ -566,3 +566,38 @@ fn two_writers_publish_whole_tracks_and_rebase_once() {
         }
     }
 }
+
+/// A writer that panics mid-publish (on a background thread, say) leaves the
+/// block whole for the presenter: reads finish, and the next publish, on any
+/// thread, is seen.
+#[test]
+fn a_panic_mid_publish_leaves_the_block_readable() {
+    let _clock = CLOCK.lock();
+    let uniforms = Arc::new(ShaderUniforms::new());
+    let writer = uniforms.clone();
+    let panicked = std::thread::spawn(move || {
+        writer.publish(|| {
+            writer.set(0, 1.0);
+            panic!("a writer fails mid-publish");
+        })
+    })
+    .join();
+    assert!(panicked.is_err());
+    let reader = uniforms.clone();
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sent.send(reader.snapshot()[0]);
+    });
+    assert_eq!(
+        got.recv_timeout(Duration::from_secs(1))
+            .expect("a read finishes"),
+        1.0
+    );
+    let other = uniforms.clone();
+    std::thread::spawn(move || {
+        other.set(0, 2.0);
+    })
+    .join()
+    .unwrap();
+    assert_eq!(uniforms.snapshot()[0], 2.0, "a later publish is seen");
+}
