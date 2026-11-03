@@ -923,9 +923,11 @@ fn give_back(
     }
     match before.as_ref().and_then(|b| b.upgrade()) {
         Some(before) => window.focus(&before, cx),
+        // Deferred: a slot's menu closes inside its view's update, and the
+        // fallback may update that view.
         None => {
             if let Some(fallback) = cx.try_global::<MenuFallback>().map(|f| f.0.clone()) {
-                fallback(window, cx);
+                window.defer(cx, move |window, cx| fallback(window, cx));
             }
         }
     }
@@ -1159,6 +1161,66 @@ mod tests {
             cx.debug_bounds("menu: Evening").is_none(),
             "the menus close once something is chosen"
         );
+    }
+
+    struct Bar {
+        slot: MenuSlot<()>,
+        focused: bool,
+    }
+
+    impl Render for Bar {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.slot.trigger(
+                    (),
+                    div()
+                        .id("trigger")
+                        .debug_selector(|| "trigger".into())
+                        .size(px(40.)),
+                    |bar: &mut Self| &mut bar.slot,
+                    |_, window, cx| {
+                        Some(Menu::build(window, cx, |menu, _, _| {
+                            menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        }))
+                    },
+                    cx,
+                ),
+            )
+        }
+    }
+
+    /// A slot's menu opened with nothing focused, closed by Escape, gives
+    /// the keyboard to the app's fallback, which may update the very view
+    /// holding the slot, as the shell's does, without it being leased.
+    #[gpui_kit::test]
+    fn a_slot_menu_with_nowhere_to_return_runs_the_fallback(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (bar, cx) = cx.add_window_view(|_, _| Bar {
+            slot: MenuSlot::default(),
+            focused: false,
+        });
+        let cx: &mut gpui_kit::VisualTestContext = cx;
+        let weak = bar.downgrade();
+        cx.update(|_, cx| {
+            on_menu_focus_lost(
+                move |_, cx| {
+                    weak.update(cx, |bar, _| bar.focused = true).ok();
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let trigger = cx.debug_bounds("trigger").expect("drawn");
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_some(), "the menu opened");
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("menu: play").is_none(), "Escape closed it");
+        assert!(bar.read_with(cx, |bar, _| bar.focused));
     }
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
