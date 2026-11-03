@@ -1121,6 +1121,31 @@ const LANDING: Duration = Duration::from_secs(1);
 /// answer.
 const NEAR_MS: u64 = 250;
 
+/// Where the times put the playhead: reckoned from the anchor shown, or at
+/// the engine's whole second its own reading, so the times step as it says
+/// rather than a moment behind. A reading counts only while it agrees with
+/// the anchor, within `NEAR_MS`: one from before a seek (backward too), or
+/// one in flight as a new anchor arrives, is of another place.
+fn shown_position(
+    reckoned: u64,
+    heard: Option<(u64, Instant)>,
+    playing: bool,
+    now: Instant,
+    duration: u64,
+) -> u64 {
+    match heard {
+        Some((heard, at)) if playing => {
+            let heard = (heard + now.duration_since(at).as_millis() as u64).min(duration);
+            if heard.abs_diff(reckoned) < NEAR_MS {
+                reckoned.max(heard)
+            } else {
+                reckoned
+            }
+        }
+        _ => reckoned,
+    }
+}
+
 /// A seek sent and not yet heard back, however it was made (the slider, the
 /// skip keys, a lyric's line, the media keys): the playhead it sets. Until
 /// the engine reports a playhead there, the seek slider stands on it, so a
@@ -1142,14 +1167,13 @@ pub fn land(target_ms: u64, cx: &mut App) {
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. Where the renderer
-/// draws shaders, the slider glides: the anchor is handed to it (`Glide`) and
-/// the GPU reckons the fill per present, so it moves continuously with no
-/// frame drawn, and a new anchor (a seek, a pause, the next track) corrects
-/// it. While it runs, one timer is set for the next moment the times would
-/// read differently (the next second), and elsewhere for the fill's next
-/// pixel too; paused or stopped, nothing is set and nothing presents, so a
-/// koan at rest costs nothing.
+/// The position is reckoned from the playhead's anchor. The slider glides:
+/// the anchor is handed to it (`Glide`) and the GPU reckons the fill per
+/// present, so it moves with no frame drawn, and a new anchor (a seek, a
+/// pause, the next track) corrects it. The times follow the engine's clock
+/// (`ClockStream`), which wakes the view at each whole second while the
+/// track plays and at each new anchor; paused, stopped or past the track's
+/// end it says nothing, so a koan at rest costs nothing.
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
@@ -1158,8 +1182,8 @@ pub struct Seek {
     /// Following the engine's clock while the window shows.
     clock: Option<Task<()>>,
     /// The playhead as the engine's clock last reported it, and when: the
-    /// times show at least this, since the anchor is stamped a little later
-    /// than the engine took it. Dropped when the anchor moves.
+    /// times show at least this while it agrees with the anchor shown, since
+    /// the anchor is stamped a little later than the engine took it.
     heard: Option<(u64, Instant)>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
@@ -1206,7 +1230,6 @@ impl Seek {
     }
 
     fn moved(&mut self, cx: &mut Context<Self>) {
-        self.heard = None;
         self.schedule(cx);
         cx.notify();
     }
@@ -1328,14 +1351,7 @@ impl Render for Seek {
         let (anchor, _) = self.shown(cx);
         let now = Instant::now();
         let reckoned = anchor.at(now, duration);
-        // At the engine's whole second, its own reading, so the times step
-        // as it says rather than a moment behind.
-        let position = match self.heard {
-            Some((heard, at)) if anchor.playing => {
-                reckoned.max((heard + now.duration_since(at).as_millis() as u64).min(duration))
-            }
-            _ => reckoned,
-        };
+        let position = shown_position(reckoned, self.heard, anchor.playing, now, duration);
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,
@@ -1390,5 +1406,55 @@ impl Render for Seek {
             .flex()
             .items_center()
             .child(div().w_full().child(slider))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::shown_position;
+
+    const TRACK: u64 = 240_000;
+
+    #[test]
+    fn the_engines_reading_steps_the_times_when_it_agrees() {
+        let now = Instant::now();
+        // The anchor is stamped a little late, reckoning 4,960 at the
+        // engine's whole second: the times show its 5,000.
+        let heard = Some((5_000, now));
+        assert_eq!(shown_position(4_960, heard, true, now, TRACK), 5_000);
+        // A reading carries on from when it was heard.
+        let later = now + Duration::from_millis(300);
+        assert_eq!(shown_position(5_260, heard, true, later, TRACK), 5_300);
+    }
+
+    #[test]
+    fn a_backward_seek_is_not_held_at_the_old_place() {
+        let now = Instant::now();
+        let heard = Some((90_000, now - Duration::from_millis(200)));
+        assert_eq!(shown_position(10_000, heard, true, now, TRACK), 10_000);
+    }
+
+    #[test]
+    fn a_reading_in_flight_does_not_override_a_new_anchor() {
+        let now = Instant::now();
+        // Read before a forward seek to 60 s, arriving after it.
+        let heard = Some((12_000, now));
+        assert_eq!(shown_position(60_000, heard, true, now, TRACK), 60_000);
+    }
+
+    #[test]
+    fn paused_the_anchor_alone_is_shown() {
+        let now = Instant::now();
+        let heard = Some((5_000, now - Duration::from_millis(500)));
+        assert_eq!(shown_position(4_990, heard, false, now, TRACK), 4_990);
+    }
+
+    #[test]
+    fn a_reading_never_runs_past_the_track() {
+        let now = Instant::now();
+        let heard = Some((TRACK - 100, now - Duration::from_millis(400)));
+        assert_eq!(shown_position(TRACK - 50, heard, true, now, TRACK), TRACK);
     }
 }

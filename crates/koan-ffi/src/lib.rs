@@ -642,13 +642,20 @@ pub struct ClockStream {
 impl ClockStream {
     /// The playhead, in milliseconds, at its next whole second while it
     /// plays, or as soon as it is anchored afresh (a seek, a pause, the next
-    /// track). Waits through a pause. `None` once the engine is gone.
+    /// track). Waits through a pause, and past the end of the track until
+    /// the next one's anchor. `None` once the engine is gone.
     pub async fn next(&self) -> Option<u64> {
         let mut moves = self.moves.lock().await;
         moves.borrow_and_update();
-        let anchor = self.state.upgrade()?.anchor();
+        let state = self.state.upgrade()?;
+        let (anchor, duration) = (state.anchor(), state.duration_ms());
+        drop(state);
+        let counting = |anchor: &state::Anchor| {
+            anchor.playing
+                && (duration == 0 || anchor.reckoning(std::time::Instant::now()) < duration)
+        };
         match anchor {
-            Some(anchor) if anchor.playing => {
+            Some(anchor) if counting(&anchor) => {
                 let now = std::time::Instant::now();
                 let wait = 1000 - anchor.reckoning(now) % 1000;
                 // No Tokio reactor drives this future (GPUI's executor and
@@ -8371,5 +8378,89 @@ mod move_tests {
         let mut away = tv;
         away.problem = Some("out of reach".into());
         assert!(!can_move_music(Some(away), Some(phone), true));
+    }
+}
+
+#[cfg(test)]
+mod clock_end_tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::ClockStream;
+    use crate::state::{EngineState, StateSlice};
+    use crate::types::{NowPlaying, PlayState, RepeatMode};
+
+    fn clock(state: &Arc<EngineState>) -> Arc<ClockStream> {
+        Arc::new(ClockStream {
+            state: Arc::downgrade(state),
+            moves: tokio::sync::Mutex::new(state.anchor_moves()),
+        })
+    }
+
+    fn playing(state: &EngineState, duration_ms: u64) {
+        state.publish(StateSlice::Playback {
+            now_playing: NowPlaying {
+                state: PlayState::Playing,
+                waiting: false,
+                position_ms: 0,
+                duration_ms,
+                queue_item_id: None,
+                entry: None,
+                format: None,
+                playlist_version: 0,
+                shuffle: false,
+                repeat_mode: RepeatMode::Off,
+                undo_shuffles: 0,
+                queue_shufflable: false,
+                sleep: None,
+                sleep_fading: false,
+                start_failure: None,
+            },
+        });
+    }
+
+    fn playhead(state: &EngineState, position_ms: u64, playing: bool) {
+        state.publish(StateSlice::Playhead {
+            position_ms,
+            seekable_ms: 0,
+            playing,
+        });
+    }
+
+    /// The clock's next reading within `limit`, polled outside Tokio; `None`
+    /// when it gave none in time.
+    fn next_within(stream: Arc<ClockStream>, limit: Duration) -> Option<Option<u64>> {
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(stream.next()));
+        });
+        got.recv_timeout(limit).ok()
+    }
+
+    #[test]
+    fn the_clock_stops_at_the_end_of_the_track() {
+        let state = EngineState::new();
+        playing(&state, 1_500);
+        playhead(&state, 1_200, true);
+        let stream = clock(&state);
+        let last = next_within(stream.clone(), Duration::from_secs(2)).flatten();
+        assert!(last.is_some_and(|ms| ms >= 1_990), "{last:?}");
+        // Reckoned past the end: nothing more until the next anchor.
+        let waiting = stream.clone();
+        let (sent, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(futures_lite::future::block_on(waiting.next()));
+        });
+        assert!(
+            got.recv_timeout(Duration::from_millis(1_300)).is_err(),
+            "no tick past the end"
+        );
+        playing(&state, 200_000);
+        playhead(&state, 0, true);
+        let next = got
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the next track's anchor");
+        assert!(next.is_some_and(|ms| ms < 100), "{next:?}");
     }
 }
