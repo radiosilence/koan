@@ -1062,14 +1062,19 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             }
         }
     }
-    // Hearts floating up through the window, swaying: each one's place in
-    // its climb and its sway from `party_prepare`.
-    for (int j = 0; j < 14; j++) {
+    // Hearts floating up through the window, swaying: each one's centre and
+    // size from `party_prepare`, and only those reaching this pixel's
+    // seventh of the window's height.
+    const int masks[7] = { 0, 1, 2, 3, 5, 7, 9 };
+    int band = clamp(int(position.y * 7.0 / size.y), 0, 6);
+    uint mask = as_type<uint>(u[masks[band]]);
+    while (mask != 0u) {
+        int j = ctz(mask);
+        mask &= mask - 1u;
         float3 h = KOAN_HEARTS[j];
-        float radius = s * (16.0 + 22.0 * h.y) * (1.0 + 0.15 * beat);
-        float travel = size.y + 4.0 * radius;
-        float y = size.y + 2.0 * radius - u[40 + j] * travel;
-        float x = h.x * size.x + u[56 + j] * 40.0 * s;
+        float radius = u[66 + j];
+        float x = u[38 + 2 * j];
+        float y = u[39 + 2 * j];
         float2 p = float2(position.x - x, y - position.y) / radius + float2(0.0, 0.5);
         if (abs(p.x) < 1.2 && p.y > -0.3 && p.y < 1.3) {
             float d = koan_heart(p);
@@ -1165,12 +1170,16 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
             }
         }
     }
-    for (var j = 0u; j < 14u; j++) {
+    var masks = array<u32, 7>(0u, 1u, 2u, 3u, 5u, 7u, 9u);
+    let band = u32(clamp(i32(position.y * 7.0 / size.y), 0, 6));
+    var mask = bitcast<u32>(koan_uniform(&b, masks[band]));
+    while (mask != 0u) {
+        let j = countTrailingZeros(mask);
+        mask = mask & (mask - 1u);
         let h = KOAN_HEARTS[j];
-        let radius = s * (16.0 + 22.0 * h.y) * (1.0 + 0.15 * beat);
-        let travel = size.y + 4.0 * radius;
-        let y = size.y + 2.0 * radius - koan_uniform(&b, 40u + j) * travel;
-        let x = h.x * size.x + koan_uniform(&b, 56u + j) * 40.0 * s;
+        let radius = koan_uniform(&b, 66u + j);
+        let x = koan_uniform(&b, 38u + 2u * j);
+        let y = koan_uniform(&b, 39u + 2u * j);
         let p = vec2<f32>(position.x - x, y - position.y) / radius + vec2<f32>(0.0, 0.5);
         if (abs(p.x) < 1.2 && p.y > -0.3 && p.y < 1.3) {
             let d = koan_heart(p);
@@ -1210,15 +1219,21 @@ const HEARTS: [[f32; 3]; 14] = [
     [0.746825, 0.054642, 0.633860],
 ];
 
-/// What every pixel of the party shares, worked out once a present: the low
-/// and high bands and the beat (16 to 18), the lasers' directions (20 to
-/// 31), each flame's height as a share of the tallest (32 to 36), each
-/// heart's place in its climb (40 to 53) and its sway (56 to 69).
+/// What every pixel of the party shares, worked out once a present from
+/// the window's size (`Prism::window`, points in 13 and 14): the low and
+/// high bands and the beat (16 to 18), the lasers' directions (20 to 31),
+/// each flame's height as a share of the tallest (32 to 36), each heart's
+/// centre in device pixels (38 to 65) and size (66 to 79), and for each
+/// seventh of the window's height, top down, a mask of the hearts reaching
+/// it (0, 1, 2, 3, 5, 7, 9).
 fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
     let [low, _, high, beat] = bands(u, time);
+    let s = u[10];
+    let size = (u[13] * s, u[14] * s);
+    let beat_party = beat.max(0.0).powf(0.6);
     u[16] = low;
     u[17] = high;
-    u[18] = beat.max(0.0).powf(0.6);
+    u[18] = beat_party;
     for i in 0..6 {
         let fi = i as f32;
         let side = if i < 3 { 1.0 } else { -1.0 };
@@ -1231,9 +1246,28 @@ fn party_prepare(u: &mut [f32; SHADER_UNIFORMS], time: f32) {
         let fk = k as f32;
         u[32 + k] = 0.8 + 0.2 * (fk * 3.7 + time * 9.0).sin();
     }
+    let band = size.1 / 7.0;
+    let mut masks = [0u32; 7];
     for (j, [h1, h2, h3]) in HEARTS.into_iter().enumerate() {
-        u[40 + j] = (time * (0.04 + 0.05 * h1) + h3).fract();
-        u[56 + j] = (time * (0.6 + h2) + j as f32).sin();
+        let radius = s * (16.0 + 22.0 * h2) * (1.0 + 0.15 * beat_party);
+        let travel = size.1 + 4.0 * radius;
+        let y = size.1 + 2.0 * radius - (time * (0.04 + 0.05 * h1) + h3).fract() * travel;
+        let x = h1 * size.0 + (time * (0.6 + h2) + j as f32).sin() * 40.0 * s;
+        u[38 + 2 * j] = x;
+        u[39 + 2 * j] = y;
+        u[66 + j] = radius;
+        // A heart is drawn within 0.8 of its radius above and below its centre.
+        let (top, foot) = (y - 0.8 * radius, y + 0.8 * radius);
+        if band > 0.0 && foot > 0.0 && top < size.1 {
+            let top = (top / band).floor().clamp(0.0, 6.0) as usize;
+            let foot = (foot / band).floor().clamp(0.0, 6.0) as usize;
+            for mask in &mut masks[top..=foot] {
+                *mask |= 1 << j;
+            }
+        }
+    }
+    for (slot, mask) in [0, 1, 2, 3, 5, 7, 9].into_iter().zip(masks) {
+        u[slot] = f32::from_bits(mask);
     }
 }
 
