@@ -48,10 +48,16 @@ pub enum StateSlice {
     /// seekable extent belongs here rather than beside the track's title: it
     /// grows for as long as a download is arriving, and a field that moves at
     /// that rate drags every reader of whatever it sits next to along with it.
+    ///
+    /// `seek` counts the seeks asked of the engine (`KoanEngine::seek`) when
+    /// this was read, and every one counted has already moved the playhead:
+    /// the first playhead whose count reaches a seek's answers it, wherever
+    /// the engine put it (clamped, declined), and none before it does.
     Playhead {
         position_ms: u64,
         seekable_ms: u64,
         playing: bool,
+        seek: u64,
     },
     /// The queue, in order. The whole list: a queue that is one copy refetched
     /// whole has nothing to forget to patch.
@@ -506,6 +512,7 @@ mod tests {
             position_ms: 5,
             seekable_ms: 0,
             playing: true,
+            seek: 0,
         });
 
         let mut seen = [0; SLOTS];
@@ -525,6 +532,7 @@ mod tests {
                 position_ms: ms,
                 seekable_ms: 0,
                 playing: true,
+                seek: 0,
             });
         }
 
@@ -535,6 +543,7 @@ mod tests {
                 position_ms: 100,
                 seekable_ms: 0,
                 playing: true,
+                seek: 0,
             }]
         );
     }
@@ -560,6 +569,7 @@ mod tests {
             position_ms: 0,
             seekable_ms: 0,
             playing: true,
+            seek: 0,
         };
         state.reanchor(held.clone());
         state.since(&mut seen);
@@ -582,12 +592,14 @@ mod tests {
             position_ms: 1,
             seekable_ms: 0,
             playing: true,
+            seek: 0,
         });
         state.publish(library(1));
         state.publish(StateSlice::Playhead {
             position_ms: 2,
             seekable_ms: 0,
             playing: true,
+            seek: 0,
         });
         state.publish(library(2));
 
@@ -597,6 +609,7 @@ mod tests {
             position_ms: 2,
             seekable_ms: 0,
             playing: true,
+            seek: 0,
         }));
         assert!(batch.contains(&library(2)));
     }

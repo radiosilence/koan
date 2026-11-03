@@ -1389,8 +1389,11 @@ impl Player {
             channels: info.channels,
             duration_ms: info.duration_ms,
         };
-        // For seeks, this keeps the bar at the target position instead of
-        // flashing to 0 while the new timeline spins up.
+        // The playhead reads from here until the new session's timeline is
+        // up: the old one would put it back where the last session stood
+        // while the output reopens, between the seek being taken and the
+        // new session starting.
+        self.timeline.reset();
         self.shared_state.set_position_ms(seek_ms);
         self.on_track_changed(id, seek_ms);
         log::info!(
@@ -2019,9 +2022,7 @@ impl Player {
     /// decode whatever happens to be on disk and end the track early.
     pub fn seek(&mut self, position_ms: u64) {
         self.seek_to(position_ms);
-        // Taken: the playhead is the timeline's again, whether it landed or
-        // the seek was declined.
-        self.shared_state.seek_taken(position_ms);
+        self.shared_state.seek_answered();
     }
 
     fn seek_to(&mut self, position_ms: u64) {
@@ -4453,20 +4454,13 @@ mod tests {
         assert!((1_750..=2_000).contains(&at), "cued at {at}ms");
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
 
-        // Seeking while paused reopens the track, and stays quiet too. Asked
-        // for, the playhead reads as landed before the player takes it.
-        player.shared_state.request_seek(4_000);
-        assert_eq!(player.shared_state.position_ms(), 4_000);
+        // Seeking while paused reopens the track, and stays quiet too. The
+        // playhead reads where the player put it as soon as it takes it.
         player.process_command(PlayerCommand::Seek(4_000));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
-        assert!(player.shared_state.pending_seek().is_none(), "taken");
-        // Two seeks in quick succession: taking the first leaves the second.
-        player.shared_state.request_seek(5_000);
-        player.shared_state.request_seek(6_000);
-        player.shared_state.seek_taken(5_000);
-        assert_eq!(player.shared_state.position_ms(), 6_000);
+        assert_eq!(player.shared_state.position_ms(), 4_000);
         player.process_command(PlayerCommand::Seek(6_000));
-        assert!(player.shared_state.pending_seek().is_none());
+        assert_eq!(player.shared_state.position_ms(), 6_000);
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
         player.process_command(PlayerCommand::Resume);
@@ -7660,6 +7654,56 @@ mod tests {
 
         player.process_command(PlayerCommand::Resume);
         assert_eq!(backend.starts.load(Ordering::Relaxed), 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_seek_never_reads_as_the_old_place_while_the_output_reopens() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 1);
+        let state = player.shared_state.clone();
+        open_gate(&backend.gate);
+        player.process_command(PlayerCommand::Cue {
+            id: ids[0],
+            position_ms: 2_000,
+            play: false,
+        });
+        take_opened(&mut player);
+        await_queued(&player);
+        assert_eq!(state.position_ms(), 2_000, "cued exactly");
+
+        // The next open is held, so the seek's reopen waits for its output.
+        // Nothing is predicted: the playhead moves when the player takes
+        // the seek, and the count says so from then on.
+        *backend.gate.0.lock().unwrap() = false;
+        let asked = state.seeks();
+        quick("seek", || {
+            player.process_command(PlayerCommand::Seek(6_000))
+        });
+        assert!(matches!(player.transport, Transport::Opening(_)));
+        assert_eq!(state.seeks(), asked + 1, "answered");
+        assert_eq!(
+            state.position_ms(),
+            6_000,
+            "taken, the old session's timeline is not read again"
+        );
+
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        assert!(player.session().is_some());
+        await_queued(&player);
+        assert_eq!(state.position_ms(), 6_000, "exactly where it was asked");
+
+        // Past the end: clamped, and answered where the player put it.
+        let asked = state.seeks();
+        player.process_command(PlayerCommand::Seek(60_000));
+        assert_eq!(state.seeks(), asked + 1);
+        let clamped = 10_000 - state::SEEK_END_GUARD_MS;
+        assert_eq!(state.position_ms(), clamped);
+        open_gate(&backend.gate);
+        take_opened(&mut player);
+        await_queued(&player);
+        assert_eq!(state.position_ms(), clamped, "clamped, as said");
         player.process_command(PlayerCommand::Stop);
     }
 

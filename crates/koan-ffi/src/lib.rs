@@ -593,6 +593,12 @@ impl KoanEngine {
         self.0.clone().seek(position_ms).await
     }
 
+    /// How many seeks the device in view has answered. A slider let go reads
+    /// it first and stands until a Playhead slice's `seek` is past it.
+    pub fn seeks(&self) -> u64 {
+        self.0.seeks()
+    }
+
     /// Follow the engine's state.
     ///
     /// The one way a client learns anything changed. Each answer is a batch of
@@ -3086,6 +3092,7 @@ mod state {
             position_ms: u64,
             seekable_ms: u64,
             playing: bool,
+            seek: u64,
         },
         /// The queue, in order. The whole list: a queue that is one copy refetched
         /// whole has nothing to forget to patch.

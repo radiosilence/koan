@@ -311,9 +311,11 @@ private fun Modifier.link(enabled: Boolean, label: String? = null, onClick: () -
     if (enabled) clickable(interactionSource = null, indication = null, onClickLabel = label, role = Role.Button, onClick = onClick) else this
 
 /**
- * The seek bar. Counts on from the playhead's anchor; a drag holds the thumb
- * where it was let go until the engine sends the next anchor, so it does not
- * jump back to the old place and forward again.
+ * The seek bar. Counts on from the engine's playhead anchor and predicts
+ * nothing. A thumb let go stands where it was let go until the engine answers
+ * the seek: the first playhead whose `seek` count is past the one read when
+ * it was let go, wherever that put the playhead. A playhead from before the
+ * seek leaves it standing.
  */
 @Composable
 private fun SeekBar(now: NowPlaying?) {
@@ -322,9 +324,9 @@ private fun SeekBar(now: NowPlaying?) {
     val duration = now.length()
     val position = rememberPosition(playhead, duration)
     var dragging by remember { mutableStateOf<Float?>(null) }
-    var landing by remember { mutableStateOf<Float?>(null) }
-    LaunchedEffect(playhead) { landing = null }
-    val held = dragging ?: landing
+    var letGo by remember { mutableStateOf<Pair<Float, Long>?>(null) }
+    LaunchedEffect(playhead) { if (letGo?.let { playhead.seek > it.second } == true) letGo = null }
+    val held = dragging ?: letGo?.first
     val fraction = held ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shown = if (held != null) (held * duration).toLong() else position
     KoanSlider(
@@ -332,7 +334,7 @@ private fun SeekBar(now: NowPlaying?) {
         onValueChange = { dragging = it },
         onValueChangeFinished = {
             dragging?.let {
-                landing = it
+                letGo = it to playhead.seek
                 app.player.seek((it * duration).toLong())
             }
             dragging = null

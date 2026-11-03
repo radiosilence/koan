@@ -335,10 +335,7 @@ async fn answer(
             Command::Next => Box::pin(engine.next()),
             Command::Previous => Box::pin(engine.previous()),
             Command::Stop => Box::pin(engine.stop()),
-            Command::Seek(at) => {
-                cx.update(|cx| crate::transport::land(at, cx));
-                Box::pin(engine.seek(at))
-            }
+            Command::Seek(at) => Box::pin(engine.seek(at)),
             Command::Raise => {
                 cx.update(super::to_front);
                 continue;

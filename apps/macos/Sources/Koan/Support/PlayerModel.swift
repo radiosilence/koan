@@ -105,7 +105,7 @@ final class PlayerModel {
     /// follower that observes its own output re-runs until it happens to
     /// settle, and "happens to" is not a property worth relying on.
     private func followEngine() {
-        settlePendingSeek(position: mirror.playhead.at())
+        settleScrub()
     }
 
     // MARK: - What is playing
@@ -225,40 +225,37 @@ final class PlayerModel {
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 
-    /// Where a seek asked to land, until the engine reports being near it.
-    @ObservationIgnored private var pendingSeekMs: UInt64?
-    /// When that seek gives up waiting.
-    @ObservationIgnored private var pendingSeekDeadline: ContinuousClock.Instant?
+    /// The engine's seek count when the thumb was let go. The thumb stands
+    /// where it was let go until a playhead past it arrives, the engine's
+    /// answer wherever it put the playhead; nothing else is predicted.
+    @ObservationIgnored private var letGoAfter: UInt64?
 
-    /// Close enough to the target to count as having landed.
-    private static let seekTolerance: Int64 = 750
-    /// How long a seek waits for the engine before handing the bar back.
-    private static let seekPatience: Duration = .seconds(2)
-
-    /// Release the held position once the engine has caught up — or give up, so
-    /// a seek the engine rejected can't wedge the bar permanently.
-    private func settlePendingSeek(position: UInt64) {
-        guard let target = pendingSeekMs else { return }
-        let reached = abs(Int64(position) - Int64(target)) < Self.seekTolerance
-        let expired = pendingSeekDeadline.map { .now >= $0 } ?? true
-        if reached || expired {
-            pendingSeekMs = nil
-            pendingSeekDeadline = nil
-            scrubbing = nil
-        }
+    /// Let the thumb go once the engine has answered its seek.
+    private func settleScrub() {
+        guard let after = letGoAfter, mirror.playhead.seek > after else { return }
+        letGoAfter = nil
+        scrubbing = nil
     }
 
-    /// Commit a scrub. Position comes from the drag, not the engine, and stops
-    /// at what has been downloaded.
+    /// Seek to a share of the track: a lyric's line.
     func seek(fraction: Double) {
         seek(toMs: UInt64(clamp(fraction) * Double(durationMs)))
     }
 
-    /// Called as the thumb is dragged. Cancels any seek still settling, since
-    /// the user is now the authority on where the head is.
+    /// Let go of the thumb: it stands where it was let go until the engine
+    /// answers the seek.
+    func endScrub(fraction: Double) {
+        guard canSeek else { return explainUnseekable() }
+        let share = clamp(fraction)
+        scrubbing = share
+        letGoAfter = engine.seeks()
+        attempt { try await self.engine.seek(positionMs: UInt64(share * Double(self.durationMs))) }
+    }
+
+    /// Called as the thumb is dragged: the person is the authority on where
+    /// the thumb is until they let go.
     func beginScrub(fraction: Double) {
-        pendingSeekMs = nil
-        pendingSeekDeadline = nil
+        letGoAfter = nil
         scrubbing = clamp(fraction)
     }
 
@@ -285,29 +282,11 @@ final class PlayerModel {
         seek(toMs: UInt64(min(target, Int64(mirror.seekableMs))))
     }
 
-    /// Hold the requested position until the engine agrees with it.
-    ///
-    /// The seek is asynchronous — it goes down a channel to the player thread,
-    /// which restarts decoding before `position_ms` moves. Clearing the local
-    /// value when the command is merely *sent* hands the bar back to the engine
-    /// during that gap, so the bar reads the old position and the thumb snaps
-    /// backwards before jumping forward again.
+    /// Seek, and show the playhead where the engine says it went.
     func seek(toMs requested: UInt64) {
         guard canSeek else { return explainUnseekable() }
         let ms = min(requested, mirror.seekableMs)
-        let deadline = ContinuousClock.now + Self.seekPatience
-        pendingSeekMs = ms
-        pendingSeekDeadline = deadline
-        if durationMs > 0 {
-            scrubbing = Double(ms) / Double(durationMs)
-        }
         attempt { try await self.engine.seek(positionMs: ms) }
-        // The playhead may never move again to settle a rejected seek.
-        Task { [weak self] in
-            try? await Task.sleep(until: deadline, clock: .continuous)
-            guard let self, self.pendingSeekDeadline == deadline else { return }
-            self.settlePendingSeek(position: self.mirror.playhead.at())
-        }
     }
 
     // MARK: - Queue
