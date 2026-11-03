@@ -197,10 +197,12 @@ impl ParentElement for ToolbarGroup {
 
 impl RenderOnce for ToolbarGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        // The groups shrink to their content's minimum, so a filter field in
-        // one gives up its width when the toolbar is narrow; buttons do not.
+        // The groups shrink past their content's width (`min_w_0`), so a
+        // filter field in one gives up its width down to its own minimum when
+        // the toolbar is narrow; buttons do not.
         div()
             .flex_shrink_1()
+            .min_w_0()
             .flex()
             .items_center()
             .gap(ToolbarMetrics::SPACER)
@@ -211,6 +213,7 @@ impl RenderOnce for ToolbarGroup {
                     .map(|group| {
                         div()
                             .flex_shrink_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .gap(ToolbarMetrics::GROUP_GAP)
