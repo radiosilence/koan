@@ -298,17 +298,20 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 }
 
 /// Whether the music of the device in view can be moved to `to` (this
-/// device with `None`): `controlled` is the device controlled, `None` while
-/// this one is in view. Both ends must play from the same library, and there
-/// must be music to move: a queue here, or another device playing or paused
-/// and in reach. Moving to the device already in view moves nothing.
+/// device with `None`). `target` is the id of the device controlled, `None`
+/// while this one is in view, and `controlled` that device as listed: a
+/// target not listed just now is out of reach, and has nothing to move from
+/// here. Both ends must play from the same library, and there must be music
+/// to move: a queue here, or another device playing or paused and in reach.
+/// Moving to the device already in view moves nothing.
 #[uniffi::export]
 pub fn can_move_music(
     to: Option<DeviceInfo>,
+    target: Option<String>,
     controlled: Option<DeviceInfo>,
     has_queue: bool,
 ) -> bool {
-    koan_runtime::can_move_music(to, controlled, has_queue)
+    koan_runtime::can_move_music(to, target, controlled, has_queue)
 }
 
 /// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
@@ -1255,6 +1258,38 @@ impl KoanEngine {
         self.0.clone().playlist_undo_shuffles(playlist_id).await
     }
 
+    /// Move the entries named to just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, those a caller does
+    /// not list included: offline, where only the entries with a file here
+    /// are shown, a move among them leaves the rest where they are. The moved
+    /// entries keep the order they had.
+    pub async fn move_playlist_entries(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+        before: Option<i64>,
+    ) -> Result<(), KoanError> {
+        self.0
+            .clone()
+            .move_playlist_entries(playlist_id, entry_ids, before)
+            .await
+    }
+
+    /// Add the tracks `sources` name just before the entry `before` (the end
+    /// when `None`), among all of the playlist's entries, as
+    /// `move_playlist_entries` places them. Returns how many landed.
+    pub async fn insert_into_playlist_before(
+        self: Arc<Self>,
+        playlist_id: i64,
+        sources: Vec<TrackSet>,
+        before: Option<i64>,
+    ) -> Result<u32, KoanError> {
+        self.0
+            .clone()
+            .insert_into_playlist_before(playlist_id, sources, before)
+            .await
+    }
+
     /// Where the playlists sit in the sidebar, in the order given, sent on to
     /// a server that keeps the account's order (`koanPlaylistOrder`). On the
     /// command lane with the edits, so two drags land in the order they were
@@ -1375,6 +1410,19 @@ impl KoanEngine {
 
     pub async fn set_device(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         self.0.clone().set_device(name).await
+    }
+
+    /// Forgets the copy of `album_id`'s server cover kept on this device, so
+    /// the next ask reaches the server: what an app does with bytes that
+    /// would not decode.
+    pub async fn discard_album_cover(self: Arc<Self>, album_id: i64) -> Result<(), KoanError> {
+        self.0.clone().discard_album_cover(album_id).await
+    }
+
+    /// Forgets every cover kept from the server on this device: the person
+    /// cleared an app's artwork, or its eviction mark is too old to trust.
+    pub async fn forget_kept_covers(self: Arc<Self>) -> Result<(), KoanError> {
+        self.0.clone().forget_kept_covers().await
     }
 
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned
@@ -2558,14 +2606,14 @@ impl KoanEngine {
 
     /// Stop fetching these tracks. Queue entries waiting on them fail as
     /// cancelled and are skipped until retried; a transfer running stops and
-    /// leaves no row.
+    /// leaves its row failed as cancelled, which is how it is retried.
     pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         self.0.clone().cancel_downloads(track_ids).await
     }
 
     /// Fetch these tracks again after a failure or a cancel: queue entries
-    /// that failed for them wait again, and a track no entry wants is
-    /// fetched into the cache.
+    /// that failed for them wait again, and a track asked into the cache
+    /// that no entry wants is fetched into it again.
     pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         self.0.clone().retry_downloads(track_ids).await
     }
@@ -2697,6 +2745,27 @@ impl KoanEngine {
         enabled: bool,
     ) -> Result<(), KoanError> {
         self.0.clone().set_organize_moves_ancillary(enabled).await
+    }
+
+    /// Carry out exactly the plan previewed from `selection` (`check` with
+    /// the same pattern, folder and `move_ancillary`), then point the queue
+    /// at where the files went. Fails with a bad argument, nothing moved,
+    /// when the library has changed since the selection was read: preview
+    /// again.
+    ///
+    /// The rename and the database rows land together, and playback survives
+    /// it — a Unix rename keeps the open descriptor.
+    pub async fn organize_execute_previewed(
+        self: Arc<Self>,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base_dir: String,
+        move_ancillary: bool,
+    ) -> Result<OrganizePlan, KoanError> {
+        self.0
+            .clone()
+            .organize_execute_previewed(selection.0.clone(), pattern, base_dir, move_ancillary)
+            .await
     }
 
     /// Carry out the moves, then point the queue at where the files went.

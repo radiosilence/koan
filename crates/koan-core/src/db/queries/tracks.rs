@@ -1190,7 +1190,7 @@ pub fn cover_track_for_album(
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.album_id = ?1
-         ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number
+         ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number, t.id
          LIMIT 1",
     )?;
 
@@ -1207,7 +1207,7 @@ pub fn remote_cover_ids(conn: &Connection) -> Result<Vec<String>, DbError> {
              SELECT t.album_id, t.remote_id, t.path, t.cached_path,
                     ROW_NUMBER() OVER (
                         PARTITION BY t.album_id
-                        ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number
+                        ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number, t.id
                     ) AS n
              FROM tracks t WHERE t.album_id IS NOT NULL)
          WHERE n = 1 AND path IS NULL AND cached_path IS NULL AND remote_id IS NOT NULL

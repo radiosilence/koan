@@ -1,0 +1,1 @@
+- **Organise moves what it previewed.** The desktop and Mac apps run the plan they showed, with the choice about cover art and cue sheets as shown, instead of reading the library again when the move starts. If the library changed after the preview (a rescan, a sync, an import), nothing moves and the sheet previews again.

@@ -3948,6 +3948,13 @@ impl Window {
             // case, instead update the tooltip's visibility here.
             let is_visible =
                 (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
+            // KOAN: a tooltip asked for and whether it was drawn (#1814).
+            log::debug!(
+                "tooltip: requested at {:?}, mouse {:?}, bounds {:?}, visible {is_visible}",
+                mouse_position,
+                self.mouse_position(),
+                tooltip_bounds
+            );
             if !is_visible {
                 continue;
             }
