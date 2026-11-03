@@ -86,7 +86,27 @@ struct Inner {
     still: AtomicBool,
 }
 
+/// An `Animated` held without keeping it alive: a clock that follows
+/// another's running for as long as its quad is drawn.
+#[derive(Clone)]
+pub struct WeakAnimated(std::sync::Weak<Inner>);
+
+impl WeakAnimated {
+    pub fn upgrade(&self) -> Option<Animated> {
+        self.0.upgrade().map(Animated)
+    }
+
+    /// Whether it is the handle `animated` was taken from.
+    pub fn is(&self, animated: &Animated) -> bool {
+        std::sync::Weak::ptr_eq(&self.0, &Arc::downgrade(&animated.0))
+    }
+}
+
 impl Animated {
+    pub fn downgrade(&self) -> WeakAnimated {
+        WeakAnimated(Arc::downgrade(&self.0))
+    }
+
     pub fn new() -> Self {
         let animated = Self::default();
         animated.0.uniforms.set_origin(Instant::now());

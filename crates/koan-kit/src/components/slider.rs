@@ -32,8 +32,9 @@ pub struct Slider {
     reach: Option<Glide>,
     /// What it sets, for a screen reader: "seek", "volume".
     name: Option<SharedString>,
-    /// A gliding fill drawn as the rainbow appearance's trail.
-    prism: bool,
+    /// A gliding fill drawn as the rainbow appearance's trail, in brat's
+    /// palette when `Some(true)`.
+    prism: Option<bool>,
 }
 
 /// A value that moves on its own between renders, as a seek bar's playhead
@@ -259,13 +260,13 @@ impl Slider {
             on_commit: None,
             glide: None,
             reach: None,
-            prism: false,
+            prism: None,
         }
     }
 
     /// With a `glide`, the fill as a rainbow trail running back from the
     /// playhead: the hidden rainbow appearance's seek bar.
-    pub fn prism(mut self, prism: bool) -> Self {
+    pub fn prism(mut self, prism: Option<bool>) -> Self {
         self.prism = prism;
         self
     }
@@ -516,11 +517,12 @@ impl RenderOnce for Slider {
             })
             .when_some(glide, |rail, glide| {
                 let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
-                let program = if prism {
+                let program = if prism.is_some() {
                     &super::prism::PRISM_GLIDE
                 } else {
                     &GLIDE
                 };
+                let brat = prism == Some(true);
                 rail.child(
                     canvas(
                         move |_, window, cx| {
@@ -532,6 +534,7 @@ impl RenderOnce for Slider {
                                 fill_color,
                                 thumb_color,
                             });
+                            glide.0.set(5, brat as u8 as f32);
                             glide.0.attach(false, window, cx);
                             glide
                         },
