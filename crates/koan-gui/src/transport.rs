@@ -18,7 +18,7 @@ use koan_kit::raw::canvas;
 
 use crate::components::{
     Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
-    MenuSlot, SHADED, Slider, TransportMetrics,
+    MenuSlot, Slider, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -1090,14 +1090,14 @@ impl Focusable for Transport {
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. Where the renderer
-/// draws shaders, the slider glides: the anchor is handed to it (`Glide`) and
-/// the GPU reckons the fill per present, so it moves continuously with no
-/// frame drawn, and a new anchor (a seek, a pause, the next track) corrects
-/// it. While it runs, one timer is set for the next moment the times would
-/// read differently (the next second), and elsewhere for the fill's next
-/// pixel too; paused or stopped, nothing is set and nothing presents, so a
-/// koan at rest costs nothing.
+/// The position is reckoned from the playhead's anchor. While it runs, one
+/// timer is set for the next moment the slider or the times would read
+/// differently: the fill's next device pixel, or the next second. The fill
+/// is the slider's shader quad (`Glide`), set where it stands at each tick,
+/// so a tick presents the window again without drawing a frame; it is not
+/// run on the display's clock, which presented the window at every refresh
+/// while playing for a fill that moves a few pixels a second. Paused,
+/// stopped or hidden, nothing is set and nothing presents.
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
@@ -1109,6 +1109,8 @@ pub struct Seek {
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// The second the times last drew.
+    shown_second: Option<u64>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1141,6 +1143,7 @@ impl Seek {
             tick: None,
             dragging: None,
             width: Default::default(),
+            shown_second: None,
             glide: Glide::new(),
         };
         seek.schedule(cx);
@@ -1152,6 +1155,20 @@ impl Seek {
         cx.notify();
     }
 
+    /// The timer's tick: the fill moves through its quad alone, and the view
+    /// draws again only when the times read differently.
+    fn ticked(&mut self, cx: &mut Context<Self>) {
+        let second = self
+            .playhead
+            .read(cx)
+            .at(Instant::now(), self.duration_ms(cx))
+            / 1000;
+        self.schedule(cx);
+        if self.shown_second != Some(second) {
+            cx.notify();
+        }
+    }
+
     fn duration_ms(&self, cx: &App) -> u64 {
         self.playback.read(cx).0.duration_ms
     }
@@ -1160,29 +1177,24 @@ impl Seek {
         self.tick = None;
         let anchor = *self.playhead.read(cx);
         let duration = self.duration_ms(cx);
-        let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        let now = Instant::now();
         if duration > 0 {
-            self.glide.set(
-                (anchor.position_ms as f64 / duration as f64) as f32,
-                if anchor.playing {
-                    1000.0 / duration as f32
-                } else {
-                    0.0
-                },
-                anchor.at,
-            );
+            let position = anchor.at(now, duration);
+            self.glide
+                .set((position as f64 / duration as f64) as f32, 0.0, now);
         }
-        self.glide.set_moving(moving);
+        self.glide.set_moving(false);
         if !self.visible || !anchor.playing || duration == 0 {
             return;
         }
-        let position = anchor.at(Instant::now(), duration);
+        let position = anchor.at(now, duration);
         if position >= duration {
             return;
         }
         let to_second = 1000 - position % 1000;
+        // The slider's width in device pixels, as last painted.
         let width = self.width.get();
-        let to_pixel = if width > 0.0 && !SHADED {
+        let to_pixel = if width > 0.0 {
             (duration as f32 / width).ceil() as u64
         } else {
             to_second
@@ -1192,7 +1204,7 @@ impl Seek {
         let wait = Duration::from_millis(to_second.min(to_pixel).max(16));
         self.tick = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(wait).await;
-            this.update(cx, |this, cx| this.moved(cx)).ok();
+            this.update(cx, |this, cx| this.ticked(cx)).ok();
         }));
     }
 
@@ -1231,6 +1243,7 @@ impl Render for Seek {
         let shown = self
             .dragging
             .map_or(position, |s| (s as f64 * duration as f64) as u64);
+        self.shown_second = Some(shown / 1000);
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
         // The playhead the slider shows comes from the engine, which holds a
@@ -1239,7 +1252,9 @@ impl Render for Seek {
         // click never shows the old place again before the new one.
         let width = self.width.clone();
         let measure = canvas(
-            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
+            move |bounds, window, _| {
+                width.set(f32::from(bounds.size.width) * window.scale_factor())
+            },
             |_, _, _, _| {},
         )
         .absolute()

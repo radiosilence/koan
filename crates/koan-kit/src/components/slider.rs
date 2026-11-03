@@ -101,9 +101,16 @@ impl Glide {
         self.0.set_origin(since);
     }
 
-    /// Whether the value is moving: presented every refresh while it is.
+    /// Whether the value is moving: presented every refresh while it is,
+    /// or as often as `set_pace` says.
     pub fn set_moving(&self, moving: bool) {
         self.0.run(moving);
+    }
+
+    /// Presents a moving value no more often than once every `every` (see
+    /// `Animated::set_pace`): for one that moves a few pixels a second.
+    pub fn set_pace(&self, every: Option<std::time::Duration>) {
+        self.0.set_pace(every);
     }
 
     /// No value to show, as a download whose size is unknown: a ring turns

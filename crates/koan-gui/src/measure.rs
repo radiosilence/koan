@@ -67,6 +67,44 @@ pub fn start(cx: &mut App) {
             play(cx);
             cx.hide();
         }
+        // Playing with the album grid showing, where no playing bars are.
+        Ok("play-albums") => {
+            play(cx);
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |cx| {
+                background.timer(Duration::from_secs(3)).await;
+                cx.update(|cx| {
+                    if let Some(window) = cx.windows().first() {
+                        window
+                            .update(cx, |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::platform::actions::ShowAlbums),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+                });
+            })
+            .detach();
+        }
+        // Minimised to the Dock rather than hidden: the window's own state,
+        // which the system may report differently from hiding the app.
+        Ok("play-minimised") => {
+            play(cx);
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |cx| {
+                background.timer(Duration::from_secs(5)).await;
+                cx.update(|cx| {
+                    if let Some(window) = cx.windows().first() {
+                        window
+                            .update(cx, |_, window, _| window.minimize_window())
+                            .ok();
+                    }
+                });
+            })
+            .detach();
+        }
         _ => {}
     }
 }

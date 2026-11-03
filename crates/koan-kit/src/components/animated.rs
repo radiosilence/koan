@@ -58,7 +58,15 @@ struct Inner {
     /// changes.
     waker: Mutex<Option<Waker>>,
     running: AtomicBool,
+    /// A clock slower than the display's (`set_pace`).
+    pace: Mutex<Option<Duration>>,
+    /// The paced clock's task is running.
+    pacing: AtomicBool,
 }
+
+/// The uniform a paced clock writes its tick into, so the renderer presents
+/// the quad again: a program run with `set_pace` must not read it.
+pub const PACE_TICK: usize = SHADER_UNIFORMS - 1;
 
 impl Animated {
     pub fn new() -> Self {
@@ -100,10 +108,19 @@ impl Animated {
     pub fn run(&self, running: bool) {
         self.0.uniforms.set_live_until(None);
         if self.0.running.swap(running, Ordering::Relaxed) != running {
-            self.0.uniforms.set_continuous(running);
+            let paced = self.0.pace.lock().is_some();
+            self.0.uniforms.set_continuous(running && !paced);
             self.0.uniforms.set_live(running);
             self.wake();
         }
+    }
+
+    /// Runs the clock (`run`) no faster than once every `every`, for motion
+    /// slow enough that most refreshes would show nothing new: each present
+    /// costs the app work whatever it shows. The program must leave
+    /// `PACE_TICK` unread. `None` presents every refresh.
+    pub fn set_pace(&self, every: Option<Duration>) {
+        *self.0.pace.lock() = every;
     }
 
     /// Runs the clock for `length` from now and then stops by itself, with
@@ -135,8 +152,32 @@ impl Animated {
         *self.0.waker.lock() = Some(waker(window, cx));
         let still = decorative && !motion_allowed(cx);
         let running = self.is_running() && !still;
-        self.0.uniforms.set_continuous(running);
+        let pace = *self.0.pace.lock();
+        self.0.uniforms.set_continuous(running && pace.is_none());
         self.0.uniforms.set_live(running);
+        if let Some(every) = pace
+            && running
+            && !self.0.pacing.swap(true, Ordering::AcqRel)
+        {
+            // Ticks while the clock runs, each tick a change the renderer
+            // presents; ends the first time it finds the clock stopped.
+            let animated = self.clone();
+            let executor = cx.background_executor().clone();
+            cx.background_executor()
+                .spawn(async move {
+                    let mut tick = 0u32;
+                    loop {
+                        executor.timer(every).await;
+                        if !animated.is_running() {
+                            animated.0.pacing.store(false, Ordering::Release);
+                            break;
+                        }
+                        tick = tick.wrapping_add(1);
+                        animated.set(PACE_TICK, (tick % 2) as f32);
+                    }
+                })
+                .detach();
+        }
     }
 
     /// Paints the quad over `bounds`, drawn by `program`, sampling `image`.

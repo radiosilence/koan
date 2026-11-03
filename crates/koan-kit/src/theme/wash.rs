@@ -46,6 +46,11 @@ use crate::components::{Animated, SHADED, ShaderProgram};
 /// The texture's side. Blurred to mush, so drawn small and magnified: the
 /// Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
 /// this one.
+/// How often the drifting wash is presented: the drift takes tens of seconds
+/// to cross a screen and a dissolve two, so thirty times a second shows every
+/// step either makes. Its program leaves `PACE_TICK` (`u[15]`) unread.
+const WASH_PACE: std::time::Duration = std::time::Duration::from_millis(33);
+
 pub const SIDE: u32 = 128;
 const RADIUS: usize = 10;
 const SATURATION: f64 = 1.6;
@@ -895,7 +900,9 @@ impl Wash {
             shader.set_all(0, &values);
             shader.set_origin(origin);
             // The drift already rests under Reduce Motion (`moving`); a
-            // dissolve still runs, as it does on the Mac.
+            // dissolve still runs, as it does on the Mac. Paced: the drift
+            // moves too slowly for every refresh to show anything new.
+            shader.set_pace(Some(WASH_PACE));
             shader.run(moving);
             rests = rests.max(opacity.rests(now));
             quads.push((image, shader));

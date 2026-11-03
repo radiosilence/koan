@@ -40,9 +40,12 @@ use crate::theme::Hsla;
 const QUIETEST: f32 = 0.12;
 /// Seconds a band takes to forget half of a loud passage.
 const FORGET: f32 = 4.0;
-/// The analyser's rate while bars are on screen, where the display does not
-/// say its own.
-const FPS: u8 = 60;
+/// The analyser's rate while bars are on screen: each new reading presents
+/// every window showing bars again, a millisecond or so of work across the
+/// app's threads, so the bars move at most this often whatever the display
+/// refreshes at. Three small bars read as moving with the music at this
+/// rate; at a 120 Hz panel's they cost four times as much and look the same.
+const FPS: u8 = 30;
 
 #[derive(Default)]
 struct Registry {
@@ -108,11 +111,16 @@ pub fn feed(window: WindowId, cx: &mut App) -> Option<Entity<Feed>> {
     Some(levels.feeds.entry(window).or_insert(made).clone())
 }
 
-/// The analyser's rate for the display `window` is on: once per refresh.
+/// The analyser's rate for the display `window` is on: once per refresh, up
+/// to `FPS`; a display slower than that gets no more readings than it shows.
 pub fn display_fps(window: &Window, cx: &App) -> u8 {
     window
         .refresh_interval(cx)
-        .map(|interval| (1.0 / interval.as_secs_f32()).round().clamp(24.0, 240.0) as u8)
+        .map(|interval| {
+            (1.0 / interval.as_secs_f32())
+                .round()
+                .clamp(24.0, FPS as f32) as u8
+        })
         .unwrap_or(FPS)
 }
 
