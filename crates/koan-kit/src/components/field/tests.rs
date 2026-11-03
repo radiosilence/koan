@@ -422,3 +422,138 @@ fn a_highlighter_follows_the_text(cx: &mut TestAppContext) {
     cx.update(|window, cx| f.update(cx, |f, cx| f.set_value("plain", window, cx)));
     assert!(f.read_with(cx, |f, _| f.spans.is_empty()));
 }
+
+fn press(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, clicks: usize) {
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
+        position: at,
+        modifiers: Modifiers::default(),
+        click_count: clicks,
+        first_mouse: false,
+    });
+}
+
+fn drag_to(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: at,
+        pressed_button: Some(gpui::MouseButton::Left),
+        modifiers: Modifiers::default(),
+    });
+}
+
+/// A drag that leaves the field still selects: past the trailing edge to
+/// the end of the line, scrolled there, and back past the leading edge to
+/// its start; a word drag likewise extends by words.
+#[gpui::test]
+fn a_drag_past_the_edges_still_selects(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let text = "word ".repeat(40);
+    cx.simulate_input(&text);
+    cx.dispatch_action(MoveHome);
+    cx.run_until_parked();
+    let f = field(&host, cx);
+    let bounds = f.read_with(cx, |f, _| f.bounds.expect("drawn"));
+    let middle = point(bounds.left() + px(60.0), bounds.center().y);
+    press(cx, middle, 1);
+    let from = selected(&host, cx).start;
+    assert!(from > 0);
+    drag_to(cx, point(bounds.right() + px(200.0), bounds.center().y));
+    cx.run_until_parked();
+    drag_to(cx, point(bounds.right() + px(400.0), bounds.center().y));
+    cx.run_until_parked();
+    assert_eq!(
+        selected(&host, cx).end,
+        text.len(),
+        "to the end, past the edge"
+    );
+    assert!(
+        f.read_with(cx, |f, _| f.scroll.x) > px(0.0),
+        "scrolled to it"
+    );
+    drag_to(cx, point(bounds.left() - px(200.0), bounds.center().y));
+    cx.run_until_parked();
+    drag_to(cx, point(bounds.left() - px(400.0), bounds.center().y));
+    cx.run_until_parked();
+    assert_eq!(selected(&host, cx), 0..from, "back to the start");
+}
+
+/// The lines of the last frame can point inside a character of text set
+/// since: moving down a line, or a click, before the next frame lands on
+/// a character's edge and does not panic.
+#[gpui::test]
+fn moves_before_a_redraw_land_on_characters(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 4);
+    cx.simulate_input("abcdef\nabcdef");
+    cx.run_until_parked();
+    let f = field(&host, cx);
+    let bounds = f.read_with(cx, |f, _| f.bounds.expect("drawn"));
+    cx.update(|window, cx| {
+        f.update(cx, |f, cx| {
+            f.set_value("ééé\nüüü", window, cx);
+            f.selected = 2..2;
+            f.down(&MoveDown, window, cx);
+            assert!(f.text.is_char_boundary(f.cursor()));
+            let at = f.offset_at(point(bounds.left() + px(25.0), bounds.top() + px(2.0)));
+            assert!(f.text.is_char_boundary(at));
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(value(&host, cx), "ééé\nüüü");
+}
+
+/// Only a focused field blinks: one emptied while unfocused, as a clear
+/// mark or a screen reader does, shows no caret and starts no blink.
+#[gpui::test]
+fn an_unfocused_field_shows_no_caret(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    cx.simulate_input("abc");
+    cx.update(|window, cx| window.blur(cx));
+    cx.run_until_parked();
+    let f = field(&host, cx);
+    cx.update(|window, cx| f.update(cx, |f, cx| f.clean(window, cx)));
+    cx.run_until_parked();
+    assert_eq!(f.read_with(cx, |f, _| f.caret.get(0)), 0.0);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(f.read_with(cx, |f, _| f.caret.get(0)), 0.0);
+}
+
+/// The platform's text services are told a password's bullets, never its
+/// characters.
+#[gpui::test]
+fn a_masked_field_hands_out_bullets(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    let f = field(&host, cx);
+    f.update(cx, |f, _| f.masked = true);
+    cx.simulate_input("pässword");
+    let told = cx.update(|window, cx| {
+        f.update(cx, |f, cx| {
+            let mut actual = None;
+            f.text_for_range(0..8, &mut actual, window, cx)
+        })
+    });
+    assert_eq!(told.as_deref(), Some("••••••••"));
+}
+
+/// A click while an input method composes ends the composition where it
+/// stands; typing after goes in at the click.
+#[gpui::test]
+fn a_click_ends_a_composition(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx, 1);
+    cx.simulate_input("abc ");
+    cx.run_until_parked();
+    let f = field(&host, cx);
+    cx.update(|window, cx| {
+        f.update(cx, |f, cx| {
+            f.replace_and_mark_text_in_range(None, "に", None, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    let bounds = f.read_with(cx, |f, _| f.bounds.expect("drawn"));
+    press(cx, point(bounds.left() + px(1.0), bounds.center().y), 1);
+    assert_eq!(f.read_with(cx, |f, _| f.marked.clone()), None);
+    assert_eq!(selected(&host, cx), 0..0);
+    cx.simulate_input("x");
+    assert_eq!(value(&host, cx), "xabc に");
+}

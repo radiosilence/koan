@@ -643,7 +643,11 @@ impl Render for OrganizeSheet {
                     .flex_none()
                     .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
-                    .child(TextField::new(&self.draft).disabled(running))
+                    .child(
+                        TextField::new(&self.draft)
+                            .label(crate::theme::label("pattern"))
+                            .disabled(running),
+                    )
                     .when(self.modified(cx), |d| {
                         let preview = self.save_preview(cx);
                         d.child(
@@ -652,7 +656,11 @@ impl Render for OrganizeSheet {
                                     .flex()
                                     .items_center()
                                     .gap(look.space(crate::theme::Space::S))
-                                    .child(TextField::new(&self.save_name).disabled(running))
+                                    .child(
+                                        TextField::new(&self.save_name)
+                                            .label(crate::theme::label("save as"))
+                                            .disabled(running),
+                                    )
                                     .child(
                                         Button::new("organize-save", ButtonKind::Bordered)
                                             .label("save")

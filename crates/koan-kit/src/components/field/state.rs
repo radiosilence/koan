@@ -35,7 +35,7 @@ pub enum InputEvent {
 /// How a drag that began with one, two or three clicks extends the
 /// selection: by characters, words or lines.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Unit {
+pub(super) enum Unit {
     Char,
     Word,
     Line,
@@ -100,6 +100,9 @@ pub struct FieldState {
     pub(super) selected: Range<usize>,
     /// The selection's moving end is its start.
     pub(super) reversed: bool,
+    /// The platform's text input is making this change: it is not told of
+    /// it, which would discard its composition.
+    platform: bool,
     /// What an input method is composing, underlined until it is committed.
     pub(super) marked: Option<Range<usize>>,
     /// As last painted: the lines, where they were drawn, a line's height,
@@ -109,14 +112,14 @@ pub struct FieldState {
     pub(super) line_height: Pixels,
     pub(super) scroll: Point<Pixels>,
     /// A drag under way, by what unit, and the selection it started from.
-    drag: Option<(Unit, Range<usize>)>,
+    pub(super) drag: Option<(Unit, Range<usize>)>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     last_edit: Option<(Kind, Instant)>,
     /// The caret's shader uniforms: 0 whether it shows, 4..8 its colour.
     pub(super) caret: Animated,
     blink: Task<()>,
-    _focus: [Subscription; 2],
+    _focus: [Subscription; 3],
 }
 
 impl EventEmitter<InputEvent> for FieldState {}
@@ -130,9 +133,13 @@ impl Focusable for FieldState {
 impl FieldState {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle().tab_stop(true);
-        let focused = cx.on_focus(&focus, window, |this, _, cx| {
-            this.blink_from_shown(cx);
+        let focused = cx.on_focus(&focus, window, |this, window, cx| {
+            this.blink_from_shown(window, cx);
             cx.emit(InputEvent::Focus);
+        });
+        // A window in the background shows no caret, and blinks none.
+        let activation = cx.observe_window_activation(window, |this, window, cx| {
+            this.blink_from_shown(window, cx);
         });
         let blurred = cx.on_blur(&focus, window, |this, _, cx| {
             this.blink = Task::ready(());
@@ -153,6 +160,7 @@ impl FieldState {
             rows: 1,
             selected: 0..0,
             reversed: false,
+            platform: false,
             marked: None,
             lines: Vec::new(),
             bounds: None,
@@ -164,7 +172,7 @@ impl FieldState {
             last_edit: None,
             caret: Animated::new(),
             blink: Task::ready(()),
-            _focus: [focused, blurred],
+            _focus: [focused, blurred, activation],
         }
     }
 
@@ -432,7 +440,13 @@ impl FieldState {
                 .nth(chars)
                 .map_or(self.text.len(), |(i, _)| i)
         } else {
-            drawn.min(self.text.len())
+            // Lines laid out before an edit not drawn yet can point inside
+            // a character of the text as it is now.
+            let mut at = drawn.min(self.text.len());
+            while !self.text.is_char_boundary(at) {
+                at -= 1;
+            }
+            at
         }
     }
 
@@ -469,8 +483,10 @@ impl FieldState {
 
     fn moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.last_edit = None;
-        self.blink_from_shown(cx);
-        window.notify_text_selection_changed(&self.focus);
+        self.blink_from_shown(window, cx);
+        if !self.platform {
+            window.notify_text_selection_changed(&self.focus);
+        }
         cx.notify();
     }
 
@@ -682,8 +698,10 @@ impl FieldState {
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.announce = false;
         self.rehighlight();
-        self.blink_from_shown(cx);
-        window.notify_text_input_changed(&self.focus);
+        self.blink_from_shown(window, cx);
+        if !self.platform {
+            window.notify_text_input_changed(&self.focus);
+        }
         cx.emit(InputEvent::Change);
         cx.notify();
     }
@@ -903,6 +921,11 @@ impl FieldState {
             return;
         }
         window.focus(&self.focus, cx);
+        // A press elsewhere ends a composition where it stands: the input
+        // method is told, and composes afresh at the caret.
+        if self.marked.take().is_some() {
+            window.notify_text_input_changed(&self.focus);
+        }
         let at = self.offset_at(event.position);
         let unit = match event.click_count {
             0 | 1 => Unit::Char,
@@ -965,9 +988,15 @@ impl FieldState {
 
     /// Shows the caret now and starts its blink after a rest, as on the
     /// Mac: steady while typing or moving, blinking once still. Only a
-    /// focused field blinks; a blink presents the last frame again with
-    /// the caret's uniform changed, and draws nothing.
-    fn blink_from_shown(&mut self, cx: &mut Context<Self>) {
+    /// focused field in the active window shows a caret and blinks; a blink
+    /// presents the last frame again with the caret's uniform changed, and
+    /// draws nothing.
+    fn blink_from_shown(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !(self.focus.is_focused(window) && window.is_window_active()) {
+            self.blink = Task::ready(());
+            self.caret.set(0, 0.0);
+            return;
+        }
         self.caret.set(0, 1.0);
         self.blink = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(BLINK_REST).await;
@@ -998,7 +1027,13 @@ impl EntityInputHandler for FieldState {
     ) -> Option<String> {
         let range = self.utf16_range_to_text(&range);
         actual.replace(self.to_utf16_range(&range));
-        Some(self.text[range].to_string())
+        // A password's characters stay here: the platform's text services
+        // are told bullets.
+        Some(if self.masked {
+            "•".repeat(self.text[range].chars().count())
+        } else {
+            self.text[range].to_string()
+        })
     }
 
     fn selected_text_range(
@@ -1021,7 +1056,9 @@ impl EntityInputHandler for FieldState {
     ) {
         self.selected = self.utf16_range_to_text(&range);
         self.reversed = false;
+        self.platform = true;
         self.moved(window, cx);
+        self.platform = false;
     }
 
     fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
@@ -1036,9 +1073,8 @@ impl EntityInputHandler for FieldState {
         self.marked.as_ref().map(|range| self.to_utf16_range(range))
     }
 
-    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.marked = None;
-        window.notify_text_input_changed(&self.focus);
         cx.notify();
     }
 
@@ -1062,7 +1098,9 @@ impl EntityInputHandler for FieldState {
         } else {
             Kind::Other
         };
+        self.platform = true;
         self.edit(range, text, kind, window, cx);
+        self.platform = false;
     }
 
     fn replace_and_mark_text_in_range(
@@ -1097,7 +1135,9 @@ impl EntityInputHandler for FieldState {
             })
             .unwrap_or(range.start + text.len()..range.start + text.len());
         self.reversed = false;
+        self.platform = true;
         self.changed(window, cx);
+        self.platform = false;
     }
 
     fn bounds_for_range(

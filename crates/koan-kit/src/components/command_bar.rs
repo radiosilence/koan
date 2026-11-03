@@ -198,6 +198,7 @@ impl RenderOnce for CommandBar {
                     .child(
                         div().flex_1().min_w_0().child(
                             TextField::new(&self.input)
+                                .label(label("search"))
                                 .bare()
                                 .role(TypeRole::TitleSmall),
                         ),

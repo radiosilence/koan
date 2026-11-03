@@ -185,6 +185,11 @@ fn editor(
     cx: &mut App,
 ) -> gpui::Stateful<gpui::Div> {
     let look = Look::of(window, cx);
+    // Its own label, or the one the row it sits in gives (`labelled`).
+    let label = label.or_else(|| {
+        cx.try_global::<Labels>()
+            .and_then(|labels| labels.0.last().cloned())
+    });
     let s = state.read(cx);
     let focus = s.focus.clone();
     let masked = s.masked;
@@ -229,7 +234,6 @@ fn editor(
         .min_w_0()
         .overflow_hidden()
         .key_context(CONTEXT)
-        .track_focus(&focus)
         .role(role)
         .when_some(label, |el, label| el.aria_label(label))
         .aria_placeholder(placeholder)
@@ -269,22 +273,23 @@ fn editor(
                     focus: at(active),
                 });
         })
-        .on_a11y_action(gpui::AccessibleAction::Focus, {
-            let focus = focus.clone();
-            move |_, window, cx| window.focus(&focus, cx)
-        })
         .child(element);
+    // A disabled field takes no focus, so Tab passes it by.
     if !enabled {
         return el;
     }
     // Reading: the pointer, the movement keys and Copy.
     el = el
+        .track_focus(&focus)
+        .on_a11y_action(gpui::AccessibleAction::Focus, {
+            let focus = focus.clone();
+            move |_, window, cx| window.focus(&focus, cx)
+        })
         .cursor(CursorStyle::IBeam)
         .on_mouse_down(
             gpui::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_down),
         )
-        .on_mouse_move(window.listener_for(state, FieldState::mouse_move))
         .on_mouse_up(
             gpui::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_up),
@@ -342,4 +347,85 @@ fn editor(
     .on_action(window.listener_for(state, FieldState::undo))
     .on_action(window.listener_for(state, FieldState::redo))
     .on_action(window.listener_for(state, FieldState::character_palette))
+}
+
+/// The labels of the rows being laid out, innermost last.
+#[derive(Default)]
+struct Labels(Vec<SharedString>);
+
+impl gpui::Global for Labels {}
+
+/// `child`, with `label` naming any text field inside it that has no label
+/// of its own: a form row's label reaching its control, for a screen
+/// reader. The field reads it as it renders, which a component does while
+/// its parent lays it out, inside this element's layout.
+pub fn labelled(label: impl Into<SharedString>, child: impl IntoElement) -> Labelled {
+    Labelled {
+        label: label.into(),
+        child: child.into_any_element(),
+    }
+}
+
+pub struct Labelled {
+    label: SharedString,
+    child: gpui::AnyElement,
+}
+
+impl IntoElement for Labelled {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for Labelled {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        cx.default_global::<Labels>().0.push(self.label.clone());
+        let layout = self.child.request_layout(window, cx);
+        cx.default_global::<Labels>().0.pop();
+        (layout, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+    }
 }

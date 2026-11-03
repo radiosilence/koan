@@ -150,7 +150,7 @@ index 8fd2066..e22aed1 100644
      }
  
 diff --git a/src/window.rs b/src/window.rs
-index f2208d3..049c73f 100644
+index f2208d3..80c3802 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -2,12 +2,12 @@ use crate::{
@@ -270,7 +270,41 @@ index f2208d3..049c73f 100644
      fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
          self.0.as_ref().lock().event_callback = Some(callback);
      }
-@@ -2637,6 +2691,8 @@ extern "C" fn handle_key_event(
+@@ -2109,6 +2163,33 @@ impl PlatformWindow for MacWindow {
+         None
+     }
+ 
++    // KOAN: (#2021) the app changed the text or the selection itself, as a
++    // click elsewhere in a field: an input method's composition no longer
++    // stands where it was, so AppKit is told to discard it, as an
++    // NSTextView does.
++    fn text_input_state_changed(&self, change: gpui::TextInputStateChange) {
++        if !matches!(
++            change,
++            gpui::TextInputStateChange::ContentChanged
++                | gpui::TextInputStateChange::SelectionChanged
++        ) {
++            return;
++        }
++        let executor = self.0.lock().foreground_executor.clone();
++        executor
++            .spawn(async move {
++                unsafe {
++                    let input_context: *mut AnyObject =
++                        msg_send![class!(NSTextInputContext), currentInputContext];
++                    if input_context.is_null() {
++                        return;
++                    }
++                    let _: () = msg_send![input_context, discardMarkedText];
++                }
++            })
++            .detach()
++    }
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+         let executor = self.0.lock().foreground_executor.clone();
+         executor
+@@ -2637,6 +2718,8 @@ extern "C" fn handle_key_event(
  ) -> Bool {
      let window_state = unsafe { get_window_state(this) };
      let mut lock = window_state.as_ref().lock();
@@ -279,7 +313,7 @@ index f2208d3..049c73f 100644
  
      let window_height = lock.content_size().height;
      let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
-@@ -2787,6 +2843,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
+@@ -2787,6 +2870,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
      let window_state = unsafe { get_window_state(this) };
      let weak_window_state = Arc::downgrade(&window_state);
      let mut lock = window_state.as_ref().lock();
@@ -288,7 +322,7 @@ index f2208d3..049c73f 100644
      let window_height = lock.content_size().height;
      let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
      match native_event_type {
-@@ -3362,7 +3420,45 @@ extern "C" fn step(view: *mut c_void) {
+@@ -3362,7 +3447,45 @@ extern "C" fn step(view: *mut c_void) {
              signal_source,
              ..Default::default()
          });

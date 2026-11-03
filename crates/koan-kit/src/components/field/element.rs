@@ -6,9 +6,9 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, Pixels, Point, ShaderProgram, SharedString, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, point, px, size,
+    App, Bounds, DispatchPhase, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels, Point, ShaderProgram,
+    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
@@ -264,6 +264,18 @@ impl gpui::Element for FieldElement {
                 ElementInputHandler::new(bounds, self.state.clone()),
                 cx,
             );
+        }
+        // A drag from the field follows the pointer past its edges and the
+        // window's, extending the selection and scrolling to it: heard
+        // window-wide while it lasts, as the field's own hitbox ends at its
+        // edge.
+        if self.state.read(cx).drag.is_some() {
+            let state = self.state.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    state.update(cx, |state, cx| state.mouse_move(event, window, cx));
+                }
+            });
         }
         let origin = bounds.origin - prepaint.scroll;
         let line_height = prepaint.line_height;

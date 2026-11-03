@@ -17,6 +17,7 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 pub struct FilterField {
     input: Entity<InputState>,
     fill: bool,
+    label: SharedString,
 }
 
 impl FilterField {
@@ -24,7 +25,15 @@ impl FilterField {
         Self {
             input: input.clone(),
             fill: false,
+            label: crate::theme::label("filter"),
         }
+    }
+
+    /// What a screen reader calls the field, in the app's words: "filter"
+    /// unless the page says what it filters.
+    pub fn label(mut self, label: &str) -> Self {
+        self.label = crate::theme::label(label);
+        self
     }
 
     /// As wide as what holds it, as the sidebar's search field is, rather
@@ -82,7 +91,7 @@ impl RenderOnce for FilterField {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(TextField::new(&self.input).bare()),
+                    .child(TextField::new(&self.input).label(self.label).bare()),
             )
             .when(!empty, |d| {
                 d.child(

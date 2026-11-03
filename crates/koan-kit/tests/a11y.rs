@@ -478,6 +478,8 @@ struct Fields {
     name: gpui::Entity<koan_kit::components::FieldState>,
     fixed: gpui::Entity<koan_kit::components::FieldState>,
     secret: gpui::Entity<koan_kit::components::FieldState>,
+    server: gpui::Entity<koan_kit::components::FieldState>,
+    filter: gpui::Entity<koan_kit::components::FieldState>,
 }
 
 impl Render for Fields {
@@ -490,6 +492,12 @@ impl Render for Fields {
             .child(TextField::new(&self.name).label("name"))
             .child(TextField::new(&self.fixed).label("address"))
             .child(TextField::new(&self.secret).label("password"))
+            // Named by the row it sits in, and by the wrapper it is in.
+            .child(
+                koan_kit::components::FormRow::new("server")
+                    .control(div().w_full().child(TextField::new(&self.server))),
+            )
+            .child(koan_kit::components::FilterField::new(&self.filter).fill())
     }
 }
 
@@ -517,6 +525,8 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
                 .masked(true)
                 .default_value("hunter2")
         }),
+        server: cx.new(|cx| FieldState::new(window, cx)),
+        filter: cx.new(|cx| FieldState::new(window, cx)),
     });
     let fields = window.root(cx).expect("the view");
     let window: AnyWindowHandle = window.into();
@@ -539,6 +549,8 @@ fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
         !fixed["on_action"].to_string().contains("SetValue"),
         "a read-only field takes no value: {fixed}"
     );
+    node(&tree, "server", "TextInput");
+    node(&tree, "filter", "TextInput");
     let (_, secret) = node(&tree, "password", "PasswordInput");
     assert!(
         secret.get("value").is_none(),
