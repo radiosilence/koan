@@ -372,6 +372,12 @@ float koan_track(constant float *u, uint k, float time) {
     }
     return from + (to - from) * p;
 }
+
+// The quad's image at `uv`, 0 to 1 across it: the renderer's sampler, under
+// the name the kit's programs call it by.
+float4 koan_sample(texture2d<float> image, float4 tile, float2 uv) {
+    return sample_image(image, tile, uv);
+}
 "#;
 
 /// `koan_track` and its curves in WGSL, prepended to every kit program.
@@ -452,4 +458,31 @@ fn koan_track(u: array<vec4<f32>, 20>, k: u32, time: f32) -> f32 {
     }
     return from + (to - from) * p;
 }
+
+// The quad's image at `uv`, 0 to 1 across it: the renderer's sampler, under
+// the name the kit's programs call it by.
+fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+    return sample_image(tile, uv);
+}
 "#;
+
+#[cfg(test)]
+mod prelude_tests {
+    use super::{TRACKS_MSL, TRACKS_WGSL};
+
+    /// The kit's programs sample their image as `koan_sample`; the renderer
+    /// names its sampler `sample_image`, so the prelude must bridge them or
+    /// every sampling program fails to compile and draws nothing.
+    #[test]
+    fn the_prelude_defines_the_sampler_the_programs_call() {
+        assert!(
+            TRACKS_MSL
+                .contains("float4 koan_sample(texture2d<float> image, float4 tile, float2 uv)")
+        );
+        assert!(TRACKS_MSL.contains("sample_image(image, tile, uv)"));
+        assert!(
+            TRACKS_WGSL.contains("fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32>")
+        );
+        assert!(TRACKS_WGSL.contains("sample_image(tile, uv)"));
+    }
+}
