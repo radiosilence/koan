@@ -69,12 +69,12 @@ fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
-/// How many of each kind the box lists: enough to recognise what was meant,
-/// as full rows that fit the panel. Everything else is behind Return, or
-/// "All results…", on the results page.
-const TRACKS: usize = 3;
-const ALBUMS: usize = 3;
-const ARTISTS: usize = 3;
+/// How many of each kind the box lists: enough to recognise what was meant.
+/// Everything else is behind Return, or "All results…", on the results
+/// page; the list scrolls inside the panel when the rows outgrow it.
+const TRACKS: usize = 5;
+const ALBUMS: usize = 5;
+const ARTISTS: usize = 5;
 
 /// The search's answer as rows, in the order they are listed: tracks,
 /// records, artists, each kind capped.
