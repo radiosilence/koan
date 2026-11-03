@@ -227,6 +227,13 @@ impl Glide {
         self.0.get(0) > 0.5
     }
 
+    /// Where the fill is drawn now: the reckoning and any correction still
+    /// easing out, as the program draws them.
+    pub fn drawn(&self) -> f32 {
+        let now = Animated::now();
+        self.0.at(0, now) + self.0.at(1, now)
+    }
+
     /// The value as last set, before any motion since.
     pub fn value(&self) -> f32 {
         self.1.lock().map_or(0.0, |(value, _, _)| value)
