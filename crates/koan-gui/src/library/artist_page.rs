@@ -557,10 +557,12 @@ impl ArtistPage {
                 } else {
                     (&record.albums, range.start)
                 };
+                // Each tile's place is in its section, not its row.
+                let section = (range.start, albums.len());
                 let Some(albums) = albums.get(range) else {
                     return div().into_any_element();
                 };
-                self.tiles(albums, first, features, grid, scale, cx)
+                self.tiles(albums, first, section, features, grid, scale, cx)
                     .into_any_element()
             }
             Item::Track(index) => {
@@ -615,10 +617,12 @@ impl ArtistPage {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tiles(
         &mut self,
         albums: &[Album],
         first: usize,
+        (start, total): (usize, usize),
         show_artist: bool,
         grid: Grid,
         scale: f32,
@@ -635,7 +639,6 @@ impl ArtistPage {
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(albums.len());
-        let count = albums.len();
         for (ix, album) in albums.iter().enumerate() {
             let record = self
                 .records
@@ -669,7 +672,7 @@ impl ArtistPage {
                 drag,
                 pick,
                 after,
-                place: (ix, count),
+                place: (start + ix, total),
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }

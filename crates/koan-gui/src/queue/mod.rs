@@ -664,6 +664,12 @@ impl QueueView {
         let insertion = p.accent;
         let p = &p.picked(selected);
         let r = self.rows(cx)[row];
+        // A track's place among the queue's items, headings not counted; a
+        // heading has none.
+        let place = match r {
+            Row::Track { ix, .. } => Some((ix, self.queue.read(cx).items.len())),
+            Row::Heading { .. } => None,
+        };
         // The sleeve first: asking for one can start a fetch, which needs the
         // app, and the rows below only borrow the queue.
         let album = match r {
@@ -791,7 +797,7 @@ impl QueueView {
             .spot(&self.spot)
             .when(p.a11y, |frame| {
                 frame
-                    .place(row, count)
+                    .when_some(place, |frame, (ix, items)| frame.place(ix, items))
                     .on_reveal(move |_, _| list.reveal_around(row))
             })
             .when(line_above, |d| {

@@ -471,11 +471,20 @@ impl ShelfPage {
             })
         }));
         let mut tiles = Vec::with_capacity(s.albums.len());
-        let count = s.albums.len();
+        // A tile's place among the tiles drawn: a record not read yet is
+        // neither drawn nor counted.
+        let count = s
+            .albums
+            .iter()
+            .filter(|album| self.records.contains_key(&album.id))
+            .count();
+        let mut shown = 0;
         for (ix, album) in s.albums.iter().enumerate() {
             let Some(record) = self.records.get(&album.id).cloned() else {
                 continue;
             };
+            let place = (shown, count);
+            shown += 1;
             let item = Playable::Album(album.id);
             let selected = self.selection.contains(item);
             let (drag, pick, after) = match (&pick, selected) {
@@ -502,7 +511,7 @@ impl ShelfPage {
                 drag,
                 pick,
                 after,
-                place: (ix, count),
+                place,
             };
             tiles.push(self.tiles.tile(&record, state, grid.tile_height(), cx));
         }
