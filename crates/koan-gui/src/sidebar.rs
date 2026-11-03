@@ -670,8 +670,17 @@ impl Render for Sidebar {
             )
             .children(
                 cx.try_global::<crate::notice::Notice>()
-                    .and_then(|n| n.text.clone().map(|text| (text, n.said)))
-                    .map(|((text, tone), said)| NavNote::new(text, tone).said("notice", said)),
+                    .and_then(|n| {
+                        // News for a moment after it is said: the sidebar
+                        // shown again later does not answer it again.
+                        let fresh = n
+                            .at
+                            .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+                        n.text.clone().map(|text| (text, n.said, fresh))
+                    })
+                    .map(|((text, tone), said, fresh)| {
+                        NavNote::new(text, tone).said("notice", said, fresh)
+                    }),
             )
     }
 }

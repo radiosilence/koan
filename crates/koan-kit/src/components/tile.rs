@@ -57,7 +57,7 @@ pub struct TileArt {
     mark: Option<TileMark>,
     playing: Option<AnyElement>,
     on_device: Option<f32>,
-    heart: Option<(bool, bool)>,
+    heart: Option<(bool, bool, bool)>,
     id: ElementId,
     pick: Option<bool>,
     sheen: Option<(ElementId, bool)>,
@@ -133,10 +133,12 @@ impl TileArt {
         self
     }
 
-    /// The heart: whether it is a favourite, and whether the pointer is on
-    /// the heart's disc.
-    pub fn heart(mut self, heart: Option<(bool, bool)>) -> Self {
-        self.heart = heart;
+    /// The heart: whether it is a favourite, whether the pointer is on the
+    /// heart's disc, and whether it shows (under the pointer, or for a
+    /// favourite). A heart not showing still follows the favourite, and
+    /// shows while it answers a change made elsewhere.
+    pub fn heart(mut self, favourite: bool, on_disc: bool, shows: bool) -> Self {
+        self.heart = Some((favourite, on_disc, shows));
         self
     }
 
@@ -279,7 +281,19 @@ impl RenderOnce for TileArt {
                     ),
             );
         }
-        if let (Some((favourite, hovered)), None) = (self.heart, self.pick) {
+        let heart = self
+            .heart
+            .filter(|_| self.pick.is_none())
+            .filter(|&(favourite, _, shows)| {
+                shows
+                    || super::Heart::answering(
+                        super::child(&self.id, "heart"),
+                        favourite,
+                        window,
+                        cx,
+                    )
+            });
+        if let Some((favourite, hovered, _)) = heart {
             // A mark inside the tile, which takes the click itself and tells
             // the heart from the sleeve by where it lands.
             let glyph = super::Heart::new(super::child(&self.id, "heart"), favourite)

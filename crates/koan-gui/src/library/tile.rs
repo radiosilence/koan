@@ -313,8 +313,9 @@ impl<V: TileHost> Render for TileView<V> {
             )
             .on_device(on_device(record.on_device, state.arriving))
             .heart(
-                (hovered.is_some() || state.favourite)
-                    .then_some((state.favourite, hovered == Some(Part::Heart))),
+                state.favourite,
+                hovered == Some(Part::Heart),
+                hovered.is_some() || state.favourite,
             )
             .pick(state.selecting.then_some(state.selected))
             .cursor(state.cursor)
