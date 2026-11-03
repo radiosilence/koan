@@ -68,6 +68,9 @@ raw = 1
 ["queue/mod.rs"]
 raw = 1
 
+["rainbow.rs"]
+raw = 3
+
 ["settings/mod.rs"]
 raw = 2
 
