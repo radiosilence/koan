@@ -1022,14 +1022,17 @@ impl LinkIdentity {
     /// app's files, id and saved session in the config directory, holding
     /// the app's lock there (`APP_LOCK`) for as long as it runs. The first
     /// launch on a configuration hands the device over: what it takes is
-    /// planned here (`Handover::plan`) and written once the engine has
-    /// opened (`Handover::finish`), so a launch that fails changes nothing.
+    /// planned here (`Handover::plan`), its devices put in place before the
+    /// engine opens (`Handover::prepare`, undone by `abandon` if it does
+    /// not), and the rest written once it has (`Handover::finish`), so a
+    /// launch that fails changes nothing.
     /// `mac_app_ran` is whether the macOS app kept a session here.
     ///
     /// An error of kind `WouldBlock` while something holds that lock: another
     /// desktop app, or a 0.70 macOS app on a configuration not yet handed
-    /// over. An older macOS app holds no lock; the desktop app looks for it
-    /// running before it gets here.
+    /// over. An older macOS app holds no lock: koan-runtime's
+    /// `KoanEngine::open_desktop` looks for it running (by its bundle id,
+    /// less one `legacy_app_running` accounts for) before it gets here.
     pub fn desktop(mac_app_ran: bool) -> std::io::Result<(Self, Option<Handover>)> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
         let dir = config::config_dir();
@@ -1130,6 +1133,9 @@ pub struct Handover {
     pub retired: Option<String>,
     config: PathBuf,
     state: PathBuf,
+    /// The app's `devices.json` before `prepare` replaced it, if it did:
+    /// `Some(None)` where there was none.
+    previous_devices: Option<Option<Vec<u8>>>,
 }
 
 impl Handover {
@@ -1165,33 +1171,53 @@ impl Handover {
             retired,
             config: config.to_owned(),
             state: state.to_owned(),
+            previous_devices: None,
         })
     }
 
-    /// Writes the plan, once the engine has opened under it: the desktop
-    /// app's id and devices under the app's names where they are its to
-    /// keep, then `TAKEN_OVER`, which makes the macOS app the legacy device
-    /// from then on.
-    pub fn finish(&self) {
-        if let Some(id) = &self.id
-            && let Err(e) = std::fs::write(self.config.join("device-id"), id)
-        {
-            log::warn!("handover: keeping the desktop app's id: {e}");
-        }
-        let devices = self.config.join("devices.json");
+    /// Before the engine opens under the plan: where the desktop app keeps
+    /// its id, the devices it knew go under the app's name, since the engine
+    /// reads them as it opens and saves over them as it runs. What was there
+    /// is kept for `abandon`.
+    pub fn prepare(&mut self) -> std::io::Result<()> {
         let desktop_devices = self
             .state
             .join(format!("{}devices.json", LinkIdentity::DESKTOP_FILES));
-        if self.id.is_some()
-            && desktop_devices.exists()
-            && let Err(e) = std::fs::copy(&desktop_devices, &devices)
-        {
-            log::warn!("handover: the devices the desktop app knew: {e}");
+        if self.id.is_none() || !desktop_devices.exists() {
+            return Ok(());
         }
-        let marker = self.config.join(TAKEN_OVER);
-        if let Err(e) = std::fs::write(&marker, self.retired.as_deref().unwrap_or_default()) {
-            log::warn!("handover: marking {}: {e}", marker.display());
+        let devices = self.config.join("devices.json");
+        self.previous_devices = Some(std::fs::read(&devices).ok());
+        std::fs::copy(&desktop_devices, &devices).map(drop)
+    }
+
+    /// The engine did not open: puts back what `prepare` replaced, so a
+    /// launch that fails leaves the configuration as it was.
+    pub fn abandon(&self) {
+        let devices = self.config.join("devices.json");
+        let restored = match &self.previous_devices {
+            None => return,
+            Some(Some(before)) => std::fs::write(&devices, before),
+            Some(None) => std::fs::remove_file(&devices),
+        };
+        if let Err(e) = restored {
+            log::warn!("handover: putting back {}: {e}", devices.display());
         }
+    }
+
+    /// Writes the rest of the plan, once the engine has opened under it:
+    /// the desktop app's id under the app's name where it is its to keep,
+    /// then `TAKEN_OVER`, which makes the macOS app the legacy device from
+    /// then on. Nothing is marked when the id cannot be written, so the next
+    /// launch hands over again.
+    pub fn finish(&self) -> std::io::Result<()> {
+        if let Some(id) = &self.id {
+            std::fs::write(self.config.join("device-id"), id)?;
+        }
+        std::fs::write(
+            self.config.join(TAKEN_OVER),
+            self.retired.as_deref().unwrap_or_default(),
+        )?;
         log::info!(
             "handover: the desktop app is this machine's app on {}{}",
             self.config.display(),
@@ -1201,7 +1227,19 @@ impl Handover {
                 ""
             }
         );
+        Ok(())
     }
+}
+
+/// Whether a macOS app that has taken its place as the legacy device is
+/// running on `config`: it holds `legacy-device.lock` there. An older macOS
+/// app takes no lock at all, so a running app without this one is that.
+pub fn legacy_app_running(config: &Path) -> bool {
+    let path = config.join(format!("{}device.lock", LinkIdentity::LEGACY_FILES));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .is_ok_and(|lock| lock.try_lock().is_err())
 }
 
 /// What this device offers whatever controls it: who it is, what it is doing,
@@ -1871,14 +1909,14 @@ mod tests {
 
     /// A machine that only ran the desktop app keeps its id and devices,
     /// now as the machine's app, even where the command line wrote an id of
-    /// its own; nothing is written until the plan is finished.
+    /// its own; nothing is written until the plan is prepared.
     #[test]
     fn the_handover_keeps_the_desktop_apps_id_where_no_mac_app_ran() {
         let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         std::fs::write(config.path().join("device-id"), "cli").unwrap();
         std::fs::write(state.path().join("desktop-device-id"), "desk\n").unwrap();
         std::fs::write(state.path().join("desktop-devices.json"), "[]").unwrap();
-        let plan = Handover::plan(config.path(), state.path(), false).unwrap();
+        let mut plan = Handover::plan(config.path(), state.path(), false).unwrap();
         assert_eq!(plan.id.as_deref(), Some("desk"));
         assert!(plan.adopt_session);
         assert_eq!(plan.retired, None);
@@ -1886,7 +1924,8 @@ mod tests {
             !config.path().join(TAKEN_OVER).exists(),
             "planning writes nothing"
         );
-        plan.finish();
+        plan.prepare().unwrap();
+        plan.finish().unwrap();
         assert_eq!(
             std::fs::read_to_string(config.path().join("device-id")).unwrap(),
             "desk"
@@ -1898,6 +1937,57 @@ mod tests {
             None,
             "once per configuration"
         );
+    }
+
+    /// The devices the desktop app knew are in place before the engine
+    /// opens, since it reads them then; a launch that fails puts back what
+    /// was there.
+    #[test]
+    fn the_handover_moves_the_devices_before_the_engine_opens() {
+        let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let devices = config.path().join("devices.json");
+        std::fs::write(&devices, "[\"cli\"]").unwrap();
+        std::fs::write(state.path().join("desktop-device-id"), "desk").unwrap();
+        std::fs::write(state.path().join("desktop-devices.json"), "[\"desk\"]").unwrap();
+        let mut plan = Handover::plan(config.path(), state.path(), false).unwrap();
+        plan.prepare().unwrap();
+        assert_eq!(std::fs::read_to_string(&devices).unwrap(), "[\"desk\"]");
+        assert!(!config.path().join(TAKEN_OVER).exists());
+        plan.abandon();
+        assert_eq!(std::fs::read_to_string(&devices).unwrap(), "[\"cli\"]");
+
+        std::fs::remove_file(&devices).unwrap();
+        let mut plan = Handover::plan(config.path(), state.path(), false).unwrap();
+        plan.prepare().unwrap();
+        assert!(devices.exists());
+        plan.abandon();
+        assert!(!devices.exists(), "none before, none after");
+    }
+
+    /// An id that cannot be written leaves the configuration unmarked, so
+    /// the next launch hands over again.
+    #[test]
+    fn the_handover_is_not_marked_when_the_id_cannot_be_written() {
+        let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        std::fs::create_dir(config.path().join("device-id")).unwrap();
+        std::fs::write(state.path().join("desktop-device-id"), "desk").unwrap();
+        let plan = Handover::plan(config.path(), state.path(), false).unwrap();
+        assert!(plan.finish().is_err());
+        assert!(!config.path().join(TAKEN_OVER).exists());
+        assert!(Handover::plan(config.path(), state.path(), false).is_some());
+    }
+
+    /// A legacy macOS app is told apart from an older one by its lock.
+    #[test]
+    fn a_legacy_app_is_running_while_it_holds_its_lock() {
+        let config = tempfile::tempdir().unwrap();
+        assert!(!legacy_app_running(config.path()));
+        let lock = std::fs::File::create(config.path().join("legacy-device.lock")).unwrap();
+        assert!(!legacy_app_running(config.path()));
+        lock.try_lock().unwrap();
+        assert!(legacy_app_running(config.path()));
+        drop(lock);
+        assert!(!legacy_app_running(config.path()));
     }
 
     /// On a Mac the macOS app kept a session on: the Mac's id, devices and
@@ -1915,7 +2005,7 @@ mod tests {
             assert_eq!(plan.id, None);
             assert!(!plan.adopt_session);
             assert_eq!(plan.retired.as_deref(), Some("desk"));
-            plan.finish();
+            plan.finish().unwrap();
             assert_eq!(
                 std::fs::read_to_string(config.path().join("device-id")).unwrap(),
                 "mac"
@@ -1937,7 +2027,7 @@ mod tests {
         let (config, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let plan = Handover::plan(config.path(), state.path(), false).unwrap();
         assert_eq!((plan.id.clone(), plan.retired.clone()), (None, None));
-        plan.finish();
+        plan.finish().unwrap();
         assert!(!config.path().join("device-id").exists());
         assert!(config.path().join(TAKEN_OVER).exists());
     }

@@ -14,7 +14,7 @@ The desktop app is this computer to the server and the network: named after it (
 
 The SwiftUI Mac app is no longer released from 0.70. The desktop app's first launch on a configuration the Mac app used takes the Mac app's place: the phones, the TV and the server go on seeing one Mac, with its play history, its TV pairings and its saved queue. If only the desktop app ever ran there, it keeps the device it already was, and its own queue.
 
-Quit the Mac app before that first launch, so the two do not run as the same device. A Mac app still installed and opened on that configuration afterwards is a device of its own named `studio (legacy)`, with a session of its own, so it cannot take the desktop app's place.
+The desktop app does not open while the Mac app is running, since the two would be the same device: quit the Mac app first. A Mac app from 0.70 still installed and opened on that configuration afterwards is a device of its own named `studio (legacy)`, with a session of its own, so it cannot take the desktop app's place. An older Mac app knows nothing of this and, opened while the desktop app runs, is the same device as it, so remove it once the desktop app has taken over.
 
 ## Files from outside
 
@@ -40,7 +40,7 @@ The same shortcuts on both, with `Ctrl` for `⌘` on Linux. Linux has no global 
 
 ## Configuration and the log
 
-If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app, or the old Mac app, already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
+If the library cannot be opened (a database a newer kōan has upgraded, another desktop app already running on the same configuration, or, on a Mac, the Mac app running as this device), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 

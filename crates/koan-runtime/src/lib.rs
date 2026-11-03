@@ -1108,41 +1108,76 @@ impl KoanEngine {
                 )
                 .unwrap_or(false)
             });
-            let (identity, handover) = koan_core::remote::link::LinkIdentity::desktop(mac_app_ran)
-                .map_err(|e| {
+            // An older macOS app takes no lock, so it is looked for by its
+            // bundle id before this one takes the device.
+            if older_mac_app_running() {
+                return Err(KoanError::Refused {
+                    message: "the kōan macOS app from before 0.70 is running, and would be the \
+                              same device as this one. Quit it, then open this one again."
+                        .into(),
+                });
+            }
+            let (identity, mut handover) =
+                koan_core::remote::link::LinkIdentity::desktop(mac_app_ran).map_err(|e| {
                     // Each says what to do about it: the words every front
                     // end shows.
-                    let message = if e.kind() == std::io::ErrorKind::WouldBlock {
-                        "kōan is already running on this configuration: another kōan desktop \
-                         app, or the macOS app, whose place this one takes. Quit it, then open \
-                         this one again."
-                            .to_string()
-                    } else {
+                    let message = if e.kind() != std::io::ErrorKind::WouldBlock {
                         format!(
                             "could not take this device's lock in {}: {e}. Check that the \
                              folder exists and can be written.",
                             koan_core::config::config_dir().display()
                         )
+                    } else if cfg!(target_os = "macos") {
+                        "kōan is already running on this configuration: another kōan desktop \
+                         app, or the kōan macOS app, whose place this one takes. Quit it, then \
+                         open this one again."
+                            .to_string()
+                    } else {
+                        "another kōan desktop app is running on this configuration. Quit it, \
+                         or use that one."
+                            .to_string()
                     };
                     KoanError::Refused { message }
                 })?;
-            let engine = Self::build(None, identity.clone())?;
-            // Written only now the engine is open, so a launch that fails
-            // leaves the macOS app as it was.
+            // The devices the engine reads as it opens; everything else is
+            // written only once it has, so a launch that fails leaves the
+            // macOS app as it was.
+            let prepared = match handover.as_mut().map(|h| h.prepare()) {
+                Some(Err(e)) => {
+                    log::warn!("handover: the devices the desktop app knew: {e}");
+                    false
+                }
+                _ => true,
+            };
+            let engine = match Self::build(None, identity.clone()) {
+                Ok(engine) => engine,
+                Err(e) => {
+                    if let Some(handover) = &handover {
+                        handover.abandon();
+                    }
+                    return Err(e);
+                }
+            };
             if let Some(handover) = handover {
                 // The session the desktop app kept as a device of its own,
                 // where the machine's app has none.
-                if handover.adopt_session
-                    && let Some(db) = &db
-                    && let Err(e) = koan_core::db::queries::adopt_session(
-                        &db.conn,
-                        koan_core::remote::link::LinkIdentity::DESKTOP_FILES,
-                        identity.files,
-                    )
-                {
-                    log::warn!("handover: the desktop app's session: {e}");
+                let adopted = !handover.adopt_session
+                    || db.as_ref().is_none_or(|db| {
+                        koan_core::db::queries::adopt_session(
+                            &db.conn,
+                            koan_core::remote::link::LinkIdentity::DESKTOP_FILES,
+                            identity.files,
+                        )
+                        .inspect_err(|e| log::warn!("handover: the desktop app's session: {e}"))
+                        .is_ok()
+                    });
+                // Anything short of the whole handover is tried again at the
+                // next launch rather than marked done.
+                if !(prepared && adopted) {
+                    log::warn!("handover: left for the next launch");
+                } else if let Err(e) = handover.finish() {
+                    log::warn!("handover: left for the next launch: {e}");
                 }
-                handover.finish();
             }
             engine
                 .state
@@ -1152,6 +1187,22 @@ impl KoanEngine {
         })
         .await
     }
+}
+
+/// Whether a kōan macOS app from before 0.70 is running: one with the app's
+/// bundle id, other than a 0.70 app running as the legacy device beside the
+/// desktop app (`link::legacy_app_running`).
+#[cfg(target_os = "macos")]
+fn older_mac_app_running() -> bool {
+    let id = objc2_foundation::NSString::from_str("cc.blit.koan");
+    let running = objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(&id);
+    !running.is_empty()
+        && !koan_core::remote::link::legacy_app_running(&koan_core::config::config_dir())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn older_mac_app_running() -> bool {
+    false
 }
 
 /// How often the desktop app's engine takes a download reading: about 15 a
