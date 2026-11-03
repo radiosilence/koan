@@ -49,6 +49,8 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: CoverArt,
+    /// The display's scale as of the last frame, which sizes the sleeve.
+    scale: f32,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -188,7 +190,7 @@ impl Transport {
                             .entry
                             .as_ref()
                             .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, cx).is_some() {
+                        if covers::image(album, COVER, this.scale, cx).is_some() {
                             cx.notify();
                         }
                     }
@@ -218,6 +220,7 @@ impl Transport {
             devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
+            scale: 2.0,
             eq: None,
             eq_profile: None,
             eq_library: mirror.library.read(cx).version,
@@ -795,7 +798,8 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
+        self.scale = window.scale_factor();
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, self.scale, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,

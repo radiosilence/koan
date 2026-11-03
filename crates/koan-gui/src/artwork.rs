@@ -25,6 +25,9 @@ struct Showing {
 pub struct Artwork {
     showing: Option<Showing>,
     focus: Option<FocusHandle>,
+    /// What held the keyboard before the viewer took it, given it back on
+    /// closing.
+    before: Option<FocusHandle>,
 }
 
 struct ArtworkHandle(Entity<Artwork>);
@@ -51,6 +54,7 @@ pub fn show(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let before = window.focused(cx);
     let focus = cx.focus_handle();
     window.focus(&focus, cx);
     let (title, detail) = (title.into(), detail);
@@ -61,17 +65,24 @@ pub fn show(
             detail,
         });
         a.focus = Some(focus);
+        // Opened again over itself, it keeps what it first took over.
+        if a.before.is_none() {
+            a.before = before;
+        }
         cx.notify();
     });
 }
 
-fn hide(cx: &mut App) {
-    artwork(cx).update(cx, |a, cx| {
-        if a.showing.take().is_some() {
-            a.focus = None;
-            cx.notify();
-        }
+fn hide(window: &mut Window, cx: &mut App) {
+    let before = artwork(cx).update(cx, |a, cx| {
+        a.showing.take()?;
+        a.focus = None;
+        cx.notify();
+        a.before.take()
     });
+    if let Some(before) = before {
+        window.focus(&before, cx);
+    }
 }
 
 /// Whether the viewer shows: the shell redraws for a sleeve landing only
@@ -98,8 +109,9 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     // new size, and a new decode, only now and then; the viewer scales it.
     let side = Viewer::side(window.viewport_size(), &look);
     let decoded = Pixels::from((f32::from(side) / 256.0).ceil() * 256.0);
-    let art = covers::art(Some(album), decoded, cx);
-    let mut viewer = Viewer::new("artwork-viewer", art, title).on_click(|_, _, cx| hide(cx));
+    let art = covers::art(Some(album), decoded, window.scale_factor(), cx);
+    let mut viewer =
+        Viewer::new("artwork-viewer", art, title).on_click(|_, window, cx| hide(window, cx));
     if let Some(detail) = detail {
         viewer = viewer.detail(detail);
     }
@@ -108,9 +120,9 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .absolute()
             .inset_0()
             .when_some(focus, |d, focus| d.track_focus(&focus))
-            .on_key_down(|e: &KeyDownEvent, _, cx| {
+            .on_key_down(|e: &KeyDownEvent, window, cx| {
                 if e.keystroke.key == "escape" {
-                    hide(cx);
+                    hide(window, cx);
                 }
             })
             .child(viewer)

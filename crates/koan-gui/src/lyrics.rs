@@ -211,6 +211,9 @@ impl Render for LyricsPanel {
         let washed = KoanTheme::washes_window(cx);
         let track = self.track(cx);
         let loading = self.fetching.is_some() && self.fetching == track;
+        // An entry the library no longer has plays without a track to look
+        // its words up by: something plays, and it has no lyrics here.
+        let playing = self.playback.read(cx).0.entry.is_some();
         let lyrics = self.lyrics(cx).cloned();
         let mut panel = Inspector::new("lyrics").clear(washed);
         if loading {
@@ -237,7 +240,7 @@ impl Render for LyricsPanel {
             _ if loading => div().into_any_element(),
             _ => EmptyState::new(
                 Icon::LyricsText,
-                if track.is_none() {
+                if !playing {
                     "nothing playing"
                 } else {
                     "no lyrics found"
