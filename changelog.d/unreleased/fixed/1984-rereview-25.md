@@ -1,0 +1,1 @@
+- **Covers on a server that slows down.** The kōan GUI app halves how many covers it asks for at once once per slowdown rather than several times for one, no longer counts its own disk work as the server being slow, and does not let answers to requests made before a cut widen it straight back.
