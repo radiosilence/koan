@@ -53,7 +53,7 @@ impl Palette {
         strong: Hex(0xFFFFFF),
         muted: Hex(0x919191),
         bad: Hex(0xEF6B73),
-        selection: Hex(0x1F1D1E),
+        selection: Hex(0x464646),
         on_selection: Hex(0xFFFFFF),
     };
 

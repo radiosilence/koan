@@ -211,6 +211,11 @@ impl Shell {
         });
     }
 
+    /// The queue's view, for tools that drive the window headlessly.
+    pub fn queue(&self) -> &Entity<QueueView> {
+        &self.queue
+    }
+
     /// Goes to `route`, as a link or a menu would.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
@@ -604,6 +609,13 @@ impl Render for Shell {
         }
         let p = Paint::of(window, cx);
         let washed = theme::KoanTheme::washes_window(cx);
+        // The strip above the sidebar: the traffic lights' room on macOS, a
+        // title bar's where the app draws the window's decorations.
+        let strip = if matches!(window.window_decorations(), Decorations::Client { .. }) {
+            crate::components::ToolbarMetrics::HEIGHT
+        } else {
+            WINDOW_BUTTONS.height
+        };
         let transport = {
             let transport = self.transport.clone();
             move || {
@@ -723,17 +735,18 @@ impl Render for Shell {
                                 .when(!washed, |d| d.bg(p.bg))
                                 // Room for the window's buttons, which full
                                 // screen hides, and a place to move the
-                                // window by.
-                                .when(
-                                    WINDOW_BUTTONS.height > Pixels::ZERO && !window.is_fullscreen(),
-                                    |d| {
-                                        d.child(
-                                            Self::moves_window(div().id("sidebar-drag"), cx)
-                                                .h(WINDOW_BUTTONS.height)
-                                                .flex_shrink_0(),
-                                        )
-                                    },
-                                )
+                                // window by: on macOS under the traffic
+                                // lights; where the app draws its own
+                                // decorations (GNOME on Wayland), the
+                                // toolbar's height, level with the page's
+                                // toolbar, as a title bar would be.
+                                .when(strip > Pixels::ZERO && !window.is_fullscreen(), |d| {
+                                    d.child(
+                                        Self::moves_window(div().id("sidebar-drag"), cx)
+                                            .h(strip)
+                                            .flex_shrink_0(),
+                                    )
+                                })
                                 .child(
                                     // A landmark to a screen reader: where to go.
                                     div()

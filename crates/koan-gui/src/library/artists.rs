@@ -343,6 +343,7 @@ impl ArtistBrowser {
                     crate::components::Spinner::new(p.look.font_size(Type::Meta)).into_any_element()
                 } else {
                     RowNumber::glyph(("artist-play", id as u64), Icon::Artist)
+                        .picked(selected)
                         .on_play(move |_, cx| {
                             play.update(cx, |this, cx| this.play(id, cx)).ok();
                         })

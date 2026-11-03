@@ -325,9 +325,10 @@ impl RenderOnce for NavNote {
 }
 
 /// A list row: no rule between rows; `hover` at 30 % behind it under the
-/// pointer, `surface` when selected, and the playing row's title and number
-/// in the accent. The caller lays out the row's parts with `ListRow::title`,
-/// `ListRow::detail` and `ListRow::number` or its own children.
+/// pointer, `selection` when selected with its text in `on_selection`, and
+/// the playing row's title and number in the accent. The caller lays out the
+/// row's parts with `ListRow::title`, `ListRow::detail` and `ListRow::number`
+/// or its own children.
 #[derive(IntoElement)]
 pub struct ListRow {
     id: ElementId,
@@ -424,12 +425,17 @@ impl RenderOnce for ListRow {
             window,
             cx,
         );
-        let lead = if self.playing {
+        let on = look.palette.on_selection.hsla();
+        let lead = if self.selected {
+            on
+        } else if self.playing {
             look.text_color(crate::theme::Tone::Accent)
         } else {
             look.palette.ink.hsla()
         };
-        let number_color = if self.playing {
+        let number_color = if self.selected {
+            on
+        } else if self.playing {
             look.text_color(crate::theme::Tone::Accent)
         } else {
             look.palette.muted.hsla()
@@ -444,7 +450,7 @@ impl RenderOnce for ListRow {
             .px(look.space(Space::M))
             .py(look.spaced(12.0))
             .min_h(HIT)
-            .child(fill(look.palette.surface.hsla(), &selected))
+            .child(fill(look.palette.selection.hsla(), &selected))
             .children(self.number.map(|number| {
                 div()
                     .relative()

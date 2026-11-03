@@ -645,7 +645,14 @@ impl Render for Menu {
                     row = row.on_click(move |_, window, cx| {
                         menu.update(cx, |menu, cx| menu.choose(index, window, cx))
                     });
-                    panel.child(div().id(("hover", index)).on_hover(hovered).child(row))
+                    let label = item.label.clone();
+                    panel.child(
+                        div()
+                            .id(("hover", index))
+                            .debug_selector(move || format!("menu: {label}"))
+                            .on_hover(hovered)
+                            .child(row),
+                    )
                 }
                 Entry::Submenu {
                     label, icon, open, ..
@@ -656,9 +663,11 @@ impl Render for Menu {
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }
+                    let name = label.clone();
                     panel.child(
                         div()
                             .id(("hover", index))
+                            .debug_selector(move || format!("menu: {name}"))
                             .relative()
                             .on_hover(hovered)
                             .child(row)
@@ -696,8 +705,13 @@ impl Render for Menu {
             .occlude()
             .child(panel)
             .child(
+                // Over the panel, from its corner: without an inset an
+                // absolute child sits where the flow would put it, under the
+                // panel, and the bounds it records miss the menu.
                 canvas(move |bounds, _, _| drawn.set(Some(bounds)), |_, _, _, _| {})
                     .absolute()
+                    .top_0()
+                    .left_0()
                     .size_full(),
             )
     }
@@ -953,6 +967,79 @@ mod tests {
     // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
     // own `#[test]` into itself.
     use core::prelude::v1::test;
+
+    struct Page {
+        chosen: Rc<Cell<Option<&'static str>>>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let chosen = self.chosen.clone();
+            div()
+                .size_full()
+                .debug_selector(|| "page".into())
+                .koan_context_menu("page-menu", window, cx, move |menu, window, cx| {
+                    let chosen = chosen.clone();
+                    menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        .submenu("add to playlist", window, cx, move |menu, _, _| {
+                            let (first, second) = (chosen.clone(), chosen.clone());
+                            menu.item(
+                                MenuEntry::data("Morning")
+                                    .on_click(move |_, _, _| first.set(Some("Morning"))),
+                            )
+                            .item(
+                                MenuEntry::data("Evening")
+                                    .on_click(move |_, _, _| second.set(Some("Evening"))),
+                            )
+                        })
+                })
+        }
+    }
+
+    /// A playlist chosen with the pointer from "add to playlist" runs its
+    /// choice: the press in the submenu, drawn outside the menu it opened
+    /// from, closes neither before the click completes.
+    #[gpui_kit::test]
+    fn a_choice_in_a_submenu_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let chosen = Rc::new(Cell::new(None));
+        let held = chosen.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Page { chosen: held });
+        let cx: &mut gpui_kit::VisualTestContext = cx;
+        cx.run_until_parked();
+        let page = cx.debug_bounds("page").expect("drawn");
+        cx.simulate_mouse_down(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let opener = cx
+            .debug_bounds("menu: add to playlist")
+            .expect("the menu opened");
+        cx.simulate_mouse_move(opener.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        let evening = cx
+            .debug_bounds("menu: Evening")
+            .expect("the submenu opened");
+        cx.simulate_mouse_move(evening.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_click(evening.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(chosen.get(), Some("Evening"));
+        assert!(
+            cx.debug_bounds("menu: Evening").is_none(),
+            "the menus close once something is chosen"
+        );
+    }
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
         names.iter().fold(menu, |menu, name| {

@@ -29,11 +29,11 @@ pub fn init(cx: &mut App) {
 #[cfg(target_os = "macos")]
 pub fn name_unbundled() {
     use objc2::runtime::AnyObject;
-    use objc2::{class, msg_send, sel};
+    use objc2::{class, msg_send};
     use objc2_foundation::NSString;
     // SAFETY: messages to AppKit's own classes on the main thread before
-    // the application runs; `setObject:forKey:` is sent only to a
-    // dictionary that answers to it.
+    // the application runs; `setObject:forKey:` is sent only to a mutable
+    // dictionary.
     unsafe {
         let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
         let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
@@ -44,7 +44,9 @@ pub fn name_unbundled() {
         if info.is_null() {
             return;
         }
-        let mutable: bool = msg_send![info, respondsToSelector: sel!(setObject:forKey:)];
+        // An immutable dictionary answers `respondsToSelector:` for the
+        // setter too, being of the same class cluster: its class says.
+        let mutable: bool = msg_send![info, isKindOfClass: class!(NSMutableDictionary)];
         if mutable {
             let name = NSString::from_str("kōan");
             let key = NSString::from_str("CFBundleName");
@@ -87,7 +89,7 @@ fn show(_cx: &mut App) {
     use objc2::{class, msg_send};
     use objc2_foundation::NSString;
     let credits = format!(
-        "<div style=\"font: 11px -apple-system; text-align: center\"><a href=\"{SITE}\">koan.rocks</a> · <a href=\"{SOURCE}\">Source</a></div>"
+        "<div style=\"font: 11px -apple-system; text-align: center; color: gray\"><a href=\"{SITE}\">koan.rocks</a> · <a href=\"{SOURCE}\">Source</a></div>"
     );
     // SAFETY: AppKit's own panel, on the main thread, from an action.
     unsafe {
@@ -187,11 +189,26 @@ fn show(cx: &mut App) {
         }
     }
 
+    /// The About window while it is open: asked again, it comes to the
+    /// front rather than opening another.
+    #[derive(Default)]
+    struct Open(Option<koan_kit::app::WindowHandle<AboutWindow>>);
+
+    impl koan_kit::app::Global for Open {}
+
+    let open = cx.default_global::<Open>().0;
+    if let Some(window) = open.filter(|w| cx.windows().contains(&(*w).into())) {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        return;
+    }
     let options = SecondaryWindow::new("About kōan", crate::app::APP_ID)
         .size(360.0, 220.0)
         .fixed()
         .options(cx);
-    if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
-        log::warn!("about: {e}");
+    match cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
+        Ok(window) => cx.set_global(Open(Some(window))),
+        Err(e) => log::warn!("about: {e}"),
     }
 }

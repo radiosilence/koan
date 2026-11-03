@@ -34,7 +34,7 @@ const OUTCOME: f32 = 160.0;
 /// Opens the sheet for `track_ids`, `title` naming them ("3 albums").
 pub fn open(title: String, track_ids: Vec<i64>, window: &mut Window, cx: &mut App) {
     let sheet = cx.new(|cx| OrganizeSheet::new(title, track_ids, window, cx));
-    ask::present(sheet, cx);
+    ask::present(sheet, window, cx);
 }
 
 pub struct OrganizeSheet {

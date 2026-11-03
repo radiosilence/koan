@@ -113,6 +113,7 @@ impl RenderOnce for TransportControl {
                 .children(answers.layer(window, cx)),
         )
         .when_some(self.on_click, move |d, on_click| {
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                 answers.start(Answer::Ring, accent, cx);
                 on_click(event, window, cx)
