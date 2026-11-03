@@ -99,7 +99,7 @@ Toolbar::new()
     .trailing(ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics").selected(open))
 ```
 
-`ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell, `surface` under the pointer, `hover` pressed, the focus ring, 40 % disabled; the word in the cell with icons off.
+`ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell with no ground, `strong` under the pointer and the accent pressed; on (`selected`) it rests at `strong` and the pointer takes it to the accent; the focus ring, 40 % disabled; the word in the cell with icons off.
 
 `ToolbarSelection::new("3 selected").action(id, label, run)`: what a toolbar says while things are picked, the Mac's selection bar: the count in `muted`, then text buttons in the accent, the toolbar's group spacing between each.
 

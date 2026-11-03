@@ -222,8 +222,10 @@ impl RenderOnce for ToolbarGroup {
     }
 }
 
-/// A toolbar's button: the glyph in `ink` in a 36-point cell, `surface`
-/// under the pointer and `hover` pressed; the word in its place with icons
+/// A toolbar's button: the glyph in `ink` in a 36-point cell with no ground.
+/// Only its colour answers: `strong` under the pointer, the accent pressed,
+/// arriving at once and fading on leaving. Selected it rests at `strong` and
+/// the pointer takes it to the accent. The word takes its place with icons
 /// off.
 #[derive(IntoElement)]
 pub struct ToolbarButton {
@@ -249,8 +251,8 @@ impl ToolbarButton {
         self
     }
 
-    /// Drawn pressed: a toggle that is on, or a menu or panel it opened
-    /// that is showing.
+    /// Drawn on, in `strong`: a toggle that is on, or a menu or panel it
+    /// opened that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
         self

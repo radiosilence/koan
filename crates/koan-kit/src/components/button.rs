@@ -36,7 +36,9 @@ pub enum ButtonKind {
     Icon,
     /// Play/pause: a transport glyph in a square `ink` outline.
     IconOutlined,
-    /// A glyph in a 36-point cell, `surface` under the pointer.
+    /// A glyph in a 36-point cell, no ground, answering in colour alone:
+    /// `ink`; `strong` under the pointer; the accent pressed. Selected it
+    /// rests at `strong` and the pointer takes it to the accent.
     Toolbar,
 }
 
@@ -244,6 +246,22 @@ impl RenderOnce for Button {
                 window,
                 cx,
             ),
+            ButtonKind::Toolbar => {
+                let (base, over) = if self.selected {
+                    (look.palette.strong.hsla(), look.color(Tone::Accent))
+                } else {
+                    (rest, look.palette.strong.hsla())
+                };
+                let hover = fade(child(&self.id, "hover"), hovered, base, over, window, cx);
+                fade(
+                    child(&self.id, "press"),
+                    pressed,
+                    hover,
+                    look.color(Tone::Accent),
+                    window,
+                    cx,
+                )
+            }
             _ => rest,
         };
         let outline = match kind {
@@ -332,8 +350,8 @@ impl RenderOnce for Button {
             }
         }
 
-        // Fills: the prominent button's pressed `hover`, the toolbar's
-        // `surface` under the pointer and `hover` pressed.
+        // Fills: the outlined kinds' pressed `hover`. The toolbar button has
+        // none; its glyph changes colour instead.
         match kind {
             ButtonKind::Prominent | ButtonKind::IconOutlined => {
                 let press = transition(
@@ -343,18 +361,6 @@ impl RenderOnce for Button {
                     cx,
                 );
                 button = button.child(fill(look.palette.hover.hsla(), &press));
-            }
-            ButtonKind::Toolbar => {
-                let hover = transition(child(&self.id, "hover-fill"), hovered, window, cx);
-                let press = transition(
-                    child(&self.id, "press-fill"),
-                    pressed || self.selected,
-                    window,
-                    cx,
-                );
-                button = button
-                    .child(fill(look.palette.surface.hsla(), &hover))
-                    .child(fill(look.palette.hover.hsla(), &press));
             }
             _ => {}
         }
