@@ -319,6 +319,11 @@ impl Answerer {
     }
 
     /// The mark last followed or noted.
+    /// Whether an answer is being drawn.
+    pub fn live(&self, cx: &App) -> bool {
+        self.0.read(cx).live.is_some()
+    }
+
     pub(crate) fn seen(&self, cx: &App) -> Option<u64> {
         self.0.read(cx).seen
     }
