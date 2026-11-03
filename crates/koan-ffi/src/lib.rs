@@ -629,14 +629,6 @@ impl Drop for KoanEngine {
     }
 }
 
-/// One client's subscription to the levels of whatever it is showing as
-/// playing: this device's analyser, or, while another device is controlled,
-/// that device's levels over the link (`koan_core::remote::levels`).
-///
-/// A cursor over the published frame, in the shape `StateStream` already uses:
-/// the value is a whole snapshot, so a subscriber that slept through two
-/// publishes wants the newest frame rather than the two it missed.
-#[derive(uniffi::Object)]
 /// The playhead at each whole second of playback, from the engine
 /// (`KoanEngine::clock_stream`): what a time shown on screen moves on, with no
 /// timer of the client's own.
@@ -679,6 +671,14 @@ impl ClockStream {
     }
 }
 
+/// One client's subscription to the levels of whatever it is showing as
+/// playing: this device's analyser, or, while another device is controlled,
+/// that device's levels over the link (`koan_core::remote::levels`).
+///
+/// A cursor over the published frame, in the shape `StateStream` already uses:
+/// the value is a whole snapshot, so a subscriber that slept through two
+/// publishes wants the newest frame rather than the two it missed.
+#[derive(uniffi::Object)]
 pub struct VizStream {
     /// Weak, so a client's loop ends when the engine goes rather than holding
     /// the analyser up. The loop *is* the subscription.

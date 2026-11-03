@@ -1129,6 +1129,10 @@ pub struct Seek {
     visible: bool,
     /// Following the engine's clock while the window shows.
     clock: Option<Task<()>>,
+    /// The playhead as the engine's clock last reported it, and when: the
+    /// times show at least this, since the anchor is stamped a little later
+    /// than the engine took it. Dropped when the anchor moves.
+    heard: Option<(u64, Instant)>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
     /// Wakes the slider when a seek's target lapses unanswered.
@@ -1164,6 +1168,7 @@ impl Seek {
             playhead: mirror.playhead,
             playback: mirror.playback,
             clock: None,
+            heard: None,
             dragging: None,
             lapse: None,
             glide: Glide::new(),
@@ -1173,6 +1178,7 @@ impl Seek {
     }
 
     fn moved(&mut self, cx: &mut Context<Self>) {
+        self.heard = None;
         self.schedule(cx);
         cx.notify();
     }
@@ -1238,8 +1244,12 @@ impl Seek {
             self.clock = self.visible.then(|| {
                 let clock = engine(cx).clock_stream();
                 cx.spawn(async move |this, cx| {
-                    while clock.next().await.is_some() {
-                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    while let Some(position) = clock.next().await {
+                        let heard = this.update(cx, |this, cx| {
+                            this.heard = Some((position, Instant::now()));
+                            cx.notify();
+                        });
+                        if heard.is_err() {
                             break;
                         }
                     }
@@ -1287,7 +1297,17 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.shown(cx).0.at(Instant::now(), duration);
+        let (anchor, _) = self.shown(cx);
+        let now = Instant::now();
+        let reckoned = anchor.at(now, duration);
+        // At the engine's whole second, its own reading, so the times step
+        // as it says rather than a moment behind.
+        let position = match self.heard {
+            Some((heard, at)) if anchor.playing => {
+                reckoned.max((heard + now.duration_since(at).as_millis() as u64).min(duration))
+            }
+            _ => reckoned,
+        };
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,
