@@ -181,7 +181,7 @@ impl TrackBrowser {
             menu: None,
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             search,
             filters,
             viewport: 0.0,
