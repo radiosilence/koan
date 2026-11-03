@@ -46,6 +46,7 @@ pub struct TableRow {
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
+    spot: Option<super::CursorSpot>,
     leading: Vec<Cell>,
     title: Option<AnyElement>,
     lines: Vec<AnyElement>,
@@ -63,6 +64,7 @@ impl TableRow {
             kind,
             selected: false,
             cursor: false,
+            spot: None,
             leading: Vec::new(),
             title: None,
             lines: Vec::new(),
@@ -156,6 +158,14 @@ impl TableRow {
     /// that colours its cells does by `on_selection` too.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -423,7 +433,7 @@ impl RenderOnce for TableRow {
             }))
             .children(
                 (self.cursor && window.last_input_was_keyboard())
-                    .then(|| super::cursor_ring(&look)),
+                    .then(|| super::cursor_ring(&look, self.spot.as_ref())),
             )
     }
 }

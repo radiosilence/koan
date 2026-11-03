@@ -129,8 +129,12 @@ pub fn init(cx: &mut App) {
     read_system_settings(cx);
     #[cfg(target_os = "macos")]
     watch_system_settings(cx);
+    // The portal answers over D-Bus from threads of its own, which the
+    // deterministic test scheduler refuses as activity it cannot order.
     #[cfg(target_os = "linux")]
-    watch_desktop_settings(cx);
+    if !cx.is_test() {
+        watch_desktop_settings(cx);
+    }
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 

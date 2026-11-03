@@ -240,19 +240,14 @@ pub fn keyed_target(
     album: Option<i64>,
     after: After,
 ) -> MenuTarget {
-    let picked = selection.picked();
-    if selection.contains(item) && picked.len() > 1 {
-        MenuTarget {
-            items: picked.into(),
-            album: None,
-            after,
-        }
-    } else {
-        MenuTarget {
-            items: Arc::from([item]),
-            album,
-            after: None,
-        }
+    let items = selection.dragging(item);
+    let single = items.len() == 1;
+    MenuTarget {
+        items: items.into(),
+        album: album.filter(|_| single),
+        // What a menu verb on the pick runs after it: on the item alone,
+        // nothing.
+        after: if single { None } else { after },
     }
 }
 
@@ -262,6 +257,11 @@ pub trait Menus: Sized + 'static {
     fn lib(&self) -> &Lib;
     fn menu_target(&mut self) -> &mut Option<MenuTarget>;
     fn menu_target_ref(&self) -> &Option<MenuTarget>;
+    /// Where the list's keyboard cursor was laid out: what the menu key
+    /// opens the menu under.
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        None
+    }
 }
 
 /// A row's or tile's right mouse down, noting what the list's menu acts on.
@@ -284,6 +284,7 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
     cx: &mut App,
 ) -> E {
     let clear = view.clone();
+    let spot = view.upgrade().and_then(|page| page.read(cx).cursor_spot());
     element
         .capture_any_mouse_down(super::listen(
             clear,
@@ -293,7 +294,7 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 }
             },
         ))
-        .koan_context_menu("list-menu", window, cx, move |m, window, cx| {
+        .koan_context_menu_at("list-menu", spot, window, cx, move |m, window, cx| {
             let Some(view) = view.upgrade() else { return m };
             let (lib, target) = {
                 let page = view.read(cx);

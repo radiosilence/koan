@@ -30,6 +30,9 @@ pub struct Transport {
     /// Where F6 brings the keyboard: the bar, from which Tab reaches its
     /// controls.
     focus: FocusHandle,
+    /// What had the keyboard when the pointer went down on the bar, given
+    /// back once the control under it has taken the focus.
+    before_press: std::rc::Rc<std::cell::RefCell<Option<FocusHandle>>>,
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     /// The renderer played to, for why its last track was skipped.
@@ -199,6 +202,7 @@ impl Transport {
                 }),
             ],
             focus: cx.focus_handle(),
+            before_press: Default::default(),
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
@@ -1092,6 +1096,35 @@ impl Render for Transport {
             .id("transport")
             .relative()
             .track_focus(&self.focus)
+            // F6 brings the keyboard here; a click on a control leaves it
+            // where it was, with the list it was working. The control takes
+            // the focus as the press bubbles up from it, before the bar
+            // hears it, so the bar notes the focus on the way down and gives
+            // it back on the way up. Preventing the default instead would
+            // also keep the controls from drawing as pressed.
+            .capture_any_mouse_down({
+                let before = self.before_press.clone();
+                // The left button alone: a right press opens a menu that
+                // takes the keyboard on purpose.
+                move |e: &MouseDownEvent, window, cx| {
+                    *before.borrow_mut() = (e.button == MouseButton::Left)
+                        .then(|| window.focused(cx))
+                        .flatten();
+                }
+            })
+            .on_any_mouse_down({
+                let (before, bar) = (self.before_press.clone(), self.focus.clone());
+                move |_, window, cx| {
+                    if let Some(before) = before.borrow_mut().take()
+                        && !bar.contains(&before, window)
+                    {
+                        window.focus(&before, cx);
+                        // The bar's own focus-on-press runs after this, on a
+                        // press no control took (a gap, a link, the cover).
+                        window.prevent_default();
+                    }
+                }
+            })
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()

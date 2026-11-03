@@ -6743,6 +6743,13 @@ impl KoanEngine {
             remote_queue: Default::default(),
             server: Default::default(),
         });
+        // `savePlaybackState` on this app's own server goes through the gate
+        // the app's saves do.
+        let gate = Arc::downgrade(&engine);
+        engine.state.set_save_gate(Arc::new(move || {
+            gate.upgrade()
+                .is_none_or(|engine| engine.may_save_session())
+        }));
         engine.spawn_watcher();
         engine.spawn_figures();
         // This device's own queue and transfers go with the server it leaves,

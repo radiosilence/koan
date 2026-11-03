@@ -38,6 +38,12 @@ impl Render for Page {
                     .lead(ShuffleButton::new("shuffle", "Hounds of Love").on_click(|_, _, _| {}))
                     .badge(Badge::new("hi-res")),
             )
+            // Two badges saying the same in rows with no id of their own,
+            // told apart by their keys, as the EQ's layer roles are.
+            .child(div().child(Badge::new("tuning").key(("role", 0usize))))
+            .child(div().child(Badge::new("tuning").key(("role", 1usize))))
+            // A slider its owner did not name: its id, read as words.
+            .child(Slider::new("wash-tint", 0.5).on_change(|_, _, _| {}))
             .child(SectionHeading::new("albums"))
             .child(
                 Button::new("queue", ButtonKind::Compact)
@@ -112,16 +118,31 @@ fn tree(window: AnyWindowHandle, cx: &mut TestAppContext) -> String {
         .expect("a tree while accessibility is on")
 }
 
-/// The node a screen reader knows by `label`: its AccessKit id and its
-/// semantics.
-fn node(tree: &str, label: &str) -> (NodeId, Value) {
+/// Every node of the tree, as its semantics.
+fn nodes(tree: &str) -> Vec<Value> {
     let tree: Value = serde_json::from_str(tree).expect("JSON");
-    let node = tree["nodes"]
+    tree["nodes"]
         .as_object()
         .expect("nodes")
         .values()
-        .find(|node| node["aria"]["label"] == label)
-        .unwrap_or_else(|| panic!("no node named {label}"));
+        .cloned()
+        .collect()
+}
+
+/// The one node a screen reader knows by `label` in `role`: its AccessKit
+/// id and its semantics. Two such, or none, fail.
+fn node(tree: &str, label: &str, role: &str) -> (NodeId, Value) {
+    let found: Vec<Value> = nodes(tree)
+        .into_iter()
+        .filter(|node| node["aria"]["label"] == label && node["aria"]["role"] == role)
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "{} nodes named {label} in role {role} in:\n{tree}",
+        found.len()
+    );
+    let node = &found[0];
     let id = node["accesskit_id"]
         .as_str()
         .expect("an id")
@@ -151,60 +172,64 @@ fn send(window: AnyWindowHandle, cx: &mut TestAppContext, action: Action, target
 fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
-    let has = |what: &str| assert!(tree.contains(what), "{what} missing from:\n{tree}");
-    for role in [
-        "Heading",
-        "Button",
-        "Switch",
-        "Slider",
-        "SpinButton",
-        "RadioGroup",
-        "RadioButton",
-        "Link",
-        "ProgressIndicator",
-        "Label",
-        "Group",
+    for (name, role) in [
+        ("Hounds of Love", "Heading"),
+        ("shuffle Hounds of Love", "Button"),
+        ("albums", "Heading"),
+        ("queue", "Button"),
+        ("queue", "Link"),
+        ("forget this device", "Button"),
+        ("fade on pause", "Switch"),
+        ("group by album", "Switch"),
+        ("seek", "Slider"),
+        ("wash tint", "Slider"),
+        ("rate", "SpinButton"),
+        ("look", "RadioGroup"),
+        ("kōan", "RadioButton"),
+        ("scanning the library", "ProgressIndicator"),
+        ("no albums", "Group"),
+        ("hi-res", "Label"),
     ] {
-        has(role);
+        node(&tree, name, role);
     }
-    for name in [
-        "Hounds of Love",
-        "shuffle Hounds of Love",
-        "albums",
-        "forget this device",
-        "fade on pause",
-        "group by album",
-        "seek",
-        "scanning the library",
-        "no albums",
-        "hi-res",
-    ] {
-        has(name);
-    }
+    // The two "tuning" badges are two nodes, not one id met twice.
+    let tunings = nodes(&tree)
+        .into_iter()
+        .filter(|node| node["aria"]["label"] == "tuning")
+        .count();
+    assert_eq!(tunings, 2);
 }
 
 #[gpui_kit::test]
 fn components_report_their_state(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
-    assert_eq!(node(&tree, "fade on pause").1["toggled"], "True");
-    assert_eq!(node(&tree, "group by album").1["toggled"], "False");
-    assert_eq!(node(&tree, "kōan").1["toggled"], "True");
-    assert_eq!(node(&tree, "system").1["toggled"], "False");
-    let (_, seek) = node(&tree, "seek");
+    assert_eq!(node(&tree, "fade on pause", "Switch").1["toggled"], "True");
+    assert_eq!(
+        node(&tree, "group by album", "Switch").1["toggled"],
+        "False"
+    );
+    assert_eq!(node(&tree, "kōan", "RadioButton").1["toggled"], "True");
+    assert_eq!(node(&tree, "system", "RadioButton").1["toggled"], "False");
+    let (_, seek) = node(&tree, "seek", "Slider");
     assert_eq!(seek["numeric_value"], 0.25);
     assert_eq!(seek["value"], "1:00");
-    assert_eq!(node(&tree, "remove").1["disabled"], true);
-    assert!(node(&tree, "queue").1.get("disabled").is_none());
+    assert_eq!(node(&tree, "remove", "Button").1["disabled"], true);
+    assert!(node(&tree, "queue", "Button").1.get("disabled").is_none());
 }
 
 #[gpui_kit::test]
 fn components_answer_a_screen_reader_s_actions(cx: &mut TestAppContext) {
     let (window, queued, seek) = open(cx);
     let tree = tree(window, cx);
-    send(window, cx, Action::Click, node(&tree, "queue").0);
+    send(window, cx, Action::Click, node(&tree, "queue", "Button").0);
     assert_eq!(queued.get(), 1);
-    send(window, cx, Action::Increment, node(&tree, "seek").0);
+    send(
+        window,
+        cx,
+        Action::Increment,
+        node(&tree, "seek", "Slider").0,
+    );
     assert!((seek.get() - 0.30).abs() < 1e-4, "seek at {}", seek.get());
 }
 
@@ -272,22 +297,22 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     attach(window, cx);
     let tree = tree(window, cx);
 
-    let (_, list) = node(&tree, "queue");
-    assert_eq!(list["role"], "List");
-    let (_, heading) = node(&tree, "Hounds of Love, Kate Bush, 1985");
-    assert_eq!(heading["role"], "Heading");
-    let (row, track) = node(&tree, "track 2, 4:01");
-    assert_eq!(track["role"], "ListItem");
+    node(&tree, "queue", "List");
+    node(&tree, "Hounds of Love, Kate Bush, 1985", "Heading");
+    let (row, track) = node(&tree, "track 2, 4:01", "ListItem");
     assert_eq!(track["position_in_set"], 3);
     assert_eq!(track["size_of_set"], 3);
-    assert!(tree.contains("\"Toolbar\""), "no toolbar in:\n{tree}");
+    assert!(
+        nodes(&tree)
+            .iter()
+            .any(|node| node["aria"]["role"] == "Toolbar"),
+        "no toolbar in:\n{tree}"
+    );
 
-    let (_, banner) = node(&tree, "the server can't be reached");
-    assert_eq!(banner["role"], "Alert");
+    let (_, banner) = node(&tree, "the server can't be reached", "Alert");
     assert_eq!(banner["live"], "Assertive");
     assert_eq!(banner["value"], "the server can't be reached");
-    let (_, note) = node(&tree, "Waiting for the TV to wake");
-    assert_eq!(note["role"], "Status");
+    let (_, note) = node(&tree, "Waiting for the TV to wake", "Status");
     assert_eq!(note["live"], "Polite");
 
     send(window, cx, Action::ScrollIntoView, row);

@@ -1,0 +1,1 @@
+- **The smoke run accepts the libraries it is meant for.** The generator marks its libraries, and the smoke run checks for that mark rather than a file the generator deletes.
