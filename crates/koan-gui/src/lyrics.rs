@@ -188,7 +188,9 @@ impl LyricsPanel {
         let Some(at) = self
             .lyrics(cx)
             .and_then(|l| l.lines.get(line))
-            .map(|l| (l.time_secs * 1000.0) as u64)
+            // Rounded: truncated, `[00:02.01]` lands a millisecond before
+            // its line, which then reads as the line before.
+            .map(|l| (l.time_secs * 1000.0).round() as u64)
         else {
             return;
         };
