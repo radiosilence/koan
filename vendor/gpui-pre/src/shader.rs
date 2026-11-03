@@ -430,7 +430,41 @@ pub struct ShaderUniforms {
     /// threads publish one after another and a write made of reads and
     /// writes (a rebase, a retarget) is one publish.
     writer: parking_lot::ReentrantMutex<std::cell::Cell<u32>>,
+    /// The thread publishing, by `thread_number`; 0 for none. A read on that
+    /// thread is inside its own publish and reads as it stands, with no lock.
+    owner: AtomicU64,
 }
+
+// KOAN: a number for each thread, from 1, for `ShaderUniforms::owner`.
+fn thread_number() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    thread_local! {
+        static NUMBER: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    NUMBER.with(|n| *n)
+}
+
+// KOAN: closes a publish however `write` ends, unwinding included: the depth
+// restored, and the outermost publish's sequence made even again.
+struct Published<'a> {
+    uniforms: &'a ShaderUniforms,
+    held: parking_lot::ReentrantMutexGuard<'a, std::cell::Cell<u32>>,
+    depth: u32,
+}
+
+impl Drop for Published<'_> {
+    fn drop(&mut self) {
+        self.held.set(self.depth);
+        if self.depth == 0 {
+            self.uniforms.owner.store(0, Ordering::Relaxed);
+            self.uniforms.sequence.fetch_add(1, Ordering::Release);
+        }
+    }
+}
+
+/// How many times a reader looks again at a publish in progress before it
+/// waits for the writer instead.
+const READ_SPINS: u32 = 64;
 
 // KOAN: written out, since an array of eighty has no derived default
 // (#1859).
@@ -451,6 +485,7 @@ impl Default for ShaderUniforms {
             colors_moved: AtomicBool::new(false),
             sequence: AtomicU64::new(0),
             writer: parking_lot::ReentrantMutex::new(std::cell::Cell::new(0)),
+            owner: AtomicU64::new(0),
         }
     }
 }
@@ -467,27 +502,30 @@ impl ShaderUniforms {
         let held = self.writer.lock();
         let depth = held.get();
         if depth == 0 {
-            self.sequence.fetch_add(1, Ordering::AcqRel);
+            // Odd before any value is stored: the fence keeps the stores
+            // that follow from being seen ahead of it (as crossbeam's
+            // sequence lock does).
+            self.sequence.fetch_add(1, Ordering::Acquire);
+            std::sync::atomic::fence(Ordering::Release);
+            self.owner.store(thread_number(), Ordering::Relaxed);
         }
         held.set(depth + 1);
-        let result = write();
-        held.set(depth);
-        if depth == 0 {
-            self.sequence.fetch_add(1, Ordering::AcqRel);
-        }
-        result
+        let _published = Published {
+            uniforms: self,
+            held,
+            depth,
+        };
+        write()
     }
 
     /// Runs `read` until it saw one whole publish: what a reader on another
     /// thread calls to take several values together. Within a `publish` on
     /// this thread it reads as it stands.
     pub fn read<R>(&self, read: impl Fn() -> R) -> R {
-        if let Some(held) = self.writer.try_lock() {
-            if held.get() > 0 {
-                return read();
-            }
+        if self.owner.load(Ordering::Relaxed) == thread_number() {
+            return read();
         }
-        loop {
+        for _ in 0..READ_SPINS {
             let before = self.sequence.load(Ordering::Acquire);
             if before % 2 == 1 {
                 std::hint::spin_loop();
@@ -499,6 +537,11 @@ impl ShaderUniforms {
                 return result;
             }
         }
+        // A writer descheduled mid-publish: wait for it rather than spin.
+        // Writers hold the lock for the whole publish, so what is read under
+        // it is whole.
+        let _held = self.writer.lock();
+        read()
     }
 
     /// Whether the value changed. A colour slot whose four floats `index`
