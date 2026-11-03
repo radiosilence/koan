@@ -21,7 +21,7 @@ mod tests;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, CursorStyle, Entity, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    StatefulInteractiveElement, Styled, Window, div,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 
 pub use actions::{
@@ -53,6 +53,7 @@ pub struct TextField {
     ground: bool,
     disabled: bool,
     role: TypeRole,
+    label: Option<SharedString>,
 }
 
 impl TextField {
@@ -62,7 +63,15 @@ impl TextField {
             ground: true,
             disabled: false,
             role: TypeRole::Control,
+            label: None,
         }
+    }
+
+    /// What a screen reader names it, where no visible label beside it
+    /// does: "search", "name". The placeholder is read as a hint after it.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
     }
 
     /// Not editable, and faded: while what it feeds is under way.
@@ -115,7 +124,7 @@ impl RenderOnce for TextField {
                 field.opacity(crate::theme::DISABLED_OPACITY)
             })
             .child(
-                editor(&self.state, &id, !self.disabled, window, cx)
+                editor(&self.state, &id, self.label, !self.disabled, window, cx)
                     .h(look.line_height(self.role))
                     .text_role(self.role, &look)
                     .text_color(look.palette.ink.hsla()),
@@ -130,13 +139,21 @@ impl RenderOnce for TextField {
 #[derive(IntoElement)]
 pub struct TextArea {
     state: Entity<AreaState>,
+    label: Option<SharedString>,
 }
 
 impl TextArea {
     pub fn new(state: &Entity<AreaState>) -> Self {
         Self {
             state: state.clone(),
+            label: None,
         }
+    }
+
+    /// What a screen reader names it, as `TextField::label`.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
     }
 }
 
@@ -148,7 +165,7 @@ impl RenderOnce for TextArea {
             .p(look.space(Space::S))
             .bg(look.palette.surface.hsla())
             .child(
-                editor(&self.state, &id, true, window, cx)
+                editor(&self.state, &id, self.label, true, window, cx)
                     .text_role(TypeRole::Control, &look)
                     .text_color(look.palette.ink.hsla()),
             )
@@ -157,10 +174,13 @@ impl RenderOnce for TextArea {
 
 /// The text itself, with the keys, the pointer, the input method and the
 /// screen reader wired to `state`: what `TextField` and `TextArea` frame.
+/// A disabled field takes nothing; a read-only one takes the pointer, the
+/// movement keys and Copy, and no edit.
 fn editor(
     state: &Entity<FieldState>,
     id: &gpui_kit::ElementId,
-    editable: bool,
+    label: Option<SharedString>,
+    enabled: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -169,9 +189,17 @@ fn editor(
     let focus = s.focus.clone();
     let masked = s.masked;
     let multi = s.multi_line();
+    let read_only = s.read_only;
+    let announce = s.announce;
     let placeholder = s.placeholder.clone();
     let value = s.text.clone();
     let (anchor, active) = s.selection_in_chars();
+    let spans = s
+        .spans
+        .iter()
+        .filter(|(range, _)| range.end <= value.len() && range.start < range.end)
+        .map(|(range, tone)| (range.clone(), look.text_color(*tone)))
+        .collect();
     let a11y = window.is_a11y_active() || cfg!(test);
     let role = if masked {
         gpui_kit::Role::PasswordInput
@@ -184,67 +212,73 @@ fn editor(
         ink: look.palette.ink.hsla(),
         placeholder: look.palette.muted.hsla(),
         caret: look.accent.hsla(),
-        selection: look.accent.hsla().opacity(0.3),
+        caret_width: look.hairline,
+        selection: look.text_selection(),
+        newline: look.space(Space::Xs),
+        spans,
     };
     let element = FieldElement {
         state: state.clone(),
-        editable,
+        editable: enabled && !read_only,
         colours,
     };
     let mut el = div()
         .id(super::child(id, "text"))
-        .w_full()
+        .flex()
+        .flex_1()
         .min_w_0()
         .overflow_hidden()
         .key_context(CONTEXT)
         .track_focus(&focus)
         .role(role)
+        .when_some(label, |el, label| el.aria_label(label))
         .aria_placeholder(placeholder)
-        .aria_disabled(!editable)
-        .when(a11y && !masked, |el| {
-            let text = value.clone();
-            el.aria_value(value.clone())
-                // The text as one run, and the selection on it, so a screen
-                // reader reads where the caret is and what is selected.
-                .a11y_synthetic_children(move |builder| {
-                    let mut run = gpui_kit::accesskit::Node::new(gpui_kit::Role::TextRun);
-                    run.set_value(text.clone());
-                    run.set_character_lengths(
-                        text.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>(),
-                    );
-                    let id = builder.synthetic_node_id(0);
-                    builder.push_child(id, run);
-                    let at = |character_index| gpui_kit::accesskit::TextPosition {
-                        node: id,
-                        character_index,
-                    };
-                    builder
-                        .parent_node()
-                        .set_text_selection(gpui_kit::accesskit::TextSelection {
-                            anchor: at(anchor),
-                            focus: at(active),
-                        });
-                })
+        .aria_disabled(!enabled)
+        // A value the owner set is said as it lands; one being typed is
+        // heard as it is typed.
+        .when(announce, |el| {
+            el.aria_live(gpui_kit::accesskit::Live::Polite)
+        })
+        .when(a11y && !masked, |el| el.aria_value(value.clone()))
+        // The text as one run with the selection on it, so a screen reader
+        // reads where the caret is and what is selected; and whether it can
+        // be changed.
+        .a11y_synthetic_children(move |builder| {
+            if read_only {
+                builder.parent_node().set_read_only();
+            }
+            if masked || !a11y {
+                return;
+            }
+            let mut run = gpui_kit::accesskit::Node::new(gpui_kit::Role::TextRun);
+            run.set_value(value.clone());
+            run.set_character_lengths(
+                value.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>(),
+            );
+            let id = builder.synthetic_node_id(0);
+            builder.push_child(id, run);
+            let at = |character_index| gpui_kit::accesskit::TextPosition {
+                node: id,
+                character_index,
+            };
+            builder
+                .parent_node()
+                .set_text_selection(gpui_kit::accesskit::TextSelection {
+                    anchor: at(anchor),
+                    focus: at(active),
+                });
         })
         .on_a11y_action(gpui_kit::AccessibleAction::Focus, {
             let focus = focus.clone();
             move |_, window, cx| window.focus(&focus, cx)
         })
         .child(element);
-    if !editable {
+    if !enabled {
         return el;
     }
+    // Reading: the pointer, the movement keys and Copy.
     el = el
         .cursor(CursorStyle::IBeam)
-        .on_a11y_action(gpui_kit::AccessibleAction::SetValue, {
-            let state = state.clone();
-            move |data, window, cx| {
-                if let Some(gpui_kit::accesskit::ActionData::Value(value)) = data {
-                    let value = value.to_string();
-                    state.update(cx, |s, cx| s.set_by_assistant(value, window, cx));
-                }
-            }
-        })
         .on_mouse_down(
             gpui_kit::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_down),
@@ -258,12 +292,6 @@ fn editor(
             gpui_kit::MouseButton::Left,
             window.listener_for(state, FieldState::mouse_up),
         )
-        .on_action(window.listener_for(state, FieldState::backspace))
-        .on_action(window.listener_for(state, FieldState::delete))
-        .on_action(window.listener_for(state, FieldState::delete_word_left))
-        .on_action(window.listener_for(state, FieldState::delete_word_right))
-        .on_action(window.listener_for(state, FieldState::delete_to_line_start))
-        .on_action(window.listener_for(state, FieldState::delete_to_line_end))
         .on_action(window.listener_for(state, FieldState::left))
         .on_action(window.listener_for(state, FieldState::right))
         .on_action(window.listener_for(state, FieldState::up))
@@ -286,13 +314,31 @@ fn editor(
         .on_action(window.listener_for(state, FieldState::select_to_end))
         .on_action(window.listener_for(state, FieldState::select_all))
         .on_action(window.listener_for(state, FieldState::copy))
-        .on_action(window.listener_for(state, FieldState::cut))
-        .on_action(window.listener_for(state, FieldState::paste))
-        .on_action(window.listener_for(state, FieldState::undo))
-        .on_action(window.listener_for(state, FieldState::redo))
         .on_action(window.listener_for(state, FieldState::enter))
         .on_action(window.listener_for(state, FieldState::shift_enter))
-        .on_action(window.listener_for(state, FieldState::secondary_enter))
-        .on_action(window.listener_for(state, FieldState::character_palette));
-    el
+        .on_action(window.listener_for(state, FieldState::secondary_enter));
+    if read_only {
+        return el;
+    }
+    // Editing.
+    el.on_a11y_action(gpui_kit::AccessibleAction::SetValue, {
+        let state = state.clone();
+        move |data, window, cx| {
+            if let Some(gpui_kit::accesskit::ActionData::Value(value)) = data {
+                let value = value.to_string();
+                state.update(cx, |s, cx| s.set_by_assistant(value, window, cx));
+            }
+        }
+    })
+    .on_action(window.listener_for(state, FieldState::backspace))
+    .on_action(window.listener_for(state, FieldState::delete))
+    .on_action(window.listener_for(state, FieldState::delete_word_left))
+    .on_action(window.listener_for(state, FieldState::delete_word_right))
+    .on_action(window.listener_for(state, FieldState::delete_to_line_start))
+    .on_action(window.listener_for(state, FieldState::delete_to_line_end))
+    .on_action(window.listener_for(state, FieldState::cut))
+    .on_action(window.listener_for(state, FieldState::paste))
+    .on_action(window.listener_for(state, FieldState::undo))
+    .on_action(window.listener_for(state, FieldState::redo))
+    .on_action(window.listener_for(state, FieldState::character_palette))
 }

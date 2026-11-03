@@ -773,6 +773,14 @@ impl Look {
 
     /// A tone for text: the accent stays off text it cannot reach 4.5:1 as,
     /// which reads in `ink` instead.
+    /// Selected text's ground: the accent at 30 %, at 45 % with more
+    /// contrast asked for.
+    pub fn text_selection(&self) -> Hsla {
+        self.accent
+            .hsla()
+            .opacity(if self.contrast { 0.45 } else { 0.3 })
+    }
+
     pub fn text_color(&self, tone: Tone) -> Hsla {
         match tone {
             Tone::Accent => self.accent.text_hsla(self.palette.ink.hsla()),

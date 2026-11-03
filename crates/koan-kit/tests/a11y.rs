@@ -469,3 +469,106 @@ fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
     }
     assert!(top + 20 <= start);
 }
+
+/// Text fields as a screen reader meets them: a text input named by its
+/// label, with its value, placeholder and text as a run; a read-only field
+/// offers no edit, a disabled one says so; a value the owner sets is
+/// announced; and a screen reader's request to set the value is an edit.
+struct Fields {
+    name: gpui_kit::Entity<koan_kit::components::FieldState>,
+    fixed: gpui_kit::Entity<koan_kit::components::FieldState>,
+    secret: gpui_kit::Entity<koan_kit::components::FieldState>,
+}
+
+impl Render for Fields {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use koan_kit::components::TextField;
+        div()
+            .w(px(400.))
+            .flex()
+            .flex_col()
+            .child(TextField::new(&self.name).label("name"))
+            .child(TextField::new(&self.fixed).label("address"))
+            .child(TextField::new(&self.secret).label("password"))
+    }
+}
+
+#[gpui_kit::test]
+fn text_fields_are_read_and_set_by_a_screen_reader(cx: &mut TestAppContext) {
+    use gpui_kit::AppContext as _;
+    use koan_kit::components::FieldState;
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let window = cx.add_window(|window, cx| Fields {
+        name: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .placeholder("your name")
+                .default_value("Kate")
+        }),
+        fixed: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .read_only(true)
+                .default_value("192.168.1.10")
+        }),
+        secret: cx.new(|cx| {
+            FieldState::new(window, cx)
+                .masked(true)
+                .default_value("hunter2")
+        }),
+    });
+    let fields = window.root(cx).expect("the view");
+    let window: AnyWindowHandle = window.into();
+    attach(window, cx);
+    let tree = tree(window, cx);
+    let (id, name) = node(&tree, "name", "TextInput");
+    assert_eq!(name["value"], "Kate");
+    assert_eq!(name["placeholder"], "your name");
+    assert!(
+        name["on_action"].to_string().contains("SetValue"),
+        "an editable field takes a value: {name}"
+    );
+    let runs: Vec<Value> = nodes(&tree)
+        .into_iter()
+        .filter(|n| n["aria"]["role"] == "TextRun" && n["aria"]["value"] == "Kate")
+        .collect();
+    assert_eq!(runs.len(), 1, "its text as one run:\n{tree}");
+    let (_, fixed) = node(&tree, "address", "TextInput");
+    assert!(
+        !fixed["on_action"].to_string().contains("SetValue"),
+        "a read-only field takes no value: {fixed}"
+    );
+    let (_, secret) = node(&tree, "password", "PasswordInput");
+    assert!(secret.get("value").is_none(), "a password is never read out");
+
+    // A screen reader sets the value: an edit of the person's.
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_a11y_action(
+                ActionRequest {
+                    action: Action::SetValue,
+                    target_tree: TreeId::ROOT,
+                    target_node: id,
+                    data: Some(gpui_kit::accesskit::ActionData::Value("Liz".into())),
+                },
+                cx,
+            )
+        })
+        .expect("the window");
+    cx.run_until_parked();
+    let name_state = fields.read_with(cx, |f, _| f.name.clone());
+    assert_eq!(name_state.read_with(cx, |f, _| f.value().to_string()), "Liz");
+
+    // The owner sets it: announced as it lands.
+    window
+        .update(cx, |_, window, cx| {
+            name_state.update(cx, |f, cx| f.set_value("Ana", window, cx))
+        })
+        .expect("the window");
+    cx.run_until_parked();
+    let tree = self::tree(window, cx);
+    let (_, name) = node(&tree, "name", "TextInput");
+    assert_eq!(name["value"], "Ana");
+    assert_eq!(name["live"], "Polite");
+}

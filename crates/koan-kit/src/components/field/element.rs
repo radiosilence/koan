@@ -8,7 +8,7 @@ use std::ops::Range;
 use gpui_kit::{
     App, Bounds, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla, InspectorElementId,
     IntoElement, LayoutId, Pixels, Point, ShaderProgram, SharedString, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, point, px, relative, size,
+    UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
@@ -29,16 +29,19 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
-/// The caret's width: one point, as the Mac's.
-const CARET_WIDTH: Pixels = px(1.0);
-
-/// What a field is drawn in.
-#[derive(Clone, Copy)]
+/// What a field is drawn in, from the look: its text, its placeholder, the
+/// caret and its width (the hairline, thicker with more contrast), the
+/// selection, a newline's sliver at the end of a selected line, and the
+/// spans its owner colours (byte ranges of the text).
+#[derive(Clone)]
 pub(super) struct Colours {
     pub ink: Hsla,
     pub placeholder: Hsla,
     pub caret: Hsla,
+    pub caret_width: Pixels,
     pub selection: Hsla,
+    pub newline: Pixels,
+    pub spans: Vec<(Range<usize>, Hsla)>,
 }
 
 pub(super) struct FieldElement {
@@ -84,9 +87,11 @@ impl gpui_kit::Element for FieldElement {
     ) -> (LayoutId, ()) {
         let rows = self.state.read(cx).rows;
         let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        // As narrow as its parent asks: the text scrolls, it never holds a
-        // row open.
+        // The row's width, from nothing: the text scrolls, so a field never
+        // holds a row open.
+        style.flex_grow = 1.0;
+        style.flex_shrink = 1.0;
+        style.flex_basis = px(0.0).into();
         style.min_size.width = px(0.0).into();
         style.size.height = (window.line_height() * rows as f32).into();
         (window.request_layout(style, [], cx), ())
@@ -121,6 +126,12 @@ impl gpui_kit::Element for FieldElement {
             .marked
             .as_ref()
             .map(|m| state.to_drawn(m.start)..state.to_drawn(m.end));
+        // The owner's colours, where the text is drawn as itself.
+        let spans: &[(Range<usize>, Hsla)] = if empty || state.masked {
+            &[]
+        } else {
+            &self.colours.spans
+        };
 
         // Each line shaped on its own, the composition underlined where it
         // falls.
@@ -128,7 +139,14 @@ impl gpui_kit::Element for FieldElement {
         let mut start = 0;
         for text in drawn.split('\n') {
             let range = start..start + text.len();
-            let runs = runs(text.len(), colour, &style, marked.as_ref(), &range);
+            let runs = runs(
+                &range,
+                colour,
+                spans,
+                &style,
+                marked.as_ref(),
+                self.colours.caret_width,
+            );
             let shaped = window.text_system().shape_line(
                 SharedString::from(text.to_string()),
                 font_size,
@@ -158,15 +176,15 @@ impl gpui_kit::Element for FieldElement {
             .iter()
             .map(|l| l.shaped.width())
             .fold(px(0.0), Pixels::max);
-        if caret_x - scroll.x > width - CARET_WIDTH {
-            scroll.x = caret_x - width + CARET_WIDTH;
+        if caret_x - scroll.x > width - self.colours.caret_width {
+            scroll.x = caret_x - width + self.colours.caret_width;
         }
         if caret_x < scroll.x {
             scroll.x = caret_x;
         }
         scroll.x = scroll
             .x
-            .clamp(px(0.0), (widest + CARET_WIDTH - width).max(px(0.0)));
+            .clamp(px(0.0), (widest + self.colours.caret_width - width).max(px(0.0)));
         let height = bounds.size.height;
         let caret_top = line_height * row as f32;
         if caret_top + line_height - scroll.y > height {
@@ -198,7 +216,7 @@ impl gpui_kit::Element for FieldElement {
                     (a < b || (past && from <= end)).then(|| {
                         let left = line.shaped.x_for_index(a - line.start);
                         let right = line.shaped.x_for_index(b.max(a) - line.start)
-                            + if past { px(4.0) } else { px(0.0) };
+                            + if past { self.colours.newline } else { px(0.0) };
                         Bounds::from_corners(
                             origin + point(left, line_height * i as f32),
                             origin + point(right, line_height * (i + 1) as f32),
@@ -210,7 +228,7 @@ impl gpui_kit::Element for FieldElement {
         let caret = (self.editable && state.selected.is_empty()).then(|| {
             Bounds::new(
                 origin + point(caret_x, caret_top),
-                size(CARET_WIDTH, line_height),
+                size(self.colours.caret_width, line_height),
             )
         });
         caret_uniforms.attach(false, window, cx);
@@ -280,36 +298,50 @@ impl gpui_kit::Element for FieldElement {
     }
 }
 
-/// A line's runs in `colour`, the part of `marked` (an input method's
-/// composition, in drawn offsets) that falls in `line` underlined.
+/// A line's runs: in `colour`, or a span's colour where the owner gave one,
+/// with the part of `marked` (an input method's composition, in drawn
+/// offsets) that falls in the line underlined.
 fn runs(
-    len: usize,
+    line: &Range<usize>,
     colour: Hsla,
+    spans: &[(Range<usize>, Hsla)],
     style: &gpui_kit::TextStyle,
     marked: Option<&Range<usize>>,
-    line: &Range<usize>,
+    underline: Pixels,
 ) -> Vec<TextRun> {
-    let run = |len: usize, underline: bool| TextRun {
-        len,
-        font: style.font(),
-        color: colour,
-        background_color: None,
-        underline: underline.then_some(UnderlineStyle {
-            color: Some(colour),
-            thickness: px(1.0),
-            wavy: false,
-        }),
-        strikethrough: None,
-    };
-    let Some(marked) = marked else {
-        return vec![run(len, false)];
-    };
-    let (a, b) = (
-        marked.start.clamp(line.start, line.end) - line.start,
-        marked.end.clamp(line.start, line.end) - line.start,
-    );
-    [run(a, false), run(b - a, true), run(len - b, false)]
-        .into_iter()
-        .filter(|r| r.len > 0)
+    // Where anything changes within the line, in the line's offsets.
+    let mut cuts = vec![0, line.len()];
+    let clip = |at: usize| at.clamp(line.start, line.end) - line.start;
+    for (range, _) in spans {
+        cuts.extend([clip(range.start), clip(range.end)]);
+    }
+    if let Some(marked) = marked {
+        cuts.extend([clip(marked.start), clip(marked.end)]);
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts.windows(2)
+        .filter(|w| w[1] > w[0])
+        .map(|w| {
+            let at = line.start + w[0];
+            let colour = spans
+                .iter()
+                .rev()
+                .find(|(range, _)| range.start <= at && at < range.end)
+                .map_or(colour, |(_, c)| *c);
+            let composing = marked.is_some_and(|m| m.start <= at && at < m.end);
+            TextRun {
+                len: w[1] - w[0],
+                font: style.font(),
+                color: colour,
+                background_color: None,
+                underline: composing.then_some(UnderlineStyle {
+                    color: Some(colour),
+                    thickness: underline,
+                    wavy: false,
+                }),
+                strikethrough: None,
+            }
+        })
         .collect()
 }

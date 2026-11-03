@@ -84,6 +84,14 @@ pub struct FieldState {
     pub(super) text: String,
     pub(super) placeholder: SharedString,
     pub(super) masked: bool,
+    /// Its text can be selected and copied but not changed.
+    pub(super) read_only: bool,
+    /// The owner set the text since the person last edited it: a screen
+    /// reader is told of it, as typing it was not.
+    pub(super) announce: bool,
+    /// Spans of the text the owner colours (a pattern's fields), as byte
+    /// ranges and tones.
+    pub(super) spans: Vec<(Range<usize>, crate::theme::Tone)>,
     /// Lines shown, for a multi-line field; 1 for a single line.
     pub(super) rows: usize,
     pub(super) selected: Range<usize>,
@@ -135,6 +143,9 @@ impl FieldState {
             text: String::new(),
             placeholder: SharedString::default(),
             masked: false,
+            read_only: false,
+            announce: false,
+            spans: Vec::new(),
             rows: 1,
             selected: 0..0,
             reversed: false,
@@ -172,6 +183,31 @@ impl FieldState {
         self
     }
 
+    /// Its text selectable and copyable, but not to be changed.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        self.read_only = read_only;
+        cx.notify();
+    }
+
+    /// Colours spans of the text, as byte ranges with their tones: a code
+    /// field's highlighting, which its owner works out from the text and
+    /// sets again on each `Change`. Spans past the text are ignored.
+    pub fn set_highlights(
+        &mut self,
+        spans: Vec<(Range<usize>, crate::theme::Tone)>,
+        cx: &mut Context<Self>,
+    ) {
+        if spans != self.spans {
+            self.spans = spans;
+            cx.notify();
+        }
+    }
+
     /// `rows` lines tall, taking Return as a new line: a `TextArea`'s.
     pub fn rows(mut self, rows: usize) -> Self {
         self.rows = rows.max(1);
@@ -204,6 +240,7 @@ impl FieldState {
         self.selected = self.text.len()..self.text.len();
         self.reversed = false;
         self.marked = None;
+        self.announce = true;
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
@@ -619,7 +656,7 @@ impl FieldState {
         } else {
             with.replace(['\n', '\r'], " ")
         };
-        if range.is_empty() && with.is_empty() {
+        if self.read_only || (range.is_empty() && with.is_empty()) {
             return;
         }
         self.remember(kind);
@@ -632,6 +669,7 @@ impl FieldState {
     }
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.announce = false;
         self.blink_from_shown(cx);
         window.notify_text_input_changed(&self.focus);
         cx.emit(InputEvent::Change);
@@ -974,6 +1012,10 @@ impl EntityInputHandler for FieldState {
         self.moved(window, cx);
     }
 
+    fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        !self.read_only
+    }
+
     fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
         Some(self.text.encode_utf16().count())
     }
@@ -1023,6 +1065,9 @@ impl EntityInputHandler for FieldState {
             .map(|range| self.from_utf16_range(&range))
             .or(self.marked.clone())
             .unwrap_or(self.selected.clone());
+        if self.read_only {
+            return;
+        }
         // The first keystroke of a composition is remembered; the rest of
         // it, until committed, is the same step.
         if self.marked.is_none() {
