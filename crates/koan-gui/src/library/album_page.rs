@@ -588,7 +588,12 @@ impl super::keys::KeyedList for AlbumPage {
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
         self.menu = ix.map(|ix| {
             let track = &self.tracks[ix];
-            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Track(track.id),
+                track.album_id,
+                None,
+            )
         });
     }
 }
