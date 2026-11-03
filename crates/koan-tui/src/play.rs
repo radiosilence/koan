@@ -162,6 +162,16 @@ fn write(state: &SharedPlayerState, session: &str, save: Save, played: bool) {
         }
     };
     let playing = state.playback_state() == PlaybackState::Playing;
+    // Unchanged, the queue is skipped, unless its row has gone:
+    // `clearPlaybackState` through this terminal's own API deletes it with the
+    // player none the wiser, and a position alone restores nothing at the
+    // next launch. The FFI's `save_session` checks the same.
+    let save = match save {
+        Save::Position if !queries::has_saved_queue(&db.conn, session).unwrap_or(true) => {
+            Save::Session
+        }
+        save => save,
+    };
     let result = match save {
         Save::Position => queries::save_playback_position(
             &db.conn,
