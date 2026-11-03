@@ -923,6 +923,10 @@ pub struct App {
     pub(crate) window_invalidators_by_entity:
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    // KOAN: windows drawing now, and the entities notified meanwhile, which
+    // the window drawing redraws if it shows them (`Window::draw`).
+    pub(crate) drawing_windows: usize,
+    pub(crate) notified_while_drawing: FxHashSet<EntityId>,
     pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
@@ -1014,6 +1018,8 @@ impl App {
                 pending_global_notifications: Default::default(),
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
+                drawing_windows: 0,
+                notified_while_drawing: FxHashSet::default(),
                 window_invalidators_by_entity: FxHashMap::default(),
                 current_window_by_entity: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
@@ -3188,6 +3194,13 @@ impl App {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
+        // KOAN: a notify while a window draws: that window is not yet
+        // tracking what this frame reads (a view drawn for the first time),
+        // or ignores the notify as it draws, so it is noted for the draw's
+        // end.
+        if self.drawing_windows > 0 {
+            self.notified_while_drawing.insert(entity_id);
+        }
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)

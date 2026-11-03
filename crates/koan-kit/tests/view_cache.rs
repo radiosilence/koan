@@ -456,3 +456,70 @@ fn a_page_filled_by_a_spawned_read_draws_without_input(cx: &mut TestAppContext) 
     assert_eq!(rows, Some(12), "the read landed");
     assert!(drawn > 0, "the rows landed but no frame drew them");
 }
+
+/// A view that asks to be drawn again while it is being drawn, as a list
+/// measuring its rows does: once.
+struct Remeasures {
+    renders: usize,
+    model: Entity<Counter>,
+}
+
+/// An entity a view updates while it draws.
+struct Counter {
+    value: usize,
+}
+
+impl Render for Remeasures {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
+        if self.renders == 1 {
+            cx.notify();
+            self.model.update(cx, |model, cx| {
+                model.value += 1;
+                cx.notify();
+            });
+        }
+        let value = self.model.read(cx).value;
+        div().size_full().child(format!("{value}"))
+    }
+}
+
+struct RemeasureShell {
+    view: Entity<Remeasures>,
+}
+
+impl Render for RemeasureShell {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            self.view
+                .clone()
+                .cached(StyleRefinement::default().size_full()),
+        )
+    }
+}
+
+/// A notify made while the window draws is not lost: the view is drawn by
+/// the next frame, which nothing but the notify asks for, exactly once, and
+/// an entity notified then reaches its observers.
+#[gpui::test]
+fn a_notify_during_a_draw_draws_the_next_frame(cx: &mut TestAppContext) {
+    let model = cx.new(|_| Counter { value: 0 });
+    let observed = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = observed.clone();
+    cx.update(|cx| {
+        cx.observe(&model, move |_, _| seen.set(seen.get() + 1))
+            .detach()
+    });
+    let view = cx.new(|_| Remeasures {
+        renders: 0,
+        model: model.clone(),
+    });
+    let _window = cx.add_window(|_, _| RemeasureShell { view: view.clone() });
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.renders),
+        2,
+        "the view asked to be drawn again while drawing"
+    );
+    assert_eq!(observed.get(), 1, "the model's observer heard its notify");
+}
