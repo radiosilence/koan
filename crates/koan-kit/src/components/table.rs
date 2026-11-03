@@ -46,6 +46,7 @@ pub struct TableRow {
     selected: bool,
     /// Under the keyboard's cursor while its list holds the keyboard.
     cursor: bool,
+    spot: Option<super::CursorSpot>,
     leading: Vec<Cell>,
     title: Option<AnyElement>,
     lines: Vec<AnyElement>,
@@ -63,6 +64,7 @@ impl TableRow {
             kind,
             selected: false,
             cursor: false,
+            spot: None,
             leading: Vec::new(),
             title: None,
             lines: Vec::new(),
@@ -100,9 +102,11 @@ impl TableRow {
         self
     }
 
-    /// Run when a screen reader moves to the row: the list scrolls it, and
-    /// its neighbours, on screen, so the reader can go on past what was
-    /// drawn (`RowListState::reveal_around`).
+    /// Run when a screen reader moves to the row: the list scrolls the
+    /// neighbour the reader is heading for on screen, so it can go on past
+    /// what was drawn (`RowListState::reveal_around`, `reveal_around`), and
+    /// the view that drew the row is drawn again so the neighbour reaches the
+    /// tree even on an idle window.
     pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.reveal = Some(std::sync::Arc::new(move |_, window, cx| reveal(window, cx)));
         self
@@ -156,6 +160,14 @@ impl TableRow {
     /// that colours its cells does by `on_selection` too.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -370,10 +382,17 @@ impl RenderOnce for TableRow {
             }),
             None => base,
         };
+        // The list holding the row is drawn again once it has scrolled: a
+        // scroll handle's change asks for no frame, and on an idle window the
+        // neighbour would never be drawn, so never reach the tree.
+        let list_view = window.current_view();
         let base = match self.reveal {
             Some(reveal) => base.on_a11y_action(
                 gpui_kit::AccessibleAction::ScrollIntoView,
-                move |_, window, cx| reveal(&(), window, cx),
+                move |_, window, cx| {
+                    reveal(&(), window, cx);
+                    cx.notify(list_view);
+                },
             ),
             None => base,
         };
@@ -423,7 +442,7 @@ impl RenderOnce for TableRow {
             }))
             .children(
                 (self.cursor && window.last_input_was_keyboard())
-                    .then(|| super::cursor_ring(&look)),
+                    .then(|| super::cursor_ring(&look, self.spot.as_ref())),
             )
     }
 }

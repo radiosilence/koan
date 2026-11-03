@@ -13,17 +13,21 @@ use gpui_kit::*;
 use super::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
-/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
-pub fn panel(look: &Look) -> Stateful<Div> {
-    // A dialog to a screen reader. The sheet's head names it.
-    super::accessible(div().id("sheet-panel"), gpui_kit::Role::Dialog, None)
-        .flex()
-        .flex_col()
-        .w(px(560.0))
-        .max_h(relative(0.85))
-        .bg(look.palette.bg.hsla())
-        .border(look.hairline)
-        .border_color(look.palette.rule.hsla())
+/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
+/// a screen reader, named `name` in the app's words: what its head says.
+pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
+    super::accessible(
+        div().id("sheet-panel"),
+        gpui_kit::Role::Dialog,
+        Some(label(name)),
+    )
+    .flex()
+    .flex_col()
+    .w(px(560.0))
+    .max_h(relative(0.85))
+    .bg(look.palette.bg.hsla())
+    .border(look.hairline)
+    .border_color(look.palette.rule.hsla())
 }
 
 /// Keeps Tab and Shift-Tab among a sheet's own controls while it is up: a
@@ -33,10 +37,40 @@ pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle) -> impl IntoElement
     panel.focus_trap("sheet-trap", focus)
 }
 
+/// Tab and Shift-Tab: the next control in the window's order, kept inside
+/// the innermost sheet, question or menu holding the keyboard, as the
+/// window's root keeps it. For an app that binds Tab in a context of its
+/// own, which the root's binding never reaches.
+pub fn step_focus(forward: bool, window: &mut Window, cx: &mut App) {
+    let advance = |window: &mut Window, cx: &mut App| {
+        if forward {
+            window.focus_next(cx)
+        } else {
+            window.focus_prev(cx)
+        }
+    };
+    let Some(container) = gpui_kit::base::active_focus_trap(window, cx) else {
+        advance(window, cx);
+        return;
+    };
+    advance(window, cx);
+    let mut visited = Vec::new();
+    while !container.contains_focused(window, cx) {
+        let focused = window.focused(cx);
+        if visited.contains(&focused) {
+            // Nothing in it takes Tab: the container keeps the keyboard.
+            container.focus(window, cx);
+            break;
+        }
+        visited.push(focused);
+        advance(window, cx);
+    }
+}
+
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
-pub fn wide_panel(look: &Look) -> Stateful<Div> {
-    panel(look).w(px(880.0)).h(relative(0.85))
+pub fn wide_panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
+    panel(name, look).w(px(880.0)).h(relative(0.85))
 }
 
 /// A sheet's head: its title in the app's words, and its actions trailing.
@@ -77,6 +111,8 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .flex_col()
         .gap(look.space(Space::S))
         .px(look.space(Space::L))
+        // A step off the head's rule, as most sheets set it for themselves.
+        .pt(look.space(Space::M))
         .pb(look.space(Space::L))
         // Shrinks below its content inside the panel's height, and scrolls.
         .min_h_0()
@@ -246,10 +282,31 @@ pub enum Layer {
     Question = 3,
 }
 
+/// The key context of everything drawn over the window: the app binds its
+/// shortcuts outside it, so none acts behind a sheet or a question.
+pub const MODAL: &str = "Modal";
+
 /// `element` drawn on `layer`, covering its parent: the parent lays it out,
 /// and it is painted once the window's content is.
+///
+/// It holds the keyboard as a modal: its keys are `MODAL`'s, and a ⌘ or Ctrl
+/// key nothing inside bound is taken here, so the macOS menu bar's key
+/// equivalent behind it does not act either. Keys that type are left alone.
 pub fn layered(layer: Layer, element: impl IntoElement) -> impl IntoElement {
-    deferred(div().absolute().inset_0().child(element)).with_priority(layer as usize)
+    deferred(
+        div()
+            .absolute()
+            .inset_0()
+            .key_context(MODAL)
+            .on_key_down(|e: &KeyDownEvent, _, cx| {
+                let m = &e.keystroke.modifiers;
+                if m.platform || m.control || (m.alt && e.keystroke.key_char.is_none()) {
+                    cx.stop_propagation();
+                }
+            })
+            .child(element),
+    )
+    .with_priority(layer as usize)
 }
 
 /// The sheet presented, placed over the window, for the shell to draw under
@@ -271,34 +328,44 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         )
     };
     let look = Look::of(window, cx);
-    Some(
-        div()
-            .id("sheet")
-            // The window's bare keys are bound outside `Ask`.
-            .key_context("Ask")
-            .when_some(focus, |d, focus| d.track_focus(&focus))
-            // Escape puts it away as its cancel does, once nothing inside it
-            // (a field, a menu) has taken the key for its own.
-            .on_key_down(|e: &KeyDownEvent, _, cx| {
+    let scrim = div()
+        .id("sheet")
+        // The window's bare keys are bound outside `Ask`.
+        .key_context("Ask")
+        .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
+        // Escape puts it away as its cancel does, once nothing inside it
+        // (a field, a menu) has taken the key for its own.
+        .on_key_down({
+            let host = asking.clone();
+            move |e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" {
                     cx.stop_propagation();
-                    if !asking(cx).read(cx).held {
+                    if !host.read(cx).held {
                         close(cx);
                     }
                 }
-            })
-            .absolute()
-            .inset_0()
-            .flex()
-            .justify_center()
-            .items_start()
-            .pt(look.space(Space::Xxl))
-            .bg(look.veil(0.6))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(view)
-            .into_any_element(),
-    )
+            }
+        })
+        .absolute()
+        .inset_0()
+        .flex()
+        .justify_center()
+        .items_start()
+        .pt(look.space(Space::Xxl))
+        .bg(look.veil(0.6))
+        .occlude()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(view);
+    Some(trapped(scrim, focus.as_ref()))
+}
+
+/// A scrim holding the keyboard keeps Tab inside it.
+fn trapped(scrim: Stateful<Div>, focus: Option<&FocusHandle>) -> AnyElement {
+    use gpui_kit::base::FocusTrapElement as _;
+    match focus {
+        Some(focus) => scrim.focus_trap("sheet-trap", focus).into_any_element(),
+        None => scrim.into_any_element(),
+    }
 }
 
 struct AskingHandle(Entity<Asking>);
@@ -458,37 +525,36 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .into_iter()
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
-    Some(
-        scrim("ask", &look)
-            .key_context("Ask")
-            .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
-            .on_key_down(
-                move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
-                    "escape" => dismiss(window, cx),
-                    "enter" if !named => go(window, cx),
-                    _ => {}
-                },
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                panel(&look)
-                    .child(head(
-                        ask.title.as_ref(),
-                        vec![cancel.into_any_element(), verb.into_any_element()],
-                        &look,
-                    ))
-                    .child(
-                        body("ask-body", &look)
-                            .pt(look.space(Space::M))
-                            .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
-                            .children(rows)
-                            .when_some(ask.note.clone(), |d, n| {
-                                d.child(note(n, Tone::Muted, &look))
-                            }),
-                    ),
-            )
-            .into_any_element(),
-    )
+    let focus = ask.focus.clone();
+    let scrim = scrim("ask", &look)
+        .key_context("Ask")
+        .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
+        .on_key_down(
+            move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
+                "escape" => dismiss(window, cx),
+                "enter" if !named => go(window, cx),
+                _ => {}
+            },
+        )
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            panel(ask.title.as_ref(), &look)
+                .child(head(
+                    ask.title.as_ref(),
+                    vec![cancel.into_any_element(), verb.into_any_element()],
+                    &look,
+                ))
+                .child(
+                    body("ask-body", &look)
+                        .pt(look.space(Space::M))
+                        .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
+                        .children(rows)
+                        .when_some(ask.note.clone(), |d, n| {
+                            d.child(note(n, Tone::Muted, &look))
+                        }),
+                ),
+        );
+    Some(trapped(scrim, focus.as_ref()))
 }
 
 #[cfg(test)]

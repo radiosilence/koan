@@ -6,9 +6,9 @@ use crate::components::{
     Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
-use koan_ffi::{ConnectionInfo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, Settings};
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
@@ -44,6 +44,9 @@ pub struct ServerPane {
     /// "Up to a limit" chosen and no limit typed yet: nothing is written,
     /// and nothing deleted, until there is a number.
     choosing_limit: bool,
+    /// The limit's own question is up: focus moving into it blurs the field,
+    /// which must not ask again.
+    asking_limit: bool,
     cache: Entity<Slice<u64>>,
     pub(super) share: super::share::ShareForm,
     _subscriptions: Vec<Subscription>,
@@ -117,12 +120,12 @@ impl ServerPane {
                 &cache_limit,
                 window,
                 |pane, _, event: &InputEvent, window, cx| {
-                    // Focus moving into a sheet blurs the field too: the
-                    // sheet's question is the one being asked.
-                    let asking = pane.ctx.sheets.read(cx).is_open();
+                    // Focus moving into the limit's own question blurs the
+                    // field too: that question is the one being asked. Any
+                    // other sheet takes the typed limit with it.
                     let commit = match event {
                         InputEvent::PressEnter { .. } => true,
-                        InputEvent::Blur => !asking,
+                        InputEvent::Blur => !pane.asking_limit,
                         _ => false,
                     };
                     if commit {
@@ -140,6 +143,7 @@ impl ServerPane {
             with_key: false,
             cache_limit,
             choosing_limit: false,
+            asking_limit: false,
             cache,
             share,
             _subscriptions: subscriptions,
@@ -291,7 +295,7 @@ impl ServerPane {
 
     /// Asks before downloads are deleted, saying how much is stored.
     fn confirm_limit(
-        &self,
+        &mut self,
         limit: String,
         stored: u64,
         window: &mut Window,
@@ -320,15 +324,22 @@ impl ServerPane {
             // Cancelled, the field shows the limit kept, so leaving it does
             // not ask again.
             .dismiss_with("Cancel", move |window, cx| {
-                kept.update(cx, |pane, cx| pane.show_stored_limit(window, cx))
+                kept.update(cx, |pane, cx| {
+                    pane.asking_limit = false;
+                    pane.show_stored_limit(window, cx)
+                })
             })
             .action(
                 Action::new("Delete Downloads", move |_, _, cx| {
                     let limit = limit.clone();
-                    pane.update(cx, |pane, cx| pane.set_limit(limit, cx))
+                    pane.update(cx, |pane, cx| {
+                        pane.asking_limit = false;
+                        pane.set_limit(limit, cx)
+                    })
                 })
                 .destructive(),
             );
+        self.asking_limit = true;
         self.ctx
             .sheets
             .update(cx, |s, cx| s.show(sheet, window, cx));

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Answer, Answerer, Handler};
+use super::{Answer, Answerer, Handler, accessible, answers_click, toggled};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 
 #[derive(IntoElement)]
@@ -152,7 +152,11 @@ impl RenderOnce for Heart {
                 "favourite"
             })
         });
-        self.base
+        // A screen reader hears a toggle named for what it does, whether it
+        // is on, and can press it as the pointer does.
+        let name = tip.clone();
+        accessible(self.base, gpui_kit::Role::Button, Some(name))
+            .aria_toggled(toggled(on))
             // Shown while it answers, whatever its owner hides it by.
             .when(live, |d| d.visible())
             .relative()
@@ -170,11 +174,15 @@ impl RenderOnce for Heart {
                     .children(answers.layer(window, cx)),
             )
             .when_some(self.on_click, move |d, handler| {
-                d.on_click(move |event, window, cx| {
-                    cx.stop_propagation();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
+                let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     let answer = if on { Answer::Close } else { Answer::Burst };
                     answers.start(answer, accent, cx);
                     handler(event, window, cx)
+                });
+                answers_click(d, press.clone()).on_click(move |event, window, cx| {
+                    cx.stop_propagation();
+                    press(event, window, cx)
                 })
             })
     }

@@ -1,0 +1,1 @@
+- **Terminal sessions and pairing on quit.** `koan --remote` no longer takes the terminal's place or overwrites its saved queue, a terminal on a filesystem that cannot lock keeps its session, and quitting the kōan GUI app declines every waiting pairing rather than only the first.

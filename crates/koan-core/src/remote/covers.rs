@@ -334,6 +334,7 @@ static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 /// preload.
 pub fn set_constrained(constrained: bool) {
     if CONSTRAINED.swap(constrained, Ordering::Relaxed) != constrained {
+        crate::remote::client::wake_cover_waiters();
         crate::signal::engine_changed().bump();
     }
 }
@@ -346,7 +347,13 @@ pub fn progress() -> Option<Preload> {
 /// Stops the running preload, keeping what it fetched.
 pub fn stop() {
     STOPPED.store(true, Ordering::Relaxed);
+    crate::remote::client::wake_cover_waiters();
     crate::signal::engine_changed().bump();
+}
+
+/// Whether the person stopped the preload.
+pub(crate) fn stopped() -> bool {
+    STOPPED.load(Ordering::Relaxed)
 }
 
 /// The setting was turned on, or the person asked for the covers again:
@@ -424,10 +431,16 @@ fn run() {
 }
 
 fn may_run(seen: &Seen) -> bool {
-    seen.enabled
-        && seen.reachable
-        && !seen.constrained
-        && !STOPPED.load(Ordering::Relaxed)
+    allowed(seen.enabled, seen.reachable)
+}
+
+/// Whether work nobody asked for may run, the setting and the server's
+/// standing given: not constrained, not stopped, the app awake.
+fn allowed(enabled: bool, reachable: bool) -> bool {
+    enabled
+        && reachable
+        && !CONSTRAINED.load(Ordering::Relaxed)
+        && !stopped()
         && crate::quiet::awake()
 }
 
@@ -448,10 +461,13 @@ enum Halt {
     Failed(SubsonicError),
 }
 
-/// Whether the pass may fetch one more cover now.
-fn may_fetch() -> Result<(), Halt> {
+/// Whether the pass may fetch one more cover from `client` now. Asked
+/// after every frame, so it reads atomics and the cached configuration
+/// alone.
+fn may_fetch(client: &SubsonicClient) -> Result<(), Halt> {
     let cfg = Config::cached();
-    if !may_run(&seen()) || !cfg.remote.preload_covers {
+    let enabled = cfg.remote.enabled && cfg.remote.preload_covers;
+    if !allowed(enabled, !client.outage().is_down()) {
         return Err(Halt::NotNow);
     }
     // Never into the room downloads need: past it, keeping one more cover
@@ -500,8 +516,12 @@ fn pass() -> bool {
     set_progress(Some(Preload { done: 0, total }));
     let bulk = crate::remote::profile::probed(client.auth())
         .is_some_and(|p| p.offers(crate::remote::profile::COVERS));
+    let may = || may_fetch(&client);
+    let go_on = || may().is_ok();
     let (one_by_one, halted) = if bulk {
-        in_bulk(&client, &cfg, missing, &tick)
+        let mut fetch =
+            |ask: &[String], each: &mut Each| client.get_covers(ask, PRELOAD_SIZE, &go_on, each);
+        in_bulk(&mut fetch, &may, &cfg, missing, &tick)
     } else {
         (missing, None)
     };
@@ -531,7 +551,15 @@ fn pass() -> bool {
 /// `koanCovers` and fetches the rest one by one.
 const BULK_FAILURES: usize = 3;
 
-/// `koanCovers` for `ids`, `BULK_MAX` at a time: keeps what the server holds
+/// What a bulk answer hands each frame to: whether to read on.
+type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
+
+/// What `in_bulk` asks a chunk through: `SubsonicClient::get_covers`, or a
+/// test's answers.
+type Fetch<'a> = dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError> + 'a;
+
+/// `koanCovers` for `ids`, `BULK_MAX` at a time, through `fetch`
+/// (`SubsonicClient::get_covers`), asking `may` whether to go on: keeps what the server holds
 /// and says it has none of, and returns the ids it does not hold ready, or
 /// did not answer. Stops between frames as soon as the pass may not go on
 /// (stopped, quiet, constrained, full), dropping the rest of that answer
@@ -539,7 +567,8 @@ const BULK_FAILURES: usize = 3;
 /// not reach, one the server cannot answer or refuses is not, and what is
 /// left goes to the one by one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
-    client: &SubsonicClient,
+    fetch: &mut Fetch,
+    may: &dyn Fn() -> Result<(), Halt>,
     cfg: &Config,
     ids: Vec<String>,
     tick: &dyn Fn(),
@@ -555,11 +584,10 @@ fn in_bulk(
         let mut halted = None;
         let mut failed = None;
         for _attempt in 0..2 {
-            if let Err(halt) = may_fetch() {
+            if let Err(halt) = may() {
                 halted = Some(halt);
                 break;
             }
-            crate::remote::client::wait_for_idle_covers();
             // What is still unanswered: the whole chunk the first time, and
             // after a stream cut part way, only what it did not reach.
             let ask: Vec<String> = chunk
@@ -567,7 +595,7 @@ fn in_bulk(
                 .filter(|id| unanswered.contains(id.as_str()))
                 .cloned()
                 .collect();
-            let answered = client.get_covers(&ask, PRELOAD_SIZE, &mut |id, cover| {
+            let answered = fetch(&ask, &mut |id, cover| {
                 if unanswered.remove(id.as_str()) {
                     match cover {
                         BulkCover::Cover(data) => {
@@ -581,7 +609,7 @@ fn in_bulk(
                         BulkCover::NotHeld => rest.push(id),
                     }
                 }
-                match may_fetch() {
+                match may() {
                     Ok(()) => true,
                     Err(halt) => {
                         halted = Some(halt);
@@ -659,16 +687,17 @@ fn one_at_a_time(
                     if halted.lock().is_some() {
                         return;
                     }
-                    if let Err(halt) = may_fetch() {
+                    if let Err(halt) = may_fetch(client) {
                         halted.lock().get_or_insert(halt);
                         return;
                     }
                     let Some(id) = next.lock().next() else {
                         return;
                     };
-                    // Waits for no page's cover in flight and a slot under
-                    // the cover limit, which a page's fetches share.
-                    match client.get_cover_art_background(&id, Some(PRELOAD_SIZE)) {
+                    // Waits for no page's cover in flight and a background
+                    // slot; ends early when the pass may not go on.
+                    let go_on = || may_fetch(client).is_ok();
+                    match client.get_cover_art_background(&id, Some(PRELOAD_SIZE), &go_on) {
                         Ok(data) if data.is_empty() => keep_miss(cfg, &id),
                         Ok(data) => keep(cfg, &id, Some(PRELOAD_SIZE), &data),
                         // The server says it has no such cover: remembered,
@@ -676,6 +705,9 @@ fn one_at_a_time(
                         // refusal (a restart, a proxy's 502, a lapsed
                         // sign-in) says nothing about the record.
                         Err(SubsonicError::Api { code: 70, .. }) => keep_miss(cfg, &id),
+                        // The wait ended: the top of the loop says why. The
+                        // cover is the next pass's.
+                        Err(SubsonicError::Busy) => continue,
                         Err(e) => {
                             halted.lock().get_or_insert(Halt::Failed(e));
                             return;
@@ -751,6 +783,86 @@ mod tests {
         huge[at..at + 4].copy_from_slice(&u32::MAX.to_be_bytes());
         let err = read_frame(&mut &huge[..]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    fn ids(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("al-{i}")).collect()
+    }
+
+    /// A stream cut part way is asked again for what it did not reach, and
+    /// what the second answer leaves goes one by one.
+    #[test]
+    fn a_cut_stream_is_asked_again_for_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let mut asked: Vec<Vec<String>> = Vec::new();
+        let (rest, halted) = {
+            let mut fetch = |ask: &[String], each: &mut Each| {
+                asked.push(ask.to_vec());
+                if asked.len() == 1 {
+                    each(ask[0].clone(), BulkCover::Cover(vec![1]));
+                    each(ask[1].clone(), BulkCover::None);
+                    return Err(SubsonicError::BadResponse);
+                }
+                each(ask[0].clone(), BulkCover::NotHeld);
+                Err(SubsonicError::BadResponse)
+            };
+            in_bulk(&mut fetch, &|| Ok(()), &cfg, ids(4), &|| {})
+        };
+        assert!(halted.is_none());
+        assert_eq!(asked, [ids(4), ids(4)[2..].to_vec()]);
+        assert!(settled(&cfg, "al-0") && settled(&cfg, "al-1"));
+        assert_eq!(rest, ["al-2", "al-3"], "not held, then not reached");
+    }
+
+    /// The pass stops between frames once it may not go on: the rest of the
+    /// answer is left unread and everything after is the next pass's.
+    #[test]
+    fn a_bulk_answer_stops_between_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let read = std::cell::Cell::new(0);
+        let mut fetch = |ask: &[String], each: &mut Each| {
+            for id in ask {
+                read.set(read.get() + 1);
+                if !each(id.clone(), BulkCover::Cover(vec![1])) {
+                    break;
+                }
+            }
+            Ok(())
+        };
+        let may = || {
+            if read.get() >= 3 {
+                Err(Halt::NotNow)
+            } else {
+                Ok(())
+            }
+        };
+        let all = ids(BULK_MAX + 10);
+        let (rest, halted) = in_bulk(&mut fetch, &may, &cfg, all.clone(), &|| {});
+        assert!(matches!(halted, Some(Halt::NotNow)));
+        assert_eq!(read.get(), 3, "no frame read after the halt");
+        assert_eq!(rest, all[3..], "the rest of the chunk and every later one");
+    }
+
+    /// A server that refuses is not asked again at once, and after
+    /// `BULK_FAILURES` chunks in a row everything left goes one by one.
+    #[test]
+    fn koan_covers_failing_falls_back_to_one_by_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let mut calls = 0;
+        let all = ids(BULK_MAX * (BULK_FAILURES + 2));
+        let (rest, halted) = {
+            let mut fetch = |_: &[String], _: &mut Each| {
+                calls += 1;
+                Err(SubsonicError::Unavailable(503))
+            };
+            in_bulk(&mut fetch, &|| Ok(()), &cfg, all.clone(), &|| {})
+        };
+        assert!(halted.is_none());
+        assert_eq!(calls, BULK_FAILURES, "one request per chunk, none retried");
+        assert_eq!(rest, all);
     }
 
     fn config(dir: &Path) -> Config {

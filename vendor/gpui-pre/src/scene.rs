@@ -22,6 +22,11 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
+// KOAN: the largest layer group texture made to the group's size, in device
+// pixels: wgpu's default limit, under Metal's. A larger group takes the
+// window's size (#1878).
+const MAX_GROUP_EXTENT: f32 = 8192.0;
+
 /// A boolean stored as a `u32` so that GPU-facing structs contain no
 /// compiler-inserted padding bytes, which would be undefined behavior to
 /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
@@ -66,11 +71,12 @@ pub struct Scene {
     // KOAN: what was painted inside each layer group, as a scene of its own
     // that a renderer draws into a texture for its shader to compose (#1859).
     pub layer_groups: Vec<Scene>,
+    // KOAN: where each group's content lies, when its texture is the size
+    // of the shader composing it and its content is moved to its origin;
+    // `None` for one drawn the window's size, as a group holding paths is
+    // (their intermediate texture is the window's) (#1878).
+    pub layer_group_frames: Vec<Option<Bounds<ScaledPixels>>>,
     group_stack: Vec<usize>,
-    /// Shaders painted inside each open group, held to be drawn after it at
-    /// their own place: a group is drawn once per frame, and a shader in it
-    /// would stand still in its texture.
-    group_shaders: Vec<Vec<Primitive>>,
 }
 
 /// A scene split where its shaders are drawn (#1641).
@@ -103,8 +109,8 @@ impl Scene {
         self.surfaces.clear();
         self.shaders.clear(); // KOAN: shader quads (#1641).
         self.layer_groups.clear(); // KOAN: #1859.
+        self.layer_group_frames.clear(); // KOAN: #1878.
         self.group_stack.clear();
-        self.group_shaders.clear();
         self.color_slots.clear(); // KOAN: #1859.
     }
 
@@ -146,15 +152,104 @@ impl Scene {
     // refresh (#1641).
     pub fn has_live_shaders(&self) -> bool {
         self.shaders.iter().any(|shader| shader.uniforms.is_live())
+            // KOAN: and in a layer group (#1878).
+            || self.layer_groups.iter().any(Scene::has_live_shaders)
+    }
+
+    // KOAN: whether group `group`, held from an earlier present, is drawn
+    // again at this one, as `compose_frame` decides for its layers (#1878):
+    // while a shader in it is live or a colour slot it draws with moves, once
+    // more after they stop so the last value lands, when the slot table was
+    // written since (a held write, as under Reduce Motion), and when a group
+    // nested in it was drawn again. `was_moving` is the group's from the last
+    // present, updated here; `redrawn` holds the groups drawn this present.
+    pub fn layer_group_stale(
+        &self,
+        group: usize,
+        at: std::time::Instant,
+        slots_written: bool,
+        was_moving: &mut bool,
+        redrawn: &[bool],
+    ) -> bool {
+        let Some(group) = self.layer_groups.get(group) else {
+            return false;
+        };
+        let moving = group.shaders.iter().any(|shader| shader.uniforms.is_live())
+            || group.color_slots_moving(at);
+        let landing = std::mem::replace(was_moving, moving);
+        moving
+            || landing
+            || (slots_written && !group.color_slots.is_empty())
+            || group.shaders.iter().any(|shader| {
+                shader
+                    .group
+                    .is_some_and(|nested| redrawn.get(nested).copied().unwrap_or(false))
+            })
+    }
+
+    // KOAN: every primitive moved by `(dx, dy)`, its clip with it: a layer
+    // group's content to its texture's origin (#1878).
+    pub fn offset(&mut self, dx: ScaledPixels, dy: ScaledPixels) {
+        let by = |b: &mut Bounds<ScaledPixels>| {
+            b.origin.x += dx;
+            b.origin.y += dy;
+        };
+        for quad in &mut self.quads {
+            by(&mut quad.bounds);
+            by(&mut quad.content_mask.bounds);
+        }
+        for shadow in &mut self.shadows {
+            by(&mut shadow.bounds);
+            by(&mut shadow.content_mask.bounds);
+            by(&mut shadow.element_bounds);
+        }
+        for underline in &mut self.underlines {
+            by(&mut underline.bounds);
+            by(&mut underline.content_mask.bounds);
+        }
+        for sprite in &mut self.monochrome_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for sprite in &mut self.subpixel_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for sprite in &mut self.polychrome_sprites {
+            by(&mut sprite.bounds);
+            by(&mut sprite.content_mask.bounds);
+        }
+        for surface in &mut self.surfaces {
+            by(&mut surface.bounds);
+            by(&mut surface.content_mask.bounds);
+        }
+        for shader in &mut self.shaders {
+            by(&mut shader.bounds);
+            by(&mut shader.content_mask.bounds);
+        }
+        for path in &mut self.paths {
+            by(&mut path.bounds);
+            by(&mut path.content_mask.bounds);
+            for vertex in &mut path.vertices {
+                vertex.xy_position.x += dx;
+                vertex.xy_position.y += dy;
+                by(&mut vertex.content_mask.bounds);
+            }
+        }
     }
 
     // KOAN: whether this refresh should present again: a live shader moved
     // or moves with time (#1641). Asks every shader, so each one's change is
     // taken once.
     pub fn take_shader_present(&self) -> bool {
+        let groups = self
+            .layer_groups
+            .iter()
+            .fold(false, |any, group| group.take_shader_present() | any);
         self.shaders
             .iter()
             .fold(false, |any, shader| shader.uniforms.take_present() | any)
+            | groups
     }
 
     pub fn len(&self) -> usize {
@@ -176,15 +271,11 @@ impl Scene {
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         // KOAN: painted inside a layer group: into its scene, recorded here
-        // so a cached view replays it (#1859).
+        // so a cached view replays it (#1859). Shaders too: a group holding
+        // one is drawn again at each present, so it moves and is clipped
+        // with the group (#1878).
         if let Some(&group) = self.group_stack.last() {
-            if matches!(primitive, Primitive::Shader(_)) {
-                if let Some(held) = self.group_shaders.last_mut() {
-                    held.push(primitive.clone());
-                }
-            } else {
-                self.layer_groups[group].insert_primitive(primitive.clone());
-            }
+            self.layer_groups[group].insert_primitive(primitive.clone());
             self.paint_operations
                 .push(PaintOperation::Primitive(primitive));
             return;
@@ -251,8 +342,8 @@ impl Scene {
     pub fn push_group(&mut self) -> usize {
         let group = self.layer_groups.len();
         self.layer_groups.push(Scene::default());
+        self.layer_group_frames.push(None);
         self.group_stack.push(group);
-        self.group_shaders.push(Vec::new());
         self.paint_operations.push(PaintOperation::StartGroup);
         group
     }
@@ -263,18 +354,31 @@ impl Scene {
         let Some(group) = self.group_stack.pop() else {
             return;
         };
-        let held = self.group_shaders.pop().unwrap_or_default();
         shader.group = Some(group);
         self.paint_operations
             .push(PaintOperation::EndGroup(shader.clone()));
-        // Into the enclosing group's scene, or this one, then the shaders
-        // painted inside it over it. Their operations are already recorded
-        // (the EndGroup's and each where it was painted): not twice.
+        // The texture is the visible part of the group's bounds, its content
+        // at its origin, unless it holds paths or would pass the largest
+        // texture a device is sure to make (#1878). Content outside the mask
+        // is clipped by its own masks already.
+        let frame = shader.bounds.intersect(&shader.content_mask.bounds);
+        let local = self.layer_groups[group].paths.is_empty()
+            && frame.size.width.0 <= MAX_GROUP_EXTENT
+            && frame.size.height.0 <= MAX_GROUP_EXTENT;
+        let origin = if local {
+            frame.origin
+        } else {
+            Point::default()
+        };
+        shader.group_inset = point(
+            ScaledPixels(shader.bounds.origin.x.0 - origin.x.0),
+            ScaledPixels(shader.bounds.origin.y.0 - origin.y.0),
+        );
+        self.layer_group_frames[group] = local.then_some(frame);
+        // Into the enclosing group's scene, or this one. Its operation is
+        // already recorded, as the EndGroup's: not twice.
         let ops = self.paint_operations.len();
         self.insert_primitive(shader);
-        for primitive in held {
-            self.insert_primitive(primitive);
-        }
         self.paint_operations.truncate(ops);
     }
 
@@ -317,10 +421,22 @@ impl Scene {
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.color_slots = self.collect_color_slots(); // KOAN: #1859.
-        // KOAN: each group drawn whole into its texture (#1859).
-        for group in &mut self.layer_groups {
+        // KOAN: each group drawn whole into its texture (#1859), moved to
+        // its texture's origin where it is the group's size (#1878); the
+        // colour slots its content draws with are this scene's too, so a
+        // fade inside a group presents.
+        for (group, frame) in self.layer_groups.iter_mut().zip(&self.layer_group_frames) {
+            if let Some(frame) = frame {
+                group.offset(
+                    ScaledPixels(-frame.origin.x.0),
+                    ScaledPixels(-frame.origin.y.0),
+                );
+            }
             group.finish();
             group.shader_layers = None;
+        }
+        for group in &self.layer_groups {
+            self.color_slots.extend(&group.color_slots);
         }
         self.shader_layers = self.plan_shader_layers().map(Box::new);
     }
@@ -414,7 +530,8 @@ impl Scene {
             }
             (after, before)
         };
-        let placed: Vec<(usize, usize)> = drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
+        let placed: Vec<(usize, usize)> =
+            drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
         // A primitive also follows every earlier one it overlaps, so a menu's
         // text stays over the menu's ground wherever each is placed. Only
         // what sits above the lowest layer anything was placed in can raise
@@ -468,7 +585,11 @@ impl Scene {
             polychrome_sprites => PolychromeSprite,
             surfaces => Surface
         );
-        for (path, layer) in self.paths.iter().zip(&layers_by_kind[PrimitiveKind::Path as usize]) {
+        for (path, layer) in self
+            .paths
+            .iter()
+            .zip(&layers_by_kind[PrimitiveKind::Path as usize])
+        {
             let paths = &mut layers[*layer].paths;
             let mut path = path.clone();
             path.id = PathId(paths.len());
@@ -1329,3 +1450,4 @@ impl PathVertex<Pixels> {
         }
     }
 }
+

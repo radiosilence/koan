@@ -62,6 +62,7 @@ pub struct TileArt {
     pick: Option<bool>,
     sheen: Option<(ElementId, bool)>,
     cursor: bool,
+    spot: Option<super::CursorSpot>,
 }
 
 impl TileArt {
@@ -92,6 +93,7 @@ impl TileArt {
             pick: None,
             sheen: None,
             cursor: false,
+            spot: None,
         }
     }
 
@@ -159,6 +161,14 @@ impl TileArt {
     /// the focus ring, inside the sleeve, once the keyboard was used last.
     pub fn cursor(mut self, cursor: bool) -> Self {
         self.cursor = cursor;
+        self
+    }
+
+    /// Where the cursor's ring tells its page it was laid out, while this
+    /// is under the cursor: what the page's scroll area follows and the menu
+    /// key opens under.
+    pub fn spot(mut self, spot: &super::CursorSpot) -> Self {
+        self.spot = Some(spot.clone());
         self
     }
 
@@ -342,7 +352,7 @@ impl RenderOnce for TileArt {
             );
         }
         if self.cursor && window.last_input_was_keyboard() {
-            art = art.child(super::cursor_ring(&look));
+            art = art.child(super::cursor_ring(&look, self.spot.as_ref()));
         }
         art
     }
@@ -401,6 +411,11 @@ mod tests {
         let scale = Scale::of(100);
         let narrow = TileGrid::for_width(px(300.0), &scale);
         assert_eq!(narrow.columns, 1);
+        // One tile stands on the margin too, not centred.
+        assert_eq!(
+            narrow.inset,
+            crate::components::RowMetrics::page_margin_on(&scale)
+        );
         let a = TileGrid::for_width(px(1200.0), &scale);
         let b = TileGrid::for_width(px(1240.0), &scale);
         assert_eq!(

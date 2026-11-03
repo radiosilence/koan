@@ -1,0 +1,1 @@
+- **History and muted bars.** Clearing the history under a filter says how many plays it forgets in all, not only those the filter shows; two plays of one track no longer share a row's clicks; and muted, the playing bars rest instead of redrawing flat.

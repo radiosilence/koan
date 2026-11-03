@@ -52,6 +52,9 @@ pub struct KoanTheme {
     /// The wash and the accent take their colour from the record playing;
     /// off, there is no wash and the accent is mint.
     pub record_colours: bool,
+    /// A wash painted from something other than the record (the rainbow's
+    /// sheen), which runs whatever "colours from the record" says.
+    pub painted_wash: bool,
     /// "Theme tint", in percent: how far the wash is held to its contrast
     /// limit.
     pub wash_tint: u32,
@@ -95,6 +98,7 @@ impl Default for KoanTheme {
             text_size: 100,
             icons: true,
             record_colours: true,
+            painted_wash: false,
             wash_tint: 100,
             wash_drift: 100,
             wash_turn: 3,
@@ -129,8 +133,12 @@ pub fn init(cx: &mut App) {
     read_system_settings(cx);
     #[cfg(target_os = "macos")]
     watch_system_settings(cx);
+    // The portal answers over D-Bus from threads of its own, which the
+    // deterministic test scheduler refuses as activity it cannot order.
     #[cfg(target_os = "linux")]
-    watch_desktop_settings(cx);
+    if !cx.is_test() {
+        watch_desktop_settings(cx);
+    }
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 
@@ -551,12 +559,25 @@ impl KoanTheme {
         }
     }
 
+    /// A wash is painted, or no longer, from something other than the
+    /// record: the rainbow's sheen runs with "colours from the record" off.
+    pub fn set_painted_wash(on: bool, cx: &mut App) {
+        if cx.global::<KoanTheme>().painted_wash == on {
+            return;
+        }
+        let before = Self::washes_window(cx);
+        cx.global_mut::<KoanTheme>().painted_wash = on;
+        if Self::washes_window(cx) != before {
+            cx.refresh_windows();
+        }
+    }
+
     /// Whether the wash runs under the whole window: "wash the whole
-    /// window" on, and a wash to run, which "colours from the record" off
-    /// takes away.
+    /// window" on, and a wash to run: the record's, which "colours from the
+    /// record" off takes away, or one painted from elsewhere.
     pub fn washes_window(cx: &App) -> bool {
         let theme = cx.global::<KoanTheme>();
-        theme.wash_window && theme.record_colours && !theme.opaque
+        theme.wash_window && (theme.record_colours || theme.painted_wash) && !theme.opaque
     }
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {

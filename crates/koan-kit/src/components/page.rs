@@ -111,6 +111,7 @@ pub struct SectionHeading {
     trailing: Vec<AnyElement>,
     count: Option<SharedString>,
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
+    reveal: Option<super::choice::Run>,
 }
 
 impl SectionHeading {
@@ -120,7 +121,16 @@ impl SectionHeading {
             trailing: Vec::new(),
             count: None,
             open: None,
+            reveal: None,
         }
+    }
+
+    /// Run when a screen reader moves to the heading in a list that draws
+    /// only what is on screen, as `TableRow::on_reveal` is for a row: the
+    /// list scrolls the reader's next stop on screen and is drawn again.
+    pub fn on_reveal(mut self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.reveal = Some(std::rc::Rc::new(reveal));
+        self
     }
 
     /// How many the section holds in all, in `muted` beside the title: a
@@ -194,11 +204,22 @@ impl RenderOnce for SectionHeading {
                 .into_any_element(),
             None => title.into_any_element(),
         };
-        super::accessible(
+        let list_view = window.current_view();
+        let heading = super::accessible(
             div().id(ElementId::Name(format!("section-heading-{spoken}").into())),
             gpui_kit::Role::Heading,
             Some(spoken),
-        )
+        );
+        match self.reveal {
+            Some(reveal) => heading.on_a11y_action(
+                gpui_kit::AccessibleAction::ScrollIntoView,
+                move |_, window, cx| {
+                    reveal(window, cx);
+                    cx.notify(list_view);
+                },
+            ),
+            None => heading,
+        }
         .aria_level(2)
         .w_full()
         .h(Self::height(&look))
@@ -312,6 +333,7 @@ pub struct PlayButton {
     id: ElementId,
     label: SharedString,
     loading: bool,
+    disabled: bool,
     on_click: Option<super::Handler<ClickEvent>>,
 }
 
@@ -322,12 +344,20 @@ impl PlayButton {
             id: id.into(),
             label: label.into(),
             loading: false,
+            disabled: false,
             on_click: None,
         }
     }
 
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+
+    /// Nothing to play: dimmed, as `ShuffleButton::disabled`, and not
+    /// clickable.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -346,6 +376,8 @@ impl RenderOnce for PlayButton {
         let accent = look.color(crate::theme::Tone::Accent);
         let hover = look.palette.hover.hsla();
         let loading = self.loading;
+        // Either way there is nothing to press.
+        let idle = loading || self.disabled;
         super::accessible(
             div().id(self.id),
             gpui_kit::Role::Button,
@@ -358,10 +390,9 @@ impl RenderOnce for PlayButton {
         .justify_center()
         .border(look.hairline)
         .border_color(accent)
-        .aria_disabled(loading)
-        .when(!loading, |d| {
-            d.cursor_pointer().active(move |s| s.bg(hover))
-        })
+        .aria_disabled(idle)
+        .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+        .when(!idle, |d| d.cursor_pointer().active(move |s| s.bg(hover)))
         .child(if loading {
             super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
         } else {
@@ -370,7 +401,7 @@ impl RenderOnce for PlayButton {
                 .color(look.text_color(crate::theme::Tone::Accent))
                 .into_any_element()
         })
-        .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
+        .when_some(self.on_click.filter(|_| !idle), |d, on_click| {
             super::answers_click(d, on_click.clone())
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })

@@ -93,17 +93,17 @@ fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Div {
         .gap(look.space(Space::S))
         .min_w(look.spaced(210.0))
         .child(sheet::note(label(group.title()), Tone::Muted, look))
-        .children(lines.into_iter().map(|line| {
+        .children(lines.into_iter().enumerate().map(|(row, line)| {
             div()
                 .flex()
                 .items_center()
                 .gap(look.space(Space::S))
-                .child(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::Xs))
-                        .children(line.keys.into_iter().map(Badge::new)),
-                )
+                .child(div().flex().gap(look.space(Space::Xs)).children(
+                    line.keys.into_iter().enumerate().map(|(k, key)| {
+                        Badge::new(key)
+                            .key((SharedString::from(format!("{}-{row}", group.title())), k))
+                    }),
+                ))
                 .child(
                     div()
                         .text_role(TypeRole::Meta, look)
@@ -140,7 +140,11 @@ impl Render for ShortcutsSheet {
             .on_click(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
 
         // Over the window as every sheet is: centred, the page dimmed.
-        let panel = sheet::panel(&look)
+        // As wide as its columns at the text size, so a larger size keeps
+        // them side by side; inside the window, scrolling if it must.
+        let panel = sheet::panel("keyboard shortcuts", &look)
+            .w(look.spaced(560.0))
+            .max_w(relative(0.95))
             .id("shortcuts-sheet")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
