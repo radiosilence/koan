@@ -27,7 +27,8 @@ gui-smoke out="target/gui-smoke" secs="30":
     #!/usr/bin/env bash
     set -euo pipefail
     lib="target/gui-walk-library"
-    [ -d "$lib/config" ] || just gui-library "$lib" 300 10
+    # A library from before the generator marked its own is made again.
+    [ -f "$lib/music/.koan-generated" ] || { rm -rf "$lib"; just gui-library "$lib" 300 10; }
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
     # Silent, and blind to renderers and the network's devices.
     printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
