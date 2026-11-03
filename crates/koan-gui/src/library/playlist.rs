@@ -336,6 +336,10 @@ impl PlaylistPage {
     }
 
     fn play_from(&self, entry: Option<i64>, shuffled: bool, cx: &App) {
+        // Nothing to play: the engine would clear the queue for it.
+        if self.items.is_empty() {
+            return;
+        }
         let id = self.id;
         command(cx, "play playlist", move |e| {
             e.play_playlist(id, entry, shuffled)
@@ -368,7 +372,13 @@ impl PlaylistPage {
             return;
         }
         let id = self.id;
+        // Offline, entries with no file here are not listed: a place among
+        // the rows shown is not one among the playlist's entries, and a
+        // reorder of the rows shown would send the rest to the end.
+        let total = self.playlist.as_ref().map_or(0, |p| p.track_count as usize);
+        let partial = total > self.items.len();
         match dragged.origin.as_ref().filter(|o| o.playlist == id) {
+            Some(_) if partial => {}
             Some(origin) => {
                 let moving: Vec<String> = origin.entries.iter().map(i64::to_string).collect();
                 let Some((target, after)) =
@@ -385,8 +395,17 @@ impl PlaylistPage {
                 let ids: Vec<i64> = moved.iter().filter_map(|id| id.parse().ok()).collect();
                 command(cx, "reorder playlist", move |e| e.reorder_playlist(id, ids));
             }
+            // A playlist dropped on its own page would hold itself twice.
+            None if dragged
+                .sets
+                .iter()
+                .any(|s| matches!(s, koan_ffi::TrackSet::Playlist { id: p } if *p == id)) => {}
             None => {
-                let at = rows::position(&self.rows, dest, self.items.len()) as u32;
+                let at = if partial {
+                    total
+                } else {
+                    rows::position(&self.rows, dest, self.items.len())
+                } as u32;
                 let sets = dragged.sets.to_vec();
                 command(cx, "add to playlist", move |e| {
                     e.insert_into_playlist(id, sets, at)
@@ -1202,6 +1221,14 @@ impl Render for PlaylistPage {
                 // A drag that leaves the list takes its insertion line with it.
                 .on_drag_move::<PlayableDrag>(cx.listener(
                     |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
+                            this.drop_at = None;
+                            cx.notify();
+                        }
+                    },
+                ))
+                .on_drag_move::<PlaylistDrag>(cx.listener(
+                    |this, e: &DragMoveEvent<PlaylistDrag>, _, cx| {
                         if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
                             this.drop_at = None;
                             cx.notify();
