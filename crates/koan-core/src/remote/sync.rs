@@ -245,10 +245,8 @@ pub struct SyncProgress {
 /// Albums and songs per list request. 500 is the most `getAlbumList2` allows.
 const PAGE_SIZE: u32 = 500;
 
-/// Song pages in flight at once during a sync. The walk is bound by
-/// round trips, not bandwidth; four hides most of a mobile link's latency
-/// without asking much of the server.
-const FETCH_LANES: usize = 4;
+/// Song pages in flight at once during a sync: the lanes one server gets.
+const FETCH_LANES: usize = super::lanes::LANES;
 
 /// Attempts at one song page before it counts as failed.
 const PAGE_ATTEMPTS: u32 = 3;
@@ -346,7 +344,7 @@ pub fn sync_library(
     });
 
     // Albums this library holds that the listing left out are asked about,
-    // `CONFIRMING` at a time; see `confirm_missing_albums`. One the server still answers for
+    // a few at a time; see `confirm_missing_albums`. One the server still answers for
     // means the album listing came up short — an album deleted mid-walk shifts
     // the next page — and the songs of an album nobody listed were never
     // fetched, so nothing can be concluded about its tracks this time.
@@ -441,42 +439,39 @@ fn confirm_missing_albums(
     if missing.is_empty() {
         return;
     }
-    // Each answer is a round trip, so several are asked at once: a server
-    // that deleted a few hundred records answers in a few seconds rather
-    // than a few hundred round trips.
-    let lanes = CONFIRMING.min(missing.len());
-    let next = parking_lot::Mutex::new(missing.into_iter());
-    let kept = parking_lot::Mutex::new(Vec::new());
-    std::thread::scope(|scope| {
-        for _ in 0..lanes {
-            scope.spawn(|| {
-                loop {
-                    if cancel.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let Some(id) = next.lock().next() else { return };
-                    match client.get_album(&id) {
-                        Err(SubsonicError::Api { code: 70, .. }) => {}
-                        Ok(_) => {
-                            log::info!("album {id} was missing from the listing but still exists");
-                            kept.lock().push(id);
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "could not confirm album {id} was deleted ({e}); keeping it"
-                            );
-                            kept.lock().push(id);
-                        }
-                    }
-                }
-            });
-        }
-    });
-    live.extend(kept.into_inner());
+    // Each answer is a round trip, so several are asked at once, in the
+    // lanes one server gets: a server that deleted a few hundred records
+    // answers in a few seconds rather than a few hundred round trips.
+    let kept = still_held(&missing, cancel, |id| client.get_album(id).map(|_| ()));
+    live.extend(kept);
 }
 
-/// How many albums the listing left out are asked about at once.
-const CONFIRMING: usize = 8;
+/// Which of `missing` the server still answers for, asking about each in
+/// lanes. Only "not found" confirms a deletion: any other failure keeps the
+/// album, and so does one left unasked because the sync was cancelled.
+fn still_held(
+    missing: &[String],
+    cancel: &AtomicBool,
+    get_album: impl Fn(&str) -> Result<(), SubsonicError> + Sync,
+) -> Vec<String> {
+    let answers = super::lanes::in_lanes(missing, cancel, |id| get_album(id));
+    missing
+        .iter()
+        .zip(answers)
+        .filter_map(|(id, answer)| match answer {
+            Some(Err(SubsonicError::Api { code: 70, .. })) => None,
+            Some(Ok(())) => {
+                log::info!("album {id} was missing from the listing but still exists");
+                Some(id.clone())
+            }
+            Some(Err(e)) => {
+                log::warn!("could not confirm album {id} was deleted ({e}); keeping it");
+                Some(id.clone())
+            }
+            None => Some(id.clone()),
+        })
+        .collect()
+}
 
 /// Every album on the server, once each.
 fn list_albums(
@@ -886,6 +881,56 @@ fn positive(value: Option<i32>) -> Option<i32> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// More albums than lanes: each is asked once, "not found" confirms a
+    /// deletion, and every other answer keeps the album.
+    #[test]
+    fn missing_albums_are_confirmed_in_lanes_and_kept_unless_not_found() {
+        let missing: Vec<String> = (0..12).map(|i| format!("al-{i}")).collect();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let kept = still_held(&missing, &AtomicBool::new(false), |id| {
+            asked.lock().unwrap().push(id.to_owned());
+            let n: usize = id[3..].parse().unwrap();
+            match n % 3 {
+                0 => Err(SubsonicError::Api {
+                    code: 70,
+                    message: "not found".into(),
+                }),
+                1 => Ok(()),
+                _ => Err(SubsonicError::BadResponse),
+            }
+        });
+        let mut asked = asked.into_inner().unwrap();
+        asked.sort();
+        let mut all = missing.clone();
+        all.sort();
+        assert_eq!(asked, all, "each asked once");
+        let expected: Vec<String> = (0..12)
+            .filter(|n| n % 3 != 0)
+            .map(|n| format!("al-{n}"))
+            .collect();
+        assert_eq!(kept, expected, "in the order held");
+    }
+
+    /// A cancel mid-flight asks nothing more, and nothing unasked counts as
+    /// deleted.
+    #[test]
+    fn a_cancelled_confirmation_keeps_what_it_did_not_ask() {
+        let missing: Vec<String> = (0..40).map(|i| format!("al-{i}")).collect();
+        let cancel = AtomicBool::new(false);
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let kept = still_held(&missing, &cancel, |_| {
+            asked.fetch_add(1, Ordering::SeqCst);
+            cancel.store(true, Ordering::SeqCst);
+            Err(SubsonicError::Api {
+                code: 70,
+                message: "not found".into(),
+            })
+        });
+        let asked = asked.into_inner();
+        assert!(asked < missing.len(), "asked all {asked} after the cancel");
+        assert_eq!(kept.len(), missing.len() - asked, "the unasked are kept");
+    }
 
     // --- Sync → DB integration tests ---
 
