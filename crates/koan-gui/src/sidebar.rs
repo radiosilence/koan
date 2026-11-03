@@ -57,6 +57,9 @@ pub struct Sidebar {
     /// Reorders made here: a read of the playlists that one overtook is
     /// read again rather than putting the old order back.
     reorders: u64,
+    /// Reorders written and not yet answered: a read until then may predate
+    /// the write, and the answer reads again.
+    writing: u32,
     /// The search field at the sidebar's head, once the library is open,
     /// and whether it holds a query, which lists the results page.
     search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
@@ -87,6 +90,7 @@ impl Sidebar {
             importing: 0,
             drop_playlist: None,
             reorders: 0,
+            writing: 0,
             search: None,
             searching: false,
             focus: cx.focus_handle().tab_stop(true),
@@ -183,6 +187,9 @@ impl Sidebar {
                     }))
                     .await;
                     this.update(cx, |this, cx| {
+                        if this.writing > 0 {
+                            return;
+                        }
                         if this.reorders != reorders {
                             this.reload(cx);
                             return;
@@ -245,7 +252,21 @@ impl Sidebar {
         let at = if from < at { at - 1 } else { at }.min(self.playlists.len());
         self.playlists.insert(at, moved);
         let ids: Vec<i64> = self.playlists.iter().map(|p| p.id).collect();
-        command(cx, "reorder playlists", move |e| e.reorder_playlists(ids));
+        self.writing += 1;
+        let write = engine(cx).reorder_playlists(ids);
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = write.await {
+                log::warn!("reorder playlists: {e}");
+            }
+            this.update(cx, |this, cx| {
+                this.writing -= 1;
+                if this.writing == 0 {
+                    this.reload(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 }

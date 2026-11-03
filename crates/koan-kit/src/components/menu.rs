@@ -709,12 +709,16 @@ impl Render for Menu {
                             .on_hover(hovered)
                             .child(row)
                             .children(open.clone().map(|child| {
-                                // Beside the row, its first row level with it.
+                                // Beside the row, its first row level with it,
+                                // moved back inside the window where it would
+                                // run past an edge.
                                 div()
                                     .absolute()
                                     .left_full()
                                     .top(-look.space(Space::Xs))
-                                    .child(child)
+                                    .child(
+                                        anchored().snap_to_window_with_margin(px(8.)).child(child),
+                                    )
                             })),
                     )
                 }
