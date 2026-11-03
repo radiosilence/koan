@@ -458,7 +458,13 @@ mod tests {
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
         let own = |view: &Entity<Two>, cx: &mut VisualTestContext| {
-            view.update(cx, |two, cx| two.answers[0].0.read(cx).own.is_some())
+            view.update(cx, |two, cx| {
+                two.answers[0]
+                    .cell
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|s| s.read(cx).own.is_some())
+            })
         };
         view.update(cx, |two, cx| two.answers[0].start(Answer::Burst, red(), cx));
         assert!(own(&view, cx), "the handler's answer is noted");

@@ -100,7 +100,7 @@ impl RenderOnce for TransportControl {
         let answers = Answerer::of(&self.id, window, cx);
         // A ring leaves a glyph; drawn as a word, the control is answered
         // by a line under it, never a ring through its letters.
-        let ring = if look.icons {
+        let ringing = if look.icons {
             Answer::Ring
         } else {
             Answer::Sweep
@@ -108,7 +108,7 @@ impl RenderOnce for TransportControl {
         // Shuffle or repeat turned on by a shortcut or another device rings
         // as a click does.
         match self.on {
-            Some(true) => answers.follow(1, ring, look.accent.hsla(), window, cx),
+            Some(true) => answers.follow(1, ringing, look.accent.hsla(), window, cx),
             Some(false) => answers.note(0, cx),
             None => {}
         }
@@ -118,7 +118,7 @@ impl RenderOnce for TransportControl {
         let tip = self.help.clone();
         let on = self.on;
         let answer = match self.answer {
-            Answer::Ring => ring,
+            Answer::Ring => ringing,
             answer => answer,
         };
         super::track(
