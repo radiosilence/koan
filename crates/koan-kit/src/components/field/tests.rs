@@ -533,14 +533,17 @@ fn a_masked_field_hands_out_bullets(cx: &mut TestAppContext) {
     let (host, cx) = host(cx, 1);
     let f = field(&host, cx);
     f.update(cx, |f, _| f.masked = true);
-    cx.simulate_input("pässword");
-    let told = cx.update(|window, cx| {
+    cx.simulate_input("pä😀d");
+    let (told, actual) = cx.update(|window, cx| {
         f.update(cx, |f, cx| {
             let mut actual = None;
-            f.text_for_range(0..8, &mut actual, window, cx)
+            let told = f.text_for_range(0..5, &mut actual, window, cx);
+            (told, actual)
         })
     });
-    assert_eq!(told.as_deref(), Some("••••••••"));
+    // As long as the range it answers, in UTF-16 units.
+    assert_eq!(actual, Some(0..5));
+    assert_eq!(told.as_deref(), Some("•••••"));
 }
 
 /// A click while an input method composes ends the composition where it

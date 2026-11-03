@@ -1030,7 +1030,8 @@ impl EntityInputHandler for FieldState {
         // A password's characters stay here: the platform's text services
         // are told bullets.
         Some(if self.masked {
-            "•".repeat(self.text[range].chars().count())
+            // One per UTF-16 unit, as the range is counted.
+            "•".repeat(self.text[range].encode_utf16().count())
         } else {
             self.text[range].to_string()
         })
