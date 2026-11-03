@@ -198,7 +198,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 struct State {
     animated: Animated,
     live: Option<Answer>,
-    started: Option<Instant>,
+    /// When the control's own handler last started an answer: the change it
+    /// answered is not answered again as the control draws it, once.
+    own: Option<Instant>,
     /// The mark `follow` was last given.
     seen: Option<u64>,
     _end: Option<Task<()>>,
@@ -219,20 +221,24 @@ impl Answerer {
     /// Starts `answer` in `color`, from the control's own handler. Nothing
     /// happens under Reduce Motion or where the renderer draws no shaders.
     pub fn start(&self, answer: Answer, color: Hsla, cx: &mut App) {
+        self.0.update(cx, |s, _| s.own = Some(Instant::now()));
+        self.run(answer, color, cx);
+    }
+
+    /// Draws `answer` in `color`.
+    fn run(&self, answer: Answer, color: Hsla, cx: &mut App) {
         if !SHADED || !KoanTheme::motion_allowed(cx) {
             return;
         }
         self.0.update(cx, |s, cx| {
             s.animated.set_all(0, &[answer.code(), answer.heading()]);
             s.animated.set_color(2, color);
-            let now = Instant::now();
             let at = Animated::now();
             for (k, ease) in [(0, Ease::Linear), (1, answer.ease())] {
                 s.animated
                     .segment(k, 0.0, 1.0, at, answer.duration(), ease, Repeat::Once);
             }
             s.live = Some(answer);
-            s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
                 // The quad leaves the scene once the answer has run.
@@ -298,10 +304,16 @@ impl Answerer {
         if seen == Some(mark) {
             return;
         }
-        let answered = s.started.is_some_and(|at| at.elapsed() < answer.duration());
-        self.0.update(cx, |s, _| s.seen = Some(mark));
+        // The change the control's own handler just answered, once; any
+        // other change, however soon after, is answered.
+        let answered = self.0.update(cx, |s, _| {
+            s.seen = Some(mark);
+            s.own
+                .take()
+                .is_some_and(|at| at.elapsed() < answer.duration())
+        });
         if (first || seen.is_some()) && !answered {
-            self.start(answer, color, cx);
+            self.run(answer, color, cx);
             window.request_animation_frame();
         }
     }
@@ -382,6 +394,40 @@ mod tests {
             two.answers.iter().map(|a| a.seen(cx)).collect::<Vec<_>>()
         });
         assert_eq!(seen, [Some(1), Some(0)]);
+    }
+
+    /// A change the control's own handler answered is not answered again as
+    /// it draws, once; the next change is answered.
+    #[gpui_kit::test]
+    fn a_handler_s_answer_holds_off_one_change(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| Two {
+            marks: [0, 0],
+            answers: Vec::new(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let own = |view: &Entity<Two>, cx: &mut VisualTestContext| {
+            view.update(cx, |two, cx| two.answers[0].0.read(cx).own.is_some())
+        };
+        view.update(cx, |two, cx| two.answers[0].start(Answer::Burst, red(), cx));
+        assert!(own(&view, cx), "the handler's answer is noted");
+        view.update(cx, |two, cx| {
+            two.marks[0] = 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(!own(&view, cx), "the change it answered took the note");
+        view.update(cx, |two, cx| {
+            two.marks[0] = 2;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let seen = view.update(cx, |two, cx| two.answers[0].seen(cx));
+        assert_eq!(seen, Some(2));
     }
 
     #[test]

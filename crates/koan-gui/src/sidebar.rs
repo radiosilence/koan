@@ -394,9 +394,15 @@ impl Render for Sidebar {
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
-        let arrivals = cx
-            .default_global::<crate::library::actions::Arrivals>()
-            .clone();
+        // Read, never made here: `default_global` tells the global's
+        // observers it changed, and this view is one of them, so making it
+        // in a render would ask for the next render, every frame.
+        let (queue_arrivals, playlist_arrivals): (u64, Vec<u64>) = cx
+            .try_global::<crate::library::actions::Arrivals>()
+            .map_or_else(
+                || (0, vec![0; self.playlists.len()]),
+                |a| (a.queue, self.playlists.iter().map(|p| a.to(p.id)).collect()),
+            );
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
@@ -409,7 +415,7 @@ impl Render for Sidebar {
             // queue's row are queued.
             .child(
                 row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
-                    .arrivals(arrivals.queue)
+                    .arrivals(queue_arrivals)
                     .drop_highlight::<ExternalPaths>(&p.look)
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .drop_highlight::<PlaylistDrag>(&p.look)
@@ -502,7 +508,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
-                        .arrivals(arrivals.to(playlist.id))
+                        .arrivals(playlist_arrivals[index])
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))

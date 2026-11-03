@@ -76,7 +76,9 @@ impl TileArt {
     /// What the play mark dims the sleeve with.
     const DIM: f32 = 0.35;
 
-    pub fn new(side: Pixels, sleeve: TileSleeve) -> Self {
+    /// `id` names which record's art this is, for its heart's answer: tiles
+    /// drawn side by side in one view each need their own.
+    pub fn new(id: impl Into<ElementId>, side: Pixels, sleeve: TileSleeve) -> Self {
         Self {
             side,
             sleeve,
@@ -86,7 +88,7 @@ impl TileArt {
             playing: None,
             on_device: None,
             heart: None,
-            id: ElementId::Name("tile-art".into()),
+            id: id.into(),
             pick: None,
             sheen: None,
             cursor: false,
