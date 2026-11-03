@@ -11,7 +11,11 @@ use crate::theme::Icon;
 /// What a window's content sits in: Tab and Shift-Tab kept inside an open
 /// sheet or menu, and copy of selected text. gpui-kit's root until koan-kit
 /// has its own (#2021); every window and offscreen render goes through here.
-pub fn host(view: impl Into<AnyView>, window: &mut Window, cx: &mut App) -> Entity<impl Render> {
+pub fn host(
+    view: impl Into<AnyView>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<gpui_kit::base::Root> {
     cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
 }
 
