@@ -366,7 +366,11 @@ impl RenderOnce for NavNote {
             }
             answers.layer(window, cx)
         });
+        // One line, cut short in a narrow sidebar: the whole of it, an
+        // error's reason included, under the pointer.
+        let whole = self.text.clone();
         super::announced(div().id(id), self.text.clone(), self.tone)
+            .tooltip(move |window, cx| super::Tooltip::view(whole.clone(), window, cx))
             .relative()
             .w_full()
             .min_w_0()
