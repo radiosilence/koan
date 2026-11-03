@@ -23,7 +23,7 @@
 //! waits while the app is in the background, on a metered network, or while
 //! the device saves power (`set_constrained`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
