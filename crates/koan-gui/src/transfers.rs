@@ -32,7 +32,7 @@ pub struct Transfers {
 struct Entry {
     /// One per colour a ring is drawn in, since a ring writes its colour
     /// into its glide.
-    rings: Vec<(u32, Glide)>,
+    rings: Vec<(Hsla, Glide)>,
     /// The seek bar's, styled by the slider.
     reach: Glide,
     /// The downloads page's bar, styled by the bar.
@@ -96,13 +96,13 @@ pub fn install(cx: &mut App) {
 /// A ring's glide for `track`'s transfer in the colour `rgba`, made now if
 /// the engine has not reported it yet, so the row that shows it is fed from
 /// its first report.
-fn ring(track: i64, rgba: [f32; 4], cx: &mut App) -> Glide {
+fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
     let Some(handle) = cx.try_global::<TransfersHandle>().cloned() else {
         let unknown = Glide::new();
         unknown.set_unknown();
         return unknown;
     };
-    let key = u32::from_be_bytes(rgba.map(|c| (c * 255.0) as u8));
+    let key = color;
     handle.0.update(cx, |transfers, _| {
         let entry = transfers.glides.entry(track).or_insert_with(Entry::new);
         if let Some((_, glide)) = entry.rings.iter().find(|(k, _)| *k == key) {
@@ -121,10 +121,7 @@ fn ring(track: i64, rgba: [f32; 4], cx: &mut App) -> Glide {
 
 /// A row's ring for `track`'s transfer, in whatever colour the mark draws.
 fn ring_for(track: i64) -> RingGlide {
-    Rc::new(move |color, cx| {
-        let c = color.to_rgb();
-        ring(track, [c.r, c.g, c.b, c.a], cx)
-    })
+    Rc::new(move |color, cx| ring(track, color, cx))
 }
 
 /// The seek bar's glide for `track`'s transfer: only while it runs with a

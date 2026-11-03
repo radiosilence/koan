@@ -247,6 +247,15 @@ impl Animated {
         self.wake();
     }
 
+    /// `color` into the four uniforms from `index`, as red, green, blue and
+    /// alpha. A colour naming a colour slot (the accent) is read from the
+    /// slot at each present, so it moves in the program with no frame drawn.
+    pub fn set_color(&self, index: usize, color: Hsla) {
+        if self.0.uniforms.set_color(index, color) {
+            self.wake();
+        }
+    }
+
     /// Uniforms from `start` on.
     pub fn set_all(&self, start: usize, values: &[f32]) {
         let mut changed = false;
@@ -381,7 +390,7 @@ fn anchored(mut track: Track, now: f32) -> Track {
     track
 }
 
-fn curve(ease: Ease) -> TrackCurve {
+pub(crate) fn curve(ease: Ease) -> TrackCurve {
     match ease {
         Ease::Linear => TrackCurve::Linear,
         Ease::InOut => TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),

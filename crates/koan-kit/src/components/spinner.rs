@@ -333,7 +333,6 @@ impl RenderOnce for Spinner {
         if SHADED {
             let field = FIELD_IMAGE.with(Rc::clone);
             let side = f32::from(self.side) * window.scale_factor();
-            let rgba = color.to_rgb();
             let animated = Animated::new();
             animated.set_all(
                 0,
@@ -345,7 +344,7 @@ impl RenderOnce for Spinner {
                     field.range * side,
                 ],
             );
-            animated.set_all(8, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            animated.set_color(8, color);
             // Every spinner turns in step, from the first one drawn.
             animated.segment(
                 0,

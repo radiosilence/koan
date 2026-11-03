@@ -87,18 +87,10 @@ impl BarLevels {
     /// The look, in device pixels: written as the slot is laid out, a
     /// change only when the colour or the scale changed.
     fn style(&self, color: Hsla, scale: f32) {
-        let rgba = color.to_rgb();
+        self.0.set_color(4, color);
         self.0.set_all(
-            4,
-            &[
-                rgba.r,
-                rgba.g,
-                rgba.b,
-                rgba.a,
-                BarMetrics::BAR * scale,
-                BarMetrics::GAP * scale,
-                FLOOR,
-            ],
+            8,
+            &[BarMetrics::BAR * scale, BarMetrics::GAP * scale, FLOOR],
         );
     }
 }

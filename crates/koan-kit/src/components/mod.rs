@@ -12,6 +12,7 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+pub(crate) use animated::curve;
 mod answer;
 mod arrive;
 mod availability;
@@ -463,8 +464,8 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
             .bg(color.opacity(amount))
             .into_any_element();
     }
-    let rgba = color.to_rgb();
-    transition.set_all(0, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
+    transition.set_color(0, color);
+    transition.set(4, 0.0);
     AnimatedQuad::new(&TRANSITION, transition)
         .decorative()
         .absolute()

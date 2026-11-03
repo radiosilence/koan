@@ -179,10 +179,9 @@ impl Answerer {
         if !SHADED || !KoanTheme::motion_allowed(cx) {
             return;
         }
-        let rgba = color.to_rgb();
         self.0.update(cx, |s, cx| {
             s.animated.set_all(0, &[answer.code(), 0.0]);
-            s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            s.animated.set_color(2, color);
             let now = Instant::now();
             s.animated.segment(
                 0,
