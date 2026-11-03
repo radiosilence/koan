@@ -93,6 +93,10 @@ struct GammaParams {
 
 @group(0) @binding(0) var<uniform> globals: GlobalParams;
 @group(0) @binding(1) var<uniform> gamma_params: GammaParams;
+// KOAN: colour slots (#1859): the time, then per slot the `from` colour, the
+// `to` colour and a track from 0 to 1 in two blocks, as gpui's
+// `color_slots_frame` writes them.
+@group(0) @binding(2) var<uniform> koan_slots: array<vec4<f32>, 1021>;  // KOAN: colour slots (#1859).
 @group(2) @binding(0) var t_sprite: texture_2d<f32>;
 @group(2) @binding(1) var s_sprite: sampler;
 
@@ -553,9 +557,12 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
         quad.background.colors
     );
     out.background_solid = gradient.solid;
+    if (quad.background.tag != 1u && quad.background.solid.h >= 2.0) {
+        out.background_solid = koan_rgba(quad.background.solid);  // KOAN: colour slots (#1859).
+    }
     out.background_color0 = gradient.color0;
     out.background_color1 = gradient.color1;
-    out.border_color = hsla_to_rgba(quad.border_color);
+    out.border_color = koan_rgba(quad.border_color);  // KOAN: colour slots (#1859).
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
@@ -990,7 +997,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 
     var out = ShadowVarying();
     out.position = to_device_position(unit_vertex, geometry);
-    out.color = hsla_to_rgba(shadow.color);
+    out.color = koan_rgba(shadow.color);  // KOAN: colour slots (#1859).
     out.shadow_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
     return out;
@@ -1172,7 +1179,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
     var out = UnderlineVarying();
     out.position = to_device_position(unit_vertex, underline.bounds);
-    out.color = hsla_to_rgba(underline.color);
+    out.color = koan_rgba(underline.color);  // KOAN: colour slots (#1859).
     out.underline_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
     return out;
@@ -1239,7 +1246,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.color = hsla_to_rgba(sprite.color);
+    out.color = koan_rgba(sprite.color);  // KOAN: colour slots (#1859).
     out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
@@ -1359,4 +1366,90 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         1.0);
 
     return ycbcr_to_RGB * y_cb_cr;
+}
+
+// KOAN: colour slots (#1859). A colour whose hue is 2 or more names slot
+// `hue - 2`, evaluated as gpui's `Track::at` and the shader prelude's
+// `koan_track` are.
+fn koan_slot_bezier_curve(a: f32, b: f32, s: f32) -> f32 {
+    let u = 1.0 - s;
+    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+fn koan_slot_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    if (t <= 0.0 || t >= 1.0) {
+        return clamp(t, 0.0, 1.0);
+    }
+    var s = t;
+    for (var i = 0; i < 6; i++) {
+        let u = 1.0 - s;
+        let d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+        if (abs(d) < 1e-5) {
+            break;
+        }
+        s = clamp(s - (koan_slot_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+    }
+    return koan_slot_bezier_curve(y1, y2, s);
+}
+
+fn koan_slot_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
+    let w = sqrt(max(k, 1e-3));
+    let z = c / (2.0 * w);
+    if (z < 1.0) {
+        let wd = w * sqrt(1.0 - z * z);
+        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    if (z > 1.0001) {
+        let root = sqrt(z * z - 1.0);
+        let r1 = -w * (z - root);
+        let r2 = -w * (z + root);
+        let c1 = (v0 - r2 * x0) / (r1 - r2);
+        return c1 * exp(r1 * t) + (x0 - c1) * exp(r2 * t);
+    }
+    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+fn koan_slot_track(ends: vec4<f32>, shape: vec4<f32>, time: f32) -> f32 {
+    let from = ends.x;
+    let to = ends.y;
+    let length = ends.w;
+    if (length <= 0.0) {
+        return to;
+    }
+    let e = max(time - ends.z, 0.0);
+    let code = u32(shape.x);
+    let kind = code % 4u;
+    let repeat = code / 4u;
+    if (kind == 2u) {
+        if (e >= length) {
+            return to;
+        }
+        return to + koan_slot_spring(from - to, shape.w, shape.y, shape.z, e);
+    }
+    var p = e / length;
+    if (repeat == 0u) {
+        p = min(p, 1.0);
+    } else if (repeat == 1u) {
+        p = fract(p);
+    } else {
+        let q = p - 2.0 * floor(p / 2.0);
+        p = select(q, 2.0 - q, q > 1.0);
+    }
+    if (kind == 1u) {
+        let a = unpack2x16float(bitcast<u32>(shape.y));
+        let b = unpack2x16float(bitcast<u32>(shape.z));
+        p = koan_slot_bezier(a.x, a.y, b.x, b.y, p);
+    }
+    return from + (to - from) * p;
+}
+
+fn koan_rgba(hsla: Hsla) -> vec4<f32> {
+    if (hsla.h < 2.0) {
+        return hsla_to_rgba(hsla);
+    }
+    let base = 1u + min(u32(hsla.h - 2.0), 254u) * 4u;
+    let t = koan_slot_track(koan_slots[base + 2u], koan_slots[base + 3u], koan_slots[0].x);
+    var color = clamp(mix(koan_slots[base], koan_slots[base + 1u], t), vec4<f32>(0.0), vec4<f32>(1.0));
+    color.a *= hsla.a;
+    return color;
 }

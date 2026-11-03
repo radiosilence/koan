@@ -4,18 +4,17 @@
 //! caller as `CoverArt`; koan-kit knows nothing of where it was fetched.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use gpui_kit::*;
 
-use super::{FadeIn, Placeholder};
+use super::{Animated, Arrival, Placeholder, arriving};
 use crate::theme::{Look, Motion};
 
-/// A named cover's arrival: it showed loading, and when its picture came.
+/// A named cover's arrival: it showed loading, and its picture's fade in.
 #[derive(Default)]
-struct Arrival {
+struct Landing {
     waited: bool,
-    landed: Option<Instant>,
+    arrival: Option<Arrival>,
 }
 
 /// What a cover shows.
@@ -81,47 +80,54 @@ impl RenderOnce for Cover {
         let arrived = self
             .id
             .as_ref()
-            .map(|id| window.use_keyed_state(id.clone(), cx, |_, _| Arrival::default()));
+            .map(|id| window.use_keyed_state(id.clone(), cx, |_, _| Landing::default()));
         match self.art {
             CoverArt::Image(image) => {
-                let picture = img(ImageSource::Render(image))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover);
-                let fading = arrived.as_ref().is_some_and(|state| {
-                    state.update(cx, |a, _| {
-                        let at = *a.landed.get_or_insert_with(Instant::now);
-                        a.waited && at.elapsed() < Motion::NORMAL
+                // A picture that came after the cover showed loading fades
+                // in over the spinner on the GPU; the cover draws once more
+                // as it lands, without the spinner.
+                let motion = crate::theme::KoanTheme::motion_allowed(cx);
+                let fading = arrived.as_ref().and_then(|state| {
+                    state.update(cx, |landing, _| {
+                        if landing.waited && landing.arrival.is_none() && motion {
+                            landing.arrival = Some(Arrival::new(Motion::NORMAL));
+                            landing.waited = false;
+                        }
+                        landing.arrival.clone().filter(|a| !a.landed())
                     })
-                }) && crate::theme::KoanTheme::motion_allowed(cx);
-                if fading {
-                    // Until it lands, so the spinner under it goes with the
-                    // render after; a burst of the motion's length.
-                    window.request_animation_frame();
-                }
-                match (fading, self.id) {
-                    (true, Some(id)) => ground
-                        .relative()
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .child(Placeholder::new(side).loading(true)),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .child(FadeIn::new(super::child(&id, "art"), picture.size_full())),
-                        ),
-                    _ => ground.child(picture),
+                });
+                match fading {
+                    Some(arrival) => {
+                        let view = window.current_view();
+                        let wait = arrival.lands().saturating_duration_since(Animated::now());
+                        cx.spawn(async move |cx| {
+                            cx.background_executor().timer(wait).await;
+                            cx.update(|cx| cx.notify(view));
+                        })
+                        .detach();
+                        ground
+                            .relative()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(Placeholder::new(side).loading(true)),
+                            )
+                            .child(div().absolute().inset_0().child(arriving(image, &arrival)))
+                    }
+                    None => ground.child(
+                        img(ImageSource::Render(image))
+                            .size_full()
+                            .object_fit(ObjectFit::Cover),
+                    ),
                 }
             }
             CoverArt::Colour(colour) => ground.bg(colour),
             CoverArt::Loading => {
                 if let Some(state) = &arrived {
-                    state.update(cx, |a, _| {
-                        a.waited = true;
-                        a.landed = None;
+                    state.update(cx, |landing, _| {
+                        landing.waited = true;
+                        landing.arrival = None;
                     });
                 }
                 ground.child(Placeholder::new(side).loading(true))

@@ -20,12 +20,12 @@ use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
 /// The sleeve as a tile shows it.
 pub enum TileSleeve {
-    /// The picture, `shown` from 0 to 1 while it fades in over `ground`,
-    /// the record's colour shown before it, or over the loading ensō where
-    /// no colour stood in.
+    /// The picture, fading in by `arrival` over `ground`, the record's
+    /// colour shown before it, or over the loading ensō where no colour
+    /// stood in.
     Image {
         image: Arc<RenderImage>,
-        shown: f32,
+        arrival: Option<super::Arrival>,
         ground: Option<Hsla>,
     },
     /// The picture's average colour, standing in while it uploads.
@@ -170,23 +170,31 @@ impl RenderOnce for TileArt {
         match self.sleeve {
             TileSleeve::Image {
                 image,
-                shown,
+                arrival,
                 ground,
             } => {
                 // Arriving: over the record's colour where it stood in, or
-                // over the ensō that was drawing itself.
-                if shown < 1.0 {
-                    art = match ground {
-                        Some(ground) => art.bg(ground),
-                        None => art.child(
+                // over the ensō that was drawing itself, on the GPU.
+                match arrival {
+                    Some(arrival) => {
+                        art = match ground {
+                            Some(ground) => art.bg(ground),
+                            None => art.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(Placeholder::new(side).loading(true)),
+                            ),
+                        };
+                        art = art.child(
                             div()
                                 .absolute()
                                 .inset_0()
-                                .child(Placeholder::new(side).loading(true)),
-                        ),
-                    };
+                                .child(super::arriving(image, &arrival)),
+                        );
+                    }
+                    None => art = art.child(img(ImageSource::Render(image)).size_full()),
                 }
-                art = art.child(img(ImageSource::Render(image)).size_full().opacity(shown));
             }
             TileSleeve::Colour(colour) => art = art.bg(colour),
             TileSleeve::Loading => art = art.child(Placeholder::new(side).loading(true)),

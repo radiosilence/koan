@@ -253,14 +253,3 @@ pub fn close_button(on_close: impl Fn(&mut Window, &mut App) + 'static) -> AnyEl
         )
         .into_any_element()
 }
-
-/// What is drawn over the whole window: a sheet, the artwork viewer, the
-/// search box.
-pub fn over_window(content: impl IntoElement) -> impl IntoElement {
-    deferred(div().absolute().inset_0().child(content)).with_priority(2)
-}
-
-/// A question over everything else, sheets included.
-pub fn over_sheets(content: impl IntoElement) -> impl IntoElement {
-    deferred(div().absolute().inset_0().child(content)).with_priority(3)
-}

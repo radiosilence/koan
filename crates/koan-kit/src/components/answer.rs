@@ -6,16 +6,16 @@
 //!
 //! Subtle by rule: one shader quad over the control and a little past its
 //! edge, in the accent at low opacity, never over the control's text, for
-//! no longer than `Motion::SETTLE`. The clock runs only while an answer is
-//! drawn and the quad leaves the scene when it ends, so a control at rest,
-//! or off screen, costs nothing. Under Reduce Motion nothing is drawn.
+//! no longer than `Motion::SETTLE`. Its progress is one track the GPU moves,
+//! and the quad leaves the scene when it ends, so a control at rest, or off
+//! screen, costs nothing. Under Reduce Motion nothing is drawn.
 
 use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Animated, AnimatedQuad, SHADED, child};
+use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, child};
 use crate::theme::{KoanTheme, Motion};
 
 /// What an answer draws.
@@ -64,13 +64,14 @@ impl Answer {
     }
 }
 
-/// The answers as one program. Uniforms: 0 the answer, 1 its length in
-/// seconds, 2..6 the colour, 6 the spill and 7 a point, in device pixels.
+/// The answers as one program. Uniforms: 0 the answer, 2..6 the colour, 6
+/// the spill and 7 a point, in device pixels; track 0 the answer's progress
+/// from 0 to 1.
 pub static ANSWER: ShaderProgram = ShaderProgram {
     name: "koan-answer",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float t = clamp(time / max(u[1], 0.001), 0.0, 1.0);
+    float t = clamp(koan_track(u, 0, time), 0.0, 1.0);
     if (t >= 1.0) { return float4(0.0); }
     float e = 1.0 - (1.0 - t) * (1.0 - t);
     float spill = u[6];
@@ -107,8 +108,8 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
-    let t = clamp(time / max(u[0].y, 0.001), 0.0, 1.0);
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let t = clamp(koan_track(u, 0u, time), 0.0, 1.0);
     if (t >= 1.0) { return vec4<f32>(0.0); }
     let e = 1.0 - (1.0 - t) * (1.0 - t);
     let spill = u[1].z;
@@ -180,18 +181,24 @@ impl Answerer {
         }
         let rgba = color.to_rgb();
         self.0.update(cx, |s, cx| {
-            s.animated
-                .set_all(0, &[answer.code(), answer.duration().as_secs_f32()]);
+            s.animated.set_all(0, &[answer.code(), 0.0]);
             s.animated.set_all(2, &[rgba.r, rgba.g, rgba.b, rgba.a]);
             let now = Instant::now();
-            s.animated.set_origin(now);
-            s.animated.run(true);
+            s.animated.segment(
+                0,
+                0.0,
+                1.0,
+                Animated::now(),
+                answer.duration(),
+                Ease::Linear,
+                Repeat::Once,
+            );
             s.live = Some(answer);
             s.started = Some(now);
             s._end = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(answer.duration()).await;
+                // The quad leaves the scene once the answer has run.
                 this.update(cx, |s, cx| {
-                    s.animated.run(false);
                     s.live = None;
                     cx.notify();
                 })

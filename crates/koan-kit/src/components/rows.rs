@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, accessible, answers_click, child, fade, fill, transition};
-use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
+use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Space, TypeRole, label};
 
 /// The hover group a nav row's glyph brightens by.
 const NAV_ROW: &str = "koan-nav-row";
@@ -146,17 +146,21 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let on = fade(
+        let color = fade(
             child(&self.id, "selected"),
             self.selected,
-            Motion::FAST,
+            look.palette.muted.hsla(),
+            look.text_color(crate::theme::Tone::Accent),
             window,
             cx,
         );
-        let color = super::mix(
-            look.palette.muted.hsla(),
-            look.text_color(crate::theme::Tone::Accent),
-            on,
+        let mark = fade(
+            child(&self.id, "mark"),
+            self.selected,
+            look.accent.hsla().opacity(0.0),
+            look.accent.hsla(),
+            window,
+            cx,
         );
         let on_click = self.on_click;
         let answers = super::Answerer::of(&self.id, window, cx);
@@ -200,7 +204,7 @@ impl RenderOnce for NavRow {
                     .top_0()
                     .bottom_0()
                     .w(MARK)
-                    .bg(look.accent.hsla().opacity(on)),
+                    .bg(mark),
             )
             .children(
                 self.icon
@@ -449,13 +453,7 @@ impl RenderOnce for FigureCell {
 impl RenderOnce for ListRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let selected = transition(
-            child(&self.id, "selected"),
-            self.selected,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        let selected = transition(child(&self.id, "selected"), self.selected, window, cx);
         let on = look.palette.on_selection.hsla();
         let lead = if self.selected {
             on

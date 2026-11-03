@@ -8,7 +8,7 @@
 
 use koan_kit::app::*;
 
-use crate::components::sheet as ask;
+use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
@@ -780,18 +780,18 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
-            .children(ask::presented(window, cx).map(crate::components::over_window))
-            .children(ask::overlay(window, cx).map(crate::components::over_sheets))
-            .children(crate::artwork::overlay(window, cx).map(crate::components::over_window))
+            .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
+            .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
+            .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
             .children(
                 self.shortcuts
                     .as_ref()
-                    .map(|(sheet, _)| crate::components::over_window(sheet.clone())),
+                    .map(|(sheet, _)| ask::layered(Layer::Sheet, sheet.clone())),
             )
             .children(
                 self.search_bar
                     .as_ref()
-                    .map(|(bar, _)| crate::components::over_window(bar.clone())),
+                    .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
             )
     }
 }

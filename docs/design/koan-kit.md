@@ -196,24 +196,27 @@ A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_o
 
 ### Animated (GPU-drawn motion)
 
-Anything that moves every frame (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, the spectrum) is an `AnimatedQuad`: an element drawn by a fragment program from sixteen uniforms, which the page writes through an `Animated` handle from any thread. The frame is presented again with the uniforms as they are then; the page and the views around it are not drawn again, and GPUI draws no frame.
+Every aspect of the UI is smooth and moves with ease, because any animation is drawn by the GPU through shaders: at the display's refresh rate always (120 Hz on ProMotion), with next to no CPU per frame, and nothing at all while nothing moves. No animation is capped, paced or stepped by a timer.
+
+Every animation is keyframes the GPU interpolates (#1859), as a browser's compositor does. Anything that moves (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, a control's fill, the spinner) is an `AnimatedQuad`: an element drawn by a fragment program from an `Animated` handle the page writes from any thread. The handle holds sixteen plain values (colours, sizes, flags, written when they change) and eight **tracks**. A track is one segment of a moving value: from, to, when it starts, how long it takes, and its curve. The CPU writes a track when its data changes, at that data's own rate; the program evaluates it at the present's time with `koan_track(u, k, time)`, at the display's rate, with no CPU work per frame. The page and the views around it are not drawn again, and GPUI draws no frame.
 
 ```rust
 static RING: ShaderProgram = ShaderProgram { name: "koan-ring", msl: r#"…"#, wgsl: r#"…"#, prepare: None };
 
-let progress = Animated::new();            // kept by the view, cloned to a worker
+let progress = Animated::new();                  // kept by the view, cloned to a worker
 AnimatedQuad::new(&RING, &progress).size(side)   // declared in render
-progress.set(0, fraction);                 // from any thread, as the engine reports
+progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engine reports, ~15 Hz
 ```
 
-- **Driven by values:** `set`/`set_all` write uniforms; a change wakes the window to present at its next refresh, and nothing runs between changes.
-- **Driven by the clock:** `run(true)` presents every refresh while it runs, and `time` in the program counts from `set_origin`. A seek bar sets the anchor's share, rate and instant and runs while playing; an indeterminate ring runs while shown.
-- **Transitions:** `run_for(length)` runs the clock for a transition's length and stops by itself, with nothing to stop it. The controls' fills fade this way (`transition` and `fill` in `components/mod.rs`); their text colours still fade on GPUI frames, since text cannot change colour without a frame.
-- **Parking** is the kit's: a window with nothing changing or running parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
-- **Reduce Motion:** `.decorative()` stops the clock while the person asks for less motion. Progress is not decorative.
-- **Per-present work:** a program's `prepare` runs on the CPU once per quad at each present, for what every pixel would otherwise work out alike (the wash's pose and eased opacity).
+- **`to(k, value, length, ease)`** moves track `k` from where it stands now (read on the present clock, `Animated::now()`) to `value`: a retarget mid-flight starts from what is on screen, and a spring carries its velocity on.
+- **`segment(k, from, to, start, length, ease, repeat)`** writes the whole segment, for values whose start is known: an analyser frame at its own time, a playhead from its anchor, a drift that breathes (`Repeat::Alternate`) or a turn that loops (`Repeat::Loop`). **`hold(k, value)`** stands still.
+- **Curves** (`Ease`): linear, ease in and out, the theme's quick-out, any CSS cubic Bézier, and a damped spring in closed form. The CPU's `Animated::at` evaluates a track exactly as the program does.
+- **Rates are the engine's:** a view hands each value the engine sends to its `Animated` as the next keyframe, and the GPU interpolates. The bars' bands glide over the gap between the analyser's frames; a seek bar's playhead takes each anchor the engine reports (a seek, a pause, a skip), its downloaded part each reading of the download; the wash, the controls' fills and the spinner are written once and run by themselves. No rate is set or assumed in koan-kit or koan-gui.
+- **States** arrive at once and leave over `Motion::LEAVE` (130 ms): the pointer reaching a control lights it, and its fill fades out once the pointer has gone (`transition` and `fill` in `components/mod.rs`). Every control and row follows this rule; Reduce Motion makes both instant. Text, glyphs and edges fade the same way through colour slots: a control holds one only while its leave fade runs.
+- **Parking** is the kit's: a window presents while any track on screen moves and once more as the last comes to rest, then parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
+- **Reduce Motion:** a `.decorative()` quad's tracks stand at their ends, a repeating one at its start. Progress is not decorative.
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
-- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback.
+- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 
@@ -268,7 +271,7 @@ A change the control learns of rather than sees done (a favourite set by a short
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
-`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+`sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view, window)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks, holding the keyboard while it does; `sheet::close` takes it away. `sheet::layered(Layer, element)` draws an overlay after the window's content, so a panel, a sheet or a question covers the playing bars the root paints over the page; `Layer` orders them (panel, sheet, question). `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
 
 The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
@@ -292,7 +295,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
-`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `open(cx, build)` (or `options(cx)`): a window beside the main one, centred at its size in points, its content under the root the kit's sheets, menus and fields draw in. `MainWindow::new(title, app_id).place(saved).min(size).buttons_at(origin).open(cx, build)` is the app's own window: put back where it was left, its content under the title bar on macOS with the window's buttons on the toolbar's ground. `moves_window(area)` makes bare space move the window and zoom it on a double click, as a title bar does; where the compositor leaves the decorations to the app (`draws_decorations`), `window_buttons(on_close)` and `close_button(on_close)` are the buttons a toolbar or a top strip carries. `over_window` and `over_sheets` place a sheet, the artwork viewer or the search box over everything, and a question over those.
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `open(cx, build)` (or `options(cx)`): a window beside the main one, centred at its size in points, its content under the root the kit's sheets, menus and fields draw in. `MainWindow::new(title, app_id).place(saved).min(size).buttons_at(origin).open(cx, build)` is the app's own window: put back where it was left, its content under the title bar on macOS with the window's buttons on the toolbar's ground. `moves_window(area)` makes bare space move the window and zoom it on a double click, as a title bar does; where the compositor leaves the decorations to the app (`draws_decorations`), `window_buttons(on_close)` and `close_button(on_close)` are the buttons a toolbar or a top strip carries.
 
 `opens_panel(id, trigger, content)` is a control that opens a panel under it, made each time it opens, with a `Dismiss` for its rows; `ToolbarMenu` is one with a toolbar button, `TextTrigger` the word that opens one in a form row or the selection bar. `anchored_panel` stands a panel by the control that opened it and keeps it in the window. `title_text` is a title outside a page's header (About, a confirmation). `TextArea` (with `AreaState`) is several lines of text on a field's ground. `sheet::trap_focus` keeps Tab inside a sheet its owner draws. `RowMetrics::lead_width(count)` is a number column measured in the face its numbers are drawn in.
 

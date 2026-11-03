@@ -23,6 +23,11 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
+
+/// Analyser frames a second for clients that interpolate between them
+/// (`viz_keyframes`): enough for the bars to follow the music, few enough
+/// that the analyser costs little.
+const VIZ_KEYFRAMES: u8 = 30;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
@@ -621,6 +626,34 @@ impl Drop for KoanEngine {
     /// find out that it had gone.
     fn drop(&mut self) {
         koan_core::signal::engine_changed().bump();
+    }
+}
+
+/// How high a playing indicator's bars stand, from the levels a `VizStream`
+/// delivers: koan-core's reading (`BarHeights`), each band against its own
+/// recent loudest, so every app draws the same bars.
+#[derive(uniffi::Object, Default)]
+pub struct BarHeights(parking_lot::Mutex<koan_core::audio::viz::BarHeights>);
+
+#[uniffi::export]
+impl BarHeights {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A frame as it arrives: the bars' heights, 0 to 1, low band to high,
+    /// or none when they did not move.
+    pub fn take(&self, levels: VizLevels) -> Option<Vec<f32>> {
+        let heard = koan_core::audio::viz::VizLevels {
+            low: levels.low,
+            mid: levels.mid,
+            high: levels.high,
+        };
+        self.0
+            .lock()
+            .take(heard, std::time::Instant::now())
+            .map(|heights| heights.to_vec())
     }
 }
 
@@ -1356,6 +1389,15 @@ impl KoanEngine {
     /// — so a paused koan delivers no messages, wakes nothing, and the thread
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
+        VizStream::new(&self.viz)
+    }
+
+    /// Follow the spectrum as keyframes, for a client that draws the bars
+    /// on the GPU and moves them between frames itself (the kōan GUI app):
+    /// the analyser runs at the rate koan chooses for keyframes, which is far
+    /// below a display's, and the client never names a rate.
+    pub fn viz_keyframes(&self) -> Arc<VizStream> {
+        self.set_viz_fps(VIZ_KEYFRAMES);
         VizStream::new(&self.viz)
     }
 
@@ -5556,8 +5598,8 @@ impl KoanEngine {
     ///
     /// The playhead is the one thing no writer can announce, because it moves
     /// on its own. It is published as an anchor instead: see `state::Anchor`.
-    /// Publish the transfers' figures whenever the store takes a reading — a
-    /// few times a second while something downloads, never otherwise.
+    /// Publish the transfers' figures whenever the store takes a reading:
+    /// about fifteen times a second while something downloads, never otherwise.
     ///
     /// Its own thread on the store's own signal. Readings are rung there and
     /// not on the engine's, so a transfer in progress wakes this and nothing

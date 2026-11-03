@@ -123,7 +123,7 @@ fn debug_assert_main_thread() {
 unsafe extern "C" fn display_link_output_callback(
     _display_link_out: *mut sys::CVDisplayLink,
     current_time: *const sys::CVTimeStamp,
-    _output_time: *const sys::CVTimeStamp,
+    output_time: *const sys::CVTimeStamp,
     _flags_in: i64,
     _flags_out: *mut i64,
     display_id: *mut c_void,
@@ -142,6 +142,23 @@ unsafe extern "C" fn display_link_output_callback(
             received_at,
         )
     });
+    // KOAN: how far ahead of now the frame asked for is shown: shaders reckon
+    // their time at that moment (#1859).
+    {
+        // SAFETY: CoreVideo owns these timestamps for the lifetime of the callback.
+        let output = unsafe { output_time.as_ref() };
+        let now = objc2_core_video::CVGetCurrentHostTime();
+        let frequency = objc2_core_video::CVGetHostClockFrequency();
+        if let Some(output) = output.filter(|t| {
+            t.version == 0 && t.flags & sys::kCVTimeStampHostTimeValid != 0
+        }) && frequency.is_finite()
+            && frequency > 0.0
+            && let Some(ticks) = output.host_time.checked_sub(now)
+            && let Ok(lead) = Duration::try_from_secs_f64(ticks as f64 / frequency)
+        {
+            gpui::set_present_lead(lead.min(Duration::from_millis(100)));
+        }
+    }
     let display_id = display_id as usize as CGDirectDisplayID;
     let registry = lock_registry();
     if let Some(entry) = registry.displays.get(&display_id) {
