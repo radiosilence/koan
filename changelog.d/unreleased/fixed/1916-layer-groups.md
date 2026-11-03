@@ -1,0 +1,1 @@
+- **Sliding and revealed panels.** Spinners, rings and fades inside the sidebar move with it as it slides, a late artist photo's reveal clips its cover, and the textures behind these take a fraction of the memory.
