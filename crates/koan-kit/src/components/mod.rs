@@ -40,6 +40,7 @@ mod level;
 mod link_text;
 mod list_keys;
 mod lists;
+mod lyrics;
 mod menu;
 mod metrics;
 mod page;
@@ -85,7 +86,7 @@ use gpui_kit::{
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track,
+    ShaderProgram, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer};
 pub use arrive::{Arrival, arriving};
@@ -112,13 +113,13 @@ pub mod list_actions {
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
-pub use filter_field::FilterField;
+pub use filter_field::{FilterButton, FilterField};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
     form_text,
 };
 pub use heart::Heart;
-pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
@@ -127,6 +128,7 @@ pub use lists::{
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
     uniform_list, width_probe,
 };
+pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
@@ -139,7 +141,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popo
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
-pub use prism::{Burst, Prism, PrismFill, Sheen};
+pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -477,6 +479,24 @@ pub(crate) fn hover_fill(
     };
     let lit = transition(child(id, "lit"), hovered || pressed, window, cx);
     (state, fill(color, &lit))
+}
+
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
 }
 
 /// A row a click acts on, lit under the pointer as controls are (`surface`,

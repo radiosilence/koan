@@ -71,7 +71,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let side = min(size.x, size.y);
     let stroke = side * 0.125;
     let d = position - size * 0.5;
@@ -191,7 +191,12 @@ impl RenderOnce for ProgressRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let side = px(crate::theme::icons::side(look.points(self.role)));
-        if let Some(glide) = self.glide.filter(|_| SHADED) {
+        // Under Reduce Motion an unknown amount is the still arc drawn
+        // below, the glide's turn left as it is for when motion returns; a
+        // known share is information and still glides.
+        let moving = crate::theme::KoanTheme::motion_allowed(cx);
+        let still_unknown = self.glide.as_ref().is_some_and(|g| g.unknown()) && !moving;
+        if let Some(glide) = self.glide.filter(|_| SHADED && !still_unknown) {
             let color = self.color;
             return canvas(
                 move |_, window, cx| {
@@ -206,9 +211,9 @@ impl RenderOnce for ProgressRing {
             .into_any_element();
         }
         let ring = dots(side);
-        let (progress, color) = (self.progress, self.color);
+        let progress = self.progress.filter(|_| !still_unknown);
+        let color = self.color;
         // With Reduce Motion an unknown amount is a still arc.
-        let moving = crate::theme::KoanTheme::motion_allowed(cx);
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {

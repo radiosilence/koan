@@ -83,6 +83,10 @@ pub struct KoanTheme {
     pub prism: Option<bool>,
 }
 
+/// `KoanTheme::prism` as a number, for `prism_now`: 0 put away, 1 the
+/// palette, 2 brat's.
+static PRISM: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 impl Global for KoanTheme {}
 
 impl Default for KoanTheme {
@@ -206,10 +210,25 @@ fn set_system_display(
     cx.refresh_windows();
 }
 
+/// Whether GNOME's text scaling factor is already in the window's scale:
+/// GNOME on X11, where gnome-settings-daemon folds it into `Xft.dpi`, which
+/// GPUI scales an X11 window by. Other desktops on X11 (XFCE, Cinnamon,
+/// MATE) leave `Xft.dpi` alone, and Wayland never folds it in.
+#[cfg(target_os = "linux")]
+fn text_scaled_by_dpi() -> bool {
+    let x11 =
+        std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some();
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")));
+    x11 && gnome
+}
+
 /// High contrast and GNOME's text scaling factor, through the desktop
 /// portal's settings, and again whenever the portal says either changed.
 /// A desktop without the portal, or without either key, leaves both as
-/// they are.
+/// they are. Where the factor is already in the window's scale
+/// (`text_scaled_by_dpi`), applying the portal's too would scale text twice,
+/// so it is left out.
 #[cfg(target_os = "linux")]
 fn watch_desktop_settings(cx: &mut App) {
     use ashpd::desktop::settings::{Contrast, Settings};
@@ -227,11 +246,13 @@ fn watch_desktop_settings(cx: &mut App) {
             return;
         };
         let contrast = settings.contrast().await.ok().map(|c| c == Contrast::High);
+        let scaled_by_dpi = text_scaled_by_dpi();
         let text = settings
             .read::<f64>(INTERFACE, SCALING)
             .await
             .ok()
-            .map(|t| t as f32);
+            .map(|t| t as f32)
+            .filter(|_| !scaled_by_dpi);
         cx.update(|cx| set_system_display(contrast, None, text, cx));
         let contrasts: BoxStream<Change> = match settings.receive_contrast_changed().await {
             Ok(changes) => changes
@@ -252,6 +273,7 @@ fn watch_desktop_settings(cx: &mut App) {
         while let Some(change) = changes.next().await {
             cx.update(|cx| match change {
                 Change::Contrast(on) => set_system_display(Some(on), None, None, cx),
+                Change::Text(_) if scaled_by_dpi => {}
                 Change::Text(factor) => set_system_display(None, None, Some(factor), cx),
             });
         }
@@ -466,10 +488,35 @@ impl KoanTheme {
     }
 
     /// The rainbow appearance drawn, in brat's palette or not, or put away.
+    /// The one place it is kept: the windows' roots observe the theme for it.
     pub fn set_prism(prism: Option<bool>, cx: &mut App) {
         if cx.global::<KoanTheme>().prism != prism {
+            PRISM.store(
+                match prism {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
             cx.global_mut::<KoanTheme>().prism = prism;
             cx.refresh_windows();
+        }
+    }
+
+    /// Whether the rainbow is drawn, and in brat's palette.
+    pub fn prism(cx: &App) -> Option<bool> {
+        cx.try_global::<KoanTheme>().and_then(|t| t.prism)
+    }
+
+    /// The same, for elements built where the app is not to hand, such as
+    /// the playing bars inside a row: they are drawn again whenever it
+    /// changes, since it refreshes the windows.
+    pub fn prism_now() -> Option<bool> {
+        match PRISM.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
         }
     }
 
@@ -545,8 +592,11 @@ pub struct AccentFeed {
     /// drawn for it. `None` when every slot was taken; the accent then lands
     /// with each record.
     slots: Option<[[ColorSlot; 2]; 2]>,
-    /// The contrast the slots were last aimed for.
+    /// The contrast the slots were last aimed for, and the target as held
+    /// for it, dark then light: what every `Look` reads, worked out once per
+    /// aim rather than looked up per call.
     contrast: std::cell::Cell<bool>,
+    held: std::cell::Cell<[Shade; 2]>,
     _landing: Option<Task<()>>,
 }
 
@@ -559,6 +609,7 @@ impl AccentFeed {
             target,
             slots,
             contrast: std::cell::Cell::new(false),
+            held: std::cell::Cell::new([target.shade(true), target.shade(false)]),
             _landing: None,
         };
         feed.aim(false, false);
@@ -570,6 +621,8 @@ impl AccentFeed {
     /// at once otherwise.
     fn aim(&self, contrast: bool, ease: bool) {
         self.contrast.set(contrast);
+        self.held
+            .set([true, false].map(|dark| held(self.target.shade(dark), dark, contrast)));
         let Some(slots) = &self.slots else {
             return;
         };
@@ -581,8 +634,9 @@ impl AccentFeed {
             curve: crate::components::curve(crate::components::Ease::InOut),
             repeat: TrackRepeat::Once,
         };
-        for (dark, [fill, text]) in [true, false].into_iter().zip(slots) {
-            let shade = held(self.target.shade(dark), dark, contrast);
+        for ((dark, [fill, text]), shade) in
+            [true, false].into_iter().zip(slots).zip(self.held.get())
+        {
             let ink = Palette::for_look(dark, contrast).ink.hsla();
             let to = [shade.rgba(), shade.text_hsla(ink).to_rgb()];
             for (slot, to) in [fill, text].into_iter().zip(to) {
@@ -612,7 +666,7 @@ fn accent_shade(dark: bool, contrast: bool, cx: &App) -> Shade {
     if feed.contrast.get() != contrast {
         feed.aim(contrast, false);
     }
-    let mut shade = held(feed.target.shade(dark), dark, contrast);
+    let mut shade = feed.held.get()[usize::from(!dark)];
     shade.slot = feed.slots.as_ref().map(|slots| {
         let [fill, text] = &slots[usize::from(!dark)];
         [fill.hsla(1.0), text.hsla(1.0)]

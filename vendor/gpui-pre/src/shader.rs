@@ -286,7 +286,9 @@ fn to_half(v: f32) -> u16 {
         return sign | 0x7c00;
     }
     // Rounded to the nearest half.
-    let rounded = (exponent as u32) << 10 | (mantissa + 0x1000) >> 13;
+    // Added, not ORed: a mantissa that rounds up past its top carries into
+    // the exponent.
+    let rounded = ((exponent as u32) << 10) + ((mantissa + 0x1000) >> 13);
     sign | rounded.min(0x7bff) as u16
 }
 
@@ -722,6 +724,21 @@ impl ShaderInstance {
                 (None, Some(_)) => rect(&shader.bounds),
                 (None, None) => [0.0; 4],
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod half_tests {
+    use super::*;
+
+    /// KOAN: a value whose mantissa rounds up carries into the exponent:
+    /// just under 0.5 packs as 0.5, not 0.25.
+    #[test]
+    fn a_rounding_carry_reaches_the_exponent() {
+        for v in [0.49995_f32, 0.24999, 0.062499, 0.999_99, 0.3, 0.75] {
+            let (a, _) = unpack_halves(pack_halves(v, 0.0));
+            assert!((a - v).abs() <= v * 1e-3, "{v} packed as {a}");
         }
     }
 }

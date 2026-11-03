@@ -128,14 +128,8 @@ impl Sidebar {
         sidebar
     }
 
-    /// The search field, over the library's search and art.
-    pub fn set_search(
-        &mut self,
-        search: Entity<crate::search::Search>,
-        covers: Entity<Covers>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// The search field, over the library's search.
+    pub fn set_search(&mut self, search: Entity<crate::search::Search>, cx: &mut Context<Self>) {
         let watch = cx.observe(&search, |this: &mut Self, search, cx| {
             let searching = !search.read(cx).query().is_empty();
             if searching != this.searching {
@@ -143,16 +137,9 @@ impl Sidebar {
                 cx.notify();
             }
         });
-        let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
+        let field = cx.new(|cx| crate::search::field::SearchField::new(search, cx));
         self.search = Some((field, watch));
         cx.notify();
-    }
-
-    /// Where the search field takes the keyboard, once the library is open.
-    pub fn search_focus(&self, cx: &App) -> Option<FocusHandle> {
-        self.search
-            .as_ref()
-            .map(|(field, _)| field.read(cx).focus_handle(cx))
     }
 
     /// Draws the playlists' sleeves from the library's art cache.
@@ -394,9 +381,15 @@ impl Render for Sidebar {
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
-        let arrivals = cx
-            .default_global::<crate::library::actions::Arrivals>()
-            .clone();
+        // Read, never made here: `default_global` tells the global's
+        // observers it changed, and this view is one of them, so making it
+        // in a render would ask for the next render, every frame.
+        let (queue_arrivals, playlist_arrivals): (u64, Vec<u64>) = cx
+            .try_global::<crate::library::actions::Arrivals>()
+            .map_or_else(
+                || (0, vec![0; self.playlists.len()]),
+                |a| (a.queue, self.playlists.iter().map(|p| a.to(p.id)).collect()),
+            );
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
@@ -409,7 +402,7 @@ impl Render for Sidebar {
             // queue's row are queued.
             .child(
                 row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
-                    .arrivals(arrivals.queue)
+                    .arrivals(queue_arrivals)
                     .drop_highlight::<ExternalPaths>(&p.look)
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .drop_highlight::<PlaylistDrag>(&p.look)
@@ -502,7 +495,7 @@ impl Render for Sidebar {
                             RowMetrics::nav_art(&p.look),
                         ))
                         .cursor(keyed == Some(page))
-                        .arrivals(arrivals.to(playlist.id))
+                        .arrivals(playlist_arrivals[index])
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))
@@ -664,8 +657,17 @@ impl Render for Sidebar {
             )
             .children(
                 cx.try_global::<crate::notice::Notice>()
-                    .and_then(|n| n.text.clone().map(|text| (text, n.said)))
-                    .map(|((text, tone), said)| NavNote::new(text, tone).said("notice", said)),
+                    .and_then(|n| {
+                        // News for a moment after it is said: the sidebar
+                        // shown again later does not answer it again.
+                        let fresh = n
+                            .at
+                            .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+                        n.text.clone().map(|text| (text, n.said, fresh))
+                    })
+                    .map(|((text, tone), said, fresh)| {
+                        NavNote::new(text, tone).said("notice", said, fresh)
+                    }),
             )
     }
 }

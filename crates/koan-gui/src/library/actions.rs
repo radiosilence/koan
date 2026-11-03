@@ -33,7 +33,7 @@ impl Arrivals {
 }
 
 /// Music reached the queue, or `playlist`.
-fn arrived(playlist: Option<i64>, cx: &mut App) {
+pub(crate) fn arrived(playlist: Option<i64>, cx: &mut App) {
     let arrivals = cx.default_global::<Arrivals>();
     match playlist {
         None => arrivals.queue += 1,

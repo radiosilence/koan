@@ -17,6 +17,8 @@ pub struct Notice {
     pub text: Option<(SharedString, Tone)>,
     /// How many notices have been shown: the line answers each.
     pub said: u64,
+    /// When the one showing was said.
+    pub at: Option<std::time::Instant>,
     _clear: Option<Task<()>>,
 }
 
@@ -37,6 +39,7 @@ pub fn show(text: impl Into<SharedString>, tone: Tone, cx: &mut App) {
     cx.set_global(Notice {
         text: Some((text.into(), tone)),
         said,
+        at: Some(std::time::Instant::now()),
         _clear: Some(clear),
     });
 }

@@ -2,7 +2,10 @@
 //! the outline off, filled in the accent on. Its own click answers it: six
 //! small dots leave a heart that fills, and one ring closes in on a heart
 //! that empties. A change made elsewhere (a shortcut, another device)
-//! answers alike while the heart is drawn. The owner says what a click
+//! answers alike. A heart its owner hides at rest (a row's, shown under the
+//! pointer) shows while it answers, so a heart emptied elsewhere is seen to
+//! close; one its owner does not draw at all at rest follows its favourite
+//! through `answering`. The owner says what a click
 //! does; a heart without one is a mark, with no tooltip or pointer, inside
 //! a control of its owner's (an album tile). Where the heart shows (always,
 //! or only under the pointer) is its styling, set as on a `div`.
@@ -26,7 +29,34 @@ pub struct Heart {
     on_click: Option<Handler<ClickEvent>>,
 }
 
+/// The heart `id`'s answers, following `on`: a change answers.
+fn follow(id: &ElementId, on: bool, window: &mut Window, cx: &mut App) -> Answerer {
+    let accent = Look::of(window, cx).accent.hsla();
+    let answers = Answerer::of(id, window, cx);
+    answers.follow(
+        on as u64,
+        if on { Answer::Burst } else { Answer::Close },
+        accent,
+        window,
+        cx,
+    );
+    answers
+}
+
 impl Heart {
+    /// For a heart its owner does not draw at rest (a tile's, shown under
+    /// the pointer or for a favourite): follows `on` while it is not drawn,
+    /// and says whether it is answering a change, for which the owner draws
+    /// it until the answer has run.
+    pub fn answering(
+        id: impl Into<ElementId>,
+        on: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        follow(&id.into(), on, window, cx).live(cx)
+    }
+
     pub fn new(id: impl Into<ElementId>, on: bool) -> Self {
         let id = id.into();
         Self {
@@ -113,14 +143,8 @@ impl RenderOnce for Heart {
                 .into_any_element()
         };
         let on = self.on;
-        let answers = Answerer::of(&self.id, window, cx);
-        answers.follow(
-            on as u64,
-            if on { Answer::Burst } else { Answer::Close },
-            accent,
-            window,
-            cx,
-        );
+        let answers = follow(&self.id, on, window, cx);
+        let live = answers.live(cx);
         let tip = self.help.clone().unwrap_or_else(|| {
             crate::theme::label(if on {
                 "remove from favourites"
@@ -129,6 +153,8 @@ impl RenderOnce for Heart {
             })
         });
         self.base
+            // Shown while it answers, whatever its owner hides it by.
+            .when(live, |d| d.visible())
             .relative()
             .flex()
             .items_center()

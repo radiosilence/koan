@@ -39,6 +39,9 @@ pub struct LyricsPanel {
     loading: Option<i64>,
     /// The line being sung.
     active: Option<usize>,
+    /// When the playhead reached the active line, which its motion is
+    /// timed from.
+    since: Option<Instant>,
     /// A line clicked to seek to, and when: it stays the line sung until the
     /// playhead reaches it, so the emphasis moves once rather than back to
     /// the old line while the seek lands.
@@ -65,6 +68,7 @@ impl LyricsPanel {
             fetching: None,
             loading: None,
             active: None,
+            since: None,
             sought: None,
             _load: None,
             _follow: None,
@@ -143,13 +147,30 @@ impl LyricsPanel {
         }
         let position = anchor.at(Instant::now(), 0) as f64 / 1000.0;
         let (mut active, next) = place(&lyrics.lines, position);
+        let mut landed = true;
         match self.sought {
-            Some((line, _)) if active == Some(line) => self.sought = None,
-            Some((line, at)) if at.elapsed() < SEEK_LANDS => active = Some(line),
-            _ => self.sought = None,
+            Some((line, _)) if active == Some(line) => {}
+            Some((line, at)) if at.elapsed() < SEEK_LANDS => {
+                active = Some(line);
+                landed = false;
+            }
+            _ => {}
+        }
+        let now = Instant::now();
+        let since = active
+            .filter(|_| anchor.playing)
+            .and_then(|line| lyrics.lines.get(line))
+            .and_then(|line| {
+                now.checked_sub(Duration::from_secs_f64(
+                    (position - line.time_secs).max(0.0),
+                ))
+            });
+        if landed {
+            self.sought = None;
         }
         if active != self.active {
             self.active = active;
+            self.since = since;
             cx.notify();
         }
         let (true, Some(wait)) = (anchor.playing, next) else {
@@ -174,6 +195,7 @@ impl LyricsPanel {
         self.sought = Some((line, Instant::now()));
         if self.active != Some(line) {
             self.active = Some(line);
+            self.since = None;
             cx.notify();
         }
         crate::transport::land(at, cx);
@@ -200,6 +222,7 @@ impl Render for LyricsPanel {
                 l.lines.iter().map(|l| l.text.clone().into()).collect(),
                 self.active,
             )
+            .since(self.since)
             .on_line(cx.listener(|this, line: &usize, _, cx| this.seek_to(*line, cx)))
             .into_any_element(),
             Some(l) if !l.content.is_empty() => {
