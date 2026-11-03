@@ -169,6 +169,7 @@ macos-icon:
 gui-icon:
     #!/usr/bin/env bash
     set -euo pipefail
+    command -v rsvg-convert >/dev/null || { echo "gui-icon needs rsvg-convert (librsvg: brew install librsvg)" >&2; exit 1; }
     dir=crates/koan-gui/packaging
     set="$dir/AppIcon.iconset"
     rm -rf "$set" && mkdir -p "$set"
