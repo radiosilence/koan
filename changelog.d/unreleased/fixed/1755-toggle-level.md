@@ -1,0 +1,1 @@
+- **Toolbar toggles sit level.** A toggle's on-underline no longer lifts its glyph above the buttons beside it, in the toolbar and the transport alike.

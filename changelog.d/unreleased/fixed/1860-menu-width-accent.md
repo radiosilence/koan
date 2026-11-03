@@ -1,0 +1,1 @@
+- **Output and Play on menus.** They keep one width as their rows change, and the chosen row stands on a faint accent ground, as in the Mac app.

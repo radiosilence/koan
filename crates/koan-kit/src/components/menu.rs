@@ -34,6 +34,7 @@ pub struct MenuEntry {
     keys: Option<SharedString>,
     run: Option<Run>,
     stays_open: bool,
+    actions: Vec<(super::panel::ActionFace, SharedString, bool, Run)>,
 }
 
 impl MenuEntry {
@@ -53,7 +54,63 @@ impl MenuEntry {
             keys: None,
             run: None,
             stays_open: false,
+            actions: Vec::new(),
         }
+    }
+
+    /// A quiet glyph at the row's end that acts on what the row names
+    /// without choosing it ("move here", "forget this device"), with `help`
+    /// as its tooltip. Every row of the menu keeps the same slots, so the
+    /// actions line up.
+    pub fn action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
+        self
+    }
+
+    /// An action of a word or two, quiet as the glyphs are: "move here". As
+    /// a row's last action it takes the last slot, which every row then
+    /// keeps as wide.
+    pub fn text_action(
+        mut self,
+        text: impl Into<SharedString>,
+        help: impl Into<SharedString>,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((
+            super::panel::ActionFace::Text(text.into()),
+            help.into(),
+            false,
+            Rc::new(run),
+        ));
+        self
+    }
+
+    /// `action`, its glyph in the accent while `lit`: a setting that is on
+    /// for what the row names, as an output's EQ.
+    pub fn lit_action(
+        mut self,
+        icon: Icon,
+        help: impl Into<SharedString>,
+        lit: bool,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push((
+            super::panel::ActionFace::Glyph(icon),
+            help.into(),
+            lit,
+            Rc::new(run),
+        ));
+        self
     }
 
     /// Choosing it leaves the menu open: a choice among outputs or devices,
@@ -167,6 +224,9 @@ pub struct Menu {
     /// The menus it opened from, as a submenu, nearest first: a press in
     /// any of them is not outside.
     ancestors: Vec<Rc<Cell<Option<Bounds<Pixels>>>>>,
+    /// The least the panel is wide, in points, so a menu whose rows change
+    /// while it is open does not change size with them.
+    min_width: Option<f32>,
     _submenu: Vec<Subscription>,
 }
 
@@ -197,6 +257,7 @@ impl Menu {
                 focus: cx.focus_handle(),
                 bounds: Rc::default(),
                 ancestors: Vec::new(),
+                min_width: None,
                 _submenu: Vec::new(),
             };
             build(menu, window, cx)
@@ -242,15 +303,29 @@ impl Menu {
             focus: self.focus.clone(),
             bounds: self.bounds.clone(),
             ancestors: self.ancestors.clone(),
+            min_width: self.min_width,
             _submenu: Vec::new(),
         };
         let built = build(empty, cx);
         self.entries = built.entries;
+        self.min_width = built.min_width;
         self._submenu.clear();
         self.highlighted = self
             .highlighted
             .filter(|&i| i < self.entries.len() && self.choosable(i));
         cx.notify();
+    }
+
+    /// The width a picker of places (outputs, devices) keeps whatever its
+    /// rows say: a rich row's glyph, its name over one line of detail, and
+    /// its actions' slots, a "move here" among them.
+    pub const PICKER_WIDTH: f32 = 440.0;
+
+    /// Keep the panel at least `points` wide, so it holds its size as rows
+    /// come, go and change while it is open.
+    pub fn min_width(mut self, points: f32) -> Self {
+        self.min_width = Some(points);
+        self
     }
 
     /// A rule between groups; one at the start, at the end or after another
@@ -459,7 +534,29 @@ impl Render for Menu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let menu = cx.entity();
-        let mut panel = MenuPanel::new();
+        let mut panel = MenuPanel::new().min_width(self.min_width);
+        // Every row keeps as many slots as the fullest needs; the last is
+        // wide when any row's last action is words, and a choice's tick then
+        // counts as that slot's.
+        let filled = |item: &MenuEntry| item.trailing.len() + item.actions.len();
+        let last_wide = self.entries.iter().any(|entry| match entry {
+            Entry::Item(item) => matches!(
+                item.actions.last(),
+                Some((super::panel::ActionFace::Text(_), ..))
+            ),
+            _ => false,
+        });
+        let slots = self
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Item(item) => {
+                    filled(item) + usize::from(last_wide && item.checked == Some(true))
+                }
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
         for (index, entry) in self.entries.iter().enumerate() {
             let highlighted = self.highlighted == Some(index);
             let hovered = {
@@ -525,6 +622,22 @@ impl Render for Menu {
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
                     }
+                    for (k, (face, help, lit, run)) in item.actions.iter().enumerate() {
+                        let run = run.clone();
+                        let id = ("action", index * 8 + k);
+                        let act = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            run(event, window, cx)
+                        };
+                        row = match face {
+                            super::panel::ActionFace::Glyph(icon) => {
+                                row.lit_action(id, *icon, help.clone(), *lit, act)
+                            }
+                            super::panel::ActionFace::Text(text) => {
+                                row.text_action(id, text.clone(), help.clone(), act)
+                            }
+                        };
+                    }
+                    row = row.slots(slots, last_wide);
                     if let Some(keys) = item.keys.clone() {
                         row = row.keys(keys);
                     }
@@ -532,7 +645,14 @@ impl Render for Menu {
                     row = row.on_click(move |_, window, cx| {
                         menu.update(cx, |menu, cx| menu.choose(index, window, cx))
                     });
-                    panel.child(div().id(("hover", index)).on_hover(hovered).child(row))
+                    let label = item.label.clone();
+                    panel.child(
+                        div()
+                            .id(("hover", index))
+                            .debug_selector(move || format!("menu: {label}"))
+                            .on_hover(hovered)
+                            .child(row),
+                    )
                 }
                 Entry::Submenu {
                     label, icon, open, ..
@@ -543,9 +663,11 @@ impl Render for Menu {
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }
+                    let name = label.clone();
                     panel.child(
                         div()
                             .id(("hover", index))
+                            .debug_selector(move || format!("menu: {name}"))
                             .relative()
                             .on_hover(hovered)
                             .child(row)
@@ -583,8 +705,13 @@ impl Render for Menu {
             .occlude()
             .child(panel)
             .child(
+                // Over the panel, from its corner: without an inset an
+                // absolute child sits where the flow would put it, under the
+                // panel, and the bounds it records miss the menu.
                 canvas(move |bounds, _, _| drawn.set(Some(bounds)), |_, _, _, _| {})
                     .absolute()
+                    .top_0()
+                    .left_0()
                     .size_full(),
             )
     }
@@ -613,39 +740,67 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             .map(|(at, menu, _)| (*at, menu.clone()));
         let build = Rc::new(build);
         let opener = state.clone();
-        let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-            let build = build.clone();
-            let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
-            // Nothing to act on, nothing to open.
-            if menu.read(cx).entries.is_empty() {
-                return;
-            }
-            let at = event.position;
-            // Where the keyboard was, given back as the menu closes: a list's
-            // keys work again after a choice or Escape.
-            let before = window.focused(cx);
-            let own = menu.focus_handle(cx);
-            opener.update(cx, |open, cx| {
-                let closing = cx.subscribe_in(
-                    &menu,
-                    window,
-                    move |open: &mut Open, _, _: &DismissEvent, window, cx| {
-                        open.0 = None;
-                        // Only from the menu: a choice that put up a sheet
-                        // or opened a field keeps the keyboard where it went.
-                        let in_menu =
-                            window.focused(cx).is_none() || own.contains_focused(window, cx);
-                        if in_menu && let Some(before) = &before {
-                            window.focus(before, cx);
-                        }
-                        cx.notify();
-                    },
-                );
-                open.0 = Some((at, menu.clone(), closing));
-                cx.notify();
+        let open = Rc::new(
+            move |at: Point<Pixels>, window: &mut Window, cx: &mut App| {
+                let build = build.clone();
+                let menu = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
+                // Nothing to act on, nothing to open.
+                if menu.read(cx).entries.is_empty() {
+                    return;
+                }
+                // Where the keyboard was, given back as the menu closes: a list's
+                // keys work again after a choice or Escape.
+                let before = window.focused(cx);
+                let own = menu.focus_handle(cx);
+                opener.update(cx, |open, cx| {
+                    let closing = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |open: &mut Open, _, _: &DismissEvent, window, cx| {
+                            open.0 = None;
+                            // Only from the menu: a choice that put up a sheet
+                            // or opened a field keeps the keyboard where it went.
+                            let in_menu =
+                                window.focused(cx).is_none() || own.contains_focused(window, cx);
+                            if in_menu && let Some(before) = &before {
+                                window.focus(before, cx);
+                            }
+                            cx.notify();
+                        },
+                    );
+                    open.0 = Some((at, menu.clone(), closing));
+                    cx.notify();
+                });
+                window.focus(&menu.focus_handle(cx), cx);
+            },
+        );
+        let by_key = open.clone();
+        let mut this = self
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                open(event.position, window, cx)
+            })
+            // The menu key: under the keyboard's cursor as the next frame
+            // draws it (the list has revealed the cursor's item, and the key
+            // makes the keyboard the last input, which shows the ring), or
+            // at the pointer where no ring is drawn in that frame. The first
+            // callback runs before that frame draws, the second after it.
+            .on_action(move |_: &super::list_keys::ShowMenu, window, cx| {
+                cx.default_global::<super::CursorAt>().0 = None;
+                window.refresh();
+                let by_key = by_key.clone();
+                window.on_next_frame(move |window, _| {
+                    window.refresh();
+                    window.on_next_frame(move |window, cx| {
+                        let id = window.window_handle().window_id();
+                        let at = cx
+                            .try_global::<super::CursorAt>()
+                            .and_then(|c| c.0)
+                            .filter(|(drawn, _)| *drawn == id)
+                            .map_or_else(|| window.mouse_position(), |(_, b)| b.bottom_left());
+                        by_key(at, window, cx)
+                    });
+                });
             });
-            window.focus(&menu.focus_handle(cx), cx);
-        });
         if let Some((at, menu)) = shown {
             this = this.child(
                 deferred(
@@ -812,6 +967,79 @@ mod tests {
     // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
     // own `#[test]` into itself.
     use core::prelude::v1::test;
+
+    struct Page {
+        chosen: Rc<Cell<Option<&'static str>>>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let chosen = self.chosen.clone();
+            div()
+                .size_full()
+                .debug_selector(|| "page".into())
+                .koan_context_menu("page-menu", window, cx, move |menu, window, cx| {
+                    let chosen = chosen.clone();
+                    menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+                        .submenu("add to playlist", window, cx, move |menu, _, _| {
+                            let (first, second) = (chosen.clone(), chosen.clone());
+                            menu.item(
+                                MenuEntry::data("Morning")
+                                    .on_click(move |_, _, _| first.set(Some("Morning"))),
+                            )
+                            .item(
+                                MenuEntry::data("Evening")
+                                    .on_click(move |_, _, _| second.set(Some("Evening"))),
+                            )
+                        })
+                })
+        }
+    }
+
+    /// A playlist chosen with the pointer from "add to playlist" runs its
+    /// choice: the press in the submenu, drawn outside the menu it opened
+    /// from, closes neither before the click completes.
+    #[gpui_kit::test]
+    fn a_choice_in_a_submenu_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let chosen = Rc::new(Cell::new(None));
+        let held = chosen.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Page { chosen: held });
+        let cx: &mut gpui_kit::VisualTestContext = cx;
+        cx.run_until_parked();
+        let page = cx.debug_bounds("page").expect("drawn");
+        cx.simulate_mouse_down(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            page.origin + point(px(20.), px(20.)),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let opener = cx
+            .debug_bounds("menu: add to playlist")
+            .expect("the menu opened");
+        cx.simulate_mouse_move(opener.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        let evening = cx
+            .debug_bounds("menu: Evening")
+            .expect("the submenu opened");
+        cx.simulate_mouse_move(evening.center(), None, Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_click(evening.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(chosen.get(), Some("Evening"));
+        assert!(
+            cx.debug_bounds("menu: Evening").is_none(),
+            "the menus close once something is chosen"
+        );
+    }
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
         names.iter().fold(menu, |menu, name| {

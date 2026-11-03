@@ -54,6 +54,7 @@ impl RenderOnce for Segmented {
         for (index, option) in self.options.into_iter().enumerate() {
             let key =
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
+            let answers = super::Answerer::of(&key, window, cx);
             let chosen = index == selected;
             let edge = fade(
                 ElementId::NamedChild(Arc::new(key.clone()), "edge".into()),
@@ -85,16 +86,25 @@ impl RenderOnce for Segmented {
             .text_role(TypeRole::Control, &look)
             .text_color(ink)
             .whitespace_nowrap()
-            .child(option);
+            .relative()
+            .child(option)
+            .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let choose: Handler<gpui_kit::ClickEvent> = {
                     let on_change = on_change.clone();
-                    Arc::new(move |_, window, cx| on_change(&index, window, cx))
+                    let answers = answers.clone();
+                    // The chosen option's mark draws in from its leading edge.
+                    Arc::new(move |_, window, cx| {
+                        if index != selected {
+                            answers.start(super::Answer::Sweep, accent, cx);
+                        }
+                        on_change(&index, window, cx)
+                    })
                 };
-                option = answers_click(option, choose)
+                option = answers_click(option, choose.clone())
                     .cursor_pointer()
-                    .on_click(move |_, window, cx| on_change(&index, window, cx));
+                    .on_click(move |event, window, cx| choose(event, window, cx));
             }
             row = row.child(option);
         }

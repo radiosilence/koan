@@ -378,7 +378,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `,` | Back 10 seconds |
 | `.` | Forward 10 seconds |
 | `f` | Favourite the current track |
-| `p` | Add music (the ⇧⌘K picker) |
+| `p` | The search box, as ⇧⌘K |
 | `/` | Search the library |
 | `l` or `a` | Albums |
 | `r` | Artists |
@@ -392,7 +392,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | Key | Action |
 |-----|--------|
 | `⌘K` | Search the library |
-| `⇧⌘K` | Add music |
+| `⇧⌘K` | The search box (find and play) |
 | `⌘1`–`⌘7` | Queue, Albums, Artists, Favourites, History, Recently Played, Tracks |
 | `⌘[` / `⌘]` | Back / forward |
 | `⌘F` | Filter what's on screen (albums, artists), otherwise search the library |
@@ -419,10 +419,14 @@ Moving around without the pointer:
 | `Tab`, `⇧Tab` | The next or previous control: the sidebar, the toolbar's buttons, the page, the transport's controls and slider |
 | `F6`, `⇧F6` | The sidebar, the page and the transport in turn |
 | `↑` `↓` | In the sidebar, the place above or below; `Return` opens it |
-| `↑` `↓` | In a list of tracks (the track browser, a record, history), the row above or below, picked; with `⇧` the pick extends |
+| `↑` `↓` | In a list, the row above or below, picked; with `⇧` the pick extends. In the album grid, an artist's records or a shelf's, the row of records above or below, in the same column |
+| `←` `→` | In a grid of records or a shelf's artists, the one before or after; with `⇧` the pick extends |
 | `Home`, `End` | The first or last row |
 | `Page Up`, `Page Down` | A screenful up or down |
-| `Return` | Plays the list from the row |
+| `Return` | Plays a list of tracks from the row; opens a record, an artist, or the record a download came off |
 | `Ctrl-Space` | Adds the row to the pick, or takes it out; `space` stays play and pause |
+| `Menu`, `⇧F10` | The context menu of the row the keyboard is on, or of the pick it is in |
 
-The control or row the keyboard is on is outlined in the accent while the keyboard was used last.
+Every library page takes these keys: the album, artist and track browsers, a record's page, an artist's page, a playlist's, the shelves and the search's results, and history, as do the downloads page and the queue's menu key. In the grid and on the shelves an arrow marks one record without starting a pick, so a click on a tile still plays it; `⇧` with an arrow starts one.
+
+The control, row or tile the keyboard is on is outlined in the accent while the keyboard was used last.

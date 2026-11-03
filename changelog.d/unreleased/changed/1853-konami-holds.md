@@ -1,0 +1,1 @@
+- **The Konami code holds back B and A.** Once its arrows are in, the B and A that finish it no longer run a hotkey; the arrows always move the list, as in ordinary use.

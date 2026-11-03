@@ -496,14 +496,74 @@ impl SubsonicClient {
     /// when the record has no art: the server's placeholder is not passed on
     /// (see `is_placeholder`), so the caller draws its own.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
+        let _slot = CoverSlots::take()?;
+        self.cover_blocking(id, size)
+    }
+
+    /// `get_cover_art` for work nobody is waiting on (the preload): not
+    /// counted among the covers in flight, so several run at once without
+    /// each waiting for the others in `wait_for_idle_covers`, which the
+    /// caller does before each instead.
+    pub fn get_cover_art_background(
+        &self,
+        id: &str,
+        size: Option<u32>,
+    ) -> Result<Vec<u8>, SubsonicError> {
+        self.cover_blocking(id, size)
+    }
+
+    /// Many records' covers at `size` in one `koanCovers` request, each
+    /// handed to `each` as its frame arrives, in the order asked. Only for a
+    /// server that offers the extension. Ids past `covers::BULK_MAX` are an
+    /// error on the server's side; the caller asks in chunks.
+    pub fn get_covers(
+        &self,
+        ids: &[String],
+        size: u32,
+        each: &mut dyn FnMut(String, crate::remote::covers::BulkCover<Vec<u8>>),
+    ) -> Result<(), SubsonicError> {
+        let url = format!("{}/rest/koanCovers", self.base_url());
+        let mut form: Vec<(String, String)> = self.auth_params()?.into_iter().collect();
+        form.push(("size".into(), cover_bucket(size).to_string()));
+        form.extend(ids.iter().map(|id| ("id".into(), id.clone())));
+        // The downloads' client: it gives up on a stall, not on a whole
+        // answer that takes a while, which two hundred covers over a phone's
+        // connection may.
+        let mut resp = self.downloader().post(&url).form(&form).send()?;
+        let status = resp.status();
+        if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(SubsonicError::Unavailable(status.as_u16()));
+        }
+        let streamed = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with(crate::remote::covers::BULK_TYPE));
+        if !streamed {
+            // A refusal is Subsonic's own document.
+            let wrapper: SubsonicResponseWrapper = resp.json()?;
+            return Err(wrapper
+                .subsonic_response
+                .error
+                .map(|e| SubsonicError::Api {
+                    code: e.code,
+                    message: e.message,
+                })
+                .unwrap_or(SubsonicError::BadResponse));
+        }
+        while let Some((id, cover)) = crate::remote::covers::read_frame(&mut resp)? {
+            each(id, cover);
+        }
+        Ok(())
+    }
+
+    fn cover_blocking(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
         let url = format!("{}/rest/getCoverArt", self.base_url());
         let mut params = self.auth_params()?;
         params.insert("id".into(), id.to_string());
         if let Some(px) = size {
             params.insert("size".into(), cover_bucket(px).to_string());
         }
-
-        let _slot = CoverSlots::take()?;
         let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
         let headers = resp.headers().clone();

@@ -1,0 +1,1 @@
+- **The rest of the kōan GUI app from the keyboard.** The album grid, an artist's records and the shelves move in two dimensions with the arrows, the artist browser, an artist's page, a playlist's page, the shelves, search results and downloads take the list keys, and the menu key or Shift-F10 opens the context menu of the row the keyboard is on.

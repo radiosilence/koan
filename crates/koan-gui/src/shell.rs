@@ -17,7 +17,7 @@ use koan_kit::raw::deferred;
 use koan_kit::raw::{Decorations, WindowControlArea};
 
 use crate::components::sheet as ask;
-use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
+use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
@@ -71,11 +71,16 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
-    /// The lyrics beside the page, while they show. Dropped when hidden, so
-    /// a closed panel follows no song.
+    /// The lyrics beside the page, while they show or slide away; dropped
+    /// once gone, so a closed panel follows no song.
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
+    lyrics_shown: bool,
+    lyrics_slide: crate::components::SlideState,
     /// ⇧⌘K's picker, while it is open.
-    picker: Option<(Entity<crate::search::picker::PickerSheet>, Subscription)>,
+    search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
+    /// What had the keyboard when the search box opened, which has it back
+    /// when the box closes.
+    before_search: Option<(FocusHandle, Route)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
@@ -114,8 +119,9 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
-                let feed = lib.feed.clone();
-                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
+                let for_queue = lib.clone();
+                this.queue
+                    .update(cx, |queue, cx| queue.set_lib(for_queue, cx));
                 let covers = lib.covers.clone();
                 let search = lib.search.clone();
                 this.sidebar.update(cx, |sidebar, cx| {
@@ -149,8 +155,11 @@ impl Shell {
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
-            picker: None,
+            search_bar: None,
+            before_search: None,
             lyrics: None,
+            lyrics_shown: false,
+            lyrics_slide: Default::default(),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -202,6 +211,11 @@ impl Shell {
         });
     }
 
+    /// The queue's view, for tools that drive the window headlessly.
+    pub fn queue(&self) -> &Entity<QueueView> {
+        &self.queue
+    }
+
     /// Goes to `route`, as a link or a menu would.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
@@ -237,39 +251,59 @@ impl Shell {
 
     /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
     fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
-        self.lyrics = match self.lyrics.take() {
-            Some(_) => None,
-            None => Some(cx.new(crate::lyrics::LyricsPanel::new)),
-        };
+        self.lyrics_shown = !self.lyrics_shown;
+        if self.lyrics_shown && self.lyrics.is_none() {
+            self.lyrics = Some(cx.new(crate::lyrics::LyricsPanel::new));
+        }
         cx.notify();
     }
 
-    /// ⌘K and `/`: the sidebar's search field, the sidebar shown first.
+    /// ⌘K, `/`, ⇧⌘K and the sidebar's field: the search box over the
+    /// window, holding the keyboard.
     fn search(&mut self, _: &Search, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.sidebar_shown {
-            self.toggle_sidebar(&ToggleSidebar, window, cx);
-        }
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.focus_search(window, cx));
+        self.open_search_bar(window, cx);
     }
 
-    /// ⇧⌘K: the picker, over the window.
     fn add_music(&mut self, _: &AddMusic, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picker.is_some() {
+        self.open_search_bar(window, cx);
+    }
+
+    fn open_search_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((bar, _)) = &self.search_bar {
+            window.focus(&bar.focus_handle(cx), cx);
             return;
         }
-        let engine = crate::engine::engine(cx);
-        let picker = cx.new(|cx| crate::search::picker::PickerSheet::new(engine, window, cx));
+        let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
+            return;
+        };
+        // The sidebar's field opened the box by taking the keyboard: given
+        // it back, it would open the box again, so the page has it instead.
+        let field = self.sidebar.read(cx).search_focus(cx);
+        let route = self.nav.read(cx).current();
+        self.before_search = window
+            .focused(cx)
+            .filter(|f| field.as_ref() != Some(f))
+            .map(|f| (f, route));
+        let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
-            &picker,
+            &bar,
             window,
-            |this, _, _: &crate::search::picker::Dismissed, window, cx| {
-                this.picker = None;
-                this.arrived_at = this.nav.read(cx).current();
-                this.refocus(window, cx);
+            |this, _, _: &crate::search::bar::Dismissed, window, cx| {
+                this.search_bar = None;
+                let route = this.nav.read(cx).current();
+                this.arrived_at = route;
+                // Back where the keyboard was, unless the box opened a page:
+                // then that page has it.
+                match this.before_search.take().filter(|(_, at)| *at == route) {
+                    Some((before, _)) => {
+                        window.focus(&before, cx);
+                        cx.notify();
+                    }
+                    None => this.focus_page(window, cx),
+                }
             },
         );
-        self.picker = Some((picker, dismissed));
+        self.search_bar = Some((bar, dismissed));
         cx.notify();
     }
 
@@ -281,9 +315,16 @@ impl Shell {
             cx.notify();
             return;
         }
+        self.focus_page(window, cx);
+    }
+
+    /// The page showing takes the keyboard, wherever it was.
+    fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
+        } else if route == Route::Downloads {
+            window.focus(&self.downloads(cx).focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
             // A library page is made as the stage draws it, and takes the
@@ -295,12 +336,22 @@ impl Shell {
         cx.notify();
     }
 
+    /// The downloads page, made when first shown and dropped on leaving.
+    fn downloads(&mut self, cx: &mut Context<Self>) -> Entity<crate::downloads::DownloadsPage> {
+        let nav = self.nav.clone();
+        self.downloads
+            .get_or_insert_with(|| cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx)))
+            .clone()
+    }
+
     /// The window's regions in F6's order: the sidebar while it shows, the
     /// page, the transport.
     fn regions(&self, cx: &App) -> Vec<FocusHandle> {
         let route = self.nav.read(cx).current();
         let page = if route == Route::Queue {
             Some(self.queue.focus_handle(cx))
+        } else if route == Route::Downloads {
+            self.downloads.as_ref().map(|d| d.focus_handle(cx))
         } else {
             self.library
                 .as_ref()
@@ -339,6 +390,9 @@ impl Shell {
         self.queue.update(cx, |_, cx| cx.notify());
         if let Some(library) = &self.library {
             library.update(cx, |_, cx| cx.notify());
+        }
+        if let Some(downloads) = &self.downloads {
+            downloads.update(cx, |_, cx| cx.notify());
         }
         cx.notify();
     }
@@ -513,7 +567,7 @@ impl Shell {
             .when_some(page, |toolbar, page| toolbar.trailing(page))
             .trailing(
                 ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
-                    .selected(self.lyrics.is_some())
+                    .selected(self.lyrics_shown)
                     .help(help("lyrics panel", &ToggleLyrics, cx))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
@@ -556,8 +610,19 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The lyrics slid away: the panel goes with them.
+        if !self.lyrics_shown && self.lyrics.is_some() && self.lyrics_slide.closed() {
+            self.lyrics = None;
+        }
         let p = Paint::of(window, cx);
         let washed = theme::KoanTheme::washes_window(cx);
+        // The strip above the sidebar: the traffic lights' room on macOS, a
+        // title bar's where the app draws the window's decorations.
+        let strip = if matches!(window.window_decorations(), Decorations::Client { .. }) {
+            crate::components::ToolbarMetrics::HEIGHT
+        } else {
+            WINDOW_BUTTONS.height
+        };
         let transport = {
             let transport = self.transport.clone();
             move || {
@@ -574,16 +639,10 @@ impl Render for Shell {
             self.downloads = None;
         }
         let stage = match route {
-            Route::Downloads => {
-                let nav = self.nav.clone();
-                self.downloads
-                    .get_or_insert_with(|| {
-                        cx.new(|cx| crate::downloads::DownloadsPage::new(&nav, cx))
-                    })
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element()
-            }
+            Route::Downloads => self
+                .downloads(cx)
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
             Route::Queue => self
                 .queue
                 .clone()
@@ -673,7 +732,8 @@ impl Render for Shell {
                         RowMetrics::SIDEBAR_MAX,
                         RowMetrics::SIDEBAR,
                     )
-                    .when(self.sidebar_shown, |split| {
+                    .shown(self.sidebar_shown)
+                    .map(|split| {
                         split.leading(
                             div()
                                 .size_full()
@@ -682,17 +742,18 @@ impl Render for Shell {
                                 .when(!washed, |d| d.bg(p.bg))
                                 // Room for the window's buttons, which full
                                 // screen hides, and a place to move the
-                                // window by.
-                                .when(
-                                    WINDOW_BUTTONS.height > Pixels::ZERO && !window.is_fullscreen(),
-                                    |d| {
-                                        d.child(
-                                            Self::moves_window(div().id("sidebar-drag"), cx)
-                                                .h(WINDOW_BUTTONS.height)
-                                                .flex_shrink_0(),
-                                        )
-                                    },
-                                )
+                                // window by: on macOS under the traffic
+                                // lights; where the app draws its own
+                                // decorations (GNOME on Wayland), the
+                                // toolbar's height, level with the page's
+                                // toolbar, as a title bar would be.
+                                .when(strip > Pixels::ZERO && !window.is_fullscreen(), |d| {
+                                    d.child(
+                                        Self::moves_window(div().id("sidebar-drag"), cx)
+                                            .h(strip)
+                                            .flex_shrink_0(),
+                                    )
+                                })
                                 .child(
                                     // A landmark to a screen reader: where to go.
                                     div()
@@ -732,14 +793,29 @@ impl Render for Shell {
                                             .h_full()
                                             .child(stage),
                                     )
-                                    .children(self.lyrics.clone().map(|lyrics| {
-                                        lyrics.cached(
-                                            StyleRefinement::default()
-                                                .w(RowMetrics::inspector(&p.look))
-                                                .h_full()
-                                                .flex_none(),
+                                    // Drawn while empty too, so the first
+                                    // showing slides in rather than snapping.
+                                    .child(
+                                        Slide::new(
+                                            "lyrics-slide",
+                                            &self.lyrics_slide,
+                                            self.lyrics_shown,
+                                            RowMetrics::inspector(&p.look),
                                         )
-                                    })),
+                                        .when_some(
+                                            self.lyrics.clone(),
+                                            |slide, lyrics| {
+                                                slide.child(
+                                                    lyrics.cached(
+                                                        StyleRefinement::default()
+                                                            .w(RowMetrics::inspector(&p.look))
+                                                            .h_full()
+                                                            .flex_none(),
+                                                    ),
+                                                )
+                                            },
+                                        ),
+                                    ),
                             )
                             .when(!washed, |d| d.child(transport())),
                     )
@@ -772,8 +848,8 @@ impl Render for Shell {
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
             }))
-            .children(self.picker.as_ref().map(|(picker, _)| {
-                deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
+            .children(self.search_bar.as_ref().map(|(bar, _)| {
+                deferred(div().absolute().size_full().child(bar.clone())).with_priority(2)
             }))
     }
 }
