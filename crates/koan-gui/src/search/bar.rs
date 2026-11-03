@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row, or "All results…" after the last |
-//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, play a track (after the queue's end) or open a record or an artist |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's, picked |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -331,17 +331,25 @@ impl SearchBar {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // One record or artist goes to its page; tracks, or a pick (one
-            // record ticked included, as the footer says), play after the
-            // queue's end.
-            Verb::Take if !picking && first.kind != Kind::Track => {
-                let page = match first.kind {
-                    Kind::Album => Page::Album(first.id),
-                    _ => Page::Artist(first.id),
+            // Choosing goes to the thing and plays nothing: a record or an
+            // artist to its page, a track to its record's with the track
+            // picked.
+            Verb::Take if !picking => {
+                let (page, pick) = match first.kind {
+                    Kind::Album => (Page::Album(first.id), None),
+                    Kind::Artist => (Page::Artist(first.id), None),
+                    Kind::Track => match first.art {
+                        Some(Art::Album(album)) => (Page::Album(album), Some((album, first.id))),
+                        _ => return,
+                    },
                 };
-                self.lib.nav.update(cx, |nav, cx| nav.open(page, cx));
+                self.lib.nav.update(cx, |nav, cx| {
+                    nav.pick = pick;
+                    nav.open(page, cx);
+                });
             }
-            Verb::Take => queue(Placement::AppendAndPlay, cx),
+            // Return chooses; a pick is played only by a verb that says so.
+            Verb::Take => return,
             Verb::Next => queue(Placement::Next, cx),
             Verb::Append => queue(Placement::Append, cx),
             Verb::Replace => {
@@ -536,19 +544,16 @@ impl Render for SearchBar {
         } else if !chosen {
             bar.key("↩", "all results").key("↑↓", "choose")
         } else {
-            bar.key(
-                "↩",
-                if picking {
-                    "play these"
-                } else {
-                    "play or open"
-                },
-            )
-            .key("⌘↩", "play next")
-            .key("⌥↩", "add to queue")
-            .key("⇧⌘↩", "replace the queue")
-            .key("tab", "tick")
-            .key("⇧↩", "all results")
+            let bar = if picking {
+                bar
+            } else {
+                bar.key("↩", "go to")
+            };
+            bar.key("⌘↩", "play next")
+                .key("⌥↩", "add to queue")
+                .key("⇧⌘↩", "replace the queue")
+                .key("tab", "tick")
+                .key("⇧↩", "all results")
         };
         let bar = bar
             .key(

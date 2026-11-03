@@ -97,6 +97,9 @@ pub struct AlbumPage {
     spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
+    /// The list takes the keyboard at the next frame: a track was picked
+    /// for it from the search box.
+    take_focus: bool,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
@@ -143,6 +146,7 @@ impl AlbumPage {
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
+            take_focus: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
@@ -191,6 +195,7 @@ impl AlbumPage {
                         this.cursor.relocate(&ids(&this.tracks), &ids(&page.tracks));
                         this.tracks = page.tracks;
                         this.gone = None;
+                        this.take_pick(cx);
                     }
                     Ok(_) => this.gone = Some(false),
                     Err(e) => {
@@ -202,6 +207,26 @@ impl AlbumPage {
             })
             .ok();
         }));
+    }
+
+    /// A track picked for this record in the search box: the cursor and the
+    /// selection on it, as a click on its row puts them, and scrolled into
+    /// view.
+    fn take_pick(&mut self, cx: &mut Context<Self>) {
+        let Some((album, track)) = self.lib.nav.read(cx).pick else {
+            return;
+        };
+        if album != self.album_id {
+            return;
+        }
+        self.lib.nav.update(cx, |nav, _| nav.pick = None);
+        let Some(index) = self.tracks.iter().position(|t| t.id == track) else {
+            return;
+        };
+        self.cursor.click(index, false);
+        self.selection.only(Playable::Track(track));
+        self.reveal(index, cx);
+        self.take_focus = true;
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
@@ -544,6 +569,9 @@ impl Render for AlbumPage {
                 .into_any_element(),
             _ => div().into_any_element(),
         };
+        if std::mem::take(&mut self.take_focus) {
+            window.focus(&self.focus, cx);
+        }
         self.keyed = self.focus.is_focused(window);
         actions::list_menu(
             super::keys::keyed(

@@ -52,6 +52,9 @@ pub struct Nav {
     anchors: HashMap<Page, Anchor>,
     /// The track whose details are open over the page.
     pub info: Option<i64>,
+    /// A track to pick on its record's page as that page opens, as (record,
+    /// track): what choosing a track in the search box does.
+    pub pick: Option<(i64, i64)>,
     _navigator: Subscription,
 }
 
@@ -68,6 +71,7 @@ impl Nav {
             offsets: HashMap::new(),
             anchors: HashMap::new(),
             info: None,
+            pick: None,
             _navigator: watch,
         }
     }
