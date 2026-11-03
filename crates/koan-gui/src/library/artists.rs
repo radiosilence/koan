@@ -486,6 +486,7 @@ impl Render for ArtistBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )

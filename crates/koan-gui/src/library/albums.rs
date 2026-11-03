@@ -980,6 +980,7 @@ impl Render for AlbumGrid {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
