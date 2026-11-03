@@ -5,7 +5,7 @@
 //! keys and the shortcuts sheet say the same thing.
 
 use koan_kit::app::platform::{Menu as BarMenu, MenuItem, OsAction, SystemMenuType};
-use koan_kit::app::{Action, App, Context, Window};
+use koan_kit::app::{Action, App, Context, FocusHandle, Window};
 
 use super::actions::{self, APPLICATION, MENU, Shortcut};
 use crate::components::{Menu, MenuEntry};
@@ -216,12 +216,17 @@ fn entry(
     title: &'static str,
     action: fn() -> Box<dyn Action>,
     caption: impl Fn(&str) -> String,
+    from: Option<FocusHandle>,
 ) -> MenuEntry {
     let keys = shortcut_for(action().as_ref())
         .and_then(|s| s.keys.iter().find(|k| !k.starts_with("cmd-")))
         .map(|k| caption(k));
-    let entry = MenuEntry::new(title).on_click(move |_, window, cx| {
-        window.dispatch_action(action(), cx);
+    // From where the keyboard was when the menu opened: from the menu, the
+    // action would reach the toolbar and the shell but not the page
+    // beneath, whose Delete, Select All, Undo and Redo it is.
+    let entry = MenuEntry::new(title).on_click(move |_, window, cx| match &from {
+        Some(from) => from.dispatch_action(action().as_ref(), window, cx),
+        None => window.dispatch_action(action(), cx),
     });
     match keys {
         Some(keys) => entry.keys(keys),
@@ -230,10 +235,17 @@ fn entry(
 }
 
 /// `items` drawn in the window, leaving out what is macOS's alone.
-fn fill(mut menu: Menu, items: Vec<Item>, caption: impl Fn(&str) -> String + Copy) -> Menu {
+fn fill(
+    mut menu: Menu,
+    items: Vec<Item>,
+    caption: impl Fn(&str) -> String + Copy,
+    from: &Option<FocusHandle>,
+) -> Menu {
     for item in items.into_iter().filter(|i| !mac_only(i)) {
         menu = match item {
-            Item::Action { title, action, .. } => menu.item(entry(title, action, caption)),
+            Item::Action { title, action, .. } => {
+                menu.item(entry(title, action, caption, from.clone()))
+            }
             Item::Separator => menu.separator(),
             Item::Services => menu,
         };
@@ -247,21 +259,23 @@ fn fill(mut menu: Menu, items: Vec<Item>, caption: impl Fn(&str) -> String + Cop
 pub fn in_window(menu: Menu, window: &mut Window, cx: &mut Context<Menu>) -> Menu {
     let os = cx.platform_info().os;
     let caption = move |key: &str| actions::caption(key, os);
+    // Built as the menu opens, before it takes the keyboard.
+    let from = window.focused(cx);
     let mut defs = menus().into_iter();
     let mut menu = match defs.next() {
-        Some(app) => fill(menu, app.items, caption),
+        Some(app) => fill(menu, app.items, caption, &from),
         None => menu,
     };
     menu = menu.separator();
     for def in defs.filter(|d| !d.items.iter().all(mac_only)) {
-        let name = def.name;
+        let (name, from) = (def.name, from.clone());
         menu = menu.submenu(name, window, cx, move |sub, _, _| {
             let items = menus()
                 .into_iter()
                 .find(|d| d.name == name)
                 .map(|d| d.items)
                 .unwrap_or_default();
-            fill(sub, items, caption)
+            fill(sub, items, caption, &from)
         });
     }
     menu

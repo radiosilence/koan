@@ -969,10 +969,25 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                 let was_open = slot(view).pressed.take() == Some(which);
                 slot(view).open = None;
                 if !was_open && let Some(menu) = build(view, window, cx) {
-                    let dismissed = cx.subscribe(&menu, move |view, _, _: &DismissEvent, cx| {
-                        slot(view).open = None;
-                        cx.notify();
-                    });
+                    // Where the keyboard was, given back as the menu closes,
+                    // as a context menu gives it back: a list's keys work
+                    // again after a choice or Escape. Not when a choice put up
+                    // a sheet or opened a field, which keeps it.
+                    let before = window.focused(cx);
+                    let own = menu.focus_handle(cx);
+                    let dismissed = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |view, _, _: &DismissEvent, window, cx| {
+                            slot(view).open = None;
+                            let in_menu =
+                                window.focused(cx).is_none() || own.contains_focused(window, cx);
+                            if in_menu && let Some(before) = &before {
+                                window.focus(before, cx);
+                            }
+                            cx.notify();
+                        },
+                    );
                     menu.focus_handle(cx).focus(window, cx);
                     slot(view).open = Some((which, menu, dismissed));
                 }
