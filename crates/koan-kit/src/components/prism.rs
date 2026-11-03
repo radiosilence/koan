@@ -1775,7 +1775,8 @@ mod tests {
 
 #[cfg(test)]
 mod mask_tests {
-    use super::*;
+    // Named, not globbed: GPUI's glob brings its own `test` attribute.
+    use super::{HEARTS, mask_halves};
 
     /// A mask reaches the program as it was made, whatever its bits look
     /// like as a float: bit 31, a NaN's pattern, a denormal's.
