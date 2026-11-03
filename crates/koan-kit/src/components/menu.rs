@@ -803,21 +803,15 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                 }
                 // Where the keyboard was, given back as the menu closes: a list's
                 // keys work again after a choice or Escape.
-                let before = window.focused(cx);
                 let own = menu.focus_handle(cx);
+                let before = returns_to(&own, window, cx);
                 opener.update(cx, |open, cx| {
                     let closing = cx.subscribe_in(
                         &menu,
                         window,
                         move |open: &mut Open, _, _: &DismissEvent, window, cx| {
                             open.0 = None;
-                            // Only from the menu: a choice that put up a sheet
-                            // or opened a field keeps the keyboard where it went.
-                            let in_menu =
-                                window.focused(cx).is_none() || own.contains_focused(window, cx);
-                            if in_menu && let Some(before) = &before {
-                                window.focus(before, cx);
-                            }
+                            give_back(&own, &before, window, cx);
                             cx.notify();
                         },
                     );
@@ -871,6 +865,40 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
 }
 
 impl<E: InteractiveElement + ParentElement> KoanContextMenu for E {}
+
+/// The menu opened last and where it gives the keyboard back to.
+struct LastMenu {
+    menu: FocusHandle,
+    returns_to: Option<FocusHandle>,
+}
+
+impl Global for LastMenu {}
+
+/// Where the keyboard goes once the menu holding `menu` closes: what held
+/// it as the menu opened, or, when that was another menu about to close
+/// under this one, what that menu would have given it back to.
+fn returns_to(menu: &FocusHandle, window: &Window, cx: &mut App) -> Option<FocusHandle> {
+    let mut before = window.focused(cx);
+    if let Some(last) = cx.try_global::<LastMenu>()
+        && before.as_ref() == Some(&last.menu)
+    {
+        before = last.returns_to.clone();
+    }
+    cx.set_global(LastMenu {
+        menu: menu.clone(),
+        returns_to: before.clone(),
+    });
+    before
+}
+
+/// Gives the keyboard back as a menu closes, if it is still the menu's: a
+/// choice that put up a sheet or opened a field keeps it where it went.
+fn give_back(menu: &FocusHandle, before: &Option<FocusHandle>, window: &mut Window, cx: &mut App) {
+    let in_menu = window.focused(cx).is_none() || menu.contains_focused(window, cx);
+    if in_menu && let Some(before) = before {
+        window.focus(before, cx);
+    }
+}
 
 /// Where a set of buttons keeps the menu one of them has open: the
 /// transport's sleep, output and EQ, a toolbar's menus.
@@ -969,10 +997,17 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                 let was_open = slot(view).pressed.take() == Some(which);
                 slot(view).open = None;
                 if !was_open && let Some(menu) = build(view, window, cx) {
-                    let dismissed = cx.subscribe(&menu, move |view, _, _: &DismissEvent, cx| {
-                        slot(view).open = None;
-                        cx.notify();
-                    });
+                    let own = menu.focus_handle(cx);
+                    let before = returns_to(&own, window, cx);
+                    let dismissed = cx.subscribe_in(
+                        &menu,
+                        window,
+                        move |view, _, _: &DismissEvent, window, cx| {
+                            slot(view).open = None;
+                            give_back(&own, &before, window, cx);
+                            cx.notify();
+                        },
+                    );
                     menu.focus_handle(cx).focus(window, cx);
                     slot(view).open = Some((which, menu, dismissed));
                 }

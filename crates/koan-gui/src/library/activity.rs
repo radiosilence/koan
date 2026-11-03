@@ -17,7 +17,9 @@ use koan_kit::app::*;
 use crate::components::{NavNote, ProgressRow};
 use crate::engine::engine;
 use crate::mirror::Mirror;
-use crate::platform::actions::{ClearDownloadedFiles, ForceRescan, RebuildIndex, Rescan, Sync};
+use crate::platform::actions::{
+    ClearArtworkCache, ClearDownloadedFiles, ForceRescan, RebuildIndex, Rescan, Sync,
+};
 use crate::theme::Tone;
 
 pub struct ActivityHandle(pub Entity<Activity>);
@@ -94,6 +96,22 @@ pub fn init(cx: &mut App) {
     // App-wide, as the menu's other tasks are, so it works with any window
     // in front; once the window is handed back, since it asks.
     cx.on_action(|_: &ClearDownloadedFiles, cx| cx.defer(clear_downloads));
+    // Asked in the main window, which comes forward, whichever is in front.
+    cx.on_action(|_: &ClearArtworkCache, cx| {
+        cx.defer(|cx| {
+            crate::platform::to_front(cx);
+            let (Some(window), Some(shell)) =
+                (crate::app::main_window(cx), crate::app::main_shell(cx))
+            else {
+                return;
+            };
+            window
+                .update(cx, |_, window, cx| {
+                    shell.update(cx, |shell, cx| shell.clear_artwork(window, cx))
+                })
+                .ok();
+        })
+    });
     // Asked first, as Settings asks: what goes with the index is said. A
     // global action runs while GPUI holds the window, so the question waits
     // until it is handed back.
@@ -445,6 +463,16 @@ fn clear_downloads(cx: &mut App) {
                 window,
                 cx,
                 move |cx| {
+                    // Something may have taken the downloads while the
+                    // question was up.
+                    if model.read(cx).conflicts(Uses::DOWNLOADS) {
+                        crate::notice::show(
+                            "Downloads are in use: clear them once that finishes",
+                            Tone::Muted,
+                            cx,
+                        );
+                        return;
+                    }
                     model.update(cx, |m, cx| {
                         m.run(
                             "Clearing downloads",
