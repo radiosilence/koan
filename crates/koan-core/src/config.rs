@@ -2156,6 +2156,12 @@ pub fn config_dir() -> PathBuf {
     platform_config_dir()
 }
 
+/// Whether `config_dir` is the platform's own, neither `KOAN_CONFIG_DIR` nor
+/// `set_config_dir` pointing it elsewhere.
+pub fn is_default_config_dir() -> bool {
+    config_dir() == platform_config_dir()
+}
+
 #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 pub(crate) fn platform_config_dir() -> PathBuf {
     dirs::home_dir()

@@ -1139,16 +1139,22 @@ impl KoanEngine {
                     };
                     KoanError::Refused { message }
                 })?;
-            // The devices the engine reads as it opens; everything else is
-            // written only once it has, so a launch that fails leaves the
-            // macOS app as it was.
-            let prepared = match handover.as_mut().map(|h| h.prepare()) {
-                Some(Err(e)) => {
-                    log::warn!("handover: the devices the desktop app knew: {e}");
-                    false
-                }
-                _ => true,
-            };
+            // The id and devices the engine reads as it opens, put back if it
+            // does not; the marker is written only once it has and the
+            // session moved, so a launch that fails leaves the macOS app as
+            // it was, and one that does not finish plans the same next time.
+            if let Some(handover) = handover.as_mut()
+                && let Err(e) = handover.prepare()
+            {
+                handover.abandon();
+                return Err(KoanError::Refused {
+                    message: format!(
+                        "could not move this device's files in {}: {e}. Check that the folder \
+                         can be written.",
+                        koan_core::config::config_dir().display()
+                    ),
+                });
+            }
             let engine = match Self::build(None, identity.clone()) {
                 Ok(engine) => engine,
                 Err(e) => {
@@ -1173,7 +1179,7 @@ impl KoanEngine {
                     });
                 // Anything short of the whole handover is tried again at the
                 // next launch rather than marked done.
-                if !(prepared && adopted) {
+                if !adopted {
                     log::warn!("handover: left for the next launch");
                 } else if let Err(e) = handover.finish() {
                     log::warn!("handover: left for the next launch: {e}");
@@ -1191,9 +1197,14 @@ impl KoanEngine {
 
 /// Whether a kōan macOS app from before 0.70 is running: one with the app's
 /// bundle id, other than a 0.70 app running as the legacy device beside the
-/// desktop app (`link::legacy_app_running`).
+/// desktop app (`link::legacy_app_running`). Only on the configuration the
+/// macOS app uses, the default one: a desktop app pointed elsewhere
+/// (`KOAN_CONFIG_DIR`) is no device the macOS app is.
 #[cfg(target_os = "macos")]
 fn older_mac_app_running() -> bool {
+    if !koan_core::config::is_default_config_dir() {
+        return false;
+    }
     let id = objc2_foundation::NSString::from_str("cc.blit.koan");
     let running = objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(&id);
     !running.is_empty()

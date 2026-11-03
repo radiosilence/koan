@@ -14,7 +14,7 @@ The desktop app is this computer to the server and the network: named after it (
 
 The SwiftUI Mac app is no longer released from 0.70. The desktop app's first launch on a configuration the Mac app used takes the Mac app's place: the phones, the TV and the server go on seeing one Mac, with its play history, its TV pairings and its saved queue. If only the desktop app ever ran there, it keeps the device it already was, and its own queue.
 
-The desktop app does not open while the Mac app is running, since the two would be the same device: quit the Mac app first. A Mac app from 0.70 still installed and opened on that configuration afterwards is a device of its own named `studio (legacy)`, with a session of its own, so it cannot take the desktop app's place. An older Mac app knows nothing of this and, opened while the desktop app runs, is the same device as it, so remove it once the desktop app has taken over.
+The desktop app does not open while the Mac app is running, since the two would be the same device: quit the Mac app first. The released Mac apps, all from before 0.70, know nothing of this: one opened while the desktop app runs is the same device as it, so remove it once the desktop app has taken over. (A Mac app built from source at 0.70 or later is a device of its own there, named `studio (legacy)`, with a session of its own.)
 
 ## Files from outside
 
