@@ -343,6 +343,37 @@ pub fn shader_epoch() -> Instant {
 // KOAN: the present clock (#1859).
 static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
 
+// KOAN: (#2034) each command buffer's time on the GPU, kept while a
+// measurement asks for it: what a frame of shaders costs, read headlessly.
+static GPU_TIMING: AtomicBool = AtomicBool::new(false);
+static GPU_TIMES: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+
+/// Starts or stops keeping each command buffer's time on the GPU, which the
+/// renderers report through `record_gpu_time`.
+pub fn gpu_timing(on: bool) {
+    GPU_TIMING.store(on, Ordering::Relaxed);
+}
+
+/// Whether GPU times are being kept.
+pub fn gpu_timing_on() -> bool {
+    GPU_TIMING.load(Ordering::Relaxed)
+}
+
+/// A command buffer's time on the GPU, in seconds, kept while timing is on.
+pub fn record_gpu_time(seconds: f64) {
+    if gpu_timing_on() {
+        GPU_TIMES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(seconds);
+    }
+}
+
+/// The GPU times kept since last taken, in seconds.
+pub fn take_gpu_times() -> Vec<f64> {
+    std::mem::take(&mut *GPU_TIMES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// The moment the frame being made now will reach the screen: what a
 /// shader's `time` is reckoned at, and what a retarget samples a track at,
 /// so motion neither jitters with encode latency nor jumps when retargeted.

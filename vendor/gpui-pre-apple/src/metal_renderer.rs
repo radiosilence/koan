@@ -638,7 +638,8 @@ impl MetalRenderer {
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
+        let block = RcBlock::new(move |buffer: ptr::NonNull<AnyObject>| {
+            note_gpu_time(buffer); // KOAN: #2034.
             if let Some(instance_buffer) = instance_buffer.take() {
                 instance_buffer_pool.lock().release(instance_buffer);
             }
@@ -1230,7 +1231,8 @@ impl MetalRenderer {
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
+        let block = RcBlock::new(move |buffer: ptr::NonNull<AnyObject>| {
+            note_gpu_time(buffer); // KOAN: #2034.
             if let Some(instance_buffer) = instance_buffer.take() {
                 instance_buffer_pool.lock().release(instance_buffer);
             }
@@ -2994,6 +2996,24 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 
 // KOAN: layer groups (#1859, #1878).
+// KOAN: (#2034) a finished command buffer's time on the GPU, for
+// `gpui::take_gpu_times`, while a measurement keeps them.
+fn note_gpu_time(buffer: ptr::NonNull<AnyObject>) {
+    if !gpui::gpu_timing_on() {
+        return;
+    }
+    // SAFETY: the completed handler is handed the command buffer, an
+    // MTLCommandBuffer, which answers both selectors.
+    let (start, end): (f64, f64) = unsafe {
+        let buffer = buffer.as_ref();
+        (
+            objc2::msg_send![buffer, GPUStartTime],
+            objc2::msg_send![buffer, GPUEndTime],
+        )
+    };
+    gpui::record_gpu_time(end - start);
+}
+
 #[cfg(test)]
 mod layer_group_tests {
     use gpui::{
