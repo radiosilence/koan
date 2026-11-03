@@ -235,8 +235,20 @@ final class PlaylistsModel {
             let byId = Dictionary(entries.map { ($0.entryId, $0) }, uniquingKeysWith: { a, _ in a })
             entries = shown.compactMap { byId[$0] }
         }
-        act {
-            try await $0.movePlaylistEntries(playlistId: id, entryIds: entryIds, before: before)
+        let engine = self.engine
+        Task {
+            do {
+                try await engine.movePlaylistEntries(playlistId: id, entryIds: entryIds, before: before)
+            } catch {
+                // The rows shown were moved here first; refused (the place
+                // named has gone on another device), they go back to what the
+                // playlist holds, read again since nothing else will say so.
+                report?(SettingsModel.describe(error))
+                if openId == id {
+                    openStamp = nil
+                    await prepare(id: id)
+                }
+            }
         }
     }
 
@@ -341,7 +353,7 @@ final class PlaylistsModel {
             do {
                 try await body(engine)
             } catch {
-                report?(String(describing: error))
+                report?(SettingsModel.describe(error))
             }
         }
     }

@@ -425,7 +425,7 @@ impl PlaylistPage {
                 }
                 .and_then(|o| o.parse::<i64>().ok());
                 let entries = origin.entries.to_vec();
-                command(cx, "reorder playlist", move |e| {
+                self.edit(cx, "reorder playlist", move |e| {
                     e.move_playlist_entries(id, entries, before)
                 });
             }
@@ -433,11 +433,40 @@ impl PlaylistPage {
                 let at = rows::position(&self.rows, dest, self.items.len());
                 let before = self.items.get(at).and_then(|i| i.playlist_entry_id);
                 let sets = dragged.sets.to_vec();
-                command(cx, "add to playlist", move |e| {
+                self.edit(cx, "add to playlist", move |e| {
                     e.insert_into_playlist_before(id, sets, before)
                 });
             }
         }
+    }
+
+    /// An edit placed among the playlist's entries. A refusal is said in the
+    /// notice line and the rows are read again: the place it named may have
+    /// gone on another device, and the rows shown are then not the
+    /// playlist's.
+    fn edit<F, Fut, T>(&self, cx: &mut Context<Self>, what: &'static str, f: F)
+    where
+        F: FnOnce(std::sync::Arc<koan_runtime::KoanEngine>) -> Fut,
+        Fut: std::future::Future<Output = Result<T, koan_runtime::KoanError>> + 'static,
+        T: 'static,
+    {
+        let future = f(crate::engine::engine(cx));
+        cx.spawn(async move |this, cx| {
+            let Err(e) = future.await else { return };
+            log::warn!("{what}: {e}");
+            let words = match &e {
+                koan_runtime::KoanError::NotFound { .. } => {
+                    "The playlist changed on another device; try again.".to_string()
+                }
+                e => crate::settings::model::describe(e),
+            };
+            this.update(cx, |this, cx| {
+                crate::notice::show(words, crate::theme::Tone::Bad, cx);
+                this.load(cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The payload for dragging `items` out: their tracks, marked as this
