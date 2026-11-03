@@ -150,9 +150,9 @@ pub struct QueueView {
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
-    /// The rest of the queue can be shuffled in place: there is a rest, and
-    /// shuffle play is off (it keeps an order of its own beside the queue).
-    shufflable: bool,
+    /// Why the rest of the queue cannot be shuffled in place now, `None`
+    /// when it can (`dice_refusal`).
+    dice: Option<&'static str>,
     /// The queue items as of the last edit, which the next is told against.
     known: HashSet<String>,
     /// Items moved by a drag here, landing with the next edit.
@@ -174,9 +174,9 @@ impl QueueView {
         let subscriptions = [
             cx.observe(&playback, |this, playback, cx| {
                 let now = &playback.read(cx).0;
-                let shufflable = now.queue_shufflable && !now.shuffle;
-                if shufflable != this.shufflable {
-                    this.shufflable = shufflable;
+                let dice = dice_refusal(now);
+                if dice != this.dice {
+                    this.dice = dice;
                     cx.notify();
                 }
                 // The cursor is the playback's: it can move in an update of
@@ -235,10 +235,7 @@ impl QueueView {
             following: false,
             followed: None,
             followed_row: None,
-            shufflable: {
-                let now = &cx.global::<Mirror>().playback.read(cx).0;
-                now.queue_shufflable && !now.shuffle
-            },
+            dice: dice_refusal(&cx.global::<Mirror>().playback.read(cx).0),
             known: HashSet::new(),
             moved: Vec::new(),
             landed: HashSet::new(),
@@ -1470,6 +1467,19 @@ impl QueueView {
     }
 }
 
+/// Why the dice cannot shuffle the rest of the queue now, the Mac's
+/// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
+/// queue, and with nothing after the cursor there is nothing to shuffle.
+fn dice_refusal(now: &koan_ffi::NowPlaying) -> Option<&'static str> {
+    if now.shuffle {
+        Some("shuffle play is on: turn it off to shuffle the queue itself")
+    } else if !now.queue_shufflable {
+        Some("nothing after this track to shuffle")
+    } else {
+        None
+    }
+}
+
 impl QueueView {
     /// The page's header, the Mac's: what the queue is (a playlist or a
     /// record it follows, or the queue), how many tracks and how long, and
@@ -1538,14 +1548,13 @@ impl QueueView {
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
+                // Refused as the Mac refuses it, and saying why.
                 ToolbarButton::new(
                     "queue-dice",
                     Icon::Reshuffle,
-                    "shuffle the rest of the queue",
+                    self.dice.unwrap_or("shuffle the rest of the queue"),
                 )
-                // As the Mac refuses it: nothing after the cursor, or shuffle
-                // play on, which keeps an order of its own.
-                .disabled(!self.shufflable)
+                .disabled(self.dice.is_some())
                 .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
             .child(
@@ -1572,7 +1581,7 @@ impl QueueView {
 }
 
 /// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
-/// read as "save" is chosen, not each time the toolbar draws.
+/// read when "save" is chosen.
 fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",
