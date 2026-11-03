@@ -26,7 +26,8 @@ use crate::theme::{KoanStyled, KoanTheme, Look, Motion, TypeRole};
 /// and 3 the line sung before it, in device pixels from the layer's top as
 /// laid out; 4 a line to come's opacity, 5 a past line's, 6 the sung line's
 /// opacity as it starts to ease in, 7 the line before's as it ends, 8 the
-/// height of the edge's fade. Tracks: 0 the emphasis moving from the line
+/// height of the edge's fade, 9 the line before's opacity as it starts to
+/// ease out (1, or where a change still running had brought it). Tracks: 0 the emphasis moving from the line
 /// before to the sung line, 0 to 1; 1 the column's offset down, in device
 /// pixels, as it glides to its place.
 pub static LYRICS: ShaderProgram = ShaderProgram {
@@ -46,7 +47,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     if (y >= u[0] && y < u[1]) {
         a = mix(u[6], 1.0, t);
     } else if (y >= u[2] && y < u[3]) {
-        a = mix(1.0, u[7], t);
+        a = mix(u[9], u[7], t);
     } else if (y < u[0]) {
         a = u[5];
     } else {
@@ -75,7 +76,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     if (y >= u[0].x && y < u[0].y) {
         a = mix(u[1].z, 1.0, t);
     } else if (y >= u[0].z && y < u[0].w) {
-        a = mix(1.0, u[1].w, t);
+        a = mix(u[2].y, u[1].w, t);
     } else if (y < u[0].x) {
         a = u[1].y;
     }
@@ -100,6 +101,7 @@ pub struct SyncedLines {
     lines: Vec<SharedString>,
     active: Option<usize>,
     since: Option<Instant>,
+    song: Option<u64>,
     on_line: Option<super::Handler<usize>>,
 }
 
@@ -110,8 +112,20 @@ impl SyncedLines {
             lines,
             active,
             since: None,
+            song: None,
             on_line: None,
         }
+    }
+
+    /// Which song these are the lines of (the track): another starts
+    /// afresh, lyrics the same as the last song's included. Told by the
+    /// lines' text otherwise.
+    pub fn song(mut self, song: impl std::hash::Hash) -> Self {
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        song.hash(&mut hasher);
+        self.song = Some(hasher.finish());
+        self
     }
 
     /// When the song reached the active line, by the playhead: its motion
@@ -143,6 +157,17 @@ struct State {
     waited: u8,
     /// Which song's lines these are: another song starts afresh.
     song: u64,
+    /// The column's layout is the last song's until it is laid out again:
+    /// where a line stands is not asked of it until then.
+    stale: bool,
+    /// When the sung line's motion started: its emphasis and its glide
+    /// keep time together however long placing it waited.
+    at: Instant,
+    /// The sung line's opacity as its emphasis started, and the line
+    /// before's: a change inside one still running starts from where that
+    /// one had brought them, rather than flashing.
+    from_sung: f32,
+    from_before: f32,
 }
 
 /// How many frames to wait for the sung line's first layout before placing
@@ -177,94 +202,128 @@ impl RenderOnce for SyncedLines {
                 drawn: false,
                 waited: 0,
                 song: 0,
+                stale: false,
+                at: Instant::now(),
+                from_sung: UPCOMING,
+                from_before: 1.0,
             }
         });
         let count = self.lines.len();
         let active = self.active.filter(|line| *line < count);
-        let song = song_of(&self.lines);
+        let song = self.song.unwrap_or_else(|| song_of(&self.lines));
         // An item for each line, after the room above the first.
         let item = |line: usize| line + 1;
         let moving = KoanTheme::motion_allowed(cx);
-        let (scroll, animated, before, waiting) = state.update(cx, |s, _| {
-            // Another song lands at once, from the top of its own lines.
-            if s.song != song {
-                s.song = song;
-                s.drawn = false;
-                s.active = None;
-                s.before = None;
-                s.placing = None;
-                s.animated.hold(0, 1.0);
-                s.animated.hold(1, 0.0);
-            }
-            if s.active != active {
-                s.waited = 0;
-                s.before = s.active;
-                s.active = active;
-                let animates = s.drawn && moving;
-                s.placing = Some(animates.then(|| s.scroll.offset().y));
-                if animates {
-                    let at = self
-                        .since
-                        .filter(|since| since.elapsed() < Motion::SETTLE)
-                        .unwrap_or_else(Animated::now);
-                    s.animated.segment(
-                        0,
-                        0.0,
-                        1.0,
-                        at,
-                        Motion::SETTLE,
-                        Ease::QuickOut,
-                        Repeat::Once,
-                    );
-                } else {
+        let (scroll, animated, before, waiting, (from_sung, from_before)) =
+            state.update(cx, |s, _| {
+                // Another song lands at once, from the top of its own lines.
+                if s.song != song {
+                    s.song = song;
+                    s.stale = true;
+                    s.drawn = false;
+                    s.active = None;
+                    s.before = None;
+                    s.placing = None;
                     s.animated.hold(0, 1.0);
+                    s.animated.hold(1, 0.0);
                 }
-            }
-            s.drawn = true;
-            // Brought to the middle of the view, gliding there from where it
-            // stood when the song moved on by a little; a jump (a seek, a new
-            // song) and the first draw land at once.
-            let mut waiting = false;
-            if let (Some(from), Some(line)) = (s.placing, active) {
-                match s.scroll.bounds_for_item(item(line)) {
-                    Some(bounds) => {
-                        s.placing = None;
-                        let view = s.scroll.bounds();
-                        let to = (view.center().y - bounds.center().y)
-                            .clamp(-s.scroll.max_offset().y, Pixels::ZERO);
-                        s.scroll.set_offset(Point {
-                            x: s.scroll.offset().x,
-                            y: to,
-                        });
-                        let travel = from.map(|from| from - to);
-                        match travel.filter(|t| *t > Pixels::ZERO && *t < band * 0.5) {
-                            Some(travel) => s.animated.segment(
-                                1,
-                                f32::from(travel) * scale,
-                                0.0,
-                                Animated::now(),
-                                Motion::SETTLE,
-                                Ease::InOut,
-                                Repeat::Once,
-                            ),
-                            None => s.animated.hold(1, 0.0),
+                if s.active != active {
+                    s.waited = 0;
+                    let now = Animated::now();
+                    // A change inside one still running: the line it was
+                    // bringing in leaves from the opacity it had reached, and the
+                    // column glides on from where it is drawn.
+                    let t = s.animated.at(0, now).clamp(0.0, 1.0);
+                    s.from_before = s.from_sung + (1.0 - s.from_sung) * t;
+                    let forward = match (s.active, active) {
+                        (Some(b), Some(a)) => b < a,
+                        (Some(_), None) => false,
+                        (None, _) => true,
+                    };
+                    s.from_sung = if forward { UPCOMING } else { PAST };
+                    s.before = s.active;
+                    s.active = active;
+                    let animates = s.drawn && moving;
+                    let drawn_at = s.scroll.offset().y + px(s.animated.at(1, now) / scale);
+                    s.placing = Some(animates.then_some(drawn_at));
+                    if animates {
+                        let at = self
+                            .since
+                            .filter(|since| since.elapsed() < Motion::SETTLE)
+                            .unwrap_or(now);
+                        s.at = at;
+                        s.animated.segment(
+                            0,
+                            0.0,
+                            1.0,
+                            at,
+                            Motion::SETTLE,
+                            Ease::QuickOut,
+                            Repeat::Once,
+                        );
+                    } else {
+                        s.animated.hold(0, 1.0);
+                        s.from_before = 1.0;
+                    }
+                }
+                s.drawn = true;
+                // Brought to the middle of the view, gliding there from where it
+                // stood when the song moved on by a little; a jump (a seek, a new
+                // song) and the first draw land at once.
+                let mut waiting = false;
+                if s.stale && s.placing.is_some() {
+                    // Laid out for this song first: the bounds held are the
+                    // last one's.
+                    s.stale = false;
+                    waiting = true;
+                } else if let (Some(from), Some(line)) = (s.placing, active) {
+                    s.stale = false;
+                    match s.scroll.bounds_for_item(item(line)) {
+                        Some(bounds) => {
+                            s.placing = None;
+                            let view = s.scroll.bounds();
+                            let to = (view.center().y - bounds.center().y)
+                                .clamp(-s.scroll.max_offset().y, Pixels::ZERO);
+                            s.scroll.set_offset(Point {
+                                x: s.scroll.offset().x,
+                                y: to,
+                            });
+                            // By a little is the next line or so: less than half
+                            // the panel.
+                            let travel = from.map(|from| from - to);
+                            let little = view.size.height * 0.5;
+                            match travel.filter(|t| *t > Pixels::ZERO && *t < little) {
+                                // Timed with the emphasis, from when the song
+                                // reached the line.
+                                Some(travel) => s.animated.segment(
+                                    1,
+                                    f32::from(travel) * scale,
+                                    0.0,
+                                    s.at,
+                                    Motion::SETTLE,
+                                    Ease::InOut,
+                                    Repeat::Once,
+                                ),
+                                None => s.animated.hold(1, 0.0),
+                            }
                         }
+                        // Not laid out yet: placed once it has been, for a few
+                        // frames, and then left to the scroll as it stands.
+                        None if s.waited < WAIT => {
+                            s.waited += 1;
+                            waiting = true;
+                        }
+                        None => s.placing = None,
                     }
-                    // Not laid out yet: placed once it has been, for a few
-                    // frames, and then left to the scroll as it stands.
-                    None if s.waited < WAIT => {
-                        s.waited += 1;
-                        waiting = true;
-                    }
-                    None => s.placing = None,
                 }
-            }
-            (s.scroll.clone(), s.animated.clone(), s.before, waiting)
-        });
-        let forward = match (before, active) {
-            (Some(b), Some(a)) => b < a,
-            _ => true,
-        };
+                (
+                    s.scroll.clone(),
+                    s.animated.clone(),
+                    s.before,
+                    waiting,
+                    (s.from_sung, s.from_before),
+                )
+            });
         if waiting {
             window.request_animation_frame();
         }
@@ -277,13 +336,14 @@ impl RenderOnce for SyncedLines {
             let on_line = self.on_line.clone();
             // Drawn whole for the program to set its opacity; without
             // shaders, in the colour its place gives it.
-            let color = if SHADED {
-                p.strong.hsla()
-            } else if active == Some(ix) {
+            let color = if SHADED || active == Some(ix) {
                 p.strong.hsla()
             } else {
                 p.muted.hsla()
             };
+            // A click finds its line by where the lines are drawn: mid-glide
+            // the column stands off its layout by the glide's offset.
+            let (glide, lines_at) = (animated.clone(), scroll.clone());
             items.push(
                 div()
                     .id(ix)
@@ -299,7 +359,21 @@ impl RenderOnce for SyncedLines {
                     .text_role(TypeRole::TitleSmall, &look)
                     .text_color(color)
                     .when_some(on_line, |d, f| {
-                        d.on_click(move |_, window, cx| f(&ix, window, cx))
+                        d.on_click(move |e, window, cx| {
+                            let offset = px(glide.at(1, Animated::now()) / window.scale_factor());
+                            let line = (offset != Pixels::ZERO)
+                                .then(|| e.position().y - offset)
+                                .and_then(|y| {
+                                    (0..count).find(|&l| {
+                                        lines_at.bounds_for_item(item(l)).is_some_and(|b| {
+                                            let top = b.top() + lines_at.offset().y;
+                                            y >= top && y < top + b.size.height
+                                        })
+                                    })
+                                })
+                                .unwrap_or(ix);
+                            f(&line, window, cx)
+                        })
                     })
                     // An empty line keeps its height: a pause in the song.
                     .child(if line.is_empty() { " ".into() } else { line })
@@ -320,15 +394,32 @@ impl RenderOnce for SyncedLines {
             .size_full()
             .map(|d| {
                 if SHADED {
-                    d.child(LinesLayer {
-                        child: column.into_any_element(),
-                        animated,
-                        scroll: scroll.clone(),
-                        sung: active.map(item),
-                        before: before.filter(|line| *line < count).map(item),
-                        forward,
-                        band: f32::from(band),
-                    })
+                    let sung = active.map(item);
+                    let before = before.filter(|line| *line < count).map(item);
+                    let band = f32::from(band);
+                    let placed = animated.clone();
+                    let lines = scroll.clone();
+                    // Not decorative: which line is sung is information,
+                    // so its emphasis shows under Reduce Motion too, landing
+                    // at once as its owner sets it.
+                    d.child(
+                        super::AnimatedLayer::new(&animated, column)
+                            .program(&LYRICS)
+                            .informative()
+                            .placed(move |bounds, scale| {
+                                place(
+                                    &placed,
+                                    &lines,
+                                    bounds,
+                                    scale,
+                                    sung,
+                                    before,
+                                    from_sung,
+                                    from_before,
+                                    band,
+                                )
+                            }),
+                    )
                 } else {
                     d.child(column)
                 }
@@ -337,124 +428,57 @@ impl RenderOnce for SyncedLines {
     }
 }
 
-/// The column drawn as one layer under `LYRICS`, always: its opacities and
-/// its edges are the program's even at rest.
-struct LinesLayer {
-    child: AnyElement,
-    animated: Animated,
-    scroll: ScrollHandle,
-    /// The items of the sung line and the one sung before it.
+/// Where the sung line and the one before stand in the layer, in device
+/// pixels from its top, as the column is laid out and scrolled now (a scroll
+/// by the person moves them with it), and the opacities they move between.
+#[allow(clippy::too_many_arguments)]
+fn place(
+    animated: &Animated,
+    scroll: &ScrollHandle,
+    bounds: Bounds<Pixels>,
+    scale: f32,
     sung: Option<usize>,
     before: Option<usize>,
-    /// The song moved on rather than back.
-    forward: bool,
-    /// The edge's fade, in points.
+    from_sung: f32,
+    from_before: f32,
     band: f32,
-}
-
-impl LinesLayer {
-    /// Where the sung line and the one before stand in the layer, in device
-    /// pixels from its top, as the column is laid out and scrolled now: a
-    /// scroll by the person moves them with it.
-    fn place(&self, bounds: Bounds<Pixels>, scale: f32) {
-        let rect = |item: Option<usize>| {
-            item.and_then(|i| self.scroll.bounds_for_item(i))
-                .map(|b| {
-                    let top = b.top() + self.scroll.offset().y - bounds.top();
-                    [
-                        f32::from(top) * scale,
-                        f32::from(top + b.size.height) * scale,
-                    ]
-                })
-                // Nowhere: no row of the layer is that line.
-                .unwrap_or([-1.0, -1.0])
-        };
-        let [n0, n1] = rect(self.sung);
-        let [o0, o1] = rect(self.before);
-        let (upcoming, past) = (UPCOMING, PAST);
-        self.animated.set_all(
-            0,
-            &[
-                n0,
-                n1,
-                o0,
-                o1,
-                upcoming,
-                past,
-                if self.forward { upcoming } else { past },
-                if self.forward { past } else { upcoming },
-                self.band * scale,
-            ],
-        );
-    }
-}
-
-impl IntoElement for LinesLayer {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Element for LinesLayer {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.size.width = relative(1.0).into();
-        style.size.height = relative(1.0).into();
-        let child = self.child.request_layout(window, cx);
-        (window.request_layout(style, [child], cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self::PrepaintState {
-        // Not decorative: which line is being sung is information, so its
-        // emphasis shows under Reduce Motion too, landing at once.
-        self.animated.attach(false, window, cx);
-        self.child.prepaint(window, cx);
-    }
-
-    fn paint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.place(bounds, window.scale_factor());
-        let child = &mut self.child;
-        self.animated
-            .paint_layer(&LYRICS, bounds, window, cx, |window, cx| {
-                child.paint(window, cx)
-            });
-    }
+) {
+    let rect = |item: Option<usize>| {
+        item.and_then(|i| scroll.bounds_for_item(i))
+            .map(|b| {
+                let top = b.top() + scroll.offset().y - bounds.top();
+                [
+                    f32::from(top) * scale,
+                    f32::from(top + b.size.height) * scale,
+                ]
+            })
+            // Nowhere: no row of the layer is that line.
+            .unwrap_or([-1.0, -1.0])
+    };
+    let [n0, n1] = rect(sung);
+    let [o0, o1] = rect(before);
+    // The line before ends as what it now is: past when the song moved on,
+    // to come when it went back.
+    let before_ends = if from_sung == UPCOMING {
+        PAST
+    } else {
+        UPCOMING
+    };
+    animated.set_all(
+        0,
+        &[
+            n0,
+            n1,
+            o0,
+            o1,
+            UPCOMING,
+            PAST,
+            from_sung,
+            before_ends,
+            band * scale,
+            from_before,
+        ],
+    );
 }
 
 #[cfg(test)]

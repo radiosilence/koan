@@ -81,12 +81,34 @@ struct Inner {
     /// changes.
     waker: Mutex<Option<Waker>>,
     running: AtomicBool,
+    /// When a `run_for` stops by itself.
+    until: Mutex<Option<Instant>>,
     /// Decorative and the person asked for less motion: tracks hold their
     /// ends.
     still: AtomicBool,
 }
 
+/// An `Animated` held without keeping it alive: a clock that follows
+/// another's running for as long as its quad is drawn.
+#[derive(Clone)]
+pub struct WeakAnimated(std::sync::Weak<Inner>);
+
+impl WeakAnimated {
+    pub fn upgrade(&self) -> Option<Animated> {
+        self.0.upgrade().map(Animated)
+    }
+
+    /// Whether it is the handle `animated` was taken from.
+    pub fn is(&self, animated: &Animated) -> bool {
+        std::sync::Weak::ptr_eq(&self.0, &Arc::downgrade(&animated.0))
+    }
+}
+
 impl Animated {
+    pub fn downgrade(&self) -> WeakAnimated {
+        WeakAnimated(Arc::downgrade(&self.0))
+    }
+
     pub fn new() -> Self {
         let animated = Self::default();
         animated.0.uniforms.set_origin(Instant::now());
@@ -131,6 +153,16 @@ impl Animated {
     /// Whether a track is moving now.
     pub fn moving(&self) -> bool {
         self.0.uniforms.tracks_moving(Self::now())
+    }
+
+    /// How long until every track stands still: `None` while one repeats.
+    pub fn settled_in(&self) -> Option<Duration> {
+        let t = self.0.uniforms.time_at(Self::now());
+        let mut last = 0.0_f32;
+        for k in 0..SHADER_TRACKS {
+            last = last.max(self.0.uniforms.track(k).end()? - t);
+        }
+        Some(Duration::from_secs_f32(last.max(0.0)))
     }
 
     /// Track `k` as it was last written.
@@ -285,6 +317,7 @@ impl Animated {
     /// drawing that moves with `time`.
     pub fn run(&self, running: bool) {
         self.0.uniforms.set_live_until(None);
+        *self.0.until.lock() = None;
         if self.0.running.swap(running, Ordering::Relaxed) != running {
             self.0.uniforms.set_continuous(running);
             self.0.uniforms.set_live(running);
@@ -295,17 +328,30 @@ impl Animated {
     /// Runs the clock for `length` from now and then stops by itself, with
     /// nothing to stop it: a transition.
     pub fn run_for(&self, length: Duration) {
-        self.0
-            .uniforms
-            .set_live_until(Some(Instant::now() + length));
+        let until = Instant::now() + length;
+        self.0.uniforms.set_live_until(Some(until));
+        *self.0.until.lock() = Some(until);
         self.0.running.store(true, Ordering::Relaxed);
         self.0.uniforms.set_continuous(true);
         self.0.uniforms.set_live(true);
         self.wake();
     }
 
+    /// Whether the clock runs; a `run_for` past its length has stopped.
     pub fn is_running(&self) -> bool {
-        self.0.running.load(Ordering::Relaxed)
+        if !self.0.running.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut until = self.0.until.lock();
+        if until.is_some_and(|until| Instant::now() >= until) {
+            *until = None;
+            self.0.running.store(false, Ordering::Relaxed);
+            self.0.uniforms.set_live_until(None);
+            self.0.uniforms.set_continuous(false);
+            self.0.uniforms.set_live(false);
+            return false;
+        }
+        true
     }
 
     fn wake(&self) {
@@ -425,16 +471,28 @@ impl Waker {
     }
 }
 
-/// Each window's waker, made the first time a quad is painted in it.
+/// Each window's waker, made the first time a quad is painted in it, and
+/// let go as its window closes.
 #[derive(Default)]
-struct Wakers(HashMap<WindowId, Waker>);
+struct Wakers {
+    by_window: HashMap<WindowId, Waker>,
+    /// Windows closing are heard, once for the app.
+    observing: bool,
+}
 
 impl Global for Wakers {}
 
 fn waker(window: &mut Window, cx: &mut App) -> Waker {
     let id = window.window_handle().window_id();
-    if let Some(waker) = cx.default_global::<Wakers>().0.get(&id) {
+    if let Some(waker) = cx.default_global::<Wakers>().by_window.get(&id) {
         return waker.clone();
+    }
+    if !cx.default_global::<Wakers>().observing {
+        cx.default_global::<Wakers>().observing = true;
+        cx.on_window_closed(|cx, closed| {
+            cx.default_global::<Wakers>().by_window.remove(&closed);
+        })
+        .detach();
     }
     let (send, mut woken) = unbounded();
     let waker = Waker {
@@ -443,6 +501,9 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
     };
     let pending = waker.pending.clone();
     let handle = window.window_handle();
+    // A clone of the sender can outlive the app (an analyser feed held by
+    // an engine that outlives it, as in the benches): a window that cannot
+    // be reached ends the task without touching the app, which may be gone.
     cx.spawn(async move |cx| {
         while woken.next().await.is_some() {
             pending.store(false, Ordering::Release);
@@ -450,15 +511,14 @@ fn waker(window: &mut Window, cx: &mut App) -> Waker {
                 .update_window(handle, |_, window, _| window.request_present())
                 .is_err()
             {
-                break;
+                return;
             }
         }
-        cx.update(|cx| {
-            cx.default_global::<Wakers>().0.remove(&id);
-        });
     })
     .detach();
-    cx.default_global::<Wakers>().0.insert(id, waker.clone());
+    cx.default_global::<Wakers>()
+        .by_window
+        .insert(id, waker.clone());
     waker
 }
 

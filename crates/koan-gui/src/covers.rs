@@ -6,7 +6,7 @@
 //! so drawing one is a texture upload and never a decode on the main thread.
 
 use std::cell::Cell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -51,6 +51,10 @@ pub struct Covers {
     /// Moves when every sleeve is dropped, so a fetch begun before lands
     /// nowhere.
     generation: u64,
+    /// Moves for a record each time the library loses it, so a fetch begun
+    /// before brings another record's sleeve, or none, and is dropped; a
+    /// fetch asked for since is not.
+    forgotten: HashMap<i64, u64>,
 }
 
 #[derive(Clone)]
@@ -113,6 +117,37 @@ impl Covers {
         });
     }
 
+    /// Forgets the sleeves of records the library lost (`art_evictions`),
+    /// whose ids may come back as other records.
+    pub fn forget(albums: &[i64], cx: &mut App) {
+        let Some(CoversHandle(covers)) = cx.try_global::<CoversHandle>().cloned() else {
+            return;
+        };
+        let albums: HashSet<i64> = albums.iter().copied().collect();
+        covers.update(cx, |covers, cx| {
+            let keys: Vec<(i64, u32)> = covers
+                .held
+                .keys()
+                .filter(|(album, _)| albums.contains(album))
+                .copied()
+                .collect();
+            for album in &albums {
+                *covers.forgotten.entry(*album).or_default() += 1;
+            }
+            covers.waiting.retain(|key| !albums.contains(&key.0));
+            for key in keys {
+                // Every state goes, a fetch's `Loading` included, so the next
+                // draw asks again under the new epoch.
+                let held = covers.held.remove(&key);
+                if let Some(Held::Ready(image, _)) = held {
+                    covers.ready -= 1;
+                    cx.drop_image(image, None);
+                }
+            }
+            cx.notify();
+        });
+    }
+
     /// Drops the sleeve drawn longest ago, and its texture, once more than
     /// `KEPT` are held.
     fn evict(&mut self, cx: &mut Context<Self>) {
@@ -149,6 +184,7 @@ impl Covers {
             let renderer = cx.svg_renderer();
             let background = cx.background_executor().clone();
             let generation = self.generation;
+            let forgotten = self.forgotten.get(&album_id).copied();
             cx.spawn(async move |this, cx| {
                 let held = background
                     .spawn(async move {
@@ -172,7 +208,9 @@ impl Covers {
                     .await;
                 this.update(cx, |covers, cx| {
                     covers.running -= 1;
-                    if covers.generation != generation {
+                    if covers.generation != generation
+                        || covers.forgotten.get(&album_id).copied() != forgotten
+                    {
                         if let Held::Ready(image, _) = held {
                             cx.drop_image(image, None);
                         }
@@ -219,22 +257,32 @@ fn format(mime: &str) -> ImageFormat {
     }
 }
 
-/// The sleeve for `album_id` drawn at `side` points, if it has landed; asks
-/// for it otherwise. Fetched at twice the side, for Retina displays. A view
-/// that keeps the image while it shows it keeps it from being evicted.
-pub fn image(album_id: Option<i64>, side: Pixels, cx: &mut App) -> Option<Arc<RenderImage>> {
-    match art(album_id, side, cx) {
+/// The sleeve for `album_id` drawn at `side` points on a display of
+/// `scale`, if it has landed; asks for it otherwise. A view that keeps the
+/// image while it shows it keeps it from being evicted.
+pub fn image(
+    album_id: Option<i64>,
+    side: Pixels,
+    scale: f32,
+    cx: &mut App,
+) -> Option<Arc<RenderImage>> {
+    match art(album_id, side, scale, cx) {
         CoverArt::Image(image) => Some(image),
         _ => None,
     }
 }
 
-/// What a record's sleeve shows at `side`: the picture, loading while it is
-/// on its way, or missing.
-pub fn art(album_id: Option<i64>, side: Pixels, cx: &mut App) -> CoverArt {
+/// What a record's sleeve shows at `side` points on a display of `scale`:
+/// the picture, loading while it is on its way, or missing.
+pub fn art(album_id: Option<i64>, side: Pixels, scale: f32, cx: &mut App) -> CoverArt {
     let Some(album_id) = album_id else {
         return CoverArt::Missing;
     };
     let covers = cx.global::<CoversHandle>().0.clone();
-    Covers::get(&covers, album_id, (f32::from(side) * 2.0) as u32, cx)
+    Covers::get(
+        &covers,
+        album_id,
+        (f32::from(side) * scale).ceil() as u32,
+        cx,
+    )
 }

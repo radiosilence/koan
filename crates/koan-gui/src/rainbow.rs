@@ -20,11 +20,10 @@
 //! motion is allowed (neither Reduce Motion nor Low Power), and stop or
 //! start as those change.
 
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
-use koan_ffi::QueueItem;
 use koan_kit::app::*;
+use koan_runtime::QueueItem;
 
 use crate::engine::engine;
 use crate::mirror::Mirror;
@@ -82,35 +81,6 @@ pub struct Rainbow {
 }
 
 impl Global for Rainbow {}
-
-/// What the windows paint: nothing of the rainbow, its own palette, or
-/// brat's. Changed only when that changes, so a window's root, which
-/// observes it, is not woken by a key pressed or a step of the cycle.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub struct Painted(pub Option<bool>);
-
-impl Global for Painted {}
-
-impl Painted {
-    /// Whether the rainbow is drawn, and in brat's palette.
-    pub fn palette(cx: &App) -> Option<bool> {
-        cx.try_global::<Painted>().and_then(|p| p.0)
-    }
-
-    /// The same, for elements built where the app is not to hand, such as
-    /// the playing bars inside a row: they are drawn again as the accent
-    /// moves, which it does whenever this does.
-    pub fn now() -> Option<bool> {
-        match PAINTED.load(Ordering::Relaxed) {
-            1 => Some(false),
-            2 => Some(true),
-            _ => None,
-        }
-    }
-}
-
-/// `Painted` as a number: 0 off, 1 the palette, 2 brat's.
-static PAINTED: AtomicU8 = AtomicU8::new(0);
 
 /// Moves each time something is worth confetti: the window in front throws
 /// it from the pointer.
@@ -207,7 +177,6 @@ pub fn install(cx: &mut App) {
         active: true,
         ..Default::default()
     });
-    cx.set_global(Painted::default());
     listen(toggle, cx).detach();
     // Reduce Motion or Low Power switched while it is on: the cycle stops
     // or starts again.
@@ -329,6 +298,9 @@ pub fn set_active(active: bool, cx: &mut App) {
 /// windows, and sets the accent now.
 fn refresh(cx: &mut App) {
     let drawn = Rainbow::drawn(cx);
+    // The sheen is a wash whatever "colours from the record" says, so the
+    // panels clear for it as they do for the record's.
+    KoanTheme::set_painted_wash(drawn, cx);
     let cycling = drawn && cx.global::<Rainbow>().active && KoanTheme::motion_allowed(cx);
     if drawn {
         let r = cx.global::<Rainbow>();
@@ -362,23 +334,12 @@ fn refresh(cx: &mut App) {
         cx.update_global::<Rainbow, _>(|r, _| r.cycle = None);
     }
     // The windows' roots take the wash, and the record's accent back when it
-    // goes.
-    let painted = Painted(drawn.then(|| {
+    // goes: the theme keeps it, and they observe the theme.
+    let painted = drawn.then(|| {
         let r = cx.global::<Rainbow>();
         r.for_track && !r.on
-    }));
-    if cx.try_global::<Painted>() != Some(&painted) {
-        PAINTED.store(
-            match painted.0 {
-                None => 0,
-                Some(false) => 1,
-                Some(true) => 2,
-            },
-            Ordering::Relaxed,
-        );
-        cx.set_global(painted);
-        KoanTheme::set_prism(painted.0, cx);
-    }
+    });
+    KoanTheme::set_prism(painted, cx);
 }
 
 #[cfg(test)]

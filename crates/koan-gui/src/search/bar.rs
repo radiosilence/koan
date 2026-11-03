@@ -18,13 +18,12 @@
 //! several queries stays in view. The answers go deeper while the box is
 //! open (`Search::set_deep`), and rows are shown only once they answer the
 //! query as typed, so a fast Return never acts on the last query's answer.
-//! It replaces the ⇧⌘K picker.
 
 use std::rc::Rc;
 
-use koan_ffi::{Placement, ShelfSummary};
 use koan_kit::app::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
 use koan_kit::app::*;
+use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
 use crate::components::{CommandBar, Cover, CoverArt, RowMetrics, SuggestionRow};
@@ -33,7 +32,7 @@ use crate::library::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::Playable;
 use crate::library::nav::Page;
 use crate::paint::Paint;
-use crate::platform::actions::FocusNext;
+use crate::platform::actions::{FocusNext, FocusPrevious, NextRegion, PreviousRegion};
 use crate::theme::Icon;
 
 /// The box asks to be closed: Escape on an empty query, a click outside, or
@@ -66,7 +65,7 @@ impl Item {
     }
 }
 
-fn credit(parts: &[koan_ffi::CreditPart]) -> String {
+fn credit(parts: &[koan_runtime::CreditPart]) -> String {
     parts.iter().map(|p| p.text.as_str()).collect()
 }
 
@@ -113,6 +112,12 @@ fn listed(ticked: &[Item], found: &[Item]) -> Vec<Item> {
                 .cloned(),
         )
         .collect()
+}
+
+/// Where `item` is listed in `rows` now, to keep the light on it.
+fn relit(item: Option<&Item>, rows: &[Item]) -> Option<usize> {
+    let item = item?;
+    rows.iter().position(|r| r.same(item))
 }
 
 /// What a key asks of the lit row, or of everything ticked.
@@ -189,8 +194,12 @@ impl SearchBar {
                     _ => {}
                 },
             ),
+            // A new answer, to this query or another, keeps the lit row on
+            // the thing it lit where that is still listed.
             cx.observe(&search, |this, _, cx| {
-                this.lit = None;
+                let was = this.lit_item();
+                let rows = this.rows(cx);
+                this.lit = relit(was.as_ref(), &rows);
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
@@ -239,6 +248,20 @@ impl SearchBar {
         listed(&self.ticked, &found)
     }
 
+    /// The thing lit, from the rows as last made.
+    fn lit_item(&self) -> Option<Item> {
+        let found = self.shown.as_ref().map_or(&[][..], |(_, rows)| &rows[..]);
+        self.lit
+            .and_then(|i| listed(&self.ticked, found).get(i).cloned())
+    }
+
+    /// Whether the search has answered the query as typed: until it has,
+    /// an empty list is not "nothing found".
+    fn answered(&self, cx: &App) -> bool {
+        let search = self.search.read(cx);
+        search.results().is_some_and(|r| r.query == search.query())
+    }
+
     fn arrow(&mut self, down: bool, cx: &mut Context<Self>) {
         let count = self.rows(cx).len();
         self.lit = step(self.lit, down, count);
@@ -255,8 +278,11 @@ impl SearchBar {
             Some(i) => {
                 self.ticked.remove(i);
             }
-            None => self.ticked.push(item),
+            None => self.ticked.push(item.clone()),
         }
+        // Ticked rows lead the list, so the row moves: the light goes with it.
+        let rows = self.rows(cx);
+        self.lit = relit(Some(&item), &rows);
         cx.notify();
     }
 
@@ -267,7 +293,8 @@ impl SearchBar {
             return;
         }
         let rows = self.rows(cx);
-        let targets: Vec<Item> = if self.ticked.is_empty() {
+        let picking = !self.ticked.is_empty();
+        let targets: Vec<Item> = if !picking {
             self.lit
                 .or((!rows.is_empty()).then_some(0))
                 .and_then(|i| rows.get(i))
@@ -286,9 +313,10 @@ impl SearchBar {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // One record or artist goes to its page; tracks, or a pick,
-            // play after the queue's end.
-            Verb::Take if targets.len() == 1 && first.kind != Kind::Track => {
+            // One record or artist goes to its page; tracks, or a pick (one
+            // record ticked included, as the footer says), play after the
+            // queue's end.
+            Verb::Take if !picking && first.kind != Kind::Track => {
                 let page = match first.kind {
                     Kind::Album => Page::Album(first.id),
                     _ => Page::Artist(first.id),
@@ -381,7 +409,9 @@ impl SearchBar {
             .map(|album| (Key::new(Art::Album(album), side, scale), Priority::Visible))
             .collect();
         let owner = cx.entity_id();
-        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
+        self.lib
+            .covers
+            .update(cx, |c, cx| c.request(owner, ranked, cx));
     }
 }
 
@@ -453,11 +483,14 @@ impl Render for SearchBar {
         for (kind, list) in sections {
             bar = bar.section(kind.map_or("ticked", Kind::heading), list);
         }
-        if !self.input.read(cx).value().trim().is_empty() {
+        if !self.input.read(cx).value().trim().is_empty() && self.answered(cx) {
             bar = bar.empty("nothing found");
         }
-        let bar = bar
-            .key(
+        // What the keys do with a row, once there is one to do it to: with
+        // nothing yet found, only Escape does anything.
+        let acting = !rows.is_empty();
+        let bar = if acting {
+            bar.key(
                 "↩",
                 if picking {
                     "play these"
@@ -470,6 +503,10 @@ impl Render for SearchBar {
             .key("⇧⌘↩", "replace the queue")
             .key("tab", "tick")
             .key("⇧↩", "all results")
+        } else {
+            bar
+        };
+        let bar = bar
             .key(
                 "esc",
                 if picking {
@@ -487,12 +524,19 @@ impl Render for SearchBar {
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.arrow(false, cx)))
             .capture_action(cx.listener(|this, _: &Escape, window, cx| this.escape(window, cx)))
             .capture_action(cx.listener(|this, _: &FocusNext, _, cx| this.tick(cx)))
-            // The field binds no ⌥Return, so it is taken here.
+            .capture_action(cx.listener(|this, _: &FocusPrevious, _, cx| this.tick(cx)))
+            // The box holds the keyboard while it is up: F6 does not take
+            // it to the page behind.
+            .capture_action(cx.listener(|_, _: &NextRegion, _, _| {}))
+            .capture_action(cx.listener(|_, _: &PreviousRegion, _, _| {}))
+            // The field binds neither ⌥Return nor ⇧⌘Return, so they are
+            // taken here.
             .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 let k = &e.keystroke;
-                if k.key == "enter" && k.modifiers.alt {
+                let m = &k.modifiers;
+                if k.key == "enter" && (m.alt || (m.secondary(cx) && m.shift)) {
                     cx.stop_propagation();
-                    let verb = Verb::of(k.modifiers.secondary(cx), true, k.modifiers.shift);
+                    let verb = Verb::of(m.secondary(cx), m.alt, m.shift);
                     this.act(verb, window, cx);
                 }
             }))
@@ -522,7 +566,28 @@ mod tests {
         assert_eq!(Verb::of(true, false, false), Verb::Next);
         assert_eq!(Verb::of(false, true, false), Verb::Append);
         assert_eq!(Verb::of(true, false, true), Verb::Replace);
+        assert_eq!(Verb::of(true, true, true), Verb::Replace);
         assert_eq!(Verb::of(false, false, true), Verb::All);
+    }
+
+    /// The light follows its row when ticking moves it to the top, and when
+    /// a new answer lists it elsewhere; it goes out when the row is gone.
+    #[test]
+    fn the_light_stays_on_its_row() {
+        let (a, b, c) = (
+            item(Kind::Track, 1),
+            item(Kind::Track, 2),
+            item(Kind::Album, 3),
+        );
+        let found = [a.clone(), b.clone(), c.clone()];
+        let ticked = [b.clone()];
+        assert_eq!(relit(Some(&b), &listed(&ticked, &found)), Some(0));
+        assert_eq!(
+            relit(Some(&c), &listed(&[], &[c.clone(), a.clone()])),
+            Some(0)
+        );
+        assert_eq!(relit(Some(&c), &listed(&[], &[a, b])), None);
+        assert_eq!(relit(None, &found), None);
     }
 
     /// A pick stays listed whatever the query, first and once.

@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use crate::theme::wash::{Sleeve, Wash};
 use crate::theme::{self, Accent, KoanTheme, Look};
-use koan_ffi::PlayState;
 use koan_kit::app::*;
-use koan_kit::components::{Burst, Prism, SHADED};
+use koan_kit::components::{Burst, Prism, Prisms, SHADED};
+use koan_runtime::PlayState;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};
@@ -25,6 +25,11 @@ use crate::mirror::{Mirror, Playback};
 /// The side the sleeve is fetched and analysed at: enough for the accent's
 /// hue and the wash's blur, which is baked smaller still.
 const SAMPLE: u32 = 128;
+
+/// The bursts, as `WindowRoot::flying` names them.
+const CONFETTI: usize = 0;
+const SWEEP: usize = 1;
+const STICKER: usize = 2;
 
 /// The mirror ball's side, and where it hangs: under the toolbar, in the
 /// window's top right corner, in points.
@@ -48,14 +53,21 @@ pub struct WindowRoot {
     fetching: Option<Task<()>>,
     /// The wash shows the rainbow's sheen.
     rainbow: bool,
+    /// The rainbow as the theme last said: drawn, and in brat's palette.
+    painted: Option<bool>,
     /// The rainbow on the GPU, and whether it is fed and running.
     prism: Prism,
     prism_fed: bool,
     confetti: Burst,
     sweep: Burst,
     sticker: Burst,
-    /// The record playing when the rainbow last looked, for its sweep.
+    /// The record last seen playing while the rainbow was drawn: the sweep
+    /// crosses the window when another one starts.
     swept: Option<i64>,
+    /// Something is playing: the prism moves only then.
+    playing: bool,
+    /// Each burst's quad is mounted while it flies, and let go after.
+    landings: [Option<Task<()>>; 3],
     /// This window is in front, and shows.
     active: bool,
     visible: bool,
@@ -86,7 +98,7 @@ impl WindowRoot {
         let drift = (theme.wash_drift, theme.wash_turn);
         let followed = playback.clone();
         let shown = playback.clone();
-        let painted = playback.clone();
+        let prism = Prism::new();
         let mut root = Self {
             wash: cx.new(|_| Wash::new()),
             content: content.into(),
@@ -97,12 +109,17 @@ impl WindowRoot {
             drift,
             fetching: None,
             rainbow: false,
-            prism: Prism::new(),
+            painted: KoanTheme::prism(cx),
             prism_fed: false,
-            confetti: Burst::confetti(),
-            sweep: Burst::sweep(),
-            sticker: Burst::sticker(),
+            // One flash gate for the window: the beat and every burst start
+            // at most three times a second between them.
+            confetti: Burst::confetti().sharing(&prism.gate()),
+            sweep: Burst::sweep().sharing(&prism.gate()),
+            sticker: Burst::sticker().sharing(&prism.gate()),
+            prism,
             swept: None,
+            playing: false,
+            landings: [None, None, None],
             active: window.is_window_active(),
             visible: true,
             window: window.window_handle().window_id(),
@@ -115,23 +132,6 @@ impl WindowRoot {
                     this.follow(&playback, false, cx)
                 }),
                 cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
-                // The rainbow drawn or put away: its sheen, or the record's
-                // sleeve and accent back.
-                cx.observe_global::<crate::rainbow::Painted>(move |this, cx| {
-                    let was = this.rainbow;
-                    this.follow(&painted, true, cx);
-                    // Coming out: confetti and a sticker in the middle of the
-                    // window.
-                    if this.rainbow && !was && this.active && KoanTheme::motion_allowed(cx) {
-                        this.throw_confetti(None);
-                        let middle =
-                            Point::new(this.viewport.width / 2.0, this.viewport.height / 2.0);
-                        let brat = crate::rainbow::Painted::now() == Some(true);
-                        this.sticker.fire(middle, this.scale, brat);
-                    }
-                    this.feed_prism(cx);
-                    cx.notify();
-                }),
                 // Its accent cycles only while a window is in front.
                 cx.observe_window_activation(window, |this, window, cx| {
                     let active = cx.active_window().is_some();
@@ -143,8 +143,16 @@ impl WindowRoot {
                 // window in front.
                 cx.observe_global_in::<crate::rainbow::Celebration>(window, |this, window, cx| {
                     if window.is_window_active() && KoanTheme::motion_allowed(cx) {
-                        this.throw_confetti(Some(window.mouse_position()));
+                        this.throw_confetti(Some(window.mouse_position()), cx);
                     }
+                }),
+                // A window closed takes its prism from the analyser's
+                // readers, which would otherwise keep it running.
+                cx.on_release(|this, cx| {
+                    if this.prism_fed {
+                        crate::levels::prism(this.window, None, cx);
+                    }
+                    Prisms::set(this.window, None, cx);
                 }),
             ],
             _levels: [
@@ -163,34 +171,82 @@ impl WindowRoot {
         };
         root.wash
             .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
+        // The sheens and gradients drawn in this window run with its prism.
+        Prisms::set(root.window, Some(root.prism.clone()), cx);
         root.follow(&playback, false, cx);
         root.feed_prism(cx);
         root
     }
 
+    /// Burst `which` was fired: mounted from now, until it has flown.
+    fn flying(&mut self, which: usize, cx: &mut Context<Self>) {
+        let length = self.bursts()[which].length();
+        self.landings[which] = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(length).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        }));
+        cx.notify();
+    }
+
+    fn bursts(&self) -> [&Burst; 3] {
+        [&self.confetti, &self.sweep, &self.sticker]
+    }
+
     /// Feeds the prism the analyser and runs its clock while the rainbow is
-    /// drawn and this window is in front and shows; otherwise neither.
+    /// drawn and this window is in front and shows; otherwise neither. Each
+    /// frame of levels fed wakes the window, so a window behind another
+    /// app's is not fed: it stands as it was.
     fn feed_prism(&mut self, cx: &mut Context<Self>) {
         // Under Reduce Motion or Low Power nothing of it is drawn, so the
         // analyser is not read for it and its clock stands.
         let drawn = self.rainbow && SHADED && KoanTheme::motion_allowed(cx);
-        let running = drawn && self.active && self.visible;
+        // Paused or stopped, the music gives it nothing to move with: it
+        // holds its frame, and presents nothing.
+        let running = drawn && self.active && self.visible && self.playing;
         self.prism.run(running);
-        if drawn != self.prism_fed {
-            self.prism_fed = drawn;
-            crate::levels::prism(self.window, drawn.then(|| self.prism.clone()), cx);
+        if running != self.prism_fed {
+            self.prism_fed = running;
+            crate::levels::prism(self.window, running.then(|| self.prism.clone()), cx);
         }
     }
 
     /// Confetti from `at`, or from the middle of the window.
-    fn throw_confetti(&self, at: Option<Point<Pixels>>) {
+    fn throw_confetti(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
         let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
-        let brat = crate::rainbow::Painted::now() == Some(true);
+        let brat = crate::theme::KoanTheme::prism_now() == Some(true);
         self.confetti.fire(at.unwrap_or(middle), self.scale, brat);
+        self.flying(CONFETTI, cx);
     }
 
-    /// Settings changed the record's colours or the tint: the wash follows.
+    /// Settings changed the record's colours or the tint, or the rainbow
+    /// came out or went: the wash follows.
     fn restyle(&mut self, playback: &Entity<Playback>, cx: &mut Context<Self>) {
+        // The rainbow drawn or put away: its sheen, or the record's sleeve
+        // and accent back.
+        let painted = KoanTheme::prism(cx);
+        if painted != self.painted {
+            self.painted = painted;
+            let was = self.rainbow;
+            self.follow(playback, true, cx);
+            // Coming out: confetti and a sticker in the middle of the window.
+            if self.rainbow && !was && self.active && KoanTheme::motion_allowed(cx) {
+                // One start on the window's flash gate for the two, which
+                // land together: thrown one after the other, the second would
+                // fall inside the gap and be dropped.
+                let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
+                self.confetti.fire_with(
+                    middle,
+                    &self.sticker,
+                    middle,
+                    self.scale,
+                    painted == Some(true),
+                );
+                self.flying(CONFETTI, cx);
+                self.flying(STICKER, cx);
+            }
+            self.feed_prism(cx);
+            cx.notify();
+        }
         // Reduce Motion or Low Power may have moved: the prism's layers come
         // or go with them.
         if self.rainbow {
@@ -226,26 +282,33 @@ impl WindowRoot {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
         let playing_album = now.entry.as_ref().and_then(|entry| entry.album_id);
-        // Off, there is no wash and the accent is mint, as with no record.
         let shown = cx.try_global::<ShownRecord>().and_then(|s| s.0);
-        let album = shown
-            .or_else(|| now.entry.as_ref().and_then(|entry| entry.album_id))
-            .filter(|_| self.record_colours);
+        if playing != self.playing {
+            self.playing = playing;
+            self.feed_prism(cx);
+        }
+        // Off, there is no wash and the accent is mint, as with no record.
+        let album = shown.or(playing_album).filter(|_| self.record_colours);
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
         // The rainbow paints over the record: its sheen in the wash, its
         // accent its own. The record's is fetched again once it goes.
-        if crate::rainbow::Rainbow::drawn(cx) {
-            if self.rainbow
-                && playing_album != self.swept
-                && self.swept.is_some()
-                && self.active
-                && KoanTheme::motion_allowed(cx)
-            {
-                let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
-                let brat = crate::rainbow::Painted::now() == Some(true);
-                self.sweep.fire(middle, self.scale, brat);
+        if KoanTheme::prism(cx).is_some() {
+            // Another record started playing: a stop, a pause or a track of
+            // the same record is not one, and the record before a stop is
+            // still the one the next is told against.
+            if let Some(album) = playing_album.filter(|_| playing) {
+                if self.rainbow
+                    && self.swept.is_some_and(|swept| swept != album)
+                    && self.active
+                    && KoanTheme::motion_allowed(cx)
+                {
+                    let middle = Point::new(self.viewport.width / 2.0, self.viewport.height / 2.0);
+                    let brat = crate::theme::KoanTheme::prism_now() == Some(true);
+                    self.sweep.fire(middle, self.scale, brat);
+                    self.flying(SWEEP, cx);
+                }
+                self.swept = Some(album);
             }
-            self.swept = playing_album;
             // Painted once on the way in, and again only when what is painted
             // changes; a change to what plays leaves it be.
             if !self.rainbow || again {
@@ -325,8 +388,11 @@ impl Render for WindowRoot {
         // frame of strobing spots is no calmer.
         let prism = (self.rainbow && SHADED && KoanTheme::motion_allowed(cx)).then(|| {
             let look = theme::Look::of(window, cx);
-            let brat = crate::rainbow::Painted::now() == Some(true);
-            self.prism.style(look.dark, brat, self.scale);
+            let brat = crate::theme::KoanTheme::prism_now() == Some(true);
+            // Its sizes and the ball's place in points grow with the
+            // spacing, as the ball laid out below does.
+            self.prism
+                .style(look.dark, brat, self.scale * look.scale.space);
             self.prism.ball_at(
                 MIRROR_BALL_RIGHT + MIRROR_BALL / 2.0,
                 MIRROR_BALL_TOP + MIRROR_BALL / 2.0,
@@ -366,11 +432,13 @@ impl Render for WindowRoot {
                             .size(side)
                             .child(self.prism.ball().size_full()),
                     )
-                    .child(layer(self.sweep.element().size_full().into_any_element()))
-                    .child(layer(self.sticker.element().size_full().into_any_element()))
-                    .child(layer(
-                        self.confetti.element().size_full().into_any_element(),
-                    ))
+                    // A burst only while it flies.
+                    .children(
+                        [&self.sweep, &self.sticker, &self.confetti]
+                            .into_iter()
+                            .filter(|burst| burst.live())
+                            .map(|burst| layer(burst.element().size_full().into_any_element())),
+                    )
             })
             .child(crate::levels::paint(cx))
     }

@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
+use koan_runtime::{Album, AlbumOnDevice};
 
 use super::actions;
 use super::covers::Sleeve;
@@ -97,8 +97,9 @@ pub struct TileState {
     pub selecting: bool,
     pub selected: bool,
     pub starting: bool,
-    /// Under the grid's keyboard cursor while the grid holds the keyboard.
-    pub cursor: bool,
+    /// Under the grid's keyboard cursor while the grid holds the keyboard:
+    /// where its ring tells the grid it was laid out.
+    pub cursor: Option<crate::components::CursorSpot>,
     pub show_artist: bool,
     pub side: Pixels,
     pub sleeve: Sleeve,
@@ -122,7 +123,7 @@ impl TileState {
             && self.selecting == other.selecting
             && self.selected == other.selected
             && self.starting == other.starting
-            && self.cursor == other.cursor
+            && self.cursor.is_some() == other.cursor.is_some()
             && self.show_artist == other.show_artist
             && self.side == other.side
             && self.pick == other.pick
@@ -302,8 +303,7 @@ impl<V: TileHost> Render for TileView<V> {
         } else {
             None
         };
-        let art = TileArt::new(side, sleeve)
-            .id(("tile-art", id as u64))
+        let art = TileArt::new(("tile-art", id as u64), side, sleeve)
             .codec(record.codec.clone())
             .badge(record.badge.clone())
             .mark(mark)
@@ -314,14 +314,16 @@ impl<V: TileHost> Render for TileView<V> {
             )
             .on_device(on_device(record.on_device, state.arriving))
             .heart(
-                (hovered.is_some() || state.favourite)
-                    .then_some((state.favourite, hovered == Some(Part::Heart))),
+                state.favourite,
+                hovered == Some(Part::Heart),
+                hovered.is_some() || state.favourite,
             )
             .pick(state.selecting.then_some(state.selected))
-            .cursor(state.cursor)
+            .cursor(state.cursor.is_some())
+            .when_some(state.cursor.as_ref(), |art, spot| art.spot(spot))
             // The rainbow refracts through the sleeve the pointer is on.
             .sheen(
-                crate::rainbow::Painted::now()
+                crate::theme::KoanTheme::prism_now()
                     .filter(|_| over_sleeve)
                     .map(|brat| (ElementId::from("tile-sheen"), brat)),
             );

@@ -21,18 +21,22 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use koan_ffi::KoanEngine;
 use koan_kit::app::platform::{KeyBindingContextPredicate, OperatingSystem};
 use koan_kit::app::{Action, App, KeyBinding, actions};
 use koan_kit::components::list_actions as list;
+use koan_runtime::KoanEngine;
 
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
 
-/// Where bare keys are live: inside the window, outside any text field, and
-/// not while a question or a menu holds the keyboard, where space would
-/// otherwise play behind it.
-const BARE_CONTEXT: &str = "koan && !Input && !Ask && !KoanMenu";
+/// Where the menus' shortcuts are live: inside the window, and not while a
+/// sheet or question over it holds the keyboard (`sheet::MODAL`), so none
+/// acts behind a confirmation.
+const MENU_CONTEXT: &str = "koan && !Modal";
+
+/// Where bare keys are live: as the menus' shortcuts, and outside any text
+/// field or menu, where space would otherwise play behind it.
+const BARE_CONTEXT: &str = "koan && !Input && !Modal && !KoanMenu";
 
 /// What the shell's text fields call their context (gpui-base's `Input`).
 #[cfg(test)]
@@ -385,6 +389,16 @@ pub fn caption(key: &str, os: OperatingSystem) -> String {
         ("escape", _) => "esc".to_string(),
         ("space", _) => "space".to_string(),
         (k, _) if mods.is_empty() => k.to_string(),
+        // A key named in a word keeps the case the unmodified one is shown
+        // in, "tab" beside "⇧tab"; on Linux it is capitalised, as "Ctrl" is.
+        (k, true) if k.chars().count() > 1 => k.to_string(),
+        (k, false) if k.chars().count() > 1 => {
+            let mut chars = k.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
         (k, _) => k.to_uppercase(),
     };
     if mac {
@@ -422,20 +436,24 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     let os = cx.platform_info().os;
     let mac = os == OperatingSystem::Mac;
     let window = Rc::new(KeyBindingContextPredicate::parse(CONTEXT).expect("a valid context"));
+    let menus = Rc::new(KeyBindingContextPredicate::parse(MENU_CONTEXT).expect("a valid context"));
     let bare = Rc::new(KeyBindingContextPredicate::parse(BARE_CONTEXT).expect("a valid context"));
     let mut bindings = Vec::new();
     // The menu tables first: the macOS menu shows an action's first binding.
-    for shortcut in MENU.iter().chain(
+    // The application's (quit, hide, settings) stay live over a sheet; the
+    // rest wait until it is gone.
+    for (shortcut, when) in MENU.iter().map(|s| (s, &menus)).chain(
         APPLICATION
             .iter()
-            .filter(|s| mac || !s.keys[0].starts_with("cmd-")),
+            .filter(|s| mac || !s.keys[0].starts_with("cmd-"))
+            .map(|s| (s, &window)),
     ) {
         for key in shortcut.keys {
             push(
                 &mut bindings,
                 key,
                 (shortcut.action)(),
-                Some(window.clone()),
+                Some(when.clone()),
                 cx,
             );
         }
@@ -453,16 +471,25 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     }
     // Tab and F6 move between controls in a text field too, where the field
     // has no use for them; the bare table binds them outside fields only.
-    for (key, action) in [
-        ("tab", FocusNext.boxed_clone()),
-        ("shift-tab", FocusPrevious.boxed_clone()),
-        ("f6", NextRegion.boxed_clone()),
-        ("shift-f6", PreviousRegion.boxed_clone()),
+    // Tab stays inside a question or menu over the window (`step_focus`);
+    // F6, which leaves for another region, is not bound there.
+    let regions = Rc::new(
+        KeyBindingContextPredicate::parse("koan && !Modal && !KoanMenu").expect("a valid context"),
+    );
+    for (key, action, when) in [
+        ("tab", FocusNext.boxed_clone(), &window),
+        ("shift-tab", FocusPrevious.boxed_clone(), &window),
+        ("f6", NextRegion.boxed_clone(), &regions),
+        ("shift-f6", PreviousRegion.boxed_clone(), &regions),
     ] {
-        push(&mut bindings, key, action, Some(window.clone()), cx);
+        push(&mut bindings, key, action, Some(when.clone()), cx);
     }
-    let lists =
-        Rc::new(KeyBindingContextPredicate::parse("List && !Input").expect("a valid context"));
+    // Not under a menu or a question opened over the list: their keys are
+    // their own, as the bare table's are.
+    let lists = Rc::new(
+        KeyBindingContextPredicate::parse("List && !Input && !Modal && !KoanMenu")
+            .expect("a valid context"),
+    );
     for shortcut in LISTS {
         for key in shortcut.keys {
             push(
@@ -537,7 +564,7 @@ fn push(
 /// Run an engine command, logging a refusal.
 fn send(
     cx: &mut App,
-    command: impl std::future::Future<Output = Result<(), koan_ffi::KoanError>> + 'static,
+    command: impl std::future::Future<Output = Result<(), koan_runtime::KoanError>> + 'static,
 ) {
     cx.foreground_executor()
         .spawn(async move {
@@ -572,6 +599,8 @@ mod tests {
         assert_eq!(caption("secondary--", mac), "⌘-");
         assert_eq!(caption("secondary-/", mac), "⌘/");
         assert_eq!(caption("backspace", mac), "⌫");
+        assert_eq!(caption("shift-tab", mac), "⇧tab");
+        assert_eq!(caption("shift-f6", mac), "⇧f6");
     }
 
     #[test]
@@ -580,6 +609,7 @@ mod tests {
         assert_eq!(caption("secondary-shift-k", linux), "Ctrl+Shift+K");
         assert_eq!(caption("alt-left", linux), "Alt+Left");
         assert_eq!(caption("secondary--", linux), "Ctrl+-");
+        assert_eq!(caption("shift-tab", linux), "Shift+Tab");
     }
 
     #[test]
@@ -653,6 +683,37 @@ mod tests {
             winner(bindings(), "backspace", &browsing),
             "koan_bare::Delete"
         );
+    }
+
+    koan_kit::app::actions!(modal, [ModalBack, ModalQuit]);
+
+    /// Over a sheet or a question, neither a menu's shortcut nor a bare key
+    /// reaches the page behind; the application's own still quit.
+    #[test]
+    fn nothing_acts_behind_a_sheet() {
+        let bindings = || {
+            vec![
+                KeyBinding::new("cmd-[", ModalBack, Some(MENU_CONTEXT)),
+                KeyBinding::new("cmd-q", ModalQuit, Some(CONTEXT)),
+                KeyBinding::new("backspace", bare::Delete, Some(BARE_CONTEXT)),
+            ]
+        };
+        let page = ["Root", CONTEXT];
+        assert_eq!(winner(bindings(), "cmd-[", &page), "modal::ModalBack");
+        assert_eq!(winner(bindings(), "backspace", &page), "koan_bare::Delete");
+        for over in [
+            ["Root", CONTEXT, koan_kit::components::sheet::MODAL, "Ask"],
+            [
+                "Root",
+                CONTEXT,
+                koan_kit::components::sheet::MODAL,
+                "Shortcuts",
+            ],
+        ] {
+            assert_eq!(winner(bindings(), "cmd-[", &over), "");
+            assert_eq!(winner(bindings(), "backspace", &over), "");
+            assert_eq!(winner(bindings(), "cmd-q", &over), "modal::ModalQuit");
+        }
     }
 
     #[test]

@@ -11,8 +11,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
 use koan_kit::app::*;
+use koan_runtime::{BrowseFilter, Track, TrackBrowseSort};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 
@@ -65,6 +65,8 @@ pub struct TrackBrowser {
     scroll: UniformListScrollHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     /// The rows on screen as of the last frame.
@@ -174,6 +176,7 @@ impl TrackBrowser {
             _load: None,
             scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             visible: 0..0,
             selection: Selection::default(),
@@ -181,7 +184,7 @@ impl TrackBrowser {
             menu: None,
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             search,
             filters,
             viewport: 0.0,
@@ -202,6 +205,7 @@ impl TrackBrowser {
             .is_some_and(|(q, _)| *q != this.query(cx))
         {
             this.tracks = Default::default();
+            this.cursor = Default::default();
             this.total = 0;
             this.loaded = None;
         }
@@ -308,7 +312,12 @@ impl TrackBrowser {
                                 let covers =
                                     list.len() >= this.visible.end.min(page.total as usize);
                                 if covers || done {
-                                    this.tracks = pending.take().unwrap_or_default();
+                                    let tracks = pending.take().unwrap_or_default();
+                                    let ids = |t: &[Track]| -> Vec<i64> {
+                                        t.iter().map(|t| t.id).collect()
+                                    };
+                                    this.cursor.relocate(&ids(&this.tracks), &ids(&tracks));
+                                    this.tracks = tracks;
                                     this.total = page.total;
                                     this.loaded = Some(wanted.clone());
                                     this.restore_scroll();
@@ -374,7 +383,7 @@ impl TrackBrowser {
         let owner = cx.entity_id();
         self.lib
             .covers
-            .update(cx, |covers, _| covers.request(owner, ranked));
+            .update(cx, |covers, cx| covers.request(owner, ranked, cx));
     }
 
     fn row(
@@ -413,7 +422,7 @@ impl TrackBrowser {
             transfer: feed.transfers.get(&id).copied(),
             drag,
             note: None,
-            cursor: self.keyed && self.cursor.at == Some(index),
+            cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             kind: crate::components::RowKind::Art,
             place: Some((index, self.total as usize)),
             reveal: p
@@ -453,6 +462,10 @@ impl actions::Menus for TrackBrowser {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for TrackBrowser {
@@ -473,8 +486,7 @@ impl TrackList for TrackBrowser {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -529,6 +541,10 @@ impl Render for TrackBrowser {
                 .set_offset(Point::default());
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no tracks yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("tracks", |shelf| {
@@ -572,20 +588,8 @@ impl Render for TrackBrowser {
         let body = if held {
             div().into_any_element()
         } else if self.total == 0 {
-            chrome::empty_state(
-                crate::theme::Icon::Track,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no tracks yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
-            )
-            .into_any_element()
+            chrome::empty_state(crate::theme::Icon::Track, empty_title, empty_detail)
+                .into_any_element()
         } else {
             // Rows past what has arrived are drawn empty, so the scroll bar
             // is the listing's length from the first page.
@@ -617,6 +621,7 @@ impl Render for TrackBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         );
@@ -652,6 +657,10 @@ impl super::keys::KeyedList for TrackBrowser {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.tracks.len()
     }
@@ -659,7 +668,7 @@ impl super::keys::KeyedList for TrackBrowser {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }
@@ -682,7 +691,12 @@ impl super::keys::KeyedList for TrackBrowser {
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
         self.menu = ix.map(|ix| {
             let track = &self.tracks[ix];
-            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Track(track.id),
+                track.album_id,
+                None,
+            )
         });
     }
 }

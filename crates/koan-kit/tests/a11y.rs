@@ -13,7 +13,8 @@ use gpui_kit::{
 use koan_kit::components::{
     Badge, Banner, Button, ButtonKind, EmptyState, IconToggle, NavNote, NavRow, PageHeader,
     PlayButton, ProgressRow, RowKind, RowList, RowListState, SectionHeading, Segmented,
-    ShuffleButton, Slider, Stepper, TableRow, Toggle, Toolbar, spoken,
+    ShuffleButton, Slider, Spinner, Stepper, TableRow, Toggle, Toolbar, UniformListScrollHandle,
+    reveal_around, spoken, uniform_list,
 };
 use koan_kit::theme::{self, Icon, Tone};
 use serde_json::Value;
@@ -38,6 +39,12 @@ impl Render for Page {
                     .lead(ShuffleButton::new("shuffle", "Hounds of Love").on_click(|_, _, _| {}))
                     .badge(Badge::new("hi-res")),
             )
+            // Two badges saying the same in rows with no id of their own,
+            // told apart by their keys, as the EQ's layer roles are.
+            .child(div().child(Badge::new("tuning").key(("role", 0usize))))
+            .child(div().child(Badge::new("tuning").key(("role", 1usize))))
+            // A slider its owner did not name: its id, read as words.
+            .child(Slider::new("wash-tint", 0.5).on_change(|_, _, _| {}))
             .child(SectionHeading::new("albums"))
             .child(
                 Button::new("queue", ButtonKind::Compact)
@@ -112,16 +119,31 @@ fn tree(window: AnyWindowHandle, cx: &mut TestAppContext) -> String {
         .expect("a tree while accessibility is on")
 }
 
-/// The node a screen reader knows by `label`: its AccessKit id and its
-/// semantics.
-fn node(tree: &str, label: &str) -> (NodeId, Value) {
+/// Every node of the tree, as its semantics.
+fn nodes(tree: &str) -> Vec<Value> {
     let tree: Value = serde_json::from_str(tree).expect("JSON");
-    let node = tree["nodes"]
+    tree["nodes"]
         .as_object()
         .expect("nodes")
         .values()
-        .find(|node| node["aria"]["label"] == label)
-        .unwrap_or_else(|| panic!("no node named {label}"));
+        .cloned()
+        .collect()
+}
+
+/// The one node a screen reader knows by `label` in `role`: its AccessKit
+/// id and its semantics. Two such, or none, fail.
+fn node(tree: &str, label: &str, role: &str) -> (NodeId, Value) {
+    let found: Vec<Value> = nodes(tree)
+        .into_iter()
+        .filter(|node| node["aria"]["label"] == label && node["aria"]["role"] == role)
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "{} nodes named {label} in role {role} in:\n{tree}",
+        found.len()
+    );
+    let node = &found[0];
     let id = node["accesskit_id"]
         .as_str()
         .expect("an id")
@@ -151,60 +173,64 @@ fn send(window: AnyWindowHandle, cx: &mut TestAppContext, action: Action, target
 fn the_kit_s_components_are_in_the_accessibility_tree(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
-    let has = |what: &str| assert!(tree.contains(what), "{what} missing from:\n{tree}");
-    for role in [
-        "Heading",
-        "Button",
-        "Switch",
-        "Slider",
-        "SpinButton",
-        "RadioGroup",
-        "RadioButton",
-        "Link",
-        "ProgressIndicator",
-        "Label",
-        "Group",
+    for (name, role) in [
+        ("Hounds of Love", "Heading"),
+        ("shuffle Hounds of Love", "Button"),
+        ("albums", "Heading"),
+        ("queue", "Button"),
+        ("queue", "Link"),
+        ("forget this device", "Button"),
+        ("fade on pause", "Switch"),
+        ("group by album", "Switch"),
+        ("seek", "Slider"),
+        ("wash tint", "Slider"),
+        ("rate", "SpinButton"),
+        ("look", "RadioGroup"),
+        ("kōan", "RadioButton"),
+        ("scanning the library", "ProgressIndicator"),
+        ("no albums", "Group"),
+        ("hi-res", "Label"),
     ] {
-        has(role);
+        node(&tree, name, role);
     }
-    for name in [
-        "Hounds of Love",
-        "shuffle Hounds of Love",
-        "albums",
-        "forget this device",
-        "fade on pause",
-        "group by album",
-        "seek",
-        "scanning the library",
-        "no albums",
-        "hi-res",
-    ] {
-        has(name);
-    }
+    // The two "tuning" badges are two nodes, not one id met twice.
+    let tunings = nodes(&tree)
+        .into_iter()
+        .filter(|node| node["aria"]["label"] == "tuning")
+        .count();
+    assert_eq!(tunings, 2);
 }
 
 #[gpui_kit::test]
 fn components_report_their_state(cx: &mut TestAppContext) {
     let (window, _, _) = open(cx);
     let tree = tree(window, cx);
-    assert_eq!(node(&tree, "fade on pause").1["toggled"], "True");
-    assert_eq!(node(&tree, "group by album").1["toggled"], "False");
-    assert_eq!(node(&tree, "kōan").1["toggled"], "True");
-    assert_eq!(node(&tree, "system").1["toggled"], "False");
-    let (_, seek) = node(&tree, "seek");
+    assert_eq!(node(&tree, "fade on pause", "Switch").1["toggled"], "True");
+    assert_eq!(
+        node(&tree, "group by album", "Switch").1["toggled"],
+        "False"
+    );
+    assert_eq!(node(&tree, "kōan", "RadioButton").1["toggled"], "True");
+    assert_eq!(node(&tree, "system", "RadioButton").1["toggled"], "False");
+    let (_, seek) = node(&tree, "seek", "Slider");
     assert_eq!(seek["numeric_value"], 0.25);
     assert_eq!(seek["value"], "1:00");
-    assert_eq!(node(&tree, "remove").1["disabled"], true);
-    assert!(node(&tree, "queue").1.get("disabled").is_none());
+    assert_eq!(node(&tree, "remove", "Button").1["disabled"], true);
+    assert!(node(&tree, "queue", "Button").1.get("disabled").is_none());
 }
 
 #[gpui_kit::test]
 fn components_answer_a_screen_reader_s_actions(cx: &mut TestAppContext) {
     let (window, queued, seek) = open(cx);
     let tree = tree(window, cx);
-    send(window, cx, Action::Click, node(&tree, "queue").0);
+    send(window, cx, Action::Click, node(&tree, "queue", "Button").0);
     assert_eq!(queued.get(), 1);
-    send(window, cx, Action::Increment, node(&tree, "seek").0);
+    send(
+        window,
+        cx,
+        Action::Increment,
+        node(&tree, "seek", "Slider").0,
+    );
     assert!((seek.get() - 0.30).abs() < 1e-4, "seek at {}", seek.get());
 }
 
@@ -230,6 +256,7 @@ impl Render for Queue {
                 Tone::Bad,
             ))
             .child(NavNote::new("Waiting for the TV to wake", Tone::Muted))
+            .child(Spinner::new(px(16.)).announced("keys-loading", "loading keys"))
             .child(
                 div().h(px(400.)).child(
                     RowList::new(&self.list, move |ix, _, _| {
@@ -272,24 +299,173 @@ fn rows_lists_and_announcements(cx: &mut TestAppContext) {
     attach(window, cx);
     let tree = tree(window, cx);
 
-    let (_, list) = node(&tree, "queue");
-    assert_eq!(list["role"], "List");
-    let (_, heading) = node(&tree, "Hounds of Love, Kate Bush, 1985");
-    assert_eq!(heading["role"], "Heading");
-    let (row, track) = node(&tree, "track 2, 4:01");
-    assert_eq!(track["role"], "ListItem");
+    node(&tree, "queue", "List");
+    node(&tree, "Hounds of Love, Kate Bush, 1985", "Heading");
+    let (row, track) = node(&tree, "track 2, 4:01", "ListItem");
     assert_eq!(track["position_in_set"], 3);
     assert_eq!(track["size_of_set"], 3);
-    assert!(tree.contains("\"Toolbar\""), "no toolbar in:\n{tree}");
+    assert!(
+        nodes(&tree)
+            .iter()
+            .any(|node| node["aria"]["role"] == "Toolbar"),
+        "no toolbar in:\n{tree}"
+    );
 
-    let (_, banner) = node(&tree, "the server can't be reached");
-    assert_eq!(banner["role"], "Alert");
+    let (_, banner) = node(&tree, "the server can't be reached", "Alert");
     assert_eq!(banner["live"], "Assertive");
     assert_eq!(banner["value"], "the server can't be reached");
-    let (_, note) = node(&tree, "Waiting for the TV to wake");
-    assert_eq!(note["role"], "Status");
+    let (_, note) = node(&tree, "Waiting for the TV to wake", "Status");
     assert_eq!(note["live"], "Polite");
+    // A spinner standing for content says what is on its way.
+    let (_, loading) = node(&tree, "loading keys", "Status");
+    assert_eq!(loading["live"], "Polite");
 
     send(window, cx, Action::ScrollIntoView, row);
     assert_eq!(revealed.get(), Some(2));
+}
+
+/// A long list of named rows, each revealing its neighbour as a reader
+/// reaches it, drawn in a window shorter than the list.
+struct LongList {
+    list: RowListState,
+}
+
+impl Render for LongList {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let list = self.list.clone();
+        div().size_full().child(
+            div().h(px(300.)).child(
+                RowList::new(&self.list, move |ix, _, _| {
+                    let list = list.clone();
+                    TableRow::new(("row", ix), RowKind::Text)
+                        .spoken(spoken([format!("row {ix}")]))
+                        .place(ix, ROWS)
+                        .on_reveal(move |_, _| list.reveal_around(ix))
+                        .into_any_element()
+                })
+                .named("long"),
+            ),
+        )
+    }
+}
+
+const ROWS: usize = 200;
+
+/// The highest-numbered row named `row n` in the tree, and the lowest.
+fn drawn_rows(tree: &str) -> (usize, usize) {
+    let tree: Value = serde_json::from_str(tree).expect("JSON");
+    let numbers: Vec<usize> = tree["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .filter_map(|node| {
+            node["aria"]["label"]
+                .as_str()?
+                .strip_prefix("row ")?
+                .parse()
+                .ok()
+        })
+        .collect();
+    (
+        numbers.iter().copied().min().unwrap_or(0),
+        numbers.iter().copied().max().unwrap_or(0),
+    )
+}
+
+/// A reader moving down a list one row at a time keeps going past the
+/// first screen: each row reached scrolls its neighbour on and the window
+/// draws it, with nothing else asking for a frame.
+#[gpui_kit::test]
+fn a_reader_walks_down_a_list_past_the_screen(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let list = RowListState::new();
+    list.reset(ROWS, RowKind::Text);
+    let window: AnyWindowHandle = cx.add_window(|_, _| LongList { list }).into();
+    attach(window, cx);
+
+    let (_, mut last) = drawn_rows(&tree(window, cx));
+    let first_screen = last;
+    for _ in 0..40 {
+        let (row, _) = node(&tree(window, cx), &format!("row {last}"), "ListItem");
+        send(window, cx, Action::ScrollIntoView, row);
+        let (_, now) = drawn_rows(&tree(window, cx));
+        assert!(
+            now > last,
+            "row {} never reached the tree after row {last}",
+            last + 1
+        );
+        last = now;
+    }
+    assert!(last >= first_screen + 40);
+}
+
+/// A `uniform_list` scrolled down, its rows revealing their neighbours.
+struct Uniform {
+    scroll: UniformListScrollHandle,
+}
+
+impl Render for Uniform {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let scroll = self.scroll.clone();
+        div().size_full().child(
+            div().h(px(300.)).child(
+                uniform_list("uniform", ROWS, move |range, _, _| {
+                    range
+                        .map(|ix| {
+                            let scroll = scroll.clone();
+                            TableRow::new(("row", ix), RowKind::Text)
+                                .spoken(spoken([format!("row {ix}")]))
+                                .place(ix, ROWS)
+                                .on_reveal(move |_, _| reveal_around(&scroll, ix, ROWS))
+                                .into_any_element()
+                        })
+                        .collect()
+                })
+                .track_scroll(&self.scroll)
+                .h_full(),
+            ),
+        )
+    }
+}
+
+/// A reader moving up a `uniform_list` from its top row reaches the rows
+/// above the screen: the list knows which row is at its top, so the reveal
+/// goes up rather than down.
+#[gpui_kit::test]
+fn a_reader_walks_up_a_uniform_list_past_the_screen(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::init(cx);
+    });
+    let scroll = UniformListScrollHandle::new();
+    let window: AnyWindowHandle = cx
+        .add_window(|_, _| Uniform {
+            scroll: scroll.clone(),
+        })
+        .into();
+    attach(window, cx);
+    scroll.scroll_to_item(150, gpui_kit::ScrollStrategy::Top);
+    window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("the window");
+    cx.run_until_parked();
+
+    let (mut top, _) = drawn_rows(&tree(window, cx));
+    assert!(top >= 140, "the list did not scroll down: top row {top}");
+    let start = top;
+    for _ in 0..20 {
+        let (row, _) = node(&tree(window, cx), &format!("row {top}"), "ListItem");
+        send(window, cx, Action::ScrollIntoView, row);
+        let (now, _) = drawn_rows(&tree(window, cx));
+        assert!(
+            now < top,
+            "row {} never reached the tree from row {top}",
+            top.saturating_sub(1)
+        );
+        top = now;
+    }
+    assert!(top + 20 <= start);
 }

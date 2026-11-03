@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, Spinner, TextField, Tooltip};
 use crate::theme::{Look, Space, Tone, TypeRole, label};
-use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, KoanError};
 
 use crate::settings::Ctx;
-use crate::settings::form::{buttons, day, item, section, text};
+use crate::settings::form::{day, item, section, text};
 use crate::settings::model::describe;
 use crate::settings::sheet::{Action, Sheet};
 
@@ -84,7 +84,9 @@ async fn list(engine: Arc<KoanEngine>, kind: Kind) -> Result<Vec<Row>, KoanError
 
 impl Keys {
     pub fn new(kind: Kind, ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("The app it is for"));
+        let name = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::theme::label("The app it is for"))
+        });
         let mut keys = Self {
             kind,
             engine: ctx.model.read(cx).engine().clone(),
@@ -277,12 +279,10 @@ impl Render for Keys {
                     Kind::ApiKeys => "New Key",
                     Kind::AppPasswords => "New App Password",
                 };
-                rows.push(buttons(
+                rows.push(crate::components::form_field(
+                    TextField::new(&self.name).into_any_element(),
+                    260.0,
                     vec![
-                        div()
-                            .w(look.spaced(260.0))
-                            .child(TextField::new(&self.name))
-                            .into_any_element(),
                         Button::new("new-secret", ButtonKind::Bordered)
                             .label(new_label)
                             .disabled(!ready)
@@ -294,9 +294,11 @@ impl Render for Keys {
                     &look,
                 ));
             }
-            None if self.error.is_none() => {
-                rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element())
-            }
+            None if self.error.is_none() => rows.push(
+                Spinner::new(look.font_size(TypeRole::Body))
+                    .announced("keys-loading", "loading keys")
+                    .into_any_element(),
+            ),
             None => {}
         }
         let (header, about) = match self.kind {

@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
+use koan_runtime::{Artist, BrowseFilter};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -65,6 +65,8 @@ pub struct ArtistBrowser {
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     search: Entity<chrome::SearchField>,
@@ -160,8 +162,9 @@ impl ArtistBrowser {
             starting: HashSet::new(),
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             search,
             filters,
@@ -332,6 +335,7 @@ impl ArtistBrowser {
             })
             .selected(selected)
             .cursor(self.keyed && self.cursor.at == Some(index))
+            .spot(&self.spot)
             // Exactly the glyph's width, so it starts on the header's edge.
             .lead_exact(
                 crate::components::RowMetrics::lead_glyph(&p.look),
@@ -359,8 +363,7 @@ impl ArtistBrowser {
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
-                this.cursor.at = Some(index);
-                this.cursor.anchor = Some(index);
+                this.cursor.click(index, e.modifiers().shift);
                 let order = &this.order;
                 if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
                     this.lib
@@ -399,6 +402,10 @@ impl actions::Menus for ArtistBrowser {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl ArtistBrowser {
@@ -425,6 +432,10 @@ impl Render for ArtistBrowser {
                 .set_offset(Point::default());
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no artists yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("artists", |shelf| {
@@ -439,20 +450,8 @@ impl Render for ArtistBrowser {
         let body = if held {
             div().into_any_element()
         } else if self.artists.is_empty() {
-            chrome::empty_state(
-                crate::theme::Icon::Artist,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no artists yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
-            )
-            .into_any_element()
+            chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
+                .into_any_element()
         } else {
             crate::components::uniform_list(
                 "artists",
@@ -479,6 +478,7 @@ impl Render for ArtistBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -507,13 +507,17 @@ impl super::keys::KeyedList for ArtistBrowser {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.artists.len()
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         self.selection.only(self.order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(self.order[to], true, &self.order);
         }
     }
@@ -536,7 +540,7 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
-        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None));
+        self.menu = ix.map(|ix| actions::keyed_target(&self.selection, self.order[ix], None, None));
     }
 }
 

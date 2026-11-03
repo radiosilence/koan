@@ -192,7 +192,7 @@ jobs:
             # then caught on main, which runs the Apple job for any Rust.
             apple=false
             if [ "$release" = true ] || [ "$inputs_apple" = true ] \
-              || touches '^apps/(macos|ios)/|^crates/koan-ffi/|^tools/uniffi-bindgen/|^\.cargo/|^rust-toolchain|^\.github/' \
+              || touches '^apps/(macos|ios)/|^crates/(koan-ffi|koan-runtime)/|^tools/uniffi-bindgen/|^\.cargo/|^rust-toolchain|^\.github/' \
               || touches '^crates/koan-core/src/audio/(coreaudio_backend|device|engine|ios_backend|toolbox)\.rs$'; then
               apple=true
             # A Rust source or manifest changed near code for an Apple target:
@@ -206,7 +206,7 @@ jobs:
             # What the Apple apps contain, for CD: everything above, and the
             # core and server they link, which the Linux jobs check.
             apple_apps=$apple
-            if touches '^crates/(koan-core|koan-server)/|^Cargo\.toml$'; then
+            if touches '^crates/(koan-core|koan-server|koan-runtime)/|^Cargo\.toml$'; then
               apple_apps=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
@@ -219,19 +219,19 @@ jobs:
             # checks it for any Rust, as it does the Apple apps.
             gui_mac=false
             if [ "$release" = true ] \
-              || touches '^crates/(koan-gui|koan-kit|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^crates/(koan-gui|koan-kit|koan-runtime)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
               gui_mac=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
               gui_mac=true
             fi
 
-            # The Android app links koan-core and koan-server through koan-ffi
-            # and nothing else of the workspace, so the TUI and CLI cannot
+            # The Android app links koan-core and koan-server through
+            # koan-runtime and koan-ffi, and nothing else of the workspace, so the TUI and CLI cannot
             # break it, nor can the Apple apps or the site.
             android=false
             if [ "$release" = true ] || [ "$inputs_android" = true ] \
-              || touches '^apps/android/|^crates/(koan-core|koan-server|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^apps/android/|^crates/(koan-core|koan-server|koan-runtime|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
               android=true
             fi
           fi
@@ -407,7 +407,7 @@ jobs:
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test --workspace --exclude koan-gui --exclude koan-kit --doc
 
-  # koan-gui on Linux, beside the job above: it links koan-ffi and so
+  # koan-gui on Linux, beside the job above: it links koan-runtime and so
   # koan-core and koan-server, which any Rust change can break for it.
   gui:
     name: GUI (Linux)
@@ -466,6 +466,34 @@ jobs:
       - run: cargo clippy -p koan-gui -p koan-kit --all-targets --features profiler -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets
+
+  # The app run as it is used, headless: playing, seeking and hovering every
+  # page against a muted generated library (`just gui-smoke`). Catches the
+  # crashes no compile or unit test reaches.
+  gui-smoke:
+    name: GUI smoke (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.gui_mac == 'true'
+    timeout-minutes: 60
+    concurrency:
+      group: gui-smoke-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: gui-smoke
+          cache-on-failure: true
+      # just runs the recipe; ffmpeg makes the generated library's silent seed.
+      - run: brew install just ffmpeg
+      - run: just gui-smoke
 
   audit:
     name: Security Audit
@@ -653,9 +681,9 @@ jobs:
       # builds that same set first, so the cache it saves holds the features a
       # pull request's narrower build unifies to.
       - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: cargo test -p koan-core -p koan-ffi --all-targets --no-run && cargo test --all-targets
+        run: cargo test -p koan-core -p koan-runtime -p koan-ffi --all-targets --no-run && cargo test --all-targets
       - if: env.FULL != 'true'
-        run: cargo test -p koan-core -p koan-ffi --all-targets
+        run: cargo test -p koan-core -p koan-runtime -p koan-ffi --all-targets
       - if: ${{ !cancelled() && env.FULL == 'true' }}
         run: cargo test --doc
 
@@ -835,7 +863,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
     if: always()
     steps:
       - env:

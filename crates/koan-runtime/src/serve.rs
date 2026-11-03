@@ -22,7 +22,7 @@ use crate::offload;
 use crate::{KoanEngine, KoanError};
 
 /// Where the library is being served, while it is.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Sharing {
     pub port: u16,
     /// Where a phone on this network reaches it, e.g.
@@ -31,7 +31,7 @@ pub struct Sharing {
 }
 
 /// Tailscale on this device, for Settings.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TailscaleStatus {
     /// The device's name on the tailnet, `mac.tailnet.ts.net`.
     pub name: String,
@@ -40,7 +40,7 @@ pub struct TailscaleStatus {
 }
 
 /// Where invites send phones.
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InviteTo {
     /// The device's address on the local network.
     Network,
@@ -77,7 +77,7 @@ impl From<InviteTo> for Target {
 
 /// Where invites go and the addresses Settings shows, as the engine works
 /// them out, read together so the page never mixes two moments.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShareStatus {
     pub to: InviteTo,
     /// Tailscale on this device, while it is running and signed in.
@@ -314,7 +314,6 @@ pub(crate) fn is_shared_admin(conn: &rusqlite::Connection, username: &str) -> bo
     SERVING.read().is_some() && admin(conn).ok().flatten().as_deref() == Some(username)
 }
 
-#[uniffi::export]
 impl KoanEngine {
     /// Serve the library on every interface, on `port` (0 for any free one).
     /// `names` are what else the server answers to as a host, such as this

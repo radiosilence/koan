@@ -161,7 +161,11 @@ impl StoryContent {
                             .flex()
                             .flex_col()
                             .gap(look.space(Space::Xs))
-                            .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
+                            .child(TileArt::new(
+                                ("grid-tile", index),
+                                grid.side,
+                                TileSleeve::Colour(colour),
+                            ))
                             .child(text(
                                 ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
                                 TypeRole::Control,
@@ -356,6 +360,11 @@ impl StoryContent {
                     SectionHeader::new("Copyable text").into_any_element(),
                     CopyText::new("story-copy-text", "koan.rocks/pair/7KQ2-M9XD")
                         .help("copy the link")
+                        .into_any_element(),
+                    SectionHeader::new("Popover panel").into_any_element(),
+                    crate::components::popover_panel(240.0, look)
+                        .child(div().child("Codec: FLAC"))
+                        .child(div().child("Sample rate: 96 kHz"))
                         .into_any_element(),
                     SectionHeader::new("Filter field and suggestions").into_any_element(),
                     div()
@@ -711,7 +720,7 @@ impl StoryContent {
                             Slider::new("story-trail", 0.62)
                                 .compact()
                                 .glide(&self.more.glide)
-                                .prism(true),
+                                .prism(Some(false)),
                         )
                         .into_any_element(),
                 ]

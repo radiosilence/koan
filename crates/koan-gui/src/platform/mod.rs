@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
-use koan_ffi::KoanEngine;
 use koan_kit::app::{App, AsyncApp, Global};
+use koan_runtime::KoanEngine;
 
 use instance::Opened;
 
@@ -157,13 +157,12 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
 /// Bring the app and its window to the front.
 pub fn to_front(cx: &mut App) {
     cx.activate(true);
-    // Kept running with the main window closed: it opens again.
-    if residency::keep_running(cx)
-        && crate::app::main_window(cx).is_none()
-        && crate::app::show_window(cx)
-    {
+    // The main window to the front, or open again where it was left: kept
+    // running with it closed, or another window (Settings, EQ) still open.
+    if crate::app::show_window(cx) {
         return;
     }
+    // Before launching has decided about the main window: whatever shows.
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }

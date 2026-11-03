@@ -1,0 +1,1 @@
+- **Idle frames draw less, and loading panes speak.** Controls at rest no longer draw shader quads, a seek bar's correction no longer steps when a new position arrives mid-correction, animation timing stays exact over days of uptime, and a loading pane's spinner is announced to screen readers.

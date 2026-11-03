@@ -1,0 +1,1 @@
+- **The seek bar's times land on a seek at once.** In the kōan GUI app a backward seek, or one made just as the clock ticked, no longer shows the old place for up to a second, and the times no longer step back a second when the queue changes. The engine's clock stops counting at the end of a track.

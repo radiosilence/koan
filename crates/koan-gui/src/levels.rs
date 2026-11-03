@@ -121,6 +121,16 @@ pub fn install(cx: &mut App) {
         }
     })
     .detach();
+    // A closed window's feed and its hidden mark go with it: every window
+    // opened (Settings, the EQ, About) has an id of its own.
+    let closing = registry.clone();
+    cx.on_window_closed(move |cx, window| {
+        closing.lock().hidden.remove(&window);
+        if cx.has_global::<Levels>() {
+            cx.global_mut::<Levels>().feeds.remove(&window);
+        }
+    })
+    .detach();
     cx.set_global(Levels {
         registry,
         feeds: HashMap::new(),
@@ -130,10 +140,13 @@ pub fn install(cx: &mut App) {
 /// The entity `window`'s root observes to paint its bars again; none where
 /// the app was not installed, as in an offscreen render.
 pub fn feed(window: WindowId, cx: &mut App) -> Option<Entity<Feed>> {
-    cx.try_global::<Levels>()?;
+    let kept = cx.try_global::<Levels>()?.feeds.get(&window).cloned();
+    if kept.is_some() {
+        return kept;
+    }
     let made = cx.new(|_| Feed);
-    let levels = cx.global_mut::<Levels>();
-    Some(levels.feeds.entry(window).or_insert(made).clone())
+    cx.global_mut::<Levels>().feeds.insert(window, made.clone());
+    Some(made)
 }
 
 /// `window` was hidden or shown: a hidden window's bars keep nothing
@@ -227,7 +240,7 @@ pub fn bars(color: Hsla) -> AnyElement {
     if HANDED_OFF.load(Ordering::Relaxed) {
         return renderer_mark(color).into_any_element();
     }
-    let prism = crate::rainbow::Painted::now();
+    let prism = crate::theme::KoanTheme::prism_now();
     PlayingBars::new(color, move |place, window, cx| {
         let levels = cx.try_global::<Levels>().cloned()?;
         let state = window.use_keyed_state("playing-bars", cx, |_, _| {

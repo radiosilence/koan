@@ -1,0 +1,1 @@
+- **Shelves while they load.** Favourites, Recently played and Downloaded show nothing until their first answer instead of saying they are empty; a failed read says so and is not asked again until the shelf's contents can have changed; a heart reads the Favourites shelf once.

@@ -3856,7 +3856,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
                         window,
                         cx,
                     ) {
-                        // KOAN: as for a hover, the element's own view draws
+                        // KOAN: (#1814) as for a hover, the element's own view draws
                         // again, in case it is cached.
                         cx.notify(current_view);
                         long_press_tooltip_active.set(true);

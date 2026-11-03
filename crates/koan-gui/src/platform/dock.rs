@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, RepeatMode, SleepTimer};
 use koan_kit::app::platform::{Menu, MenuItem, OperatingSystem};
 use koan_kit::app::{Action, App, Entity, Global};
+use koan_runtime::{KoanEngine, RepeatMode, SleepTimer};
 
 use super::actions::{Next, Previous, TogglePlayPause};
 use crate::mirror::{Devices, Mirror, Playback, Slice};
@@ -148,7 +148,7 @@ fn shown(playback: &Entity<Playback>, devices: &Entity<Slice<Devices>>, cx: &App
         }),
         track,
         favourite: track.is_some_and(|t| favourites.is_some_and(|ids| ids.contains(&t))),
-        playing: now.state == koan_ffi::PlayState::Playing,
+        playing: now.state == koan_runtime::PlayState::Playing,
         repeat: Some(now.repeat_mode),
         shuffle: now.shuffle,
         sleeping: now.sleep.is_some(),

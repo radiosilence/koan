@@ -10,10 +10,10 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::settings::{SettingsWindow, Tab};
 use koan_gui::{app, theme};
 use koan_kit::app::*;
+use koan_runtime::KoanEngine;
 // A tool outside the app: GPUI's headless harness and input, driven directly.
 use koan_kit::raw::{
     HeadlessAppContext, PlatformInput, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
@@ -42,6 +42,7 @@ fn report(name: &str, mut times: Vec<Duration>) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
     }

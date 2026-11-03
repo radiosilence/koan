@@ -2,7 +2,10 @@
 //! the outline off, filled in the accent on. Its own click answers it: six
 //! small dots leave a heart that fills, and one ring closes in on a heart
 //! that empties. A change made elsewhere (a shortcut, another device)
-//! answers alike while the heart is drawn. The owner says what a click
+//! answers alike. A heart its owner hides at rest (a row's, shown under the
+//! pointer) shows while it answers, so a heart emptied elsewhere is seen to
+//! close; one its owner does not draw at all at rest follows its favourite
+//! through `answering`. The owner says what a click
 //! does; a heart without one is a mark, with no tooltip or pointer, inside
 //! a control of its owner's (an album tile). Where the heart shows (always,
 //! or only under the pointer) is its styling, set as on a `div`.
@@ -12,7 +15,7 @@ use std::sync::Arc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Answer, Answerer, Handler};
+use super::{Answer, Answerer, Handler, accessible, answers_click, toggled};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 
 #[derive(IntoElement)]
@@ -26,7 +29,34 @@ pub struct Heart {
     on_click: Option<Handler<ClickEvent>>,
 }
 
+/// The heart `id`'s answers, following `on`: a change answers.
+fn follow(id: &ElementId, on: bool, window: &mut Window, cx: &mut App) -> Answerer {
+    let accent = Look::of(window, cx).accent.hsla();
+    let answers = Answerer::of(id, window, cx);
+    answers.follow(
+        on as u64,
+        if on { Answer::Burst } else { Answer::Close },
+        accent,
+        window,
+        cx,
+    );
+    answers
+}
+
 impl Heart {
+    /// For a heart its owner does not draw at rest (a tile's, shown under
+    /// the pointer or for a favourite): follows `on` while it is not drawn,
+    /// and says whether it is answering a change, for which the owner draws
+    /// it until the answer has run.
+    pub fn answering(
+        id: impl Into<ElementId>,
+        on: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        follow(&id.into(), on, window, cx).live(cx)
+    }
+
     pub fn new(id: impl Into<ElementId>, on: bool) -> Self {
         let id = id.into();
         Self {
@@ -113,14 +143,8 @@ impl RenderOnce for Heart {
                 .into_any_element()
         };
         let on = self.on;
-        let answers = Answerer::of(&self.id, window, cx);
-        answers.follow(
-            on as u64,
-            if on { Answer::Burst } else { Answer::Close },
-            accent,
-            window,
-            cx,
-        );
+        let answers = follow(&self.id, on, window, cx);
+        let live = answers.live(cx);
         let tip = self.help.clone().unwrap_or_else(|| {
             crate::theme::label(if on {
                 "remove from favourites"
@@ -128,7 +152,13 @@ impl RenderOnce for Heart {
                 "favourite"
             })
         });
-        self.base
+        // A screen reader hears a toggle named for what it does, whether it
+        // is on, and can press it as the pointer does.
+        let name = tip.clone();
+        accessible(self.base, gpui_kit::Role::Button, Some(name))
+            .aria_toggled(toggled(on))
+            // Shown while it answers, whatever its owner hides it by.
+            .when(live, |d| d.visible())
             .relative()
             .flex()
             .items_center()
@@ -144,11 +174,15 @@ impl RenderOnce for Heart {
                     .children(answers.layer(window, cx)),
             )
             .when_some(self.on_click, move |d, handler| {
-                d.on_click(move |event, window, cx| {
-                    cx.stop_propagation();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
+                let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     let answer = if on { Answer::Close } else { Answer::Burst };
                     answers.start(answer, accent, cx);
                     handler(event, window, cx)
+                });
+                answers_click(d, press.clone()).on_click(move |event, window, cx| {
+                    cx.stop_propagation();
+                    press(event, window, cx)
                 })
             })
     }

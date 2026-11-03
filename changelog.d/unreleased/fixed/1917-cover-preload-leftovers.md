@@ -1,0 +1,1 @@
+- **The cover preload stops when asked.** Stopping it, backgrounding the app or a metered network ends a bulk answer between covers rather than after its last; its requests share the limit a page's covers have; a failed chunk no longer ends bulk fetching for the whole pass; and the server no longer holds a thread for each bulk answer while it is read.

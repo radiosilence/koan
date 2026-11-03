@@ -770,7 +770,12 @@ fn analysis_loop(
         // or starved. The bars fall away rather than holding the last chord,
         // and once they have fallen there is nothing left to publish.
         let played = samples_played.load(Ordering::Relaxed);
-        let heard = played != last_played;
+        // What the listener hears: the output's own gain (a pause or resume
+        // fade, a sleep timer, mute) on top of the ReplayGain and DSP the
+        // decode thread applied before feeding the buffer. Muted, nothing is
+        // heard however the play head moves, and the bars fall and rest.
+        let gain = crate::audio::fade::heard_gain();
+        let heard = played != last_played && gain > 0.0;
         let previous = std::mem::replace(&mut last_played, played);
         // Nothing heard is silence, not the last reading held.
         let mut loudness = Loudness::default();
@@ -788,10 +793,6 @@ fn analysis_loop(
             }
         } else {
             viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
-            // What the listener hears: the output's own gain (a pause or
-            // resume fade, a sleep timer, mute) on top of the ReplayGain and
-            // DSP the decode thread applied before feeding the buffer.
-            let gain = crate::audio::fade::heard_gain();
             if gain < 1.0 {
                 for sample in &mut snap.samples {
                     *sample *= gain;
