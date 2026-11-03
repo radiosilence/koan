@@ -13,7 +13,7 @@ use koan_kit::app::input::InputState;
 use koan_kit::app::*;
 
 use crate::settings::Ctx;
-use crate::settings::form::{buttons, day, item, section, text};
+use crate::settings::form::{day, item, section, text};
 use crate::settings::model::describe;
 use crate::settings::sheet::{Action, Sheet};
 
@@ -277,12 +277,10 @@ impl Render for Keys {
                     Kind::ApiKeys => "New Key",
                     Kind::AppPasswords => "New App Password",
                 };
-                rows.push(buttons(
+                rows.push(crate::components::form_field(
+                    TextField::new(&self.name).into_any_element(),
+                    260.0,
                     vec![
-                        div()
-                            .w(look.spaced(260.0))
-                            .child(TextField::new(&self.name))
-                            .into_any_element(),
                         Button::new("new-secret", ButtonKind::Bordered)
                             .label(new_label)
                             .disabled(!ready)

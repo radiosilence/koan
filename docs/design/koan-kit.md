@@ -190,6 +190,8 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_outlined`), which takes its tooltip: what it does, with its keys where it has them (koan-gui's `platform::actions::help`, "back (⌘[)"). A glyph-only button made any other way without help or a label fails a debug assertion, so none goes without saying what it does.
 
+`form_entry(field, verbs)` and `form_field(field, points, verbs)`: a field with its verbs after it on one line, the field the form's width or `points` wide, the verbs stretched to the field's height whatever their kind's type.
+
 `Slider::ends(low, high).ends_width(chars)`: the words at the rail's ends in slots so many characters of their face wide, so sliders one above another in a form start and stop their rails level whatever their words.
 
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.

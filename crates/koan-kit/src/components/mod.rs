@@ -115,8 +115,8 @@ pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
 pub use filter_field::{FilterButton, FilterField};
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
-    form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
+    form_note, form_text,
 };
 pub use heart::Heart;
 pub use inspector::{Inspector, plain_text};
