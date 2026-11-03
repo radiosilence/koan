@@ -115,6 +115,9 @@ pub struct ShelfPage {
     /// The read in flight and what it was asked at; a newer one replaces it,
     /// and a read landing for an older stamp is dropped.
     loading: Option<Stamp>,
+    /// The last read failed, and why: not asked again until what the shelf
+    /// depends on moves.
+    failed: Option<(Stamp, SharedString)>,
     _load: Option<Task<()>>,
     width: CollectionWidth,
     selection: Selection,
@@ -177,6 +180,7 @@ impl ShelfPage {
             summary: None,
             loaded: None,
             loading: None,
+            failed: None,
             _load: None,
             width: CollectionWidth::default(),
             selection: Selection::default(),
@@ -254,7 +258,10 @@ impl ShelfPage {
             return;
         }
         let stamp = Stamp::of(&self.shelf, feed);
-        if Some(stamp) == self.loading || (self.loading.is_none() && Some(stamp) == self.loaded) {
+        if Some(stamp) == self.loading
+            || (self.loading.is_none() && Some(stamp) == self.loaded)
+            || self.failed.as_ref().is_some_and(|(at, _)| *at == stamp)
+        {
             return;
         }
         self.loading = Some(stamp);
@@ -269,6 +276,7 @@ impl ShelfPage {
                 match read {
                     Ok(summary) => {
                         this.loaded = Some(stamp);
+                        this.failed = None;
                         this.records = summary
                             .albums
                             .iter()
@@ -277,7 +285,11 @@ impl ShelfPage {
                         this.summary = Some(Rc::new(summary));
                         cx.notify();
                     }
-                    Err(e) => log::warn!("shelf {:?}: {e}", this.shelf),
+                    Err(e) => {
+                        log::warn!("shelf {:?}: {e}", this.shelf);
+                        this.failed = Some((stamp, e.to_string().into()));
+                        cx.notify();
+                    }
                 }
             })
             .ok();
@@ -875,8 +887,18 @@ impl Render for ShelfPage {
         }
 
         let mut header = PageHeader::new(words.title);
-        let mut collection = Collection::new("shelf", &self.width)
-            .empty(EmptyState::new(words.icon, words.empty).detail(words.detail));
+        // Until the first answer the page shows nothing: an empty state then
+        // would say the shelf is empty before it is known.
+        let mut collection = Collection::new("shelf", &self.width);
+        if self.summary.is_some() {
+            collection =
+                collection.empty(EmptyState::new(words.icon, words.empty).detail(words.detail));
+        } else if let Some((_, why)) = &self.failed {
+            collection = collection.empty(
+                EmptyState::new(words.icon, format!("couldn't read {}", words.title))
+                    .detail(why.clone()),
+            );
+        }
         if let Some(s) = self.summary.clone() {
             header = header.detail(counts(&s));
             let artists = self.heading("artists", s.artist_total, Listing::Artists, cx);
