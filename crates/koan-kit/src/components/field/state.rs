@@ -208,6 +208,12 @@ impl FieldState {
         cx.notify();
     }
 
+    /// Empties the field as the person's edit (a clear mark, Escape in a
+    /// filter): says `Change`, and can be undone.
+    pub fn clean(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit(0..self.text.len(), "", Kind::Other, window, cx);
+    }
+
     /// The whole text replaced by a screen reader's request: an edit of
     /// the person's, which says `Change` and can be undone.
     pub(super) fn set_by_assistant(

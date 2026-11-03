@@ -366,10 +366,11 @@ pub fn pin_appearance(dark: Option<bool>, window: &mut Window, cx: &mut App) {
     window.refresh();
 }
 
-/// gpui-component's theme, in the tokens: the text field is its `Input`, and
-/// reads its text colours, caret, selection, type and corners from this one
-/// global. It follows the window most recently told to (the system's
-/// appearance, or a pinned window's), since it cannot differ per window.
+/// gpui-component's theme, in the tokens: the toolbar's popover panels
+/// (`opens_panel`) are its `Popover`, and read their colours, type and
+/// corners from this one global. It follows the window most recently told
+/// to (the system's appearance, or a pinned window's), since it cannot
+/// differ per window. koan-kit's own fields read the look directly.
 fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
@@ -380,7 +381,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     let current = Theme::global(cx);
     if current.colors.background == palette.bg.hsla()
         && current.colors.foreground == palette.ink.hsla()
-        && current.colors.caret == accent
+        && current.colors.ring == accent
         && current.font_size == px(size)
         && current.font_family.as_ref() == FONT_FAMILY
     {
@@ -398,10 +399,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     theme.colors.muted_foreground = palette.muted.hsla();
     theme.colors.background = palette.bg.hsla();
     theme.colors.border = palette.muted.hsla();
-    theme.colors.input = palette.muted.hsla();
     theme.colors.ring = accent;
-    theme.colors.caret = accent;
-    theme.colors.selection = accent.opacity(0.3);
 }
 
 /// The kōan scrollbar, for gpui-base's `Scrollbar`, which every scrolling

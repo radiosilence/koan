@@ -43,7 +43,10 @@ fn host(cx: &mut TestAppContext, rows: usize) -> (Entity<Host>, &mut VisualTestC
         }
     });
     let field = host.read_with(cx, |h, _| h.field.clone());
-    cx.update(|window, cx| field.read(cx).focus(window, cx));
+    cx.update(|window, cx| {
+        let focus = field.read(cx).focus.clone();
+        window.focus(&focus, cx);
+    });
     cx.run_until_parked();
     (host, cx)
 }
