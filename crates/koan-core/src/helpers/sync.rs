@@ -128,6 +128,8 @@ pub fn sync_remote(
     let history = crate::remote::history::reconcile(db, client, url, username);
     let history_took = step.elapsed();
     cancelled()?;
+    // The cover preload wakes before the EQ's round trips, not after them.
+    crate::remote::covers::synced();
     let step = std::time::Instant::now();
     let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
     let after = AfterLibrary {
@@ -143,7 +145,6 @@ pub fn sync_remote(
         after.history,
         after.dsp
     );
-    crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,
