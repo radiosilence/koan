@@ -662,10 +662,18 @@ pub fn reconcile_playlists(
 /// server's order, as an edit from another device would.
 static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
 
-/// Held while the order goes either way, and while a reorder is written, so
-/// a sync never adopts the server's order over a reorder on its way there,
-/// and two sends land in the order they were made.
+/// Held while a reorder is written, while a sync adopts the server's order,
+/// and while a send reads the order and settles, never across a request: a
+/// reorder waits only for the database, never for the network.
 static ORDER_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Held across a send's request, so two sends land in the order they were
+/// made. Only another send waits on it.
+static SEND_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// A send is on its way to the server: a sync does not adopt a listing
+/// meanwhile, since the server may not have the order yet.
+static ORDER_SENDING: AtomicBool = AtomicBool::new(false);
 
 /// Moved by every reorder written here and every send. A sync adopts the
 /// server's listing only if this has not moved since the listing was asked
@@ -687,12 +695,15 @@ fn sync_order(
     if !keeps_order {
         return;
     }
-    let _lane = ORDER_LANE.lock();
-    if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+    let lane = ORDER_LANE.lock();
+    if ORDER_UNSENT.load(Ordering::Relaxed) {
+        drop(lane);
         send_order(db, client);
         return;
     }
-    if ORDER_GENERATION.load(Ordering::Acquire) != listed_at {
+    if ORDER_SENDING.load(Ordering::Relaxed)
+        || ORDER_GENERATION.load(Ordering::Acquire) != listed_at
+    {
         return;
     }
     let order: Vec<String> = listing.iter().map(|p| p.id.clone()).collect();
@@ -703,12 +714,25 @@ fn sync_order(
     }
 }
 
-/// Send the sidebar's order as it stands, under [`ORDER_LANE`]. A failure
-/// leaves it unsent for the next sync.
+/// Send the sidebar's order as it stands, if a reorder has not been sent:
+/// read under [`ORDER_LANE`], sent under [`SEND_LANE`] alone, so a reorder
+/// or a sync never waits for the request. A failure leaves it unsent for
+/// the next sync.
 fn send_order(db: &Database, client: &SubsonicClient) {
-    let sent = queries::remote_playlist_order(&db.conn)
+    let _send = SEND_LANE.lock();
+    let ids = {
+        let _lane = ORDER_LANE.lock();
+        if !ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        ORDER_SENDING.store(true, Ordering::Relaxed);
+        queries::remote_playlist_order(&db.conn)
+    };
+    let sent = ids
         .map_err(|e| e.to_string())
         .and_then(|ids| client.set_playlist_order(&ids).map_err(|e| e.to_string()));
+    let _lane = ORDER_LANE.lock();
+    ORDER_SENDING.store(false, Ordering::Relaxed);
     match sent {
         Ok(()) => {
             ORDER_GENERATION.fetch_add(1, Ordering::AcqRel);
@@ -779,10 +803,7 @@ pub fn push_order() {
             let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
-            let _lane = ORDER_LANE.lock();
-            if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
-                send_order(&db, &client);
-            }
+            send_order(&db, &client);
         })
         .ok();
 }
@@ -1651,10 +1672,91 @@ mod tests {
         }
     }
 
+    /// The order tests move the process-wide marks and generation.
+    static ORDER_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    /// A send waiting on a server that does not answer holds the send lane,
+    /// never the one a reorder writes and a sync adopts under.
+    #[test]
+    fn a_send_does_not_hold_the_order_lane() {
+        let _order = ORDER_TESTS.lock();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        drop(Database::open(&path).unwrap());
+        // Accepts the connection and never answers.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", silent.local_addr().unwrap());
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+        let send = std::thread::spawn(move || {
+            let db = Database::open(&path).unwrap();
+            send_order(&db, &SubsonicClient::new(&url, "u", "pw"));
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ORDER_SENDING.load(Ordering::Relaxed) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the send never started"
+            );
+            std::thread::yield_now();
+        }
+        assert!(
+            ORDER_LANE
+                .try_lock_for(std::time::Duration::from_secs(1))
+                .is_some(),
+            "a reorder would have waited for the request"
+        );
+        assert!(
+            SEND_LANE.try_lock().is_none(),
+            "the send holds its own lane"
+        );
+        // The send fails once the server goes, and is left for the next
+        // sync; the next test starts with nothing unsent.
+        drop(silent);
+        send.join().unwrap();
+        ORDER_UNSENT.store(false, Ordering::Relaxed);
+    }
+
+    /// While a send is on its way, a sync does not adopt the server's
+    /// listing, which may not have the order yet.
+    #[test]
+    fn a_sync_does_not_adopt_during_a_send() {
+        let _order = ORDER_TESTS.lock();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), Vec::new(), 1), ("p2".into(), Vec::new(), 1)],
+            keeps_order: true,
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = |r: &str| {
+            queries::playlist_by_remote_id(&db.conn, r)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let (p1, p2) = (id("p1"), id("p2"));
+        queries::reorder_playlists(&db.conn, &[p2, p1]).unwrap();
+        let listing = client.get_playlists().unwrap();
+        let listed_at = ORDER_GENERATION.load(Ordering::Acquire);
+        ORDER_SENDING.store(true, Ordering::Relaxed);
+        sync_order(&db, &client, &listing, listed_at);
+        ORDER_SENDING.store(false, Ordering::Relaxed);
+        let order: Vec<i64> = queries::list_playlists(&db.conn, queries::LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(order, [p2, p1], "the order on its way stands");
+    }
+
     /// A listing asked for before this device made or sent a reorder is
     /// older than that order, and is not adopted over it.
     #[test]
     fn a_listing_older_than_a_send_is_not_adopted() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
@@ -1700,6 +1802,7 @@ mod tests {
 
     #[test]
     fn a_sync_adopts_the_servers_playlist_order_around_local_ones() {
+        let _order = ORDER_TESTS.lock();
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
