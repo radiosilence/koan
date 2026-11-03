@@ -244,8 +244,11 @@ pub struct SyncProgress {
 /// Albums and songs per list request. 500 is the most `getAlbumList2` allows.
 const PAGE_SIZE: u32 = 500;
 
-/// Song pages in flight at once during a sync: the lanes one server gets.
-const FETCH_LANES: usize = super::lanes::LANES;
+/// Song pages in flight at once during a sync. Each is a 500-song query, far
+/// heavier for the server than the single records [`super::lanes::LANES`]
+/// counts; four hides most of a mobile link's latency without asking much of
+/// the server.
+const FETCH_LANES: usize = 4;
 
 /// Attempts at one song page before it counts as failed.
 const PAGE_ATTEMPTS: u32 = 3;
