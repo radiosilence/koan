@@ -1,1 +1,1 @@
-- **Text draws again on macOS.** Since GPUI moved to koan's fork, the app drew no text: the fork's macOS text system is a feature koan now turns on.
+- **Text and the wash draw again on macOS.** Since gpui-kit went and GPUI moved to koan's fork, the app drew no text (the macOS text system is a feature koan now turns on) and a black wash (the kit's shaders called a sampler the fork names differently).
