@@ -295,9 +295,13 @@ fn moved_notice(
     }
     if !moved.started {
         return Some((
-            format!(
-                "Sent to {name}, which has not started it yet. It may when it wakes; until then the music is paused where it was."
-            ),
+            if here {
+                format!("The music came here from {source} but has not started.")
+            } else {
+                format!(
+                    "Sent to {name}, which has not started it yet. It may when it wakes; until then the music is paused where it was."
+                )
+            },
             Tone::Muted,
         ));
     }
