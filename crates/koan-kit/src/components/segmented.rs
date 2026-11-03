@@ -6,7 +6,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
-use crate::theme::{KoanStyled, Look, Motion, TypeRole, label};
+use crate::theme::{KoanStyled, Look, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
 /// one `ink` and underlined in the accent 5 points below. Each option's

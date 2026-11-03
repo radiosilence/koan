@@ -19,7 +19,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(u[1].xyz, u[1].w * u[0].x);
 }
 "#,

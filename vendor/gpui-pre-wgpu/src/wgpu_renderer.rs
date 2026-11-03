@@ -74,6 +74,76 @@ fn koan_sample(tile: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
     return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
 }
+
+// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
+fn koan_bezier_curve(a: f32, b: f32, s: f32) -> f32 {
+    let u = 1.0 - s;
+    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+fn koan_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    if (t <= 0.0 || t >= 1.0) {
+        return clamp(t, 0.0, 1.0);
+    }
+    var s = t;
+    for (var i = 0; i < 6; i++) {
+        let u = 1.0 - s;
+        let d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+        if (abs(d) < 1e-5) {
+            break;
+        }
+        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+    }
+    return koan_bezier_curve(y1, y2, s);
+}
+
+fn koan_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
+    let w = sqrt(max(k, 1e-3));
+    let z = c / (2.0 * w);
+    if (z < 1.0) {
+        let wd = w * sqrt(1.0 - z * z);
+        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+// Track `k` of the uniforms at `time`.
+fn koan_track(u: array<vec4<f32>, KOAN_UNIFORM_BLOCKS>, k: u32, time: f32) -> f32 {
+    var blocks = u;
+    let ends = blocks[4u + k * 2u];
+    let shape = blocks[5u + k * 2u];
+    let from = ends.x;
+    let to = ends.y;
+    let length = ends.w;
+    if (length <= 0.0) {
+        return to;
+    }
+    let e = max(time - ends.z, 0.0);
+    let code = u32(shape.x);
+    let kind = code % 4u;
+    let repeat = code / 4u;
+    if (kind == 2u) {
+        if (e >= length) {
+            return to;
+        }
+        return to + koan_spring(from - to, shape.w, shape.y, shape.z, e);
+    }
+    var p = e / length;
+    if (repeat == 0u) {
+        p = min(p, 1.0);
+    } else if (repeat == 1u) {
+        p = fract(p);
+    } else {
+        let q = p - 2.0 * floor(p / 2.0);
+        p = select(q, 2.0 - q, q > 1.0);
+    }
+    if (kind == 1u) {
+        let a = unpack2x16float(bitcast<u32>(shape.y));
+        let b = unpack2x16float(bitcast<u32>(shape.z));
+        p = koan_bezier(a.x, a.y, b.x, b.y, p);
+    }
+    return from + (to - from) * p;
+}
 "#;
 
 const KOAN_SHADER_MAIN: &str = r#"
@@ -1685,7 +1755,8 @@ impl WgpuRendererCore {
             for shader in &scene.shaders {
                 self.prepare_shader_pipeline(shader.program);
             }
-            let now = std::time::Instant::now();
+            // KOAN: the present clock (#1859).
+            let now = gpui::present_now();
             let instances: Vec<gpui::ShaderInstance> = scene
                 .shaders
                 .iter()
@@ -2113,7 +2184,8 @@ impl WgpuRendererCore {
         for shader in &scene.shaders {
             self.prepare_shader_pipeline(shader.program);
         }
-        let now = std::time::Instant::now();
+        // KOAN: the present clock (#1859).
+        let now = gpui::present_now();
         let instances: Vec<gpui::ShaderInstance> = scene
             .shaders
             .iter()
@@ -3516,7 +3588,7 @@ mod tests {
             name: "koan-test-half",
             msl: "",
             wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     if (position.x < size.x * u[0].x) {
         return vec4<f32>(1.0, 0.0, 0.0, 1.0);
     }
@@ -3562,7 +3634,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         name: "koan-test-solid",
         msl: "",
         wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     if (position.x < size.x * u[0].x) {
         return vec4<f32>(1.0, 0.0, 0.0, 0.5);
     }

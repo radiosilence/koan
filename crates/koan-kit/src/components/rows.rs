@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, accessible, answers_click, child, fade, fill, transition};
-use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
+use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Space, TypeRole, label};
 
 /// The hover group a nav row's glyph brightens by.
 const NAV_ROW: &str = "koan-nav-row";

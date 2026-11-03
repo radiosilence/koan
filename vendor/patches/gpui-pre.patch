@@ -624,10 +624,10 @@ index 6cb3387..40e041a 100644
  }
 diff --git b/src/shader.rs b/src/shader.rs
 new file mode 100644
-index 0000000..c799f78
+index 0000000..f841f42
 --- /dev/null
 +++ b/src/shader.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,574 @@
 +// KOAN: this module is koan's addition (#1641): a quad drawn by a fragment
 +// program the app supplies, with a small block of uniforms the app may write
 +// from any thread. The uniforms are read when a frame is presented, not when
@@ -644,8 +644,266 @@ index 0000000..c799f78
 +
 +use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
 +
-+/// How many floats a shader's uniform block holds.
-+pub const SHADER_UNIFORMS: usize = 16;
++/// How many plain floats a shader's uniform block holds, written by the app
++/// when they change: colours, sizes, flags.
++pub const SHADER_PLAIN: usize = 16;
++/// How many tracks follow them: values the GPU moves itself.
++pub const SHADER_TRACKS: usize = 8;
++/// The floats one track takes: `from, to, start, length` and
++/// `kind + 4 * repeat, a, b, c`.
++pub const TRACK_FLOATS: usize = 8;
++/// How many floats a shader's uniform block holds: the plain values, then
++/// the tracks (#1859).
++pub const SHADER_UNIFORMS: usize = SHADER_PLAIN + SHADER_TRACKS * TRACK_FLOATS;
++
++// KOAN: tracks (#1859). A track is one segment of a moving value, evaluated
++// by the program at present time through the prelude's `koan_track`, so the
++// CPU writes it when the value's target changes and never per frame. The
++// same evaluation is here, for the app to read where a track stands (a
++// retarget starts from there) and for the renderer's liveness.
++
++/// How a track moves between its ends.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackCurve {
++    Linear,
++    /// A CSS cubic Bézier timing function, `cubic-bezier(x1, y1, x2, y2)`.
++    Bezier(f32, f32, f32, f32),
++    /// A damped spring of unit mass, set off with `velocity` (units of the
++    /// value per second). Its `length` is how long it takes to settle.
++    Spring {
++        stiffness: f32,
++        damping: f32,
++        velocity: f32,
++    },
++}
++
++/// What a track does at its end.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum TrackRepeat {
++    /// Holds `to`.
++    Once,
++    /// Starts again from `from`.
++    Loop,
++    /// Goes back to `from`, and on again: a breath.
++    Alternate,
++}
++
++/// One segment of a value the GPU moves: from `from` to `to` over `length`
++/// seconds from `start`, seconds of the shader's time, along `curve`.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Track {
++    pub from: f32,
++    pub to: f32,
++    pub start: f32,
++    pub length: f32,
++    pub curve: TrackCurve,
++    pub repeat: TrackRepeat,
++}
++
++impl Track {
++    /// Standing at `value`.
++    pub fn hold(value: f32) -> Self {
++        Self {
++            from: value,
++            to: value,
++            start: 0.0,
++            length: 0.0,
++            curve: TrackCurve::Linear,
++            repeat: TrackRepeat::Once,
++        }
++    }
++
++    /// Where it stands at `time`, seconds of the shader's time: what the
++    /// prelude's `koan_track` draws.
++    pub fn at(&self, time: f32) -> f32 {
++        if self.length <= 0.0 {
++            return self.to;
++        }
++        let elapsed = (time - self.start).max(0.0);
++        if let TrackCurve::Spring {
++            stiffness,
++            damping,
++            velocity,
++        } = self.curve
++        {
++            if elapsed >= self.length {
++                return self.to;
++            }
++            return self.to + spring(self.from - self.to, velocity, stiffness, damping, elapsed);
++        }
++        let mut phase = elapsed / self.length;
++        match self.repeat {
++            TrackRepeat::Once => phase = phase.min(1.0),
++            TrackRepeat::Loop => phase = phase.fract(),
++            TrackRepeat::Alternate => {
++                let p = phase.rem_euclid(2.0);
++                phase = if p > 1.0 { 2.0 - p } else { p };
++            }
++        }
++        let eased = match self.curve {
++            TrackCurve::Linear => phase,
++            TrackCurve::Bezier(x1, y1, x2, y2) => bezier(x1, y1, x2, y2, phase),
++            TrackCurve::Spring { .. } => phase,
++        };
++        self.from + (self.to - self.from) * eased
++    }
++
++    /// When it stops moving, in seconds of the shader's time; `None` for one
++    /// that repeats.
++    pub fn end(&self) -> Option<f32> {
++        match self.repeat {
++            TrackRepeat::Once => Some(self.start + self.length.max(0.0)),
++            _ if self.length <= 0.0 => Some(self.start),
++            _ => None,
++        }
++    }
++
++    fn encode(&self) -> [f32; TRACK_FLOATS] {
++        let repeat = match self.repeat {
++            TrackRepeat::Once => 0.0,
++            TrackRepeat::Loop => 1.0,
++            TrackRepeat::Alternate => 2.0,
++        };
++        let (kind, a, b, c) = match self.curve {
++            TrackCurve::Linear => (0.0, 0.0, 0.0, 0.0),
++            TrackCurve::Bezier(x1, y1, x2, y2) => (1.0, pack_halves(x1, y1), pack_halves(x2, y2), 0.0),
++            TrackCurve::Spring {
++                stiffness,
++                damping,
++                velocity,
++            } => (2.0, stiffness, damping, velocity),
++        };
++        [
++            self.from,
++            self.to,
++            self.start,
++            self.length,
++            kind + 4.0 * repeat,
++            a,
++            b,
++            c,
++        ]
++    }
++
++    fn decode(f: &[f32]) -> Self {
++        let code = f[4] as u32;
++        let repeat = match code / 4 {
++            1 => TrackRepeat::Loop,
++            2 => TrackRepeat::Alternate,
++            _ => TrackRepeat::Once,
++        };
++        let curve = match code % 4 {
++            1 => {
++                let (x1, y1) = unpack_halves(f[5]);
++                let (x2, y2) = unpack_halves(f[6]);
++                TrackCurve::Bezier(x1, y1, x2, y2)
++            }
++            2 => TrackCurve::Spring {
++                stiffness: f[5],
++                damping: f[6],
++                velocity: f[7],
++            },
++            _ => TrackCurve::Linear,
++        };
++        Self {
++            from: f[0],
++            to: f[1],
++            start: f[2],
++            length: f[3],
++            curve,
++            repeat,
++        }
++    }
++}
++
++/// How long a spring takes to come within a thousandth of the distance it
++/// set off from (or of one unit, for one set off from rest at its end).
++pub fn spring_length(distance: f32, velocity: f32, stiffness: f32, damping: f32) -> f32 {
++    let omega = stiffness.max(1e-3).sqrt();
++    let zeta = damping / (2.0 * omega);
++    let decay = if zeta < 1.0 { zeta * omega } else { omega * (zeta - (zeta * zeta - 1.0).sqrt()) };
++    let reach = distance.abs() + velocity.abs() / omega;
++    let epsilon = (distance.abs() * 1e-3).max(1e-4);
++    if reach <= epsilon {
++        return 0.0;
++    }
++    ((reach / epsilon).ln() / decay.max(1e-3)).min(10.0)
++}
++
++/// The displacement of a unit-mass spring `t` seconds after it set off from
++/// `x0` with velocity `v0`.
++fn spring(x0: f32, v0: f32, stiffness: f32, damping: f32, t: f32) -> f32 {
++    let omega = stiffness.max(1e-3).sqrt();
++    let zeta = damping / (2.0 * omega);
++    if zeta < 1.0 {
++        let wd = omega * (1.0 - zeta * zeta).sqrt();
++        let envelope = (-zeta * omega * t).exp();
++        envelope * (x0 * (wd * t).cos() + (v0 + zeta * omega * x0) / wd * (wd * t).sin())
++    } else {
++        (x0 + (v0 + omega * x0) * t) * (-omega * t).exp()
++    }
++}
++
++/// A CSS cubic Bézier timing function: the curve's y where its x is `t`, by
++/// Newton's method from `t`, as the prelude's `koan_bezier` finds it.
++fn bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
++    if t <= 0.0 || t >= 1.0 {
++        return t.clamp(0.0, 1.0);
++    }
++    let curve = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
++    };
++    let slope = |a: f32, b: f32, s: f32| {
++        let u = 1.0 - s;
++        3.0 * u * u * a + 6.0 * u * s * (b - a) + 3.0 * s * s * (1.0 - b)
++    };
++    let mut s = t;
++    for _ in 0..6 {
++        let d = slope(x1, x2, s);
++        if d.abs() < 1e-5 {
++            break;
++        }
++        s = (s - (curve(x1, x2, s) - t) / d).clamp(0.0, 1.0);
++    }
++    curve(y1, y2, s)
++}
++
++/// Two numbers as half floats in one float's bits: a Bézier's control point.
++fn pack_halves(a: f32, b: f32) -> f32 {
++    f32::from_bits(to_half(a) as u32 | (to_half(b) as u32) << 16)
++}
++
++fn unpack_halves(v: f32) -> (f32, f32) {
++    let bits = v.to_bits();
++    (from_half(bits as u16), from_half((bits >> 16) as u16))
++}
++
++fn to_half(v: f32) -> u16 {
++    let bits = v.to_bits();
++    let sign = ((bits >> 16) & 0x8000) as u16;
++    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
++    let mantissa = bits & 0x7f_ffff;
++    if exponent <= 0 {
++        return sign;
++    }
++    if exponent >= 31 {
++        return sign | 0x7c00;
++    }
++    // Rounded to the nearest half.
++    let rounded = (exponent as u32) << 10 | (mantissa + 0x1000) >> 13;
++    sign | rounded.min(0x7bff) as u16
++}
++
++fn from_half(h: u16) -> f32 {
++    let sign = ((h & 0x8000) as u32) << 16;
++    let exponent = ((h >> 10) & 0x1f) as u32;
++    let mantissa = (h & 0x3ff) as u32;
++    if exponent == 0 {
++        return f32::from_bits(sign) + (mantissa as f32) * 2f32.powi(-24) * if sign != 0 { -1.0 } else { 1.0 };
++    }
++    f32::from_bits(sign | (exponent + 127 - 15) << 23 | mantissa << 13)
++}
 +
 +/// A fragment program, written once for each renderer.
 +///
@@ -656,7 +914,7 @@ index 0000000..c799f78
 +///   where `koan_sample(image, tile, uv)` reads the shader's image
 +///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 +///   kept to its edge
-+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
++/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32>`,
 +///   where `koan_sample(tile, uv)` reads the image the same way
 +///
 +/// `position` is the pixel's centre within the quad and `size` the quad's
@@ -684,6 +942,28 @@ index 0000000..c799f78
 +    *EPOCH.get_or_init(Instant::now)
 +}
 +
++
++// KOAN: the present clock (#1859).
++static PRESENT_LEAD: AtomicI64 = AtomicI64::new(0);
++
++/// The moment the frame being made now will reach the screen: what a
++/// shader's `time` is reckoned at, and what a retarget samples a track at,
++/// so motion neither jitters with encode latency nor jumps when retargeted.
++pub fn present_now() -> Instant {
++    let lead = PRESENT_LEAD.load(Ordering::Relaxed);
++    let now = Instant::now();
++    if lead >= 0 {
++        now + std::time::Duration::from_nanos(lead as u64)
++    } else {
++        now
++    }
++}
++
++/// How far ahead of now a frame encoded now is shown, as the platform's
++/// display link reports it.
++pub fn set_present_lead(lead: std::time::Duration) {
++    PRESENT_LEAD.store(lead.as_nanos().min(i64::MAX as u128) as i64, Ordering::Relaxed);
++}
 +
 +/// Signed nanoseconds from [`shader_epoch`] to `at`.
 +fn since_epoch(at: Instant) -> i64 {
@@ -720,6 +1000,12 @@ index 0000000..c799f78
 +    /// A lapse not yet presented: the present that lands a transition at
 +    /// its end, however early the last refresh before it fell.
 +    landing: AtomicBool,
++    // KOAN: #1859.
++    /// Nanoseconds from [`shader_epoch`] until which a track moves; 0 for
++    /// none, `u64::MAX` for one that repeats.
++    moving_until: AtomicU64,
++    /// The present that lands the last track at its end.
++    track_landing: AtomicBool,
 +}
 +
 +impl ShaderUniforms {
@@ -762,8 +1048,11 @@ index 0000000..c799f78
 +    }
 +
 +    pub fn is_live(&self) -> bool {
-+        self.live.load(Ordering::Relaxed)
-+            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
++        (self.live.load(Ordering::Relaxed)
++            && (!self.lapsed() || self.landing.load(Ordering::Relaxed)))
++            // KOAN: a moving track keeps the window presenting (#1859).
++            || self.tracks_moving(present_now())
++            || self.track_landing.load(Ordering::Relaxed)
 +    }
 +
 +    /// Whether a deadline was set and has passed.
@@ -793,12 +1082,56 @@ index 0000000..c799f78
 +    pub fn take_present(&self) -> bool {
 +        let changed = self.changed.swap(false, Ordering::Relaxed);
 +        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
-+        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
++        // KOAN: a track moves with time; the present after its end lands it
++        // (#1859).
++        let now = present_now();
++        let moving = self.tracks_moving(now);
++        let track_landed = !moving && self.track_landing.swap(false, Ordering::Relaxed);
++        changed
++            || landed
++            || moving
++            || track_landed
++            || (self.is_live() && self.continuous.load(Ordering::Relaxed))
 +    }
 +
 +    /// Every value, as a renderer copies them into a frame.
 +    pub fn snapshot(&self) -> [f32; SHADER_UNIFORMS] {
 +        std::array::from_fn(|i| self.get(i))
++    }
++
++    // KOAN: #1859.
++    /// Puts `track` in slot `k`: the program draws it from the next present
++    /// on, and the window presents while it moves.
++    pub fn set_track(&self, k: usize, track: Track) {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        for (i, value) in track.encode().into_iter().enumerate() {
++            self.set(base + i, value);
++        }
++        let origin = self.origin.load(Ordering::Relaxed);
++        let until = (0..SHADER_TRACKS)
++            .map(|k| self.track(k))
++            .filter(|t| t.length > 0.0)
++            .map(|t| match t.end() {
++                None => u64::MAX,
++                Some(end) => (origin + (end as f64 * 1e9) as i64).max(1) as u64,
++            })
++            .max()
++            .unwrap_or(0);
++        self.moving_until.store(until, Ordering::Relaxed);
++        self.track_landing.store(until != 0, Ordering::Relaxed);
++    }
++
++    /// The track in slot `k`.
++    pub fn track(&self, k: usize) -> Track {
++        let base = SHADER_PLAIN + k * TRACK_FLOATS;
++        let floats: [f32; TRACK_FLOATS] = std::array::from_fn(|i| self.get(base + i));
++        Track::decode(&floats)
++    }
++
++    /// Whether a track is moving at `now`.
++    pub fn tracks_moving(&self, now: Instant) -> bool {
++        let until = self.moving_until.load(Ordering::Relaxed);
++        until != 0 && (since_epoch(now).max(0) as u64) < until
 +    }
 +}
 +

@@ -40,9 +40,9 @@ use crate::theme::Hsla;
 const QUIETEST: f32 = 0.12;
 /// Seconds a band takes to forget half of a loud passage.
 const FORGET: f32 = 4.0;
-/// The analyser's rate while bars are on screen, where the display does not
-/// say its own.
-const FPS: u8 = 60;
+/// The analyser's rate while bars are on screen: each frame is a keyframe
+/// the GPU glides the bars to by the next, at the display's rate.
+const RATE: u8 = 30;
 
 #[derive(Default)]
 struct Registry {
@@ -64,10 +64,6 @@ struct Registry {
     ceiling: [f32; 3],
     stamp: Option<Instant>,
     following: bool,
-    /// The analyser's rate: the fastest display a bar has been drawn on or
-    /// a window with bars has shown on, so the bars move once per refresh.
-    /// Kept while the analyser parks.
-    fps: u8,
 }
 
 /// What a window's root observes: notified when that window's bars move,
@@ -108,19 +104,10 @@ pub fn feed(window: WindowId, cx: &mut App) -> Option<Entity<Feed>> {
     Some(levels.feeds.entry(window).or_insert(made).clone())
 }
 
-/// The analyser's rate for the display `window` is on: once per refresh.
-pub fn display_fps(window: &Window, cx: &App) -> u8 {
-    window
-        .refresh_interval(cx)
-        .map(|interval| (1.0 / interval.as_secs_f32()).round().clamp(24.0, 240.0) as u8)
-        .unwrap_or(FPS)
-}
-
-/// `window`, on a display refreshing `fps` times a second, was hidden or
-/// shown: a hidden window's bars keep nothing running, and one showing
-/// again starts them at its display's rate, since it replays its rows
+/// `window` was hidden or shown: a hidden window's bars keep nothing
+/// running, and one showing again starts them, since it replays its rows
 /// rather than drawing them.
-pub fn visibility(window: WindowId, shows: bool, fps: u8, cx: &mut App) {
+pub fn visibility(window: WindowId, shows: bool, cx: &mut App) {
     let Some(levels) = cx.try_global::<Levels>().cloned() else {
         return;
     };
@@ -128,7 +115,6 @@ pub fn visibility(window: WindowId, shows: bool, fps: u8, cx: &mut App) {
         let mut registry = levels.registry.lock();
         if shows {
             registry.hidden.remove(&window);
-            registry.fps = registry.fps.max(fps);
         } else {
             registry.hidden.insert(window);
         }
@@ -187,7 +173,7 @@ pub fn bars(color: Hsla) -> impl IntoElement {
             let mut registry = levels.registry.lock();
             registry.next_id += 1;
             let bars = BarLevels::new();
-            bars.set(registry.bands);
+            bars.hold(registry.bands);
             SlotState {
                 id: registry.next_id,
                 registry: levels.registry.clone(),
@@ -198,11 +184,8 @@ pub fn bars(color: Hsla) -> impl IntoElement {
             let state = state.read(cx);
             (state.id, state.levels.clone())
         };
-        let fps = display_fps(window, cx);
-        let faster = {
+        {
             let mut registry = levels.registry.lock();
-            let faster = fps > registry.fps;
-            registry.fps = registry.fps.max(fps);
             if SHADED {
                 registry
                     .shaders
@@ -210,10 +193,6 @@ pub fn bars(color: Hsla) -> impl IntoElement {
             } else {
                 registry.slots.insert(id, (place, color));
             }
-            faster && registry.following
-        };
-        if faster {
-            engine(cx).set_viz_fps(fps);
         }
         follow(&levels, cx);
         Some(bars)
@@ -245,11 +224,7 @@ fn follow(levels: &Levels, cx: &mut App) {
         return;
     }
     let engine = engine(cx);
-    let fps = {
-        let registry = levels.registry.lock();
-        if registry.fps == 0 { FPS } else { registry.fps }
-    };
-    engine.set_viz_fps(fps);
+    engine.set_viz_fps(RATE);
     let stream = engine.viz_stream();
     let registry = levels.registry.clone();
     let (wake, mut woken) = futures::channel::mpsc::unbounded::<Vec<WindowId>>();
@@ -322,8 +297,10 @@ impl Registry {
         let moved = next != self.bands;
         self.bands = next;
         if moved {
+            // Glided to by the next frame's arrival.
+            let over = std::time::Duration::from_secs_f32(elapsed.max(1.0 / RATE as f32));
             for (_, bars) in self.shaders.values() {
-                bars.set(next);
+                bars.glide(next, over);
             }
         }
         moved
@@ -370,8 +347,8 @@ mod tests {
             .shaders
             .insert(1, (WindowId::from(1), levels.clone()));
         assert!(registry.take([0.5, 0.2, 0.1]));
-        assert_eq!(levels.band(0), 1.0);
+        assert_eq!(levels.target(0), 1.0);
         registry.take([0.25, 0.2, 0.1]);
-        assert!((levels.band(0) - 0.5).abs() < 0.01);
+        assert!((levels.target(0) - 0.5).abs() < 0.01);
     }
 }

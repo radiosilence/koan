@@ -15,10 +15,10 @@ index b4940fb..85ad0d5 100644
  version = "1.0.86"
  
 diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
-index f6611df..ee39002 100644
+index f6611df..2c1fd50 100644
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
-@@ -45,6 +45,121 @@ const SUBPIXEL_SHADERS: &str = concat!(
+@@ -45,6 +45,191 @@ const SUBPIXEL_SHADERS: &str = concat!(
      include_str!("shaders_subpixel.wgsl"),
  );
  
@@ -50,6 +50,76 @@ index f6611df..ee39002 100644
 +    let extent = vec2<f32>(textureDimensions(t_koan_image, 0));
 +    let at = clamp(tile.xy + uv * tile.zw, tile.xy + 0.5, tile.xy + tile.zw - 0.5);
 +    return textureSampleLevel(t_koan_image, s_koan_image, at / extent, 0.0);
++}
++
++// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
++fn koan_bezier_curve(a: f32, b: f32, s: f32) -> f32 {
++    let u = 1.0 - s;
++    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
++}
++
++fn koan_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
++    if (t <= 0.0 || t >= 1.0) {
++        return clamp(t, 0.0, 1.0);
++    }
++    var s = t;
++    for (var i = 0; i < 6; i++) {
++        let u = 1.0 - s;
++        let d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
++        if (abs(d) < 1e-5) {
++            break;
++        }
++        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
++    }
++    return koan_bezier_curve(y1, y2, s);
++}
++
++fn koan_spring(x0: f32, v0: f32, k: f32, c: f32, t: f32) -> f32 {
++    let w = sqrt(max(k, 1e-3));
++    let z = c / (2.0 * w);
++    if (z < 1.0) {
++        let wd = w * sqrt(1.0 - z * z);
++        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
++    }
++    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
++}
++
++// Track `k` of the uniforms at `time`.
++fn koan_track(u: array<vec4<f32>, KOAN_UNIFORM_BLOCKS>, k: u32, time: f32) -> f32 {
++    var blocks = u;
++    let ends = blocks[4u + k * 2u];
++    let shape = blocks[5u + k * 2u];
++    let from = ends.x;
++    let to = ends.y;
++    let length = ends.w;
++    if (length <= 0.0) {
++        return to;
++    }
++    let e = max(time - ends.z, 0.0);
++    let code = u32(shape.x);
++    let kind = code % 4u;
++    let repeat = code / 4u;
++    if (kind == 2u) {
++        if (e >= length) {
++            return to;
++        }
++        return to + koan_spring(from - to, shape.w, shape.y, shape.z, e);
++    }
++    var p = e / length;
++    if (repeat == 0u) {
++        p = min(p, 1.0);
++    } else if (repeat == 1u) {
++        p = fract(p);
++    } else {
++        let q = p - 2.0 * floor(p / 2.0);
++        p = select(q, 2.0 - q, q > 1.0);
++    }
++    if (kind == 1u) {
++        let a = unpack2x16float(bitcast<u32>(shape.y));
++        let b = unpack2x16float(bitcast<u32>(shape.z));
++        p = koan_bezier(a.x, a.y, b.x, b.y, p);
++    }
++    return from + (to - from) * p;
 +}
 +"#;
 +
@@ -140,7 +210,7 @@ index f6611df..ee39002 100644
  fn least_common_multiple(left: u64, right: u64) -> u64 {
      let mut first = left;
      let mut second = right;
-@@ -195,6 +310,25 @@ struct WgpuResources {
+@@ -195,6 +380,25 @@ struct WgpuResources {
      path_intermediate_view: Option<wgpu::TextureView>,
      path_msaa_texture: Option<wgpu::Texture>,
      path_msaa_view: Option<wgpu::TextureView>,
@@ -166,7 +236,7 @@ index f6611df..ee39002 100644
  }
  
  struct CachedTextureBindGroup {
-@@ -1077,6 +1211,10 @@ impl WgpuRenderer {
+@@ -1077,6 +1281,10 @@ impl WgpuRenderer {
              core.dual_source_blending,
              core.uses_webgl_instance_data,
          );
@@ -177,7 +247,7 @@ index f6611df..ee39002 100644
  
          if let RendererState::Ready { surface, core } = &self.state {
              surface.configure(&core.resources.device, &self.surface_config);
-@@ -1191,13 +1329,23 @@ impl WgpuRenderer {
+@@ -1191,13 +1399,23 @@ impl WgpuRenderer {
              .create_view(&wgpu::TextureViewDescriptor::default());
          let premultiplied_alpha =
              self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
@@ -208,7 +278,7 @@ index f6611df..ee39002 100644
              log::error!("{error:#}");
              return false;
          }
-@@ -1331,6 +1479,39 @@ impl WgpuRendererCore {
+@@ -1331,6 +1549,39 @@ impl WgpuRendererCore {
              ],
          });
          let max_texture_size = device.limits().max_texture_dimension_2d;
@@ -248,7 +318,7 @@ index f6611df..ee39002 100644
  
          Self {
              resources: WgpuResources {
-@@ -1348,6 +1529,11 @@ impl WgpuRendererCore {
+@@ -1348,6 +1599,11 @@ impl WgpuRendererCore {
                  path_intermediate_view: None,
                  path_msaa_texture: None,
                  path_msaa_view: None,
@@ -260,7 +330,7 @@ index f6611df..ee39002 100644
              },
              atlas,
              path_globals_offset,
-@@ -1492,6 +1678,21 @@ impl WgpuRendererCore {
+@@ -1492,6 +1748,22 @@ impl WgpuRendererCore {
                  )
              })?;
          self.prepare_texture_bind_groups(scene);
@@ -271,7 +341,8 @@ index f6611df..ee39002 100644
 +            for shader in &scene.shaders {
 +                self.prepare_shader_pipeline(shader.program);
 +            }
-+            let now = std::time::Instant::now();
++            // KOAN: the present clock (#1859).
++            let now = gpui::present_now();
 +            let instances: Vec<gpui::ShaderInstance> = scene
 +                .shaders
 +                .iter()
@@ -282,7 +353,7 @@ index f6611df..ee39002 100644
  
          let mut encoder =
              self.resources()
-@@ -1607,6 +1808,22 @@ impl WgpuRendererCore {
+@@ -1607,6 +1879,22 @@ impl WgpuRendererCore {
                      // Surfaces are macOS-only for video playback and are not
                      // implemented by the WGPU renderer.
                      PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -305,7 +376,7 @@ index f6611df..ee39002 100644
                  }
              }
          }
-@@ -1688,6 +1905,11 @@ impl WgpuRendererCore {
+@@ -1688,6 +1976,11 @@ impl WgpuRendererCore {
                  PrimitiveBatch::MonochromeSprites { texture_id, .. }
                  | PrimitiveBatch::SubpixelSprites { texture_id, .. }
                  | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
@@ -317,7 +388,7 @@ index f6611df..ee39002 100644
                  _ => continue,
              };
              if !texture_ids.contains(&texture_id) {
-@@ -1727,6 +1949,37 @@ impl WgpuRendererCore {
+@@ -1727,6 +2020,37 @@ impl WgpuRendererCore {
          }
      }
  
@@ -355,7 +426,7 @@ index f6611df..ee39002 100644
      fn draw_instances(
          &self,
          instances: &InstanceBinding,
-@@ -1775,6 +2028,318 @@ impl WgpuRendererCore {
+@@ -1775,6 +2099,319 @@ impl WgpuRendererCore {
          Ok(())
      }
  
@@ -444,7 +515,8 @@ index f6611df..ee39002 100644
 +        for shader in &scene.shaders {
 +            self.prepare_shader_pipeline(shader.program);
 +        }
-+        let now = std::time::Instant::now();
++        // KOAN: the present clock (#1859).
++        let now = gpui::present_now();
 +        let instances: Vec<gpui::ShaderInstance> = scene
 +            .shaders
 +            .iter()
@@ -674,7 +746,7 @@ index f6611df..ee39002 100644
      unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
          unsafe {
              std::slice::from_raw_parts(
-@@ -2405,6 +2970,26 @@ impl WgpuHeadlessRenderer {
+@@ -2405,6 +3042,26 @@ impl WgpuHeadlessRenderer {
          Ok(())
      }
  
@@ -701,7 +773,7 @@ index f6611df..ee39002 100644
      /// Copies the current render target back to the CPU. Dimensions come from the
      /// target texture itself, so the copy can never disagree with what was rendered.
      fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
-@@ -2921,4 +3506,144 @@ mod tests {
+@@ -2921,4 +3578,144 @@ mod tests {
              ]
          );
      }
@@ -715,7 +787,7 @@ index f6611df..ee39002 100644
 +            name: "koan-test-half",
 +            msl: "",
 +            wgsl: r#"
-+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
++fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
 +    if (position.x < size.x * u[0].x) {
 +        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 +    }
@@ -761,7 +833,7 @@ index f6611df..ee39002 100644
 +        name: "koan-test-solid",
 +        msl: "",
 +        wgsl: r#"
-+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
++fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
 +    if (position.x < size.x * u[0].x) {
 +        return vec4<f32>(1.0, 0.0, 0.0, 0.5);
 +    }

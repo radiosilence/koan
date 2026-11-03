@@ -194,24 +194,27 @@ A glyph-only button is made with `Button::icon_only(id, icon, help)` (or `icon_o
 
 ### Animated (GPU-drawn motion)
 
-Anything that moves every frame (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, the spectrum) is an `AnimatedQuad`: an element drawn by a fragment program from sixteen uniforms, which the page writes through an `Animated` handle from any thread. The frame is presented again with the uniforms as they are then; the page and the views around it are not drawn again, and GPUI draws no frame.
+Every aspect of the UI is smooth and moves with ease, because any animation is drawn by the GPU through shaders: at the display's refresh rate always (120 Hz on ProMotion), with next to no CPU per frame, and nothing at all while nothing moves. No animation is capped, paced or stepped by a timer.
+
+Every animation is keyframes the GPU interpolates (#1859), as a browser's compositor does. Anything that moves (the playing bars, a seek bar's playhead, the wash's drift, a download's ring, a control's fill, the spinner) is an `AnimatedQuad`: an element drawn by a fragment program from an `Animated` handle the page writes from any thread. The handle holds sixteen plain values (colours, sizes, flags, written when they change) and eight **tracks**. A track is one segment of a moving value: from, to, when it starts, how long it takes, and its curve. The CPU writes a track when its data changes, at that data's own rate; the program evaluates it at the present's time with `koan_track(u, k, time)`, at the display's rate, with no CPU work per frame. The page and the views around it are not drawn again, and GPUI draws no frame.
 
 ```rust
 static RING: ShaderProgram = ShaderProgram { name: "koan-ring", msl: r#"…"#, wgsl: r#"…"#, prepare: None };
 
-let progress = Animated::new();            // kept by the view, cloned to a worker
+let progress = Animated::new();                  // kept by the view, cloned to a worker
 AnimatedQuad::new(&RING, &progress).size(side)   // declared in render
-progress.set(0, fraction);                 // from any thread, as the engine reports
+progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engine reports, ~15 Hz
 ```
 
-- **Driven by values:** `set`/`set_all` write uniforms; a change wakes the window to present at its next refresh, and nothing runs between changes.
-- **Driven by the clock:** `run(true)` presents every refresh while it runs, and `time` in the program counts from `set_origin`. A seek bar sets the anchor's share, rate and instant and runs while playing; an indeterminate ring runs while shown.
-- **Transitions:** `run_for(length)` runs the clock for a transition's length and stops by itself, with nothing to stop it. The controls' fills fade this way (`transition` and `fill` in `components/mod.rs`); their text colours still fade on GPUI frames, since text cannot change colour without a frame. A state arriving shows at once and a state leaving lingers: the pointer reaching a control lights it as it arrives, and its highlight fades over `Motion::LEAVE` (130 ms) once the pointer has gone. Every control and row follows this rule; Reduce Motion makes both instant.
-- **Parking** is the kit's: a window with nothing changing or running parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
-- **Reduce Motion:** `.decorative()` stops the clock while the person asks for less motion. Progress is not decorative.
-- **Per-present work:** a program's `prepare` runs on the CPU once per quad at each present, for what every pixel would otherwise work out alike (the wash's pose and eased opacity).
+- **`to(k, value, length, ease)`** moves track `k` from where it stands now (read on the present clock, `Animated::now()`) to `value`: a retarget mid-flight starts from what is on screen, and a spring carries its velocity on.
+- **`segment(k, from, to, start, length, ease, repeat)`** writes the whole segment, for values whose start is known: an analyser frame at its own time, a playhead from its anchor, a drift that breathes (`Repeat::Alternate`) or a turn that loops (`Repeat::Loop`). **`hold(k, value)`** stands still.
+- **Curves** (`Ease`): linear, ease in and out, the theme's quick-out, any CSS cubic Bézier, and a damped spring in closed form. The CPU's `Animated::at` evaluates a track exactly as the program does.
+- **Rates:** the bars' bands are keyframed at the analyser's 30 Hz and glide between frames; a seek bar's playhead on each anchor change (a seek, a pause, a skip, and at least once a second), its downloaded part at the download's rate; the wash, the controls' fills and the spinner are written once and run by themselves.
+- **States** arrive at once and leave over `Motion::LEAVE` (130 ms): the pointer reaching a control lights it, and its fill fades out once the pointer has gone (`transition` and `fill` in `components/mod.rs`). Every control and row follows this rule; Reduce Motion makes both instant. Text colours still fade on GPUI frames until the renderer can animate a text colour.
+- **Parking** is the kit's: a window presents while any track on screen moves and once more as the last comes to rest, then parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
+- **Reduce Motion:** a `.decorative()` quad's tracks stand at their ends, a repeating one at its start. Progress is not decorative.
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
-- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback.
+- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 

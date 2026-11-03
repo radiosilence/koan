@@ -38,7 +38,28 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use parking_lot::Mutex;
 
-pub use gpui_kit::{SHADER_UNIFORMS, ShaderProgram};
+pub use gpui_kit::{
+    SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS, ShaderProgram, Track, TrackCurve,
+    TrackRepeat as Repeat,
+};
+
+/// How a track moves between its ends (#1859).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ease {
+    Linear,
+    /// Core Animation's `easeInEaseOut`, `cubic-bezier(0.42, 0, 0.58, 1)`.
+    InOut,
+    /// The theme's quick-out, `cubic-bezier(0.2, 0.9, 0.3, 1)`.
+    QuickOut,
+    /// A CSS cubic Bézier, `cubic-bezier(x1, y1, x2, y2)`.
+    Bezier(f32, f32, f32, f32),
+    /// A damped spring of unit mass; a retarget carries its velocity on, and
+    /// its length is how long it takes to settle.
+    Spring {
+        stiffness: f32,
+        damping: f32,
+    },
+}
 
 use crate::theme::KoanTheme;
 
@@ -58,11 +79,33 @@ struct Inner {
     /// changes.
     waker: Mutex<Option<Waker>>,
     running: AtomicBool,
+    /// Decorative and the person asked for less motion: tracks hold their
+    /// ends.
+    still: AtomicBool,
 }
 
 impl Animated {
     pub fn new() -> Self {
-        Self::default()
+        let animated = Self::default();
+        animated.0.uniforms.set_origin(Instant::now());
+        animated
+    }
+
+    /// Track times are seconds from the uniforms' origin, in f32: an hour on,
+    /// the origin moves to now and every track with it, so a koan open for
+    /// days still reckons its motion to the frame.
+    fn rebase(&self) {
+        let now = Instant::now();
+        let shift = self.0.uniforms.time_at(now);
+        if shift < 3600.0 {
+            return;
+        }
+        self.0.uniforms.set_origin(now);
+        for k in 0..SHADER_TRACKS {
+            let mut track = self.0.uniforms.track(k);
+            track.start -= shift;
+            self.0.uniforms.set_track(k, track);
+        }
     }
 
     /// Uniform `index`; a change is presented at the next refresh.
@@ -70,6 +113,115 @@ impl Animated {
         if self.0.uniforms.set(index, value) {
             self.wake();
         }
+    }
+
+    /// The clock tracks are reckoned in: when a frame made now reaches the
+    /// screen. What a retarget samples a moving value at.
+    pub fn now() -> Instant {
+        gpui_kit::present_now()
+    }
+
+    /// Where track `k` stands at `at`, as the program draws it.
+    pub fn at(&self, k: usize, at: Instant) -> f32 {
+        self.0.uniforms.track(k).at(self.0.uniforms.time_at(at))
+    }
+
+    /// Track `k` as it was last written.
+    pub fn track(&self, k: usize) -> Track {
+        self.0.uniforms.track(k)
+    }
+
+    /// Track `k` standing at `value`.
+    pub fn hold(&self, k: usize, value: f32) {
+        self.put(k, Track::hold(value));
+    }
+
+    /// Track `k` moving from where it stands now to `to` over `length`: a
+    /// retarget mid-flight starts from the value, and with a spring the
+    /// velocity, it had reached.
+    pub fn to(&self, k: usize, to: f32, length: Duration, ease: Ease) {
+        let now = Self::now();
+        let current = self.0.uniforms.track(k);
+        let t = self.0.uniforms.time_at(now);
+        let from = current.at(t);
+        let (curve, length) = match ease {
+            Ease::Spring { stiffness, damping } => {
+                let dt = 1.0 / 240.0;
+                let velocity = (current.at(t + dt) - from) / dt;
+                (
+                    TrackCurve::Spring {
+                        stiffness,
+                        damping,
+                        velocity,
+                    },
+                    gpui_kit::spring_length(from - to, velocity, stiffness, damping),
+                )
+            }
+            ease => (curve(ease), length.as_secs_f32()),
+        };
+        self.put(
+            k,
+            Track {
+                from,
+                to,
+                start: t,
+                length,
+                curve,
+                repeat: Repeat::Once,
+            },
+        );
+    }
+
+    /// Track `k` as a whole segment, for a value whose start is known: an
+    /// analyser frame at its own time, a playhead from its anchor, a drift
+    /// that breathes (`Repeat::Alternate`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn segment(
+        &self,
+        k: usize,
+        from: f32,
+        to: f32,
+        start: Instant,
+        length: Duration,
+        ease: Ease,
+        repeat: Repeat,
+    ) {
+        let (curve, length) = match ease {
+            Ease::Spring { stiffness, damping } => (
+                TrackCurve::Spring {
+                    stiffness,
+                    damping,
+                    velocity: 0.0,
+                },
+                gpui_kit::spring_length(from - to, 0.0, stiffness, damping),
+            ),
+            ease => (curve(ease), length.as_secs_f32()),
+        };
+        self.put(
+            k,
+            Track {
+                from,
+                to,
+                start: self.0.uniforms.time_at(start),
+                length,
+                curve,
+                repeat,
+            },
+        );
+    }
+
+    fn put(&self, k: usize, track: Track) {
+        self.rebase();
+        let track = if self.0.still.load(Ordering::Relaxed) {
+            Track::hold(match track.repeat {
+                Repeat::Once => track.to,
+                _ => track.from,
+            })
+        } else {
+            track
+        };
+        self.0.uniforms.set_track(k, track);
+        self.wake();
     }
 
     /// Uniforms from `start` on.
@@ -134,6 +286,23 @@ impl Animated {
     pub fn attach(&self, decorative: bool, window: &mut Window, cx: &mut App) {
         *self.0.waker.lock() = Some(waker(window, cx));
         let still = decorative && !motion_allowed(cx);
+        self.0.still.store(still, Ordering::Relaxed);
+        // Written before it was known: what moves stands at its end, or a
+        // repeat at its start.
+        if still {
+            for k in 0..SHADER_TRACKS {
+                let track = self.0.uniforms.track(k);
+                if track.length > 0.0 {
+                    self.0.uniforms.set_track(
+                        k,
+                        Track::hold(match track.repeat {
+                            Repeat::Once => track.to,
+                            _ => track.from,
+                        }),
+                    );
+                }
+            }
+        }
         let running = self.is_running() && !still;
         self.0.uniforms.set_continuous(running);
         self.0.uniforms.set_live(running);
@@ -156,6 +325,16 @@ impl Animated {
             }
             None => window.paint_shader(bounds, program, uniforms),
         }
+    }
+}
+
+fn curve(ease: Ease) -> TrackCurve {
+    match ease {
+        Ease::Linear => TrackCurve::Linear,
+        Ease::InOut => TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0),
+        Ease::QuickOut => TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+        Ease::Bezier(x1, y1, x2, y2) => TrackCurve::Bezier(x1, y1, x2, y2),
+        Ease::Spring { .. } => TrackCurve::Linear,
     }
 }
 

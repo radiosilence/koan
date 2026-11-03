@@ -33,7 +33,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let t = fract(time / u[0].x);
     let left = -u[0].y + (1.0 + u[0].y) * smoothstep(0.0, 1.0, t);
     let x = position.x / size.x;

@@ -1096,7 +1096,8 @@ impl MetalRenderer {
             &self.instance_buffer_pool,
             self.is_unified_memory,
         );
-        let now = std::time::Instant::now();
+        // KOAN: the present clock (#1859).
+        let now = gpui::present_now();
         let shaders = writer.write_iter(
             scene
                 .shaders
@@ -1933,10 +1934,75 @@ using namespace metal;
 struct KoanShaderInstance {
     float4 bounds;
     float4 clip;
-    float4 uniforms[4];
+    float4 uniforms[20];
     float4 time;
     float4 tile;
 };
+
+// KOAN: tracks (#1859), evaluated as `Track::at` does in gpui's shader.rs.
+float koan_bezier_curve(float a, float b, float s) {
+    float u = 1.0 - s;
+    return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+}
+
+float koan_bezier(float x1, float y1, float x2, float y2, float t) {
+    if (t <= 0.0 || t >= 1.0) {
+        return clamp(t, 0.0, 1.0);
+    }
+    float s = t;
+    for (int i = 0; i < 6; i++) {
+        float u = 1.0 - s;
+        float d = 3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+        if (abs(d) < 1e-5) {
+            break;
+        }
+        s = clamp(s - (koan_bezier_curve(x1, x2, s) - t) / d, 0.0, 1.0);
+    }
+    return koan_bezier_curve(y1, y2, s);
+}
+
+float koan_spring(float x0, float v0, float k, float c, float t) {
+    float w = sqrt(max(k, 1e-3));
+    float z = c / (2.0 * w);
+    if (z < 1.0) {
+        float wd = w * sqrt(1.0 - z * z);
+        return exp(-z * w * t) * (x0 * cos(wd * t) + (v0 + z * w * x0) / wd * sin(wd * t));
+    }
+    return (x0 + (v0 + w * x0) * t) * exp(-w * t);
+}
+
+// Track `k` of the uniforms at `time`.
+float koan_track(constant float *u, uint k, float time) {
+    constant float *t = u + 16 + k * 8;
+    float from = t[0];
+    float to = t[1];
+    float length = t[3];
+    if (length <= 0.0) {
+        return to;
+    }
+    float e = max(time - t[2], 0.0);
+    uint code = uint(t[4]);
+    uint kind = code % 4;
+    uint repeat = code / 4;
+    if (kind == 2) {
+        return e >= length ? to : to + koan_spring(from - to, t[7], t[5], t[6], e);
+    }
+    float p = e / length;
+    if (repeat == 0) {
+        p = min(p, 1.0);
+    } else if (repeat == 1) {
+        p = fract(p);
+    } else {
+        float q = fmod(p, 2.0);
+        p = q > 1.0 ? 2.0 - q : q;
+    }
+    if (kind == 1) {
+        half2 a = as_type<half2>(t[5]);
+        half2 b = as_type<half2>(t[6]);
+        p = koan_bezier(a.x, a.y, b.x, b.y, p);
+    }
+    return from + (to - from) * p;
+}
 
 // The shader's image at `uv`, 0 to 1 across it, filtered and kept off the
 // texels around its tile in the atlas.
@@ -2005,7 +2071,8 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
         // KOAN: the shaders' uniforms as they are now, when the frame is
         // presented (#1641).
         shaders: {
-            let now = std::time::Instant::now();
+            // KOAN: the present clock (#1859).
+            let now = gpui::present_now();
             writer.write_iter(
                 scene
                     .shaders
@@ -2311,6 +2378,79 @@ mod tests {
             assert!(green.abs_diff(128) <= 2);
             assert!(blue.abs_diff(128) <= 2);
             assert_eq!(*alpha, 255);
+        }
+    }
+
+    // KOAN: (#1859) the prelude's `koan_track` draws each curve where
+    // `Track::at` says it stands, so a retarget on the CPU starts from what
+    // is on screen.
+    #[test]
+    fn tracks_draw_where_the_cpu_says() {
+        use gpui::{Track, TrackCurve, TrackRepeat};
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-tracks",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    uint k = uint(position.x / size.x * 5.0);
+    return float4(koan_track(u, k, time), 0.0, 0.0, 1.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        let now = uniforms.time_at(gpui::present_now());
+        let track = |t: f32, length: f32, curve, repeat| Track {
+            from: 0.1,
+            to: 0.9,
+            start: now - t,
+            length,
+            curve,
+            repeat,
+        };
+        let tracks = [
+            track(30.0, 100.0, TrackCurve::Linear, TrackRepeat::Once),
+            track(20.0, 100.0, TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), TrackRepeat::Once),
+            track(
+                0.3,
+                5.0,
+                TrackCurve::Spring { stiffness: 30.0, damping: 12.0, velocity: 0.0 },
+                TrackRepeat::Once,
+            ),
+            track(250.0, 100.0, TrackCurve::Linear, TrackRepeat::Loop),
+            track(160.0, 100.0, TrackCurve::Bezier(0.42, 0.0, 0.58, 1.0), TrackRepeat::Alternate),
+        ];
+        for (k, t) in tracks.iter().enumerate() {
+            uniforms.set_track(k, *t);
+        }
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: size(ScaledPixels(5.0), ScaledPixels(1.0)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds },
+            program: &PROGRAM,
+            uniforms: uniforms.clone(),
+            image: None,
+        });
+        scene.finish();
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let image = renderer
+            .render_scene_to_image(&scene, size(DevicePixels(5), DevicePixels(1)))
+            .unwrap();
+        // The render's moment is a few milliseconds on; every track here
+        // moves less than a level in that.
+        let at = uniforms.time_at(gpui::present_now());
+        for (k, t) in tracks.iter().enumerate() {
+            let expected = (t.at(at) * 255.0).round() as i32;
+            let drawn = image.get_pixel(k as u32, 0).0[0] as i32;
+            assert!(
+                (expected - drawn).abs() <= 2,
+                "track {k}: drawn {drawn}, expected {expected}"
+            );
         }
     }
 
