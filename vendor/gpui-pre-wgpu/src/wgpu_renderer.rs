@@ -408,6 +408,9 @@ struct KoanLayers {
     slot_generation: u64, // KOAN: #1859.
     size: (u32, u32),
     layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
+    /// KOAN: whether each layer's colour slots were moving when it was
+    /// last drawn (#1859).
+    moving: Vec<bool>,
 }
 
 struct CachedTextureBindGroup {
@@ -2168,18 +2171,17 @@ impl WgpuRendererCore {
         let plan = scene.shader_layers.as_deref().context("no shader layers")?;
         let extent = (size.width.0 as u32, size.height.0 as u32);
         let held = &self.resources.shader_layers;
-        // KOAN: a layer drawing with a colour slot that moves, or was
-        // written since the layers were drawn, is drawn again (#1859).
+        // KOAN: (#1859) a layer drawing with a colour slot is drawn again
+        // while one of its slots moves, when the table was written since it
+        // was drawn, and once more after its slots stop, so the last value
+        // lands; the other layers are kept.
+        let now = gpui::present_now();
         let slot_generation = gpui::color_slots_generation();
-        let slots_moved = plan.layers.iter().any(|layer| {
-            !layer.color_slots.is_empty()
-                && (held.slot_generation != slot_generation
-                    || layer.color_slots_moving(gpui::present_now()))
-        });
-        if slots_moved
-            || held.generation != scene.generation
+        let written = held.slot_generation != slot_generation;
+        if held.generation != scene.generation
             || held.size != extent
             || held.layers.is_empty()
+            || held.layers.len() != plan.layers.len()
         {
             let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
                 if self.resources.shader_layers.size == extent {
@@ -2231,7 +2233,29 @@ impl WgpuRendererCore {
                 slot_generation,
                 size: extent,
                 layers: drawn,
+                moving: plan.layers.iter().map(|l| l.color_slots_moving(now)).collect(),
             };
+        } else {
+            for (k, layer) in plan.layers.iter().enumerate() {
+                if layer.color_slots.is_empty() {
+                    continue;
+                }
+                let moving = layer.color_slots_moving(now);
+                let was_moving =
+                    std::mem::replace(&mut self.resources_mut().shader_layers.moving[k], moving);
+                if !(written || moving || was_moving) {
+                    continue;
+                }
+                let Some(view) = self.resources().shader_layers.layers[k]
+                    .as_ref()
+                    .map(|(texture, _)| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+                else {
+                    continue;
+                };
+                // After the last compose that read it: the same queue.
+                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+            }
+            self.resources_mut().shader_layers.slot_generation = slot_generation;
         }
         if self.resources().compose_pipelines.is_none() {
             let pipelines = self.create_compose_pipelines();

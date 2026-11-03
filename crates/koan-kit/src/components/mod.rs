@@ -67,6 +67,7 @@ mod viewer;
 mod window;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui_kit::{
     AnyElement, App, ColorSlot, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
@@ -214,20 +215,21 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
 }
 
 /// A colour moving between its off and on colours on the GPU, through a
-/// colour slot (#1859): the control draws once with the slot's colour, and
-/// the presents that follow move it with no frame drawn.
+/// colour slot (#1859): the control draws once with the slot's colour as a
+/// leave fade starts, and the presents that follow move it with no frame
+/// drawn. The slot is held only for the fade, and let go at the control's
+/// next draw after it lands; at rest the control draws a plain colour.
 struct ColorFade {
     on: bool,
-    colors: (Rgba, Rgba),
-    /// `None` when every slot was taken: the colour then changes at once.
-    slot: Option<ColorSlot>,
+    /// The slot fading and when it lands, while a leave fade runs.
+    fading: Option<(ColorSlot, Instant)>,
 }
 
 /// The colour a control's text, glyph or edge draws in, `on_color` when `on`
 /// and `off_color` otherwise, kept under `key`. Arriving is at once and
 /// leaving lingers: a hover lights a control as the pointer reaches it and
-/// fades over `Motion::LEAVE` once it has gone. Instant with Reduce Motion.
-/// The slot is freed with the control.
+/// fades over `Motion::LEAVE` once it has gone. Instant with Reduce Motion,
+/// and when every slot is taken.
 pub(crate) fn fade(
     key: ElementId,
     on: bool,
@@ -236,38 +238,36 @@ pub(crate) fn fade(
     window: &mut Window,
     cx: &mut App,
 ) -> Hsla {
-    let colors = (Rgba::from(off_color), Rgba::from(on_color));
-    let target = |on: bool, colors: (Rgba, Rgba)| if on { colors.1 } else { colors.0 };
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| ColorFade {
-        on,
-        colors,
-        slot: ColorSlot::claim(target(on, colors)),
-    });
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade { on, fading: None });
     state.update(cx, |fade, _| {
-        let to = target(on, colors);
-        if let Some(slot) = &fade.slot {
-            if fade.on != on && !on && !reduce {
-                slot.to(
-                    to,
-                    Track {
-                        from: 0.0,
-                        to: 1.0,
-                        start: 0.0,
-                        length: Motion::LEAVE.as_secs_f32(),
-                        curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
-                        repeat: Repeat::Once,
-                    },
-                );
-            } else if fade.on != on || fade.colors != colors {
-                slot.hold(to);
-            }
+        let now = Animated::now();
+        if fade.on != on {
+            fade.on = on;
+            fade.fading = (!on && !reduce)
+                .then(|| ColorSlot::claim(Rgba::from(on_color)))
+                .flatten()
+                .map(|slot| {
+                    slot.to(
+                        Rgba::from(off_color),
+                        Track {
+                            from: 0.0,
+                            to: 1.0,
+                            start: 0.0,
+                            length: Motion::LEAVE.as_secs_f32(),
+                            curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                            repeat: Repeat::Once,
+                        },
+                    );
+                    (slot, now + Motion::LEAVE)
+                });
+        } else if fade.fading.as_ref().is_some_and(|(_, lands)| now >= *lands) {
+            fade.fading = None;
         }
-        fade.on = on;
-        fade.colors = colors;
-        match &fade.slot {
-            Some(slot) => slot.hsla(1.0),
-            None => to.into(),
+        match &fade.fading {
+            Some((slot, _)) => slot.hsla(1.0),
+            None if on => on_color,
+            None => off_color,
         }
     })
 }
