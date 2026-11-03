@@ -1,0 +1,1 @@
+- **The animation engine under churn.** koan-kit's stress tests drive the colour-slot table and shader uniforms from many threads, storms of retargets and hovers, long uptimes, a moving present lead and Reduce Motion turned on mid-animation; koan-ffi's playhead clock is tested polled outside Tokio.
