@@ -155,7 +155,7 @@ impl RenderOnce for Heart {
         // A screen reader hears a toggle named for what it does, whether it
         // is on, and can press it as the pointer does.
         let name = tip.clone();
-        accessible(self.base, gpui_kit::Role::ToggleButton, Some(name))
+        accessible(self.base, gpui_kit::Role::Button, Some(name))
             .aria_toggled(toggled(on))
             // Shown while it answers, whatever its owner hides it by.
             .when(live, |d| d.visible())
