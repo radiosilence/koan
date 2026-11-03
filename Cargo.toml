@@ -15,8 +15,8 @@ license = "MIT"
 # with koan's commits, each proposed upstream, published as gpui-koan-*.
 # Pinned to a revision; the library names stay Zed's (`gpui`,
 # `gpui_platform`).
-gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "5a9b4d365730c668cb5b6818701b134b52acb4e4" }
-gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "5a9b4d365730c668cb5b6818701b134b52acb4e4" }
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc" }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "b037f492daeac576a7f8d761d24f2af238946abc" }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
