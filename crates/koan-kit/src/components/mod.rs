@@ -80,7 +80,7 @@ use std::time::Instant;
 use gpui_kit::{
     AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+    Stateful, StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
 };
 
 pub use animated::{
