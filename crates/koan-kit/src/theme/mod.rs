@@ -83,6 +83,10 @@ pub struct KoanTheme {
     pub prism: Option<bool>,
 }
 
+/// `KoanTheme::prism` as a number, for `prism_now`: 0 put away, 1 the
+/// palette, 2 brat's.
+static PRISM: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 impl Global for KoanTheme {}
 
 impl Default for KoanTheme {
@@ -466,10 +470,35 @@ impl KoanTheme {
     }
 
     /// The rainbow appearance drawn, in brat's palette or not, or put away.
+    /// The one place it is kept: the windows' roots observe the theme for it.
     pub fn set_prism(prism: Option<bool>, cx: &mut App) {
         if cx.global::<KoanTheme>().prism != prism {
+            PRISM.store(
+                match prism {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
             cx.global_mut::<KoanTheme>().prism = prism;
             cx.refresh_windows();
+        }
+    }
+
+    /// Whether the rainbow is drawn, and in brat's palette.
+    pub fn prism(cx: &App) -> Option<bool> {
+        cx.try_global::<KoanTheme>().and_then(|t| t.prism)
+    }
+
+    /// The same, for elements built where the app is not to hand, such as
+    /// the playing bars inside a row: they are drawn again whenever it
+    /// changes, since it refreshes the windows.
+    pub fn prism_now() -> Option<bool> {
+        match PRISM.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
         }
     }
 

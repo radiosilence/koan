@@ -715,7 +715,7 @@ impl StoryContent {
                             Slider::new("story-trail", 0.62)
                                 .compact()
                                 .glide(&self.more.glide)
-                                .prism(true),
+                                .prism(Some(false)),
                         )
                         .into_any_element(),
                 ]

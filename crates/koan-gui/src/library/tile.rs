@@ -321,7 +321,7 @@ impl<V: TileHost> Render for TileView<V> {
             .cursor(state.cursor)
             // The rainbow refracts through the sleeve the pointer is on.
             .sheen(
-                crate::rainbow::Painted::now()
+                crate::theme::KoanTheme::prism_now()
                     .filter(|_| over_sleeve)
                     .map(|brat| (ElementId::from("tile-sheen"), brat)),
             );

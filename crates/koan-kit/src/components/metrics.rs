@@ -76,7 +76,7 @@ impl TransportMetrics {
     /// the outline, as tall as `HIT` where there is room and never reaching
     /// above the rule or into the seek row, so a click in it never seeks.
     pub fn centre_rows(look: &Look) -> CentreRows {
-        let inner = Self::HEIGHT - crate::theme::HAIRLINE;
+        let inner = Self::HEIGHT - look.hairline;
         let outline = super::ButtonKind::IconOutlined.glyph_side(look);
         let gap = look.spaced(Self::STACK_GAP);
         let row = look.spaced(Self::SEEK_ROW);
