@@ -24,9 +24,9 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
-use koan_ffi::KoanEngine;
 use koan_kit::app::image::{RenderImage, Rgba};
 use koan_kit::app::*;
+use koan_runtime::KoanEngine;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
@@ -1195,7 +1195,7 @@ impl Covers {
         self.shared.wake(fetches, 0);
     }
 
-    fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
+    fn evict(&mut self, gone: koan_runtime::ArtEvictions, cx: &mut Context<Self>) {
         // The mark is older than what the library keeps, or another
         // database's: any cover here may be another record's now.
         if gone.purge {

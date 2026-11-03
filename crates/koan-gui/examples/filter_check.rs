@@ -8,10 +8,10 @@ use std::error::Error;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, browse::Browse};
 use koan_gui::theme;
 use koan_kit::app::{AppContext as _, Entity};
+use koan_runtime::KoanEngine;
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, px, size};
 

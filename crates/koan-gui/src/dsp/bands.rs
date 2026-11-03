@@ -11,13 +11,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{DspBand, DspBandKind, DspPoint};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::{
     AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, SharedString,
     Subscription, Window, div,
 };
 use koan_kit::app::{InteractiveElement, StatefulInteractiveElement, Styled};
+use koan_runtime::{DspBand, DspBandKind, DspPoint};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};

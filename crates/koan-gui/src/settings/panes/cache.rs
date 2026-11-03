@@ -25,7 +25,7 @@ impl Keeping {
     pub fn of(limit: &str) -> Keeping {
         if limit.is_empty() {
             Keeping::Unlimited
-        } else if koan_ffi::size_in_bytes(limit.to_owned()) == Some(0) {
+        } else if koan_runtime::size_in_bytes(limit.to_owned()) == Some(0) {
             Keeping::Off
         } else {
             Keeping::Limited
@@ -38,7 +38,7 @@ const GIB: f64 = 1_073_741_824.0;
 /// The limit in gigabytes, however it was written in the config, to two
 /// places at most.
 pub fn limit_gb(limit: &str) -> String {
-    match koan_ffi::size_in_bytes(limit.to_owned()) {
+    match koan_runtime::size_in_bytes(limit.to_owned()) {
         Some(bytes) if bytes > 0 => places(bytes as f64 / GIB),
         _ => String::new(),
     }
@@ -66,12 +66,12 @@ pub fn parse_limit(typed: &str) -> Option<Result<String, &'static str>> {
 /// Whether setting `limit` deletes downloads, so it asks first: only when
 /// it comes down below what is stored and below the limit set now.
 pub fn lowers(limit: &str, current: &str, stored: u64) -> bool {
-    let Some(bytes) = koan_ffi::size_in_bytes(limit.to_owned()) else {
+    let Some(bytes) = koan_runtime::size_in_bytes(limit.to_owned()) else {
         return false;
     };
     let now = match Keeping::of(current) {
         Keeping::Unlimited => None,
-        _ => koan_ffi::size_in_bytes(current.to_owned()),
+        _ => koan_runtime::size_in_bytes(current.to_owned()),
     };
     bytes < stored && now.is_none_or(|now| bytes < now)
 }

@@ -2,8 +2,8 @@
 //! order, which the browser reads in place of the shared ones, so opening a
 //! shelf's listing leaves the library browser's filter as it was.
 
-use koan_ffi::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use koan_kit::app::*;
+use koan_runtime::{AlbumSort, BrowseFilter, TrackBrowseSort};
 
 use super::Lib;
 use crate::navigator::{Listing, Shelf};

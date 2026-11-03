@@ -16,8 +16,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{KoanEngine, ShelfKind, ShelfSummary};
 use koan_kit::app::*;
+use koan_runtime::{KoanEngine, ShelfKind, ShelfSummary};
 
 use crate::navigator::{Listing, Navigator, Route, Shelf};
 

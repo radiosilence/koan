@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use koan_ffi::{KoanEngine, KoanError, Settings};
 use koan_kit::app::{App, Context, SharedString, Subscription, Task};
+use koan_runtime::{KoanEngine, KoanError, Settings};
 
 use crate::mirror::{Mirror, Slice};
 
@@ -147,6 +147,8 @@ impl Draft {
 
 /// Work that waits for the writes under way to land.
 type Then = Box<dyn FnOnce(&mut SettingsModel, &mut Context<SettingsModel>)>;
+/// What runs once the file has first been read.
+type Loaded = Box<dyn FnOnce(&mut App)>;
 
 /// What a sign-in is called while it runs, by which the pane knows one is.
 pub const SIGNING_IN: &str = "Signing in";
@@ -165,7 +167,7 @@ pub struct SettingsModel {
     early: Vec<Edit>,
     /// What waits for the file's first read: a link that launched the app
     /// is answered as the settings stand, not as signed out.
-    loaded: Vec<Box<dyn FnOnce(&mut App)>>,
+    loaded: Vec<Loaded>,
     /// What waits for the writes under way to land.
     written: Vec<Then>,
     /// The error shown is a write's.
@@ -500,7 +502,7 @@ impl SettingsModel {
             for path in &paths {
                 if !s.library_folders.iter().any(|f| &f.path == path) {
                     // The scan this starts fills the count in.
-                    s.library_folders.push(koan_ffi::LibraryFolder {
+                    s.library_folders.push(koan_runtime::LibraryFolder {
                         path: path.clone(),
                         tracks: 0,
                     });
@@ -595,7 +597,7 @@ impl SettingsModel {
     }
 
     /// Signs in through an invite, then loads the library.
-    pub fn join_invite(&mut self, invite: koan_ffi::Invite, cx: &mut Context<Self>) {
+    pub fn join_invite(&mut self, invite: koan_runtime::Invite, cx: &mut Context<Self>) {
         let host = invite.server.clone();
         self.run(
             SIGNING_IN,
@@ -798,7 +800,7 @@ mod tests {
             devices_keep_running: false,
             share_enabled: false,
             share_port: port,
-            share_invite_to: koan_ffi::InviteTo::Network,
+            share_invite_to: koan_runtime::InviteTo::Network,
             share_url: String::new(),
         }
     }
@@ -806,7 +808,7 @@ mod tests {
     fn add(path: &'static str) -> Edit {
         Rc::new(move |s: &mut Settings| {
             if !s.library_folders.iter().any(|f| f.path == path) {
-                s.library_folders.push(koan_ffi::LibraryFolder {
+                s.library_folders.push(koan_runtime::LibraryFolder {
                     path: path.into(),
                     tracks: 0,
                 });
@@ -851,7 +853,7 @@ mod tests {
     #[test]
     fn an_append_already_in_the_file_is_not_doubled() {
         let mut base = settings(1);
-        base.library_folders.push(koan_ffi::LibraryFolder {
+        base.library_folders.push(koan_runtime::LibraryFolder {
             path: "/music".into(),
             tracks: 10,
         });

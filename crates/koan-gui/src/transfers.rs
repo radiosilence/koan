@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::{EntryStatus, Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{EntryStatus, Transfer, TransferFigure, TransferState};
 
 use crate::components::{Availability, Glide, RingGlide};
 use crate::mirror::Mirror;

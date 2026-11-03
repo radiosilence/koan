@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use koan_ffi::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use koan_kit::app::*;
+use koan_runtime::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use serde::{Deserialize, Serialize};
 
 pub struct Browse {
@@ -231,11 +231,11 @@ struct Stored {
 
 /// The sorts a menu offers under the current filter and search.
 pub fn album_sorts(filter: &BrowseFilter, searching: bool) -> Vec<AlbumSort> {
-    koan_ffi::album_sorts_offered(filter.clone(), searching)
+    koan_runtime::album_sorts_offered(filter.clone(), searching)
 }
 
 pub fn track_sorts(filter: &BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
-    koan_ffi::track_sorts_offered(filter.clone(), searching)
+    koan_runtime::track_sorts_offered(filter.clone(), searching)
 }
 
 /// Every sort, for reading a stored name back.

@@ -14,13 +14,13 @@
 use std::error::Error;
 use std::time::Duration;
 
-use koan_ffi::KoanEngine;
 use koan_gui::mirror::Mirror;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::{
     AppContext, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point,
 };
+use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic input, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, PlatformInput, point, px, size};

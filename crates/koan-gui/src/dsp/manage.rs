@@ -6,9 +6,9 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use koan_ffi::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};

@@ -8,8 +8,8 @@
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
 
-use koan_ffi::{Track, TransferState};
 use koan_kit::app::*;
+use koan_runtime::{Track, TransferState};
 
 use super::Lib;
 use super::actions;

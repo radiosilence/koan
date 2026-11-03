@@ -2,8 +2,8 @@
 //! sources says it: the file's tags, the server's entry, the ReplayGain, and
 //! the library's own ids. Dense, for reading a value off.
 
-use koan_ffi::{InfoField, TrackDetails};
 use koan_kit::app::*;
+use koan_runtime::{InfoField, TrackDetails};
 
 use super::{Dismiss, Lib};
 use crate::components::sheet as ask;

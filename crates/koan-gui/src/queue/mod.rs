@@ -11,8 +11,8 @@ pub mod rows;
 
 use std::collections::HashSet;
 
-use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
+use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
@@ -591,7 +591,7 @@ impl QueueView {
     /// Queues what was dragged from the library before row `dest`, where
     /// `rows::place` says.
     fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
-        use koan_ffi::Placement;
+        use koan_runtime::Placement;
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
@@ -706,7 +706,7 @@ impl QueueView {
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
             if self.lib.is_none() && status == EntryStatus::Downloading {
-                transfer = Some(koan_ffi::TransferState::Running);
+                transfer = Some(koan_runtime::TransferState::Running);
             }
             availability =
                 crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
@@ -1015,7 +1015,7 @@ fn row_menu(
         );
     }
     if !tracks.is_empty() {
-        let sets = vec![koan_ffi::TrackSet::Tracks { ids: tracks }];
+        let sets = vec![koan_runtime::TrackSet::Tracks { ids: tracks }];
         menu = menu.item(
             MenuEntry::new(if record.is_some() {
                 "copy album share link"
@@ -1473,7 +1473,7 @@ impl QueueView {
 /// Why the dice cannot shuffle the rest of the queue now, the Mac's
 /// `queueDiceRefusal`: shuffle play keeps an order of its own beside the
 /// queue, and with nothing after the cursor there is nothing to shuffle.
-fn dice_refusal(now: &koan_ffi::NowPlaying) -> Option<&'static str> {
+fn dice_refusal(now: &koan_runtime::NowPlaying) -> Option<&'static str> {
     if now.shuffle {
         Some("shuffle play is on: turn it off to shuffle the queue itself")
     } else if !now.queue_shufflable {

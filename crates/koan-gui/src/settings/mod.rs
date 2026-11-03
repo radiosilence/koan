@@ -17,8 +17,8 @@ mod sheet;
 use std::sync::Arc;
 
 use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
-use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
+use koan_runtime::{ConnectionInfo, KoanEngine};
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -585,7 +585,7 @@ impl SettingsWindow {
                 // No such pairing: approved, declined or lapsed.
                 let settled = matches!(
                     engine.pairing_info(pair.clone()).await,
-                    Err(koan_ffi::KoanError::BadArgument { .. })
+                    Err(koan_runtime::KoanError::BadArgument { .. })
                 );
                 if settled {
                     cx.update(|window, cx| {

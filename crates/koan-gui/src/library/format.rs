@@ -1,6 +1,6 @@
 //! How figures read on the pages, as the Mac app writes them.
 
-use koan_ffi::Track;
+use koan_runtime::Track;
 
 /// "3:07", "1:02:34", "--:--" for an unknown length.
 pub fn duration(ms: Option<i64>) -> String {
