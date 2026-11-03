@@ -999,6 +999,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             ShadowInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1052,9 +1058,18 @@ impl MetalRenderer {
         if self.compose_pipelines.is_none() {
             self.compose_pipelines = Some(ComposePipelines::new(&self.device)?);
         }
-        if !self
-            .shader_layers
-            .holds(scene.generation, width, height)
+        // KOAN: a layer drawing with a colour slot that moves, or was
+        // written since the layers were drawn, is drawn again (#1859).
+        let slot_generation = gpui::color_slots_generation();
+        let slots_moved = plan.layers.iter().any(|layer| {
+            !layer.color_slots.is_empty()
+                && (self.shader_layers.slot_generation != slot_generation
+                    || layer.color_slots_moving(gpui::present_now()))
+        });
+        if slots_moved
+            || !self
+                .shader_layers
+                .holds(scene.generation, width, height)
         {
             let mut pool = self.shader_layers.take(width, height);
             let mut drawn = Vec::with_capacity(plan.layers.len());
@@ -1081,6 +1096,7 @@ impl MetalRenderer {
             }
             self.shader_layers = ShaderLayerTextures {
                 generation: scene.generation,
+                slot_generation,
                 width,
                 height,
                 layers: drawn,
@@ -1269,6 +1285,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1382,6 +1404,12 @@ impl MetalRenderer {
         }
 
         command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             UnderlineInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1432,6 +1460,12 @@ impl MetalRenderer {
             DevicePixels(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
+        // KOAN: colour slots (#1859).
+        command_encoder.set_vertex_buffer(
+            COLOR_SLOTS_INDEX,
+            Some(&instance_bindings.color_slots.buffer),
+            instance_bindings.color_slots.offset as u64,
+        );
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1803,13 +1837,19 @@ struct InstanceBindings {
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
     shaders: InstanceBinding, // KOAN: #1641.
+    color_slots: InstanceBinding, // KOAN: #1859.
 }
+
+// KOAN: the vertex buffer the stock shaders read the colour slots from
+// (#1859).
+const COLOR_SLOTS_INDEX: u64 = 20;
 
 // KOAN: (#1641) the layers of the last frame drawn with shaders, `None`
 // for a blank one, kept while presents compose them.
 #[derive(Default)]
 struct ShaderLayerTextures {
     generation: u64,
+    slot_generation: u64, // KOAN: #1859.
     width: u64,
     height: u64,
     layers: Vec<Option<metal::Texture>>,
@@ -2079,6 +2119,18 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
                     .iter()
                     .map(|shader| gpui::ShaderInstance::of(shader, now)),
             )?
+        },
+        // KOAN: the colour slots as they stand when the frame is presented
+        // (#1859).
+        color_slots: {
+            thread_local! {
+                static TABLE: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+            }
+            TABLE.with(|table| {
+                let mut table = table.borrow_mut();
+                gpui::color_slots_frame(gpui::present_now(), &mut table);
+                writer.write(&table)
+            })?
         },
     })
 }

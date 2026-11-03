@@ -106,11 +106,13 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let on = fade(child(&self.id, "selected"), self.selected, window, cx);
-        let color = super::mix(
+        let color = fade(
+            child(&self.id, "selected"),
+            self.selected,
             look.palette.muted.hsla(),
             look.text_color(crate::theme::Tone::Accent),
-            on,
+            window,
+            cx,
         );
         let on_click = self.on_click;
         let ink = look.palette.ink.hsla();
