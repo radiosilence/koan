@@ -2,6 +2,7 @@ package cc.blit.koan.engine
 
 import android.os.SystemClock
 import cc.blit.koan.ffi.Appearance
+import cc.blit.koan.ffi.ArtistWalk
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.DeviceReach
@@ -159,6 +160,8 @@ class EngineMirror(deviceName: String) {
     /** How far fetching every record's cover ahead has got, while it runs. */
     private val _covers = MutableStateFlow<CoverPreload?>(null)
     val covers: StateFlow<CoverPreload?> = _covers.asStateFlow()
+    private val _artists = MutableStateFlow<ArtistWalk?>(null)
+    val artists: StateFlow<ArtistWalk?> = _artists.asStateFlow()
 
     private val _devices = MutableStateFlow(Devices(emptyList(), null))
     /** Devices to play on, and the one controlled: `null` for this one. */
@@ -309,6 +312,7 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Tasks -> _tasks.value = Tasks(slice.scanning, slice.syncing)
             is StateSlice.Sync -> _sync.value = slice.progress
             is StateSlice.Covers -> _covers.value = slice.progress
+            is StateSlice.Artists -> _artists.value = slice.progress
             is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target, slice.targetReach)
             is StateSlice.Connection -> {
                 _connection.value = slice.connection

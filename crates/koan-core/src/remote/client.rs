@@ -1431,6 +1431,44 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
+    // -- Artist info: koan servers offering `koanArtistInfo` --
+
+    /// An artist's biography and photograph as the server resolved them.
+    /// From a server offering `koanArtistInfo`, resolved by MusicBrainz id
+    /// only and carrying koan's fields beside Subsonic's.
+    pub fn get_artist_info2(&self, id: &str) -> Result<SubsonicArtistInfo, SubsonicError> {
+        Ok(self
+            .get_with_params("getArtistInfo2", &[("id", id)])?
+            .artist_info2
+            .unwrap_or_default())
+    }
+
+    /// The artist's photograph as the server keeps it (`koanArtistImage`);
+    /// `None` when the artist has none.
+    pub fn koan_artist_image(&self, id: &str) -> Result<Option<Vec<u8>>, SubsonicError> {
+        let url = format!("{}/rest/koanArtistImage", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        params.insert("id".into(), id.into());
+        let resp = self.http().get(&url).query(&params).send()?;
+        let status = resp.status();
+        if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(SubsonicError::Unavailable(status.as_u16()));
+        }
+        let image = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .is_some_and(|t| t.as_bytes().starts_with(b"image/"));
+        if !image {
+            let resp: SubsonicResponseWrapper = resp.json()?;
+            return match resp.subsonic_response.ok() {
+                Err(SubsonicError::Api { code: 70, .. }) => Ok(None),
+                Err(e) => Err(e),
+                Ok(_) => Err(SubsonicError::BadResponse),
+            };
+        }
+        Ok(Some(resp.bytes()?.to_vec()))
+    }
+
     // -- EQ profiles: koan servers offering `koanDspProfiles` --
 
     /// The account's profiles changed after revision `since`.
@@ -1663,6 +1701,24 @@ struct SubsonicResponse {
     koan_dsp_profiles: Option<KoanDspProfiles>,
     koan_dsp_saved: Option<KoanDspSaved>,
     koan_dsp_deleted: Option<KoanDspDeleted>,
+    artist_info2: Option<SubsonicArtistInfo>,
+}
+
+/// `getArtistInfo2`'s answer. The `koan` fields come only from a server
+/// offering `koanArtistInfo`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsonicArtistInfo {
+    pub biography: Option<String>,
+    pub music_brainz_id: Option<String>,
+    pub large_image_url: Option<String>,
+    /// The article the biography opens.
+    pub koan_bio_url: Option<String>,
+    /// Photographer and licence, as the photograph's licence asks.
+    pub koan_image_credit: Option<String>,
+    /// Whether `koanArtistImage` has a photograph for the artist.
+    #[serde(default)]
+    pub koan_image: bool,
 }
 
 /// The play queue the account saved on the server: `getPlayQueue` names the

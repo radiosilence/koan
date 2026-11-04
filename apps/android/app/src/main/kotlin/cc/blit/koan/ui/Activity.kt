@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.engine.Tasks
+import cc.blit.koan.ffi.ArtistWalk
 import cc.blit.koan.ffi.CoverPreload
 import cc.blit.koan.ffi.SyncPhase
 import cc.blit.koan.ffi.SyncProgress
@@ -92,7 +93,13 @@ class ActivityModel {
      * says so, and not twice: a sync this app asked for already has a row,
      * which takes the engine's counts.
      */
-    fun follow(tasks: Tasks, sync: SyncProgress?, covers: CoverPreload? = null, stopCovers: () -> Unit = {}) {
+    fun follow(
+        tasks: Tasks,
+        sync: SyncProgress?,
+        covers: CoverPreload? = null,
+        artists: ArtistWalk? = null,
+        stopCovers: () -> Unit = {},
+    ) {
         _tasks.update { current ->
             val asked = current.filterNot { it.mirrored }
             fun kept(label: String, followsSync: Boolean = false) =
@@ -103,6 +110,9 @@ class ActivityModel {
                 kept(SCANNING).takeIf { tasks.scanning },
                 covers?.let {
                     kept(COVERS).copy(unit = "records", done = it.done.toLong(), total = it.total.toLong(), stop = stopCovers)
+                },
+                artists?.let {
+                    kept(ARTISTS).copy(unit = "artists", done = it.done.toLong(), total = it.total.toLong())
                 },
             )
             (asked + mirrored).map { if (it.followsSync) withSync(it, sync) else it }
@@ -124,6 +134,7 @@ class ActivityModel {
         const val SYNCING = "Syncing with server"
         const val SCANNING = "Scanning library"
         const val COVERS = "Fetching covers"
+        const val ARTISTS = "Looking up artists"
     }
 }
 

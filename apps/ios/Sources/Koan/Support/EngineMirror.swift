@@ -79,6 +79,7 @@ final class EngineMirror: Observable {
     private var _syncing = false
     private var _syncProgress: SyncProgress?
     private var _covers: CoverPreload?
+    private var _artists: ArtistWalk?
     private var _devices: [DeviceInfo] = []
     private var _devicesAt = Date.now
     private var _target: String?
@@ -136,6 +137,13 @@ final class EngineMirror: Observable {
     var covers: CoverPreload? {
         access(\.covers)
         return _covers
+    }
+
+    /// How far looking up artists' biographies and photographs ahead has
+    /// got, while it runs.
+    var artists: ArtistWalk? {
+        access(\.artists)
+        return _artists
     }
 
     var queue: [QueueItem] {
@@ -493,6 +501,8 @@ final class EngineMirror: Observable {
             mutate(\.syncProgress) { _syncProgress = progress }
         case .covers(let progress):
             mutate(\.covers) { _covers = progress }
+        case .artists(let progress):
+            mutate(\.artists) { _artists = progress }
         case .devices(let devices, let target, let targetReach):
             mutate(\.devices) {
                 _devices = devices

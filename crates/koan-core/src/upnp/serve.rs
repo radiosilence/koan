@@ -327,16 +327,7 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
             let art = served.and_then(|s| crate::index::folder_art::cover_art(s.art()));
             match art {
                 Some(bytes) => {
-                    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-                        "image/png"
-                    } else if bytes.len() >= 12
-                        && &bytes[..4] == b"RIFF"
-                        && &bytes[8..12] == b"WEBP"
-                    {
-                        "image/webp"
-                    } else {
-                        "image/jpeg"
-                    };
+                    let mime = crate::index::folder_art::image_mime(&bytes).unwrap_or("image/jpeg");
                     write!(
                         stream,
                         "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

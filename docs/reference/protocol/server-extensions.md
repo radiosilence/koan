@@ -163,6 +163,26 @@ Profiles deleted in the last thirty days, which the server keeps. The same crede
 
 ## Library
 
+### `koanArtistInfo`
+
+Artist biographies and photographs the server resolves for its whole library ahead of time, so a client draws an artist page without asking MusicBrainz and Wikimedia itself, and every device sees the same answer.
+
+The server finds an artist through their MusicBrainz id, or one of their records' release ids, then the Wikidata item MusicBrainz links them to, the Wikipedia article and the Commons image Wikidata names. It never searches by name. It walks the library's artists with such an id that it has not looked up, newest records first, after each scan and daily, at about one artist every few seconds; what it found is looked up again after 30 days, an artist it found nothing for after 7. An artist the walk has not reached is looked up when a client asks.
+
+`getArtistInfo2` (role `user`, Subsonic's `id`) answers `artistInfo2` with Subsonic's `biography` (plain text, the article's opening), `musicBrainzId`, and `smallImageUrl`, `mediumImageUrl` and `largeImageUrl`, each the Commons address of the photograph, and koan's:
+
+| Field | |
+|-------|---|
+| `koanBioUrl` | the article the biography opens |
+| `koanImageCredit` | the photographer and licence, which the licence asks to be shown with it |
+| `koanImage` | whether `koanArtistImage` has a photograph for the artist |
+
+An artist nothing was found for is an `artistInfo2` with `koanImage` false and nothing else. A lookup that failed (MusicBrainz or Wikimedia unreachable, with nothing held) is an error (`0`), so a client does not remember it as nothing found.
+
+`/rest/koanArtistImage` (role `user`, `id`) answers the photograph as the server keeps it, an image type by its bytes, or not found (`70`) when the artist has none.
+
+kōan's apps ask these for an artist synced from a server listing the extension, and keep the answer for a week. Where the server cannot be reached, or does not list it, they resolve the artist themselves, and a device with a library of its own walks it as the server does. Other Subsonic clients read `getArtistInfo2` as Navidrome's, without koan's fields.
+
 ### `koanCovers`
 
 Many records' covers in one request, for a client keeping a library's covers on the device ahead of time. A cover fetched with `getCoverArt` costs a round trip each; this one costs a round trip per two hundred, and the server answers from the covers it has already made, reading files and decoding nothing.

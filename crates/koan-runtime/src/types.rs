@@ -1120,6 +1120,23 @@ impl From<koan_core::remote::covers::Preload> for CoverPreload {
     }
 }
 
+/// How far looking up artists' biographies and photographs ahead has got:
+/// artists done of those due a lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArtistWalk {
+    pub done: u64,
+    pub total: u64,
+}
+
+impl From<koan_core::artist_info::Walk> for ArtistWalk {
+    fn from(w: koan_core::artist_info::Walk) -> Self {
+        Self {
+            done: w.done,
+            total: w.total,
+        }
+    }
+}
+
 /// How far a remote sync has got. `total` is absent where the server gives no
 /// way to know it in advance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

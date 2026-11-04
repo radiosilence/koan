@@ -74,6 +74,7 @@ static LIBRARY_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// once, edits in place included.
 pub fn library_written() {
     LIBRARY_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::artist_info::wake();
 }
 
 /// How many times this process has said it wrote library rows.

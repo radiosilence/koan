@@ -67,6 +67,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::TV_PAIRING, &[1]),
     (koan_core::remote::profile::PLAYLIST_ORDER, &[1]),
     (koan_core::remote::profile::COVERS, &[1]),
+    (koan_core::remote::profile::ARTIST_INFO, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -2342,6 +2343,109 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
                     ),
             ))
         })
+    })
+    .await
+}
+
+/// An artist's biography and photograph, resolved by MusicBrainz id
+/// (`koan_core::artist_info`): from what the walk already holds, or looked up
+/// now. Beside Subsonic's fields, koan's (`koanArtistInfo`): the article the
+/// biography opens, the photograph's credit, and whether `koanArtistImage`
+/// has it. A lookup that failed is an error, so a client resolves the artist
+/// itself rather than remembering a miss; one that found nothing is an
+/// empty answer.
+async fn get_artist_info2(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IdParam>,
+) -> Response {
+    offload_response(move || {
+        respond(&state, &params.auth, |_, b| {
+            use rusqlite::OptionalExtension as _;
+            let (artist_id, mbid) = {
+                let db = state.open_db()?;
+                let artist_id = require_id(&db, params.id.as_deref(), EntityKind::Artist)?;
+                let mbid: Option<String> = db
+                    .conn
+                    .query_row(
+                        "SELECT mbid FROM artists WHERE id = ?1",
+                        rusqlite::params![artist_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+                    .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+                (artist_id, mbid.filter(|m| !m.is_empty()))
+            };
+            // No connection is held while MusicBrainz and Wikimedia answer.
+            let info = koan_core::artist_info::fetch_by_id(&state.pool, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .unwrap_or_default();
+            Ok(b.child(artist_info_node(&info, mbid.as_deref())))
+        })
+    })
+    .await
+}
+
+fn artist_info_node(info: &koan_core::artist_info::ArtistInfo, mbid: Option<&str>) -> XmlNode {
+    let text = |tag: &str, value: &str| XmlNode::scalar(tag, AttrValue::Str(value.into()));
+    let mut node = XmlNode::new("artistInfo2");
+    if let Some(bio) = &info.bio {
+        node = node.child(text("biography", bio));
+    }
+    if let Some(mbid) = mbid {
+        node = node.child(text("musicBrainzId", mbid));
+    }
+    let image = info.image_url.as_deref().filter(|u| !u.is_empty());
+    if let Some(url) = image {
+        for tag in ["smallImageUrl", "mediumImageUrl", "largeImageUrl"] {
+            node = node.child(text(tag, url));
+        }
+    }
+    if let Some(url) = &info.bio_url {
+        node = node.child(text("koanBioUrl", url));
+    }
+    if let Some(credit) = image.and(info.image_credit.as_deref()) {
+        node = node.child(text("koanImageCredit", credit));
+    }
+    node.child(XmlNode::scalar(
+        "koanImage",
+        AttrValue::Bool(image.is_some()),
+    ))
+}
+
+/// `koanArtistImage`: the artist's photograph as this server keeps it,
+/// downloaded and kept first where the walk has not reached the artist yet.
+/// Not found (70) when the artist has none.
+async fn koan_artist_image(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IdParam>,
+) -> Response {
+    offload_response(move || {
+        let json = params.auth.wants_json();
+        let answer = (|| {
+            let artist_id = {
+                let db = authed_db(&state, &params.auth)?;
+                require_id(&db, params.id.as_deref(), EntityKind::Artist)?
+            };
+            koan_core::artist_info::image(&state.pool, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Artist image"))
+        })();
+        match answer {
+            Ok(bytes) => (
+                StatusCode::OK,
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        koan_core::index::folder_art::image_mime(&bytes).unwrap_or("image/jpeg"),
+                    ),
+                    (header::CACHE_CONTROL, "max-age=86400"),
+                ],
+                bytes,
+            )
+                .into_response(),
+            Err(e) => SubsonicResponse::error(json, &e),
+        }
     })
     .await
 }
@@ -6690,6 +6794,18 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/getArtists.view", get(get_artists).post(get_artists))
         .route("/rest/getArtist", get(get_artist).post(get_artist))
         .route("/rest/getArtist.view", get(get_artist).post(get_artist))
+        .route(
+            "/rest/getArtistInfo2",
+            get(get_artist_info2).post(get_artist_info2),
+        )
+        .route(
+            "/rest/getArtistInfo2.view",
+            get(get_artist_info2).post(get_artist_info2),
+        )
+        .route(
+            "/rest/koanArtistImage",
+            get(koan_artist_image).post(koan_artist_image),
+        )
         .route("/rest/getAlbum", get(get_album).post(get_album))
         .route("/rest/getAlbum.view", get(get_album).post(get_album))
         .route(
@@ -9452,6 +9568,74 @@ mod tests {
 
         rate(gamma_album, "0").await;
         assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn artist_info_is_answered_from_what_the_server_holds() {
+        let (state, _dir) = test_state();
+        let (found, missed) = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let artist = |name: &str| {
+                let id = queries::get_or_create_artist(&db.conn, name, None).unwrap();
+                db.conn
+                    .execute(
+                        "UPDATE artists SET mbid = 'mb-' || id WHERE id = ?1",
+                        rusqlite::params![id],
+                    )
+                    .unwrap();
+                id
+            };
+            let (found, missed) = (artist("Glass Candy"), artist("Desire"));
+            let now = koan_core::clock::unix_secs();
+            db.conn
+                .execute(
+                    "INSERT INTO artist_info (artist_id, bio, bio_url, image_url, image_credit, fetched_at)
+                     VALUES (?1, 'An American duo.', 'https://en.wikipedia.org/wiki/Glass_Candy',
+                             'https://upload.wikimedia.org/glass.jpg', 'A. Photographer, CC BY-SA 4.0', ?3),
+                            (?2, NULL, NULL, NULL, NULL, ?3)",
+                    rusqlite::params![found, missed, now],
+                )
+                .unwrap();
+            (found, missed)
+        };
+        let (found_uid, missed_uid) = (
+            uid_of(&state, queries::UidKind::Artist, found),
+            uid_of(&state, queries::UidKind::Artist, missed),
+        );
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+
+        let v = get(format!("getArtistInfo2?id={found_uid}")).await;
+        let info = &v["artistInfo2"];
+        assert_eq!(info["biography"], "An American duo.", "{v}");
+        assert_eq!(info["musicBrainzId"], format!("mb-{found}"));
+        assert_eq!(
+            info["largeImageUrl"],
+            "https://upload.wikimedia.org/glass.jpg"
+        );
+        assert_eq!(
+            info["koanBioUrl"],
+            "https://en.wikipedia.org/wiki/Glass_Candy"
+        );
+        assert_eq!(info["koanImageCredit"], "A. Photographer, CC BY-SA 4.0");
+        assert_eq!(info["koanImage"], true);
+
+        let v = get(format!("getArtistInfo2?id={missed_uid}")).await;
+        let info = &v["artistInfo2"];
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(info["biography"].is_null(), "{v}");
+        assert_eq!(info["koanImage"], false);
+
+        let v = get(format!("koanArtistImage?id={missed_uid}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
     }
 
     #[tokio::test]

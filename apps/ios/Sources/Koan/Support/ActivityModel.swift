@@ -131,6 +131,19 @@ final class ActivityModel {
         tasks[index].unit = "records"
     }
 
+    private static let artistsLabel = "Looking up artists"
+
+    /// A row for the artists being looked up ahead, while they are, with its
+    /// counts.
+    func showArtists(_ progress: ArtistWalk?) {
+        mirror(Self.artistsLabel, running: progress != nil)
+        guard let progress, let id = mirrored[Self.artistsLabel],
+              let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[index].done = progress.done
+        tasks[index].total = progress.total
+        tasks[index].unit = "artists"
+    }
+
     /// Run `work` off the main actor with a task registered for its duration.
     ///
     /// The registration is removed however `work` ends, including by throwing,
