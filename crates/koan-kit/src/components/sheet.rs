@@ -484,7 +484,9 @@ fn show(ask: Ask, cx: &mut App) {
     });
 }
 
-fn dismiss(window: &mut Window, cx: &mut App) {
+/// Puts the question away. Whether there was one to put away: a question
+/// already fading, its buttons still drawn, has nothing left to answer.
+fn dismiss(window: &mut Window, cx: &mut App) -> bool {
     let Some((before, fading)) = asking(cx).update(cx, |a, cx| {
         cx.notify();
         let mut ask = a.ask.take()?;
@@ -493,7 +495,7 @@ fn dismiss(window: &mut Window, cx: &mut App) {
         a.leaving_ask = Fading::start(cx).map(|f| (ask, f));
         Some((before, a.leaving_ask.is_some()))
     }) else {
-        return;
+        return false;
     };
     match before {
         Some(before) => window.focus(&before, cx),
@@ -504,6 +506,7 @@ fn dismiss(window: &mut Window, cx: &mut App) {
     if fading {
         let_go(cx);
     }
+    true
 }
 
 /// The question being asked, over the window, for the shell to draw.
@@ -534,15 +537,18 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             if name.is_some() && typed.is_empty() {
                 return;
             }
-            dismiss(window, cx);
-            run(typed, cx);
+            if dismiss(window, cx) {
+                run(typed, cx);
+            }
         }
     };
     let go = Rc::new(go);
     let named = ask.name.is_some();
     let cancel = Button::new("ask-cancel", ButtonKind::Standard)
         .label("cancel")
-        .on_click(|_, window, cx| dismiss(window, cx));
+        .on_click(|_, window, cx| {
+            dismiss(window, cx);
+        });
     let verb = {
         let go = go.clone();
         Button::new("ask-go", ButtonKind::Standard)
@@ -562,7 +568,9 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .when(live, |d| {
             d.on_key_down(
                 move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
-                    "escape" => dismiss(window, cx),
+                    "escape" => {
+                        dismiss(window, cx);
+                    }
                     "enter" if !named => go(window, cx),
                     _ => {}
                 },
@@ -647,6 +655,50 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
         assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
+
+    /// A question fading out still draws its verb, which a screen reader or
+    /// the keyboard can reach past the pointer's cover; answering it again
+    /// runs nothing, so a destructive action happens once.
+    #[gpui::test]
+    fn a_fading_question_answers_once(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let runs = Rc::new(Cell::new(0));
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            let runs = runs.clone();
+            confirm(
+                Confirm {
+                    title: "replace the queue".into(),
+                    verb: "replace".into(),
+                    destructive: true,
+                    lines: vec!["3 tracks come off the queue.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                move |_| runs.set(runs.get() + 1),
+            );
+        });
+        redraw(cx);
+        act(cx, "replace", Action::Click);
+        assert_eq!(runs.get(), 1);
+        redraw(cx);
+        let fading = tree(cx)["nodes"]
+            .as_object()
+            .is_some_and(|nodes| nodes.values().any(|n| n["aria"]["label"] == "replace"));
+        assert!(fading, "the question fades out where it stood");
+        act(cx, "replace", Action::Click);
+        assert_eq!(runs.get(), 1, "a fading question ran its action again");
     }
 
     struct Presenter {
