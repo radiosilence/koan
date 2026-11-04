@@ -43,7 +43,14 @@ import kotlinx.coroutines.withContext
  * (a seek, a pause, a new track, a stall), not on a clock. `positionAt` is
  * where it is now, for whatever draws a moving playhead at its own rate.
  */
-data class Playhead(val positionMs: Long, val seekableMs: Long, val playing: Boolean, val atMs: Long) {
+data class Playhead(
+    val positionMs: Long,
+    val seekableMs: Long,
+    val playing: Boolean,
+    val atMs: Long,
+    /** The seeks the engine had answered when it said this: the first playhead past a count read before a seek answers it. */
+    val seek: Long = 0,
+) {
     /**
      * Where it is at `nowMs`, kept within `durationMs` when that is known: the
      * reckoning runs on past a track's end until the anchor for the next one
@@ -280,6 +287,7 @@ class EngineMirror(deviceName: String) {
                 slice.seekableMs.toLong(),
                 slice.playing,
                 SystemClock.elapsedRealtime(),
+                slice.seek.toLong(),
             )
             is StateSlice.Queue -> {
                 base = QueueState(slice.items, slice.version.toLong())

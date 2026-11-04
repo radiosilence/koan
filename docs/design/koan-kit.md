@@ -28,7 +28,7 @@ One thing does not travel: the GPUI patch that stops an idle window waking at ev
 
 The Swift app fixed its glitches one at a time: a seek bar that snapped back, menus that reopened when their button was clicked to close them, hover jank, scroll jumps, layout shifts on load, covers jumping while a window resized. Each koan-kit component is built from its Swift counterpart's history (`git log -p` on the view, and the merged PRs that fixed it), so it has those fixes by construction, with a test where one can be written, and its docs list them. Two so far:
 
-- **Seeking.** A seek lands at once and stale playhead anchors wait until the engine reaches it, or two seconds pass (`PlayerModel.swift`'s pending seek). Shared by every app in koan-ffi's published state, and tested there.
+- **Seeking.** The playhead shown is the engine's; nothing predicts a seek. A thumb let go stands where it was let go until the Playhead slice whose `seek` count is past the one read at release, which answers that seek wherever the engine put it.
 - **Menus and popovers toggle.** A trigger whose menu is open closes it, including when the click outside that dismisses the menu and the trigger's own click arrive in one event. Part of the anchor every menu and popover trigger uses.
 
 ## Layers

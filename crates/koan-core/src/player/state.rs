@@ -11,21 +11,6 @@ use crate::remote::downloads::{ByteFeed, DownloadStore};
 /// Kept back from the end of a track when seeking, so dragging the thumb all
 /// the way over lands in the last moment of it rather than in the next track.
 pub(crate) const SEEK_END_GUARD_MS: u64 = 500;
-/// How long a seek sent to the player is read as the playhead before it is
-/// given up on: long enough for a decoder to restart on a slow disk.
-const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// A seek on its way to the player.
-#[derive(Clone, Copy, Debug)]
-struct PendingSeek {
-    /// What the sender asked for, which names the command that takes it.
-    asked: u64,
-    position_ms: u64,
-    at: std::time::Instant,
-    /// The playhead was moving when it was asked for.
-    moving: bool,
-}
-
 /// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueueItemId(pub Uuid);
@@ -924,10 +909,8 @@ pub struct SharedPlayerState {
     /// own clock: where it was last heard to be, and since when it has been
     /// running from there. Read in place of the timeline while set.
     renderer_clock: parking_lot::Mutex<Option<RendererClock>>,
-    /// A seek sent to the player and not yet taken by it. Read in place of
-    /// the playhead meanwhile, so the gap between asking and the decoder
-    /// restarting never reads as the old position (`request_seek`).
-    pending_seek: parking_lot::Mutex<Option<PendingSeek>>,
+    /// How many seeks the player has taken (`seek_answered`).
+    seeks: AtomicU64,
 
     /// The UPnP renderer playing in place of the local output, if one is.
     renderer: parking_lot::RwLock<Option<crate::upnp::Output>>,
@@ -1001,7 +984,7 @@ impl SharedPlayerState {
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             output_opening: parking_lot::Mutex::new(None),
-            pending_seek: parking_lot::Mutex::new(None),
+            seeks: AtomicU64::new(0),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
             sleep: parking_lot::RwLock::new(None),
@@ -1081,15 +1064,6 @@ impl SharedPlayerState {
     /// Where the playhead is, read off the samples the output has played, so
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
-        if let Some(seek) = self.pending_seek() {
-            // Counting on from a target near the end stops at the end.
-            let duration = self.duration_ms();
-            return if duration > 0 {
-                seek.min(duration)
-            } else {
-                seek
-            };
-        }
         let clock = *self.renderer_clock.lock();
         if let Some(clock) = clock {
             let at = clock.now_ms();
@@ -1102,41 +1076,6 @@ impl SharedPlayerState {
             return playhead.position_ms;
         }
         self.position_ms.load(Ordering::Acquire)
-    }
-
-    /// Where a seek on its way to the player lands, counting on from there
-    /// while the playhead was moving. One the player never took lapses after
-    /// `SEEK_PATIENCE`, giving the playhead back.
-    pub(crate) fn pending_seek(&self) -> Option<u64> {
-        let mut pending = self.pending_seek.lock();
-        let seek = (*pending)?;
-        let since = seek.at.elapsed();
-        if since >= SEEK_PATIENCE {
-            *pending = None;
-            drop(pending);
-            // The playhead read from the timeline again is news to every
-            // front end that drew the seek's.
-            crate::signal::engine_changed().bump();
-            return None;
-        }
-        Some(if seek.moving {
-            seek.position_ms + since.as_millis() as u64
-        } else {
-            seek.position_ms
-        })
-    }
-
-    /// When a seek on its way to the player lapses if the player has not
-    /// taken it, for a front end that publishes the playhead to wait no
-    /// longer than that. One already lapsed is let go here, with the change
-    /// signal, so the deadline returned is never past.
-    pub fn seek_deadline(&self) -> Option<std::time::Instant> {
-        let at = (*self.pending_seek.lock())?.at;
-        if at.elapsed() >= SEEK_PATIENCE {
-            self.pending_seek();
-            return None;
-        }
-        Some(at + SEEK_PATIENCE)
     }
 
     /// Where a seek to `position_ms` lands: held inside what has arrived of
@@ -1152,35 +1091,20 @@ impl SharedPlayerState {
         Some(position_ms.min(ceiling))
     }
 
-    /// A seek to `position_ms` is about to be sent to the player: the
-    /// playhead reads as having landed from now, for every front end, until
-    /// the player takes it (`seek_taken`). Call it before sending
-    /// `PlayerCommand::Seek` to this device's own player, and `seek_taken`
-    /// if the send fails.
-    pub fn request_seek(&self, position_ms: u64) {
-        let Some(target) = self.seek_target(position_ms) else {
-            return;
-        };
-        let moving = self.playhead_moving();
-        *self.pending_seek.lock() = Some(PendingSeek {
-            asked: position_ms,
-            position_ms: target,
-            at: std::time::Instant::now(),
-            moving,
-        });
+    /// The player has taken a seek: wherever it put the playhead (where it
+    /// was asked, clamped to what can be reached, or left where it was for
+    /// a seek declined), the playhead reads there from now. A front end that
+    /// asked for a seek after reading `seeks` knows a playhead read after the
+    /// count moved past it answers that seek.
+    pub fn seek_answered(&self) {
+        self.seeks.fetch_add(1, Ordering::SeqCst);
         crate::signal::engine_changed().bump();
     }
 
-    /// The player took the seek to `asked`, or it never reached the player:
-    /// the playhead is read from the timeline again. A newer seek asked for
-    /// meanwhile stays pending until the player takes that one.
-    pub fn seek_taken(&self, asked: u64) {
-        let mut pending = self.pending_seek.lock();
-        if pending.is_some_and(|p| p.asked == asked) {
-            *pending = None;
-            drop(pending);
-            crate::signal::engine_changed().bump();
-        }
+    /// How many seeks the player has taken. Read it before the playhead: a
+    /// seek counted has already moved it.
+    pub fn seeks(&self) -> u64 {
+        self.seeks.load(Ordering::SeqCst)
     }
 
     /// The timeline the playhead is read from. Set once, by the player.

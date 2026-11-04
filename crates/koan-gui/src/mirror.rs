@@ -42,6 +42,8 @@ pub struct Playhead {
     pub seekable_ms: u64,
     pub playing: bool,
     pub at: Instant,
+    /// The seeks the engine had answered when it said this (`KoanEngine::seeks`).
+    pub seek: u64,
 }
 
 impl Playhead {
@@ -267,6 +269,7 @@ impl Mirror {
                 seekable_ms: 0,
                 playing: false,
                 at: Instant::now(),
+                seek: 0,
             }),
             queue: cx.new(|_| Queue::default()),
             library: cx.new(|_| Library {
@@ -458,11 +461,13 @@ impl From<StateSlice> for Prepared {
                 position_ms,
                 seekable_ms,
                 playing,
+                seek,
             } => Prepared::Playhead(Playhead {
                 position_ms,
                 seekable_ms,
                 playing,
                 at: Instant::now(),
+                seek,
             }),
             other => Prepared::Other(other),
         }

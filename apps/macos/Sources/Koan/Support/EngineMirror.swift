@@ -46,7 +46,7 @@ final class EngineMirror: Observable {
         sleep: nil, sleepFading: false,
         startFailure: nil, outputWait: nil
     )
-    private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
+    private var _playhead = Playhead(positionMs: 0, playing: false, at: .now, seek: 0)
     private var _seekableMs: UInt64 = 0
     private var _queue: [QueueItem] = []
     /// The queue as last sent whole, which `_queue` is with the latest patch
@@ -394,11 +394,11 @@ final class EngineMirror: Observable {
         switch slice {
         case .playback(let nowPlaying):
             mutate(\.playback) { _playback = nowPlaying }
-        case .playhead(let ms, let seekableMs, let playing):
+        case .playhead(let ms, let seekableMs, let playing, let seek):
             // Stamped on arrival. The engine cannot send a clock across the
             // boundary and does not need to: the message is minutes old only
             // if it sat in a queue, and it did not.
-            mutate(\.playhead) { _playhead = Playhead(positionMs: ms, playing: playing, at: .now) }
+            mutate(\.playhead) { _playhead = Playhead(positionMs: ms, playing: playing, at: .now, seek: seek) }
             if seekableMs != _seekableMs {
                 mutate(\.seekableMs) { _seekableMs = seekableMs }
             }
@@ -673,6 +673,8 @@ struct Playhead: Equatable {
     let playing: Bool
     /// When this arrived. Local, because it is compared only with `Date.now`.
     let at: Date
+    /// The seeks the engine had answered when it said this (`KoanEngine.seeks`).
+    let seek: UInt64
 
     /// Where the playhead is at `date`, by this anchor's reckoning.
     func at(_ date: Date = .now) -> UInt64 {
