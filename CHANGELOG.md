@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The desktop app's main thread sleeps while only its animations move, on macOS.** The wash, the playing bars and the seek bar are presented from GPUI's display-link thread from the last frame drawn, rather than waking the main thread at every refresh while music plays.
+
 ## 0.70.0
 
 ### Added
