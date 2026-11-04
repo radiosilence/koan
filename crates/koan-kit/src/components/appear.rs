@@ -2,7 +2,7 @@
 //! the window's veil fades in under it (`Veil`) and its panel rises a step
 //! as it fades in (`Rise`), over `Motion::ARRIVE`. One put away fades out
 //! where it stood over `Motion::LEAVE` (`Fading`): its owner keeps it for
-//! that long and draws it as it stood, taking no input. Both take the
+//! that long and draws it as it stood, inert, taking no input. Both take the
 //! ease-in-out curve: on the quick-out a fade this short is mostly gone by
 //! its first frame and reads as a cut.
 //!
@@ -145,15 +145,17 @@ impl Fading {
         self.started <= when
     }
 
-    /// `child` fading out, composed until its owner lets it go, and covered
-    /// so that nothing in it takes the pointer: a question's verb pressed
-    /// again as it fades does nothing.
+    /// `child` fading out, composed until its owner lets it go, and drawn
+    /// inert: the pointer passes through it to the window, its scrim
+    /// included, and the keyboard never tabs into it, so the window takes
+    /// input the moment it is put away.
     pub fn draw(&self, child: impl IntoElement) -> AnyElement {
-        div()
-            .absolute()
-            .inset_0()
-            .child(AnimatedLayer::new(&self.animated, child).program(&LAYER))
-            .child(div().absolute().inset_0().occlude())
-            .into_any_element()
+        inert(
+            div()
+                .absolute()
+                .inset_0()
+                .child(AnimatedLayer::new(&self.animated, child).program(&LAYER)),
+        )
+        .into_any_element()
     }
 }
