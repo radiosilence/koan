@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password/api_key/device_key`, `subsonic.password`, `auth.refresh_token`, `lastfm.api_key`, `lastfm.secret` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username/server_url`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `remote.play_queue`, `server.url`, `auth.server`, `playback.output_device/renderer/renderer_name/renderers/muted/rate_switch_lead_in_ms`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, `appearance.text_size`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username/server_url`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `remote.play_queue`, `server.url`, `auth.server`, `playback.output_device/renderer/renderer_name/renderers/muted/rate_switch_lead_in_ms`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, `updates.auto`, `appearance.text_size`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size/art_graphics/tui_theme/queue_grouped`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake`, `appearance.rainbow` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -593,6 +593,26 @@ volume, and move the music here or away. `"playback"` is for a network shared
 with strangers: play and the queue only, and a hand-off that stays on the
 network. If the port is taken, koan listens on another and announces that one,
 so only typed addresses miss it.
+
+---
+
+## `[updates]`
+
+How the desktop app keeps itself up to date. It checks GitHub for a newer
+release at launch and once a day after.
+
+```toml
+# config.local.toml -- how this machine's copy was installed decides what an update can do
+[updates]
+auto = true                         # fetch each new release and install it when kōan quits
+```
+
+A DMG install on macOS and an AppImage on Linux update themselves: the release
+is downloaded, checked against the digest GitHub publishes for it (and on
+macOS against the Developer ID the running app is signed with), and put in
+place when kōan quits. Installs a package manager keeps, the Homebrew cask and
+the `.deb`, and builds from source never replace themselves; Settings →
+Devices says when a newer version is out.
 
 ---
 

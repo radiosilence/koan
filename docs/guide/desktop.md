@@ -6,6 +6,10 @@ kōan's desktop app runs on macOS and Linux. It is drawn with GPUI and links the
 
 Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is `Koan.dmg`, and installs as `kōan.app`.
 
+## Updates
+
+Installed from the DMG or run as an AppImage, the app keeps itself up to date: it checks GitHub for a newer release at launch and once a day, downloads it, checks it against the digest GitHub publishes (and on a Mac against the Developer ID the running app is signed with), and installs it when kōan quits. Settings → Devices → Updates turns this off, checks now, and restarts into a downloaded version. A copy Homebrew or `apt` installed, or one in a folder kōan cannot write to, is only told that a new version is out, since replacing it would leave the package manager's record wrong; `brew upgrade --cask koan-app` or the new `.deb` updates it. See [`[updates]`](../reference/configuration.md#updates).
+
 ## Beside the other apps
 
 The desktop app is this computer to the server and the network: named after it (`studio`), with the computer's device id, saved session and the devices it knows. The terminal UI on the same library is a device of its own, `studio (terminal)`, with a session of its own, so one can control the other. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.

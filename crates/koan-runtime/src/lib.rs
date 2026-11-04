@@ -7965,6 +7965,7 @@ fn read_settings(db: Option<&koan_core::db::connection::Database>) -> Settings {
             config::NearbyControl::Playback => "playback".into(),
         },
         devices_keep_running: cfg.devices.keep_running,
+        updates_auto: cfg.updates.auto,
         share_enabled: cfg.share.enabled,
         share_port: cfg.share.port,
         share_invite_to: cfg.share.invite_to.into(),
@@ -8047,6 +8048,9 @@ fn write_settings(read: Option<&Settings>, s: &Settings) -> Result<(), KoanError
         }
         if edited!(devices_keep_running) {
             cfg.devices.keep_running = s.devices_keep_running;
+        }
+        if edited!(updates_auto) {
+            cfg.updates.auto = s.updates_auto;
         }
         if edited!(share_enabled) {
             cfg.share.enabled = s.share_enabled;

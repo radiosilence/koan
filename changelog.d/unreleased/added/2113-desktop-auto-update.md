@@ -1,0 +1,1 @@
+- **The desktop app updates itself.** Installed from the DMG or as an AppImage, it downloads each new release, checks its digest and signature, and installs it when kōan quits; `updates.auto` (Settings → Devices) turns it off. Homebrew and `.deb` installs are told a new version is out.
