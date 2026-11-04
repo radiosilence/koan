@@ -73,9 +73,13 @@ impl RenderOnce for Toggle {
         let tick_side = px(crate::theme::icons::side(BOX * 0.64));
         let drawing = answers.glyph_live(cx);
         let tick_drawn = answers.glyph_layer(tick_side, look.palette.bg.hsla(), None, window, cx);
+        // Turned off, the box stays filled while its tick erases, then
+        // fades: the tick is drawn in `bg`, so on a ground already fading
+        // it would be gone before it was seen erasing.
+        let lit = self.checked || drawing;
         let edge = fade(
             child(&self.id, "edge"),
-            self.checked,
+            lit,
             look.palette.muted.hsla(),
             accent,
             window,
@@ -83,7 +87,7 @@ impl RenderOnce for Toggle {
         );
         let ground = fade(
             child(&self.id, "on"),
-            self.checked,
+            lit,
             accent.opacity(0.0),
             accent,
             window,

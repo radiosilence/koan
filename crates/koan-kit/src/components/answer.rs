@@ -154,10 +154,12 @@ impl Answer {
 
     /// How what it draws travels: out from the control decisively and
     /// settling (quick-out); a ring closing in eases both ways, as a
-    /// gathering rather than a throw.
+    /// gathering rather than a throw. A glyph changing shape, or a tick
+    /// drawing, eases both ways too: on quick-out it is nearly whole within
+    /// a few frames and reads as a cut.
     fn ease(self) -> Ease {
         match self {
-            Answer::Close | Answer::Morph(_) => Ease::InOut,
+            Answer::Close | Answer::Morph(_) | Answer::Tick(_) => Ease::InOut,
             _ => Ease::QuickOut,
         }
     }
@@ -1097,6 +1099,27 @@ mod tests {
             Answer::Streak(true),
         ] {
             assert!(answer.duration() <= Motion::SETTLE);
+        }
+    }
+
+    /// A tick is seen drawing (#2056): a quarter of the way through, less
+    /// than half of it is drawn.
+    #[test]
+    fn a_tick_is_seen_drawing() {
+        for on in [true, false] {
+            let track = Track {
+                from: 0.0,
+                to: 1.0,
+                start: 0.0,
+                length: 1.0,
+                curve: super::super::animated::curve(Answer::Tick(on).ease()),
+                repeat: Repeat::Once,
+            };
+            assert!(
+                track.at(0.25) < 0.5,
+                "drawn {} at a quarter",
+                track.at(0.25)
+            );
         }
     }
 }
