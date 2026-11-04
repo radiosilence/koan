@@ -14,8 +14,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use koan_ffi::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 use koan_kit::app::*;
+use koan_runtime::{OrganizeEntry, OrganizePattern, OrganizePlan, OrganizeSelection, PlanOutcome};
 
 use crate::components::sheet as ask;
 use crate::components::{
@@ -59,12 +59,57 @@ pub struct OrganizeSheet {
     error: Option<String>,
     /// Bumped per preview, so a slow plan cannot land on a newer one.
     generation: u64,
+    /// A plan is being generated: the read pool runs it to the end even
+    /// when it is no longer wanted, so one runs at a time, and the pattern
+    /// typed meanwhile goes next (`stale`).
+    generating: bool,
+    stale: bool,
     _preview: Option<Task<()>>,
     _settle: Option<Task<()>>,
     /// The move under way. Its own task, so no preview replaces it.
     _run: Option<Task<()>>,
     _load: Task<()>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A format pattern's syntax, coloured: fields (`%album%`) in the accent,
+/// functions (`$if2(`) strong, the brackets, commas and parentheses that
+/// shape it and quoted literals muted; the rest is the path as written.
+fn pattern_spans(pattern: &str) -> Vec<(Range<usize>, Tone)> {
+    // Every mark is ASCII, which no byte of a longer character equals.
+    let bytes = pattern.as_bytes();
+    let closing = |from: usize, mark: u8| {
+        bytes[from..]
+            .iter()
+            .position(|&b| b == mark)
+            .map_or(bytes.len(), |i| from + i + 1)
+    };
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let (end, tone) = match bytes[at] {
+            b'%' => (closing(at + 1, b'%'), Tone::Accent),
+            b'\'' => (closing(at + 1, b'\''), Tone::Muted),
+            b'$' => {
+                let name = bytes[at + 1..]
+                    .iter()
+                    .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+                    .map_or(bytes.len(), |i| at + 1 + i);
+                (
+                    name + usize::from(bytes.get(name) == Some(&b'(')),
+                    Tone::Strong,
+                )
+            }
+            b'[' | b']' | b'(' | b')' | b',' => (at + 1, Tone::Muted),
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        spans.push((at..end, tone));
+        at = end;
+    }
+    spans
 }
 
 impl OrganizeSheet {
@@ -74,7 +119,11 @@ impl OrganizeSheet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let draft = cx.new(|cx| FieldState::new(window, cx).placeholder("%album artist%/…"));
+        let draft = cx.new(|cx| {
+            FieldState::new(window, cx)
+                .placeholder("%album artist%/…")
+                .highlight(pattern_spans)
+        });
         let save_name = cx.new(|cx| FieldState::new(window, cx).placeholder("name"));
         let subscriptions = vec![
             cx.subscribe(&draft, |this, _, event: &InputEvent, cx| {
@@ -112,7 +161,8 @@ impl OrganizeSheet {
                     Ok(selection) => this.selection = Some(selection),
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
-                // Setting the field previews, through its subscription.
+                // Setting the field says nothing to its subscription: the
+                // preview is asked for here.
                 this.draft.update(cx, |s, cx| s.set_value(text, window, cx));
                 this.preview(cx);
             })
@@ -135,6 +185,8 @@ impl OrganizeSheet {
             running: false,
             error: None,
             generation: 0,
+            generating: false,
+            stale: false,
             _preview: None,
             _settle: None,
             _run: None,
@@ -172,18 +224,7 @@ impl OrganizeSheet {
             cx.notify();
             return;
         }
-        let quick = selection.clone().generate(pattern.clone(), base.clone());
-        self._preview = Some(cx.spawn(async move |this, cx| {
-            let plan = quick.await;
-            this.update(cx, |this, cx| {
-                // Not over the disk's answer, should that have come first.
-                if this.generation == generation && !this.checked {
-                    this.plan = Some(plan);
-                    cx.notify();
-                }
-            })
-            .ok();
-        }));
+        self.generate(selection.clone(), pattern.clone(), base.clone(), cx);
         let ancillary = self.move_ancillary;
         self._settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;
@@ -199,10 +240,51 @@ impl OrganizeSheet {
         }));
     }
 
-    /// Reads the selection again after a move that left some files behind:
-    /// the ones that moved are at new paths, which the next preview must
-    /// start from. The result stays on screen meanwhile; previews wait for
-    /// the new selection.
+    /// The plan without the disk, as typed. One at a time: typing faster
+    /// than plans are made generates only the newest pattern next.
+    fn generate(
+        &mut self,
+        selection: Arc<OrganizeSelection>,
+        pattern: String,
+        base: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generating {
+            self.stale = true;
+            return;
+        }
+        self.generating = true;
+        let generation = self.generation;
+        let quick = selection.generate(pattern, base);
+        self._preview = Some(cx.spawn(async move |this, cx| {
+            let plan = quick.await;
+            this.update(cx, |this, cx| {
+                this.generating = false;
+                // Not over the disk's answer, should that have come first.
+                if this.generation == generation && !this.checked {
+                    this.plan = Some(plan);
+                    cx.notify();
+                }
+                if std::mem::take(&mut this.stale)
+                    && !this.running
+                    && !this.checked
+                    && let (Some(selection), Some(base)) = (this.selection.clone(), this.base())
+                {
+                    let pattern = this.pattern(cx);
+                    if !pattern.is_empty() {
+                        this.generate(selection, pattern, base, cx);
+                    }
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// Reads the selection again after a move that left some files behind,
+    /// or one refused: the ones that moved are at new paths, which the next
+    /// preview must start from, and a library that changed under the plan
+    /// gives a new one. Previews again once it lands, the line saying what
+    /// happened kept above the new plan.
     fn reread(&mut self, cx: &mut Context<Self>) {
         self.selection = None;
         let read = engine(cx).organize_selection(Some(self.track_ids.clone()));
@@ -210,7 +292,12 @@ impl OrganizeSheet {
             let selection = read.await;
             this.update(cx, |this, cx| {
                 match selection {
-                    Ok(selection) => this.selection = Some(selection),
+                    Ok(selection) => {
+                        this.selection = Some(selection);
+                        let said = this.error.take();
+                        this.preview(cx);
+                        this.error = said;
+                    }
                     Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                 }
                 cx.notify();
@@ -229,6 +316,9 @@ impl OrganizeSheet {
         self.chosen = Some(index);
         let text = pattern.pattern.clone();
         self.draft.update(cx, |s, cx| s.set_value(text, window, cx));
+        // Setting the field emits no change: without this the plan shown,
+        // and the one confirmed, would be the last pattern's.
+        self.preview(cx);
     }
 
     /// The typed pattern differs from the named one chosen, or none is.
@@ -312,7 +402,10 @@ impl OrganizeSheet {
                 .into(),
             );
         }
-        let (pattern, ids) = (self.pattern(cx), self.track_ids.clone());
+        let Some(selection) = self.selection.clone() else {
+            return;
+        };
+        let (pattern, ancillary) = (self.pattern(cx), self.move_ancillary);
         let sheet = cx.entity().downgrade();
         ask::confirm(
             ask::Confirm {
@@ -330,11 +423,18 @@ impl OrganizeSheet {
             cx,
             move |cx| {
                 let Some(sheet) = sheet.upgrade() else { return };
-                let run = engine(cx).organize_execute(
+                // The plan previewed, from the selection it was previewed
+                // against and with the ancillary choice shown: refused, with
+                // nothing moved, if the library has changed since.
+                let run = engine(cx).organize_execute_previewed(
+                    selection.clone(),
                     pattern.clone(),
-                    Some(ids.clone()),
-                    Some(base.clone()),
+                    base.clone(),
+                    ancillary,
                 );
+                // Escape leaves the sheet while files move, as its cancel
+                // is disabled: dropping it would stop the move part way.
+                ask::hold(true, cx);
                 sheet.update(cx, |this, cx| {
                     this.running = true;
                     // A preview still in flight is for the plan before the
@@ -347,6 +447,7 @@ impl OrganizeSheet {
                         let result = run.await;
                         this.update(cx, |this, cx| {
                             this.running = false;
+                            ask::hold(false, cx);
                             match result {
                                 // Every file went: done.
                                 Ok(done) if done.conflict_count + done.error_count == 0 => {
@@ -369,7 +470,13 @@ impl OrganizeSheet {
                                     this.checked = false;
                                     this.reread(cx);
                                 }
-                                Err(e) => this.error = Some(crate::settings::model::describe(&e)),
+                                // Read again, so the plan shown is the one a
+                                // second confirm would run.
+                                Err(e) => {
+                                    this.error = Some(crate::settings::model::describe(&e));
+                                    this.plan = None;
+                                    this.reread(cx);
+                                }
                             }
                             cx.notify();
                         })
@@ -453,7 +560,10 @@ impl Render for OrganizeSheet {
 
         let mut names: Vec<String> = self.patterns.iter().map(|p| p.name.clone()).collect();
         names.push("typed here".into());
-        let chosen = Some(self.chosen.unwrap_or(names.len() - 1));
+        // A named pattern edited is no longer that pattern: the picker says
+        // it is typed here, and names it again if the text comes back.
+        let named = self.chosen.filter(|_| !self.modified(cx));
+        let chosen = Some(named.unwrap_or(names.len() - 1));
         let picker = Picker::keeps_case("organize-pattern", names, chosen)
             .disabled(running)
             .on_change(cx.listener(|this, index: &usize, window, cx| {
@@ -522,9 +632,9 @@ impl Render for OrganizeSheet {
         .flex_1()
         .min_h_0();
 
-        ask::wide_panel(look)
+        ask::wide_panel(crate::theme::label("organise"), look)
             .child(ask::head_data(
-                format!("Organise {}", self.title),
+                format!("{} {}", crate::theme::label("organise"), self.title),
                 vec![cancel.into_any_element(), go.into_any_element()],
                 look,
             ))
@@ -533,7 +643,11 @@ impl Render for OrganizeSheet {
                     .flex_none()
                     .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
-                    .child(TextField::new(&self.draft).disabled(running))
+                    .child(
+                        TextField::new(&self.draft)
+                            .label(crate::theme::label("pattern"))
+                            .disabled(running),
+                    )
                     .when(self.modified(cx), |d| {
                         let preview = self.save_preview(cx);
                         d.child(
@@ -542,7 +656,11 @@ impl Render for OrganizeSheet {
                                     .flex()
                                     .items_center()
                                     .gap(look.space(crate::theme::Space::S))
-                                    .child(TextField::new(&self.save_name).disabled(running))
+                                    .child(
+                                        TextField::new(&self.save_name)
+                                            .label(crate::theme::label("save as"))
+                                            .disabled(running),
+                                    )
                                     .child(
                                         Button::new("organize-save", ButtonKind::Bordered)
                                             .label("save")
@@ -567,5 +685,39 @@ impl Render for OrganizeSheet {
                     })),
             )
             .child(list)
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn a_pattern_s_syntax_is_coloured() {
+        let pattern = "%album artist%/[%date% - ]$if2(%album%,'none')/é";
+        let spans: Vec<(&str, Tone)> = pattern_spans(pattern)
+            .into_iter()
+            .map(|(r, t)| (&pattern[r], t))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                ("%album artist%", Tone::Accent),
+                ("[", Tone::Muted),
+                ("%date%", Tone::Accent),
+                ("]", Tone::Muted),
+                ("$if2(", Tone::Strong),
+                ("%album%", Tone::Accent),
+                (",", Tone::Muted),
+                ("'none'", Tone::Muted),
+                (")", Tone::Muted),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unclosed_field_runs_to_the_end() {
+        assert_eq!(pattern_spans("a/%alb"), [(2..6, Tone::Accent)]);
     }
 }

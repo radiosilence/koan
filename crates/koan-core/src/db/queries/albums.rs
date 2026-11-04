@@ -442,16 +442,45 @@ pub struct AlbumQuery<'a> {
 /// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
 /// `Mötley`.
 pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, DbError> {
-    if let Some(ids) = fuzzy_fallback(conn, q)? {
-        return list_albums(
+    match fuzzy_fallback(conn, q)? {
+        Some(ids) => list_albums_resolved(
             conn,
             &AlbumQuery {
                 search: None,
                 ids: Some(&ids),
                 ..*q
             },
-        );
+        ),
+        None => list_albums_resolved(conn, q),
     }
+}
+
+/// `list_albums` and `count_albums` for `q`, the fuzzy fallback decided once
+/// for both: what a shelf's preview and its total read.
+pub fn list_albums_counted(
+    conn: &Connection,
+    q: &AlbumQuery,
+) -> Result<(Vec<AlbumRow>, u64), DbError> {
+    let ids = fuzzy_fallback(conn, q)?;
+    let fallback;
+    let q = match &ids {
+        Some(ids) => {
+            fallback = AlbumQuery {
+                search: None,
+                ids: Some(ids),
+                ..*q
+            };
+            &fallback
+        }
+        None => q,
+    };
+    Ok((
+        list_albums_resolved(conn, q)?,
+        count_albums_resolved(conn, q)?,
+    ))
+}
+
+fn list_albums_resolved(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, DbError> {
     let (body, mut params) = album_body(conn, q)?;
     let counted = q.filter.on_device || q.order == AlbumOrder::Downloaded;
     let mut sql = format!(
@@ -522,16 +551,20 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
 /// How many albums `list_albums` would list for `q`, ignoring its paging: what
 /// a "See all" says, from the same narrowing as the list it opens.
 pub fn count_albums(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
-    if let Some(ids) = fuzzy_fallback(conn, q)? {
-        return count_albums(
+    match fuzzy_fallback(conn, q)? {
+        Some(ids) => count_albums_resolved(
             conn,
             &AlbumQuery {
                 search: None,
                 ids: Some(&ids),
                 ..*q
             },
-        );
+        ),
+        None => count_albums_resolved(conn, q),
     }
+}
+
+fn count_albums_resolved(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
     let (body, params) = album_body(conn, q)?;
     let n: i64 = conn.query_row(
         &format!("SELECT COUNT(*) {body}"),

@@ -516,10 +516,7 @@ impl MutationRoot {
 
     async fn seek(&self, ctx: &Context<'_>, position_ms: i64) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        state.request_seek(position_ms as u64);
-        send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))
-            .inspect_err(|_| state.seek_taken(position_ms as u64))?;
+        send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))?;
         Ok(GqlStatus::success(format!("seeked to {}ms", position_ms)))
     }
 
@@ -716,6 +713,11 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let device = session(ctx)?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        // An app restoring its session would have it replaced by the queue
+        // it has not finished putting back.
+        if !state.may_save_session() {
+            return Err("the saved session is still being restored; nothing was saved".into());
+        }
 
         let (items, cursor) = state.snapshot_playlist();
         let position_ms = state.position_ms();

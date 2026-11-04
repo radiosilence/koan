@@ -11,10 +11,10 @@ use std::error::Error;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, browse::Browse};
 use koan_gui::theme;
 use koan_kit::app::{AppContext as _, Entity};
+use koan_runtime::KoanEngine;
 // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
 use koan_kit::raw::{HeadlessAppContext, px, size};
 
@@ -23,10 +23,13 @@ const WIDTH: f32 = 2560.0;
 const HEIGHT: f32 = 1600.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let Some(config) = std::env::var_os("KOAN_CONFIG_DIR") else {
+    koan_core::places::keep_with_config();
+    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
-    };
-    let artwork = std::path::Path::new(&config).join("artwork");
+    }
+    // A throwaway configuration keeps its artwork in its own cache
+    // directory, not beside the config.
+    let artwork = koan_core::places::cache().join("artwork");
     std::fs::remove_dir_all(&artwork).ok();
     // SAFETY: set before any other thread starts.
     unsafe {
@@ -44,7 +47,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     cx.update(|cx| {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-        koan_kit::raw::init(cx);
         theme::init(cx);
     });
     let lib = cx.update(|cx| {

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::prelude::FluentBuilder as _;
+
+use gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -34,7 +36,9 @@ pub enum ButtonKind {
     Icon,
     /// Play/pause: a transport glyph in a square `ink` outline.
     IconOutlined,
-    /// A glyph in a 36-point cell, `surface` under the pointer.
+    /// A glyph in a 36-point cell, no ground, answering in colour alone:
+    /// `ink`; `strong` under the pointer; the accent pressed. Selected it
+    /// rests at `strong` and the pointer takes it to the accent.
     Toolbar,
 }
 
@@ -242,6 +246,22 @@ impl RenderOnce for Button {
                 window,
                 cx,
             ),
+            ButtonKind::Toolbar => {
+                let (base, over) = if self.selected {
+                    (look.palette.strong.hsla(), look.color(Tone::Accent))
+                } else {
+                    (rest, look.palette.strong.hsla())
+                };
+                let hover = fade(child(&self.id, "hover"), hovered, base, over, window, cx);
+                fade(
+                    child(&self.id, "press"),
+                    pressed,
+                    hover,
+                    look.color(Tone::Accent),
+                    window,
+                    cx,
+                )
+            }
             _ => rest,
         };
         let outline = match kind {
@@ -256,15 +276,41 @@ impl RenderOnce for Button {
         let glyph_only = matches!(kind, ButtonKind::Icon | ButtonKind::IconOutlined)
             || (kind == ButtonKind::Toolbar && look.icons && self.icon.is_some());
         let show_glyph = glyph_only || look.icons;
+        // A press is answered by a ring off a glyph alone; a button showing
+        // its word is lifted instead, under the word, never ringed through it.
+        let worded = !glyph_only && self.label.is_some();
+        let answer = match kind.answer() {
+            Some(super::Answer::Ring) if worded => Some(super::Answer::Lift),
+            answer => answer,
+        };
         debug_assert!(
             !glyph_only || self.help.is_some() || self.label.is_some(),
             "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
         );
         let role = kind.role();
+        // Play and pause fold into each other as the state they show moves,
+        // whoever moved it; the glyph is drawn by the program meanwhile.
+        // Only a glyph alone, a toggle's face, or copy turning to its tick
+        // (a copy button is labelled): a labelled button with a transport
+        // glyph (a "Play" header button) shows no state to move.
+        let morphing = self.icon.is_some_and(|icon| {
+            super::answer::morphs(icon) && (glyph_only || matches!(icon, Icon::Copy | Icon::Check))
+        }) && show_glyph;
+        if let Some(icon) = self.icon.filter(|_| morphing) {
+            let mark = super::answer::glyph_mark(icon, None);
+            if let Some(answer) = answers
+                .seen(cx)
+                .and_then(|from| super::answer::glyph_motion(from, mark))
+            {
+                answers.follow(mark, answer, look.accent.hsla(), window, cx);
+            } else {
+                answers.note(mark, cx);
+            }
+        }
 
         // Named by its label, or a glyph's by what its tooltip says it does.
         let name = self.label.clone().or_else(|| self.help.clone());
-        let mut button = accessible(div().id(self.id.clone()), gpui_kit::Role::Button, name)
+        let mut button = accessible(div().id(self.id.clone()), gpui::Role::Button, name)
             .aria_disabled(self.disabled)
             .relative()
             .flex()
@@ -291,10 +337,10 @@ impl RenderOnce for Button {
             button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
-                let answer = kind.answer();
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
-                    if let Some(answer) = answer {
+                    // A glyph that morphs answers as its state lands.
+                    if let Some(answer) = answer.filter(|_| !morphing) {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
@@ -304,8 +350,8 @@ impl RenderOnce for Button {
             }
         }
 
-        // Fills: the prominent button's pressed `hover`, the toolbar's
-        // `surface` under the pointer and `hover` pressed.
+        // Fills: the outlined kinds' pressed `hover`. The toolbar button has
+        // none; its glyph changes colour instead.
         match kind {
             ButtonKind::Prominent | ButtonKind::IconOutlined => {
                 let press = transition(
@@ -316,37 +362,39 @@ impl RenderOnce for Button {
                 );
                 button = button.child(fill(look.palette.hover.hsla(), &press));
             }
-            ButtonKind::Toolbar => {
-                let hover = transition(child(&self.id, "hover-fill"), hovered, window, cx);
-                let press = transition(
-                    child(&self.id, "press-fill"),
-                    pressed || self.selected,
-                    window,
-                    cx,
-                );
-                button = button
-                    .child(fill(look.palette.surface.hsla(), &hover))
-                    .child(fill(look.palette.hover.hsla(), &press));
-            }
             _ => {}
         }
 
-        let glyph = self
-            .icon
-            .filter(|_| show_glyph)
-            .map(|icon| KoanIcon::new(icon).role(role).color(color));
+        let hidden = answers.glyph_live(cx);
+        let drawn = answers.glyph_layer(
+            px(crate::theme::icons::side(look.points(role))),
+            color,
+            None,
+            window,
+            cx,
+        );
+        let glyph = self.icon.filter(|_| show_glyph).map(|icon| {
+            div()
+                .relative()
+                .child(
+                    div()
+                        .when(hidden, |d| d.invisible())
+                        .child(KoanIcon::new(icon).role(role).color(color)),
+                )
+                .children(drawn)
+        });
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
-        // A ring leaves the glyph and its word, not the hit area around them;
-        // a lift fills the button.
-        let ring_answer = kind.answer() == Some(super::Answer::Ring);
+        // A ring leaves a glyph alone, not the hit area around it; a lift
+        // fills the button under its content, over its fills.
+        let ring_answer = answer == Some(super::Answer::Ring);
         let answered = answers.layer(window, cx);
         let (inner_answer, outer_answer) = if ring_answer {
             (answered, None)
         } else {
             (None, answered)
         };
-        button = button.child(
+        button = button.children(outer_answer).child(
             div()
                 .relative()
                 .flex()
@@ -368,9 +416,7 @@ impl RenderOnce for Button {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));
         }
-        button
-            .children(outer_answer)
-            .children(ring(&handle, &look, window))
+        button.children(ring(&handle, &look, window))
     }
 }
 
@@ -379,8 +425,8 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::accesskit::Action;
-    use gpui_kit::{IntoElement, TestAppContext, VisualTestContext};
+    use gpui::accesskit::Action;
+    use gpui::{IntoElement, TestAppContext, VisualTestContext};
 
     use super::*;
     use crate::components::testing::{act, click, node, stage};
@@ -424,7 +470,7 @@ mod tests {
         cx
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_click_reaches_its_own_button(cx: &mut TestAppContext) {
         let clicks = Rc::new(Cell::new([0; 3]));
         let cx = buttons(cx, clicks.clone());
@@ -434,7 +480,7 @@ mod tests {
         assert_eq!(clicks.get(), [1, 1, 0]);
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn enter_and_space_click_the_focused_button(cx: &mut TestAppContext) {
         let clicks = Rc::new(Cell::new([0; 3]));
         let cx = buttons(cx, clicks.clone());
@@ -444,10 +490,8 @@ mod tests {
         assert_eq!(clicks.get(), [2, 0, 0]);
     }
 
-    #[gpui_kit::test]
-    fn a_disabled_button_refuses_the_pointer_the_keys_and_a_screen_reader(
-        cx: &mut TestAppContext,
-    ) {
+    #[gpui::test]
+    fn a_disabled_button_refuses_the_pointer_the_keys_and_a_screen_reader(cx: &mut TestAppContext) {
         let clicks = Rc::new(Cell::new([0; 3]));
         let cx = buttons(cx, clicks.clone());
         click(cx, "remove");
@@ -463,7 +507,7 @@ mod tests {
         assert_eq!(node(cx, "remove").1["disabled"], true);
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn buttons_are_named_by_their_label_or_their_tooltip(cx: &mut TestAppContext) {
         let clicks = Rc::new(Cell::new([0; 3]));
         let cx = buttons(cx, clicks.clone());

@@ -10,8 +10,11 @@
 //! cache limit and trimmed with them (`trim`).
 //!
 //! The preload walks every record whose cover is on the server only and
-//! fetches it at the size grids draw, one at a time and only while no cover a
-//! page asked for is in flight, so it never holds up what is on screen. It
+//! fetches it at the size grids draw: from a kōan server two hundred to a
+//! request (`koanCovers`), and otherwise, or for whatever the server did not
+//! hold, six at a time by `getCoverArt`. It starts a request only while no
+//! cover a page asked for is in flight, so it does not hold up what is on
+//! screen. It
 //! sleeps on the engine's change signal while there is nothing to do, and
 //! starts again when a sync finishes or the settings or the connection move.
 //! It stops short of the cache limit, never pushing out a download, and
@@ -20,7 +23,7 @@
 //! waits while the app is in the background, on a metered network, or while
 //! the device saves power (`set_constrained`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
@@ -82,11 +85,23 @@ pub fn frame(id: &str, cover: BulkCover<&[u8]>) -> Vec<u8> {
 pub fn read_frame(
     from: &mut impl std::io::Read,
 ) -> std::io::Result<Option<(String, BulkCover<Vec<u8>>)>> {
+    // The end only where no byte of the next frame came: a stream cut
+    // inside the id's length is cut inside a frame.
     let mut len = [0u8; 2];
-    match from.read_exact(&mut len) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
+    let mut read = 0;
+    while read < len.len() {
+        match from.read(&mut len[read..]) {
+            Ok(0) if read == 0 => return Ok(None),
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "a stream cut inside a frame",
+                ));
+            }
+            Ok(n) => read += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
     }
     let mut id = vec![0u8; u16::from_be_bytes(len) as usize];
     from.read_exact(&mut id)?;
@@ -115,14 +130,39 @@ pub fn directory(cfg: &Config) -> PathBuf {
     cfg.cache_dir().join("artwork")
 }
 
-/// A cover's file for `id` at `bucket`, on the configured server. Ids are
-/// the server's own and may be row numbers another server reuses, so the
-/// file is named by a digest of the server and the id together. Bucket 0 is
-/// the record's miss: the server had no cover for it.
+/// A cover's file for `id` at `bucket`, on the configured server.
 fn file(cfg: &Config, id: &str, bucket: u32) -> PathBuf {
-    let server = cfg.remote.url.trim_end_matches('/');
+    file_on(cfg, &cfg.remote.url, id, bucket)
+}
+
+/// A cover's file for `id` at `bucket` on `server`. Ids are the server's own
+/// and may be row numbers another server reuses, so the file is named by a
+/// digest of the server and the id together. Bucket 0 is the record's miss:
+/// the server had no cover for it.
+fn file_on(cfg: &Config, server: &str, id: &str, bucket: u32) -> PathBuf {
+    let server = server.trim_end_matches('/');
     let digest = md5::compute(format!("{server}\0{id}").as_bytes());
     directory(cfg).join(format!("{digest:x}-{bucket}"))
+}
+
+/// A miss's file name ends so: trimming one frees nothing and forgets that
+/// the server has no cover.
+const MISS_SUFFIX: &str = "-0";
+
+/// How long a kept cover goes unread before a read marks it as used again:
+/// often enough to order the trimming, rarely enough to cost nothing.
+const USED_AGAIN: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Marks the kept file at `path` as used now, so trimming takes it last.
+fn used(path: &Path) {
+    let stale = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|at| at.elapsed().ok())
+        .is_some_and(|age| age >= USED_AGAIN);
+    if stale && let Ok(file) = std::fs::File::options().write(true).open(path) {
+        file.set_modified(std::time::SystemTime::now()).ok();
+    }
 }
 
 /// The bucket a miss is kept under.
@@ -137,10 +177,28 @@ pub fn kept(cfg: &Config, id: &str, size: Option<u32>) -> Option<Vec<u8>> {
         .into_iter()
         .filter(|b| *b >= wanted)
         .find_map(|b| {
-            std::fs::read(file(cfg, id, b))
-                .ok()
-                .filter(|d| !d.is_empty())
+            let path = file(cfg, id, b);
+            let data = std::fs::read(&path).ok().filter(|d| !d.is_empty())?;
+            used(&path);
+            Some(data)
         })
+}
+
+/// Forgets what is kept for `id` on the configured server, every size and a
+/// miss: an app found the bytes it was given unusable, and the next ask goes
+/// to the server.
+pub fn discard(cfg: &Config, id: &str) {
+    let mut freed = 0;
+    for bucket in std::iter::once(MISS).chain(crate::remote::client::COVER_SIZES) {
+        let path = file(cfg, id, bucket);
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        if std::fs::remove_file(&path).is_ok() {
+            freed += size;
+        }
+    }
+    if freed > 0 {
+        crate::helpers::cache_shrank(freed);
+    }
 }
 
 /// Whether the preload has nothing to ask about `id`: a cover is kept at
@@ -183,14 +241,21 @@ pub fn forget(cfg: &Config) {
     }
 }
 
-/// Keeps `data` as `id`'s cover at `size`. Written beside its name and
-/// renamed, so a reader never sees half a file.
+/// Keeps `data` as `id`'s cover at `size`, from the configured server.
 pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
+    keep_on(cfg, &cfg.remote.url, id, size, data, true);
+}
+
+/// Keeps `data` as `id`'s cover at `size`, from `server`. Written beside its
+/// name and renamed, so a reader never sees half a file. A file it replaces
+/// is counted out of the cache as this one is counted in. `signal` rings the
+/// change signal for the new size; the preload's progress rings it instead.
+fn keep_on(cfg: &Config, server: &str, id: &str, size: Option<u32>, data: &[u8], signal: bool) {
     let Some(size) = size else { return };
     if data.is_empty() {
         return;
     }
-    let path = file(cfg, id, cover_bucket(size));
+    let path = file_on(cfg, server, id, cover_bucket(size));
     if let Some(dir) = path.parent()
         && let Err(e) = std::fs::create_dir_all(dir)
     {
@@ -198,9 +263,10 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
         return;
     }
     let tmp = path.with_extension("part");
+    let replaced = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, &path));
     match written {
-        Ok(()) => crate::helpers::cache_grew(data.len() as u64),
+        Ok(()) => crate::helpers::cache_resized(data.len() as u64, replaced, signal),
         Err(e) => {
             std::fs::remove_file(&tmp).ok();
             log::warn!("artwork {}: {e}", path.display());
@@ -209,10 +275,12 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
 }
 
 /// `keep`, on the store's own writer thread, for a caller on an async runtime
-/// or a page's lane that should not wait on the disk.
-pub fn keep_later(id: String, size: Option<u32>, data: Vec<u8>) {
-    /// A cover to keep: its id, the size asked for and its bytes.
-    type Keeping = (String, Option<u32>, Vec<u8>);
+/// or a page's lane that should not wait on the disk. `server` is the one the
+/// cover was fetched from, read when the request was made: the configured
+/// one may have changed by the time it is written.
+pub fn keep_later(server: String, id: String, size: Option<u32>, data: Vec<u8>) {
+    /// A cover to keep: its server, its id, the size asked for and its bytes.
+    type Keeping = (String, String, Option<u32>, Vec<u8>);
     static WRITER: std::sync::OnceLock<crossbeam_channel::Sender<Keeping>> =
         std::sync::OnceLock::new();
     let writer = WRITER.get_or_init(|| {
@@ -220,14 +288,14 @@ pub fn keep_later(id: String, size: Option<u32>, data: Vec<u8>) {
         std::thread::Builder::new()
             .name("koan-cover-store".into())
             .spawn(move || {
-                for (id, size, data) in rx {
-                    keep(&Config::cached(), &id, size, &data);
+                for (server, id, size, data) in rx {
+                    keep_on(&Config::cached(), &server, &id, size, &data, true);
                 }
             })
             .ok();
         tx
     });
-    writer.send((id, size, data)).ok();
+    writer.send((server, id, size, data)).ok();
 }
 
 /// `id`'s cover at `size`: kept, or fetched through `client` and kept.
@@ -245,8 +313,8 @@ pub fn cover(
     Ok(data)
 }
 
-/// The kept covers, oldest first by when they were last written, with their
-/// sizes.
+/// The kept covers, least recently used first (written, or read after
+/// `USED_AGAIN`), with their sizes.
 fn kept_files(cfg: &Config) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
     let mut files: Vec<_> = std::fs::read_dir(directory(cfg))
         .into_iter()
@@ -267,11 +335,18 @@ pub fn bytes(cfg: &Config) -> u64 {
     kept_files(cfg).iter().map(|(_, size, _)| size).sum()
 }
 
-/// Removes kept covers, oldest first, until `over` bytes are gone or none is
-/// left. Returns the bytes freed.
+/// Removes kept covers, least recently used first, until `over` bytes are
+/// gone or none is left. Misses stay: they free nothing. Returns the bytes
+/// freed.
 pub fn trim(cfg: &Config, over: u64) -> u64 {
     let mut freed = 0;
-    for (path, size, _) in kept_files(cfg) {
+    let covers = kept_files(cfg).into_iter().filter(|(path, _, _)| {
+        !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(MISS_SUFFIX))
+    });
+    for (path, size, _) in covers {
         if freed >= over {
             break;
         }
@@ -319,6 +394,7 @@ static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 /// preload.
 pub fn set_constrained(constrained: bool) {
     if CONSTRAINED.swap(constrained, Ordering::Relaxed) != constrained {
+        crate::remote::client::wake_cover_waiters();
         crate::signal::engine_changed().bump();
     }
 }
@@ -331,7 +407,13 @@ pub fn progress() -> Option<Preload> {
 /// Stops the running preload, keeping what it fetched.
 pub fn stop() {
     STOPPED.store(true, Ordering::Relaxed);
+    crate::remote::client::wake_cover_waiters();
     crate::signal::engine_changed().bump();
+}
+
+/// Whether the person stopped the preload.
+pub(crate) fn stopped() -> bool {
+    STOPPED.load(Ordering::Relaxed)
 }
 
 /// The setting was turned on, or the person asked for the covers again:
@@ -396,19 +478,29 @@ fn run() {
         crate::quiet::wait_until_awake();
         let generation = signal.generation();
         let now = seen();
+        let mut quieted = false;
         if last.as_ref() != Some(&now) && may_run(&now) {
-            pass();
+            quieted = pass();
         }
-        last = Some(now);
+        // A pass the app's going quiet stopped runs again once it wakes,
+        // though nothing else moved. One the server refused waits for
+        // something to change, rather than asking again at every bump.
+        last = (!quieted).then_some(now);
         signal.wait(generation);
     }
 }
 
 fn may_run(seen: &Seen) -> bool {
-    seen.enabled
-        && seen.reachable
-        && !seen.constrained
-        && !STOPPED.load(Ordering::Relaxed)
+    allowed(seen.enabled, seen.reachable)
+}
+
+/// Whether work nobody asked for may run, the setting and the server's
+/// standing given: not constrained, not stopped, the app awake.
+fn allowed(enabled: bool, reachable: bool) -> bool {
+    enabled
+        && reachable
+        && !CONSTRAINED.load(Ordering::Relaxed)
+        && !stopped()
         && crate::quiet::awake()
 }
 
@@ -429,10 +521,15 @@ enum Halt {
     Failed(SubsonicError),
 }
 
-/// Whether the pass may fetch one more cover now.
-fn may_fetch() -> Result<(), Halt> {
+/// Whether the pass may fetch one more cover from `client` now. Asked
+/// after every frame, so it reads atomics and the cached configuration
+/// alone.
+fn may_fetch(client: &SubsonicClient, server: &str) -> Result<(), Halt> {
     let cfg = Config::cached();
-    if !may_run(&seen()) || !cfg.remote.preload_covers {
+    let enabled = cfg.remote.enabled && cfg.remote.preload_covers;
+    // Signed in somewhere else since the pass began: its covers are another
+    // server's, and the next pass is the new one's.
+    if !allowed(enabled, !client.outage().is_down()) || cfg.remote.url != server {
         return Err(Halt::NotNow);
     }
     // Never into the room downloads need: past it, keeping one more cover
@@ -446,28 +543,29 @@ fn may_fetch() -> Result<(), Halt> {
     Ok(())
 }
 
-/// Fetches every missing cover once: from a server with `koanCovers`, as
+/// Fetches every missing cover once, and says whether it stopped because
+/// the app went quiet: from a server with `koanCovers`, as
 /// many as it holds ready in a few streamed answers, and the rest, or every
 /// one from another server, `WORKERS` at a time. Each request waits while a
 /// page's covers are in flight. Gives up early when the setting goes off,
 /// the person stops it, the server cannot be reached or the app goes quiet;
 /// the next pass carries on from what is kept.
-fn pass() {
+fn pass() -> bool {
     let cfg = Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
-        return;
+        return false;
     };
     let ids = match crate::db::pool::shared().get() {
         Ok(db) => crate::db::queries::remote_cover_ids(&db.conn).unwrap_or_default(),
-        Err(_) => return,
+        Err(_) => return false,
     };
     // A cache kept to nothing keeps no covers ahead either.
     if cfg.cache_limit_bytes() == Some(0) {
-        return;
+        return false;
     }
     let missing: Vec<String> = ids.into_iter().filter(|id| !settled(&cfg, id)).collect();
     if missing.is_empty() {
-        return;
+        return false;
     }
     let total = missing.len() as u64;
     let started = std::time::Instant::now();
@@ -480,13 +578,20 @@ fn pass() {
     set_progress(Some(Preload { done: 0, total }));
     let bulk = crate::remote::profile::probed(client.auth())
         .is_some_and(|p| p.offers(crate::remote::profile::COVERS));
+    let server = cfg.remote.url.clone();
+    let may = || may_fetch(&client, &server);
+    let ranked = missing.clone();
+    let go_on = || may().is_ok();
     let (one_by_one, halted) = if bulk {
-        in_bulk(&client, &cfg, missing, &tick)
+        let mut fetch =
+            |ask: &[String], each: &mut Each| client.get_covers(ask, PRELOAD_SIZE, &go_on, each);
+        in_bulk(&mut fetch, &may, &cfg, missing, &tick)
     } else {
         (missing, None)
     };
     let in_bulk_done = done.load(Ordering::Relaxed);
-    let halted = halted.or_else(|| one_at_a_time(&client, &cfg, one_by_one, &tick));
+    let halted = halted.or_else(|| one_at_a_time(&client, &cfg, &server, one_by_one, &tick));
+    age_by_rank(&cfg, &ranked);
     let fetched = done.load(Ordering::Relaxed);
     let took = started.elapsed().as_secs_f64();
     log::info!(
@@ -502,59 +607,148 @@ fn pass() {
     set_progress(None);
     // Held to the cache limit with the downloads, the playback window kept.
     crate::remote::queue::cache_limit_changed();
+    // Decided by why it halted, not by sampling quiet now: the app may have
+    // woken again while the pass wound down, and the re-run would be lost.
+    matches!(halted, Some(Halt::NotNow))
 }
 
-/// `koanCovers` for `ids`, `BULK_MAX` at a time: keeps what the server holds
-/// and says it has none of, and returns the ids it does not hold ready.
+/// Stamps the covers a pass kept so the newest records' are the last
+/// trimmed: the pass fetches them first, so by write time they would be the
+/// first to go. Each record's file is dated a millisecond before the one
+/// ranked above it, all before the pass began, so a cover a page fetched
+/// meanwhile, or reads later, outlasts them.
+fn age_by_rank(cfg: &Config, ranked: &[String]) {
+    let Some(start) = std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(60))
+    else {
+        return;
+    };
+    for (rank, id) in ranked.iter().enumerate() {
+        let path = file(cfg, id, cover_bucket(PRELOAD_SIZE));
+        let Some(at) = start.checked_sub(std::time::Duration::from_millis(rank as u64)) else {
+            break;
+        };
+        if let Ok(file) = std::fs::File::options().write(true).open(&path) {
+            file.set_modified(at).ok();
+        }
+    }
+}
+
+/// How many chunks in a row may fail before the pass gives up on
+/// `koanCovers` and fetches the rest one by one.
+const BULK_FAILURES: usize = 3;
+
+/// What a bulk answer hands each frame to: whether to read on.
+type Each<'a> = dyn FnMut(String, BulkCover<Vec<u8>>) -> bool + 'a;
+
+/// What `in_bulk` asks a chunk through: `SubsonicClient::get_covers`, or a
+/// test's answers.
+type Fetch<'a> = dyn FnMut(&[String], &mut Each) -> Result<(), SubsonicError> + 'a;
+
+/// `koanCovers` for `ids`, `BULK_MAX` at a time, through `fetch`
+/// (`SubsonicClient::get_covers`), asking `may` whether to go on: keeps what the server holds
+/// and says it has none of, and returns the ids it does not hold ready, or
+/// did not answer. Stops between frames as soon as the pass may not go on
+/// (stopped, quiet, constrained, full), dropping the rest of that answer
+/// unread. A chunk whose stream is cut is asked once more for what it did
+/// not reach, one the server cannot answer or refuses is not, and what is
+/// left goes to the one by one fetch; after `BULK_FAILURES` in a row, so is everything left.
 fn in_bulk(
-    client: &SubsonicClient,
+    fetch: &mut Fetch,
+    may: &dyn Fn() -> Result<(), Halt>,
     cfg: &Config,
     ids: Vec<String>,
     tick: &dyn Fn(),
 ) -> (Vec<String>, Option<Halt>) {
     let mut rest = Vec::new();
+    let mut failures = 0;
     let mut chunks = ids.chunks(BULK_MAX);
     for chunk in chunks.by_ref() {
-        if let Err(halt) = may_fetch() {
-            rest.extend(chunk.iter().cloned());
-            rest.extend(chunks.flatten().cloned());
-            return (rest, Some(halt));
-        }
-        crate::remote::client::wait_for_idle_covers();
-        // Each id asked is answered once; a frame for anything else, or
-        // a second for the same id, is ignored.
+        // Each id asked is answered once; a frame for anything else, or a
+        // second for the same id, is ignored.
         let mut unanswered: std::collections::HashSet<&str> =
             chunk.iter().map(String::as_str).collect();
-        let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |id, cover| {
-            if !unanswered.remove(id.as_str()) {
-                return;
+        let mut halted = None;
+        let mut failed = None;
+        for _attempt in 0..2 {
+            if let Err(halt) = may() {
+                halted = Some(halt);
+                break;
             }
-            match cover {
-                BulkCover::Cover(data) => {
-                    keep(cfg, &id, Some(PRELOAD_SIZE), &data);
-                    tick();
+            // What is still unanswered: the whole chunk the first time, and
+            // after a stream cut part way, only what it did not reach.
+            let ask: Vec<String> = chunk
+                .iter()
+                .filter(|id| unanswered.contains(id.as_str()))
+                .cloned()
+                .collect();
+            let answered = fetch(&ask, &mut |id, cover| {
+                if unanswered.remove(id.as_str()) {
+                    match cover {
+                        BulkCover::Cover(data) => {
+                            keep_on(cfg, &cfg.remote.url, &id, Some(PRELOAD_SIZE), &data, false);
+                            tick();
+                        }
+                        BulkCover::None => {
+                            keep_miss(cfg, &id);
+                            tick();
+                        }
+                        BulkCover::NotHeld => rest.push(id),
+                    }
                 }
-                BulkCover::None => {
-                    keep_miss(cfg, &id);
-                    tick();
+                match may() {
+                    Ok(()) => true,
+                    Err(halt) => {
+                        halted = Some(halt);
+                        false
+                    }
                 }
-                BulkCover::NotHeld => rest.push(id),
+            });
+            match answered {
+                // Every id answered is the chunk done, however the stream
+                // ended after its last frame.
+                Ok(()) => {
+                    failed = None;
+                    break;
+                }
+                Err(_) if unanswered.is_empty() => {
+                    failed = None;
+                    break;
+                }
+                // A server that cannot answer now, or refuses, is not asked
+                // again at once: that is a stream cut's remedy.
+                Err(e @ (SubsonicError::Unavailable(_) | SubsonicError::Api { .. })) => {
+                    failed = Some(e);
+                    break;
+                }
+                Err(e) => failed = Some(e),
             }
-        });
-        // What the stream did not answer, whether it failed or ended early
-        // (a server task that stopped, a body cut between frames), is
-        // fetched one by one, which says for itself whether the server is
-        // there.
+            if halted.is_some() {
+                break;
+            }
+        }
+        // What the stream did not answer, however it ended, is fetched one
+        // by one, which says for itself whether the server is there.
         rest.extend(
             chunk
                 .iter()
                 .filter(|id| unanswered.contains(id.as_str()))
                 .cloned(),
         );
-        if let Err(e) = answered {
-            log::info!("cover preload: koanCovers failed ({e}); fetching one by one");
+        if let Some(halt) = halted {
             rest.extend(chunks.flatten().cloned());
-            return (rest, None);
+            return (rest, Some(halt));
+        }
+        match failed {
+            None => failures = 0,
+            Some(e) => {
+                failures += 1;
+                log::info!("cover preload: a koanCovers chunk failed ({e})");
+                if failures >= BULK_FAILURES {
+                    log::info!("cover preload: koanCovers keeps failing; fetching one by one");
+                    rest.extend(chunks.flatten().cloned());
+                    return (rest, None);
+                }
+            }
         }
     }
     (rest, None)
@@ -564,6 +758,7 @@ fn in_bulk(
 fn one_at_a_time(
     client: &SubsonicClient,
     cfg: &Config,
+    server: &str,
     ids: Vec<String>,
     tick: &(dyn Fn() + Sync),
 ) -> Option<Halt> {
@@ -579,22 +774,27 @@ fn one_at_a_time(
                     if halted.lock().is_some() {
                         return;
                     }
-                    if let Err(halt) = may_fetch() {
+                    if let Err(halt) = may_fetch(client, server) {
                         halted.lock().get_or_insert(halt);
                         return;
                     }
                     let Some(id) = next.lock().next() else {
                         return;
                     };
-                    crate::remote::client::wait_for_idle_covers();
-                    match client.get_cover_art_background(&id, Some(PRELOAD_SIZE)) {
+                    // Waits for no page's cover in flight and a background
+                    // slot; ends early when the pass may not go on.
+                    let go_on = || may_fetch(client, server).is_ok();
+                    match client.get_cover_art_background(&id, Some(PRELOAD_SIZE), &go_on) {
                         Ok(data) if data.is_empty() => keep_miss(cfg, &id),
-                        Ok(data) => keep(cfg, &id, Some(PRELOAD_SIZE), &data),
+                        Ok(data) => keep_on(cfg, server, &id, Some(PRELOAD_SIZE), &data, false),
                         // The server says it has no such cover: remembered,
                         // so the next pass does not ask again. Any other
                         // refusal (a restart, a proxy's 502, a lapsed
                         // sign-in) says nothing about the record.
                         Err(SubsonicError::Api { code: 70, .. }) => keep_miss(cfg, &id),
+                        // The wait ended: the top of the loop says why. The
+                        // cover is the next pass's.
+                        Err(SubsonicError::Busy) => continue,
                         Err(e) => {
                             halted.lock().get_or_insert(Halt::Failed(e));
                             return;
@@ -614,117 +814,8 @@ mod tests {
 
     use super::*;
 
-    /// What the preload costs against a real server: its first albums'
-    /// covers one at a time, then six at a time, then through `koanCovers`
-    /// where the server offers it. The server and sign-in come from the
-    /// environment (`KOAN_MEASURE_URL`, `KOAN_MEASURE_USER`,
-    /// `KOAN_MEASURE_PASS`), never a file; run it with `--ignored
-    /// --nocapture` in release.
-    #[test]
-    #[ignore]
-    fn measure_against_a_server() {
-        let var = |name| std::env::var(name).expect(name);
-        let client = SubsonicClient::new(
-            &var("KOAN_MEASURE_URL"),
-            &var("KOAN_MEASURE_USER"),
-            &var("KOAN_MEASURE_PASS"),
-        );
-        let albums: usize = std::env::var("KOAN_MEASURE_ALBUMS")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(600);
-        let mut ids = Vec::new();
-        while ids.len() < albums {
-            let page = client
-                .get_album_list("alphabeticalByName", 500, ids.len() as u32)
-                .unwrap();
-            if page.is_empty() {
-                break;
-            }
-            ids.extend(page.into_iter().map(|a| a.id));
-        }
-        ids.truncate(albums);
-        let rate = |n: usize, took: std::time::Duration| n as f64 / took.as_secs_f64();
-        let first = &ids[..ids.len() / 6];
-        let started = std::time::Instant::now();
-        let mut bytes = 0;
-        for id in first {
-            bytes += client
-                .get_cover_art_background(id, Some(PRELOAD_SIZE))
-                .unwrap()
-                .len();
-        }
-        let took = started.elapsed();
-        println!(
-            "measure: one at a time: {} in {took:.2?} ({:.1} a second, {} KB each)",
-            first.len(),
-            rate(first.len(), took),
-            bytes / first.len().max(1) / 1024
-        );
-        let rest = &ids[ids.len() / 6..];
-        for own in [false, true] {
-            let started = std::time::Instant::now();
-            let next = Mutex::new(rest.iter());
-            let in_flight = std::sync::atomic::AtomicUsize::new(0);
-            let most = std::sync::atomic::AtomicUsize::new(0);
-            std::thread::scope(|scope| {
-                for _ in 0..WORKERS {
-                    scope.spawn(|| {
-                        let mine = own.then(|| {
-                            SubsonicClient::new(
-                                &var("KOAN_MEASURE_URL"),
-                                &var("KOAN_MEASURE_USER"),
-                                &var("KOAN_MEASURE_PASS"),
-                            )
-                        });
-                        let client = mine.as_ref().unwrap_or(&client);
-                        loop {
-                            // Taken and let go before the request: held through it,
-                            // the workers would ask one at a time.
-                            let taken = next.lock().next();
-                            let Some(id) = taken else { break };
-                            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                            most.fetch_max(now, Ordering::SeqCst);
-                            client
-                                .get_cover_art_background(id, Some(PRELOAD_SIZE))
-                                .unwrap();
-                            in_flight.fetch_sub(1, Ordering::SeqCst);
-                        }
-                    });
-                }
-            });
-            let took = started.elapsed();
-            println!(
-                "measure: {WORKERS} at a time{}: {} in {took:.2?} ({:.1} a second, at most {} asked at once)",
-                if own { ", a client each" } else { "" },
-                rest.len(),
-                rate(rest.len(), took),
-                most.load(Ordering::SeqCst)
-            );
-        }
-        let started = std::time::Instant::now();
-        let mut covers = 0;
-        for chunk in ids.chunks(BULK_MAX) {
-            let answered = client.get_covers(chunk, PRELOAD_SIZE, &mut |_, cover| {
-                if matches!(cover, BulkCover::Cover(_)) {
-                    covers += 1;
-                }
-            });
-            if let Err(e) = answered {
-                println!("measure: koanCovers not answered: {e}");
-                return;
-            }
-        }
-        let took = started.elapsed();
-        println!(
-            "measure: koanCovers: {covers} of {} held, in {took:.2?} ({:.1} a second)",
-            ids.len(),
-            rate(covers, took)
-        );
-    }
-
-    /// Frames read back as written, in order; a kind this client does not
-    /// know reads as not held, and the stream's end as `None`.
+    /// Frames read back as written: an unknown kind reads as not held, and
+    /// the end of the stream as nothing more.
     #[test]
     fn bulk_frames_read_back_as_written() {
         let mut stream = frame("al-1", BulkCover::Cover(b"jpeg"));
@@ -764,12 +855,155 @@ mod tests {
             err.is_some(),
             "a stream cut inside a frame is an error, not its end"
         );
+        // Cut one byte into the next frame's id length: an error too.
+        let mut one = frame("al-6", BulkCover::None);
+        one.push(0);
+        let mut read = &one[..];
+        assert!(read_frame(&mut read).unwrap().is_some());
+        assert!(
+            read_frame(&mut read).is_err(),
+            "a stream cut inside the id's length is cut inside a frame"
+        );
         // A length past any cover is refused before anything is allocated.
         let mut huge = frame("al-5", BulkCover::None);
         let at = 2 + 4 + 1;
         huge[at..at + 4].copy_from_slice(&u32::MAX.to_be_bytes());
         let err = read_frame(&mut &huge[..]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// A cover fetched before a switch is kept under the server it came
+    /// from, never the next one's.
+    #[test]
+    fn a_cover_is_kept_under_the_server_it_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = config(dir.path());
+        old.remote.url = "https://old.example".into();
+        let mut new = old.clone();
+        new.remote.url = "https://new.example".into();
+        keep_on(
+            &new,
+            "https://old.example",
+            "al-1",
+            Some(600),
+            &[1, 2],
+            true,
+        );
+        assert_eq!(kept(&old, "al-1", Some(600)), Some(vec![1, 2]));
+        assert_eq!(kept(&new, "al-1", Some(600)), None);
+    }
+
+    /// Trimming takes the least recently used first, and the preload's
+    /// stamps put the newest records last; a miss frees nothing and stays.
+    #[test]
+    fn trimming_takes_the_oldest_records_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let ranked: Vec<String> = ["al-new", "al-mid", "al-old"].map(String::from).into();
+        // Written in the preload's order: the newest record first.
+        for id in &ranked {
+            keep(&cfg, id, Some(PRELOAD_SIZE), &[0; 10]);
+        }
+        keep_miss(&cfg, "al-none");
+        age_by_rank(&cfg, &ranked);
+        assert_eq!(trim(&cfg, 10), 10);
+        assert!(!settled(&cfg, "al-old"), "the oldest record's went first");
+        assert!(settled(&cfg, "al-new") && settled(&cfg, "al-mid"));
+        assert_eq!(trim(&cfg, 100), 20);
+        assert!(settled(&cfg, "al-none"), "the miss stays");
+    }
+
+    /// A replaced cover is one file, and a discard removes every size.
+    #[test]
+    fn a_replaced_cover_is_one_file_until_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        keep(&cfg, "al-1", Some(600), &[0; 10]);
+        keep(&cfg, "al-1", Some(600), &[0; 30]);
+        assert_eq!(bytes(&cfg), 30);
+        discard(&cfg, "al-1");
+        assert_eq!(bytes(&cfg), 0);
+        assert_eq!(kept(&cfg, "al-1", Some(600)), None);
+    }
+
+    fn ids(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("al-{i}")).collect()
+    }
+
+    /// A stream cut part way is asked again for what it did not reach, and
+    /// what the second answer leaves goes one by one.
+    #[test]
+    fn a_cut_stream_is_asked_again_for_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let mut asked: Vec<Vec<String>> = Vec::new();
+        let (rest, halted) = {
+            let mut fetch = |ask: &[String], each: &mut Each| {
+                asked.push(ask.to_vec());
+                if asked.len() == 1 {
+                    each(ask[0].clone(), BulkCover::Cover(vec![1]));
+                    each(ask[1].clone(), BulkCover::None);
+                    return Err(SubsonicError::BadResponse);
+                }
+                each(ask[0].clone(), BulkCover::NotHeld);
+                Err(SubsonicError::BadResponse)
+            };
+            in_bulk(&mut fetch, &|| Ok(()), &cfg, ids(4), &|| {})
+        };
+        assert!(halted.is_none());
+        assert_eq!(asked, [ids(4), ids(4)[2..].to_vec()]);
+        assert!(settled(&cfg, "al-0") && settled(&cfg, "al-1"));
+        assert_eq!(rest, ["al-2", "al-3"], "not held, then not reached");
+    }
+
+    /// The pass stops between frames once it may not go on: the rest of the
+    /// answer is left unread and everything after is the next pass's.
+    #[test]
+    fn a_bulk_answer_stops_between_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let read = std::cell::Cell::new(0);
+        let mut fetch = |ask: &[String], each: &mut Each| {
+            for id in ask {
+                read.set(read.get() + 1);
+                if !each(id.clone(), BulkCover::Cover(vec![1])) {
+                    break;
+                }
+            }
+            Ok(())
+        };
+        let may = || {
+            if read.get() >= 3 {
+                Err(Halt::NotNow)
+            } else {
+                Ok(())
+            }
+        };
+        let all = ids(BULK_MAX + 10);
+        let (rest, halted) = in_bulk(&mut fetch, &may, &cfg, all.clone(), &|| {});
+        assert!(matches!(halted, Some(Halt::NotNow)));
+        assert_eq!(read.get(), 3, "no frame read after the halt");
+        assert_eq!(rest, all[3..], "the rest of the chunk and every later one");
+    }
+
+    /// A server that refuses is not asked again at once, and after
+    /// `BULK_FAILURES` chunks in a row everything left goes one by one.
+    #[test]
+    fn koan_covers_failing_falls_back_to_one_by_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        let mut calls = 0;
+        let all = ids(BULK_MAX * (BULK_FAILURES + 2));
+        let (rest, halted) = {
+            let mut fetch = |_: &[String], _: &mut Each| {
+                calls += 1;
+                Err(SubsonicError::Unavailable(503))
+            };
+            in_bulk(&mut fetch, &|| Ok(()), &cfg, all.clone(), &|| {})
+        };
+        assert!(halted.is_none());
+        assert_eq!(calls, BULK_FAILURES, "one request per chunk, none retried");
+        assert_eq!(rest, all);
     }
 
     fn config(dir: &Path) -> Config {

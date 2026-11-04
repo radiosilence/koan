@@ -12,6 +12,10 @@
 //! the pointer is doing and the state of their transitions.
 
 mod animated;
+mod program;
+mod slot;
+mod track;
+pub(crate) use animated::curve;
 mod answer;
 mod arrive;
 mod availability;
@@ -29,8 +33,9 @@ mod details;
 mod drag;
 mod empty;
 mod fade;
-mod field;
+pub mod field;
 mod filter_field;
+pub mod focus_trap;
 mod form;
 mod heart;
 mod inspector;
@@ -39,6 +44,7 @@ mod level;
 mod link_text;
 mod list_keys;
 mod lists;
+mod lyrics;
 mod menu;
 mod metrics;
 mod page;
@@ -46,13 +52,16 @@ mod panel;
 mod picker;
 mod pill;
 pub(crate) mod placeholder;
+mod popover;
 mod prism;
 mod progress;
 mod qr;
 mod ring;
+mod root;
 mod row_list;
 mod rows;
 mod scroll;
+mod scrollbar;
 mod segmented;
 mod selection_bar;
 pub mod sheet;
@@ -76,17 +85,17 @@ mod window;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui_kit::{
-    AnyElement, App, Bounds, ColorSlot, Div, ElementId, Entity, FocusHandle, Global, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString,
-    StatefulInteractiveElement, Styled, TrackCurve, Window, canvas, div, px,
+use gpui::{
+    AnyElement, App, Bounds, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Task, Window, canvas, div, px,
 };
 
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
-    ShaderProgram, Track,
+    ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
-pub use answer::{ANSWER, Answer, Answerer};
+pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
@@ -94,13 +103,15 @@ pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
-pub use command_bar::{CommandBar, CommandSection};
+pub use command_bar::{CommandBar, CommandResults, CommandSection};
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
+pub use slot::{ColorSlot, install as install_color_slots, present_now};
+pub use track::{TrackCurve, spring_length, track_at};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{
@@ -110,23 +121,24 @@ pub mod list_actions {
 }
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{AreaState, FieldState, InputEvent, TextArea, TextField};
-pub use filter_field::FilterField;
+pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
+pub use filter_field::{FilterButton, FilterField};
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
-    form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
+    form_note, form_text,
 };
 pub use heart::Heart;
-pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
-    uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
+    spoken_list, uniform_list, width_probe,
 };
-pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
+pub use lyrics::{LYRICS, SyncedLines};
+pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
@@ -138,7 +150,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, anchored_panel, popo
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
-pub use prism::{Burst, Prism, PrismFill, Sheen};
+pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
@@ -161,12 +173,13 @@ pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
-    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS, opens_panel,
+    ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{
-    MainWindow, SecondaryWindow, close_button, draws_decorations, moves_window, window_buttons,
+    MainWindow, SecondaryWindow, close_button, draws_decorations, host, moves_window,
+    window_buttons,
 };
 
 use crate::theme::{Look, MARK, Motion};
@@ -227,6 +240,18 @@ pub(crate) fn focus(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusH
         .clone()
 }
 
+/// A control's name for a screen reader where its owner gave none: its id
+/// read as words ("wash-tint" as "wash tint"), so no slider or choice is met
+/// unnamed. An id that is not a name gives none.
+pub(crate) fn spoken_id(id: &ElementId) -> Option<SharedString> {
+    match id {
+        ElementId::Name(name) | ElementId::NamedInteger(name, _) => {
+            Some(name.replace(['-', '_'], " ").into())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
     ElementId::NamedChild(Arc::new(id.clone()), SharedString::new_static(name))
 }
@@ -234,12 +259,15 @@ pub(crate) fn child(id: &ElementId, name: &'static str) -> ElementId {
 /// A colour moving between its off and on colours on the GPU, through a
 /// colour slot (#1859): the control draws once with the slot's colour as a
 /// leave fade starts, and the presents that follow move it with no frame
-/// drawn. The slot is held only for the fade, and let go at the control's
-/// next draw after it lands; at rest the control draws a plain colour.
+/// drawn. The slot is held only for the fade: as it lands the control is
+/// drawn once more in its plain colour, and that draw lets the slot go, so
+/// the table's slots are held only by fades still running.
 struct ColorFade {
     on: bool,
     /// The slot fading and when it lands, while a leave fade runs.
     fading: Option<(ColorSlot, Instant)>,
+    /// Wakes the control as the fade lands.
+    _landing: Option<Task<()>>,
 }
 
 /// The colour a control's text, glyph or edge draws in, `on_color` when `on`
@@ -256,8 +284,12 @@ pub(crate) fn fade(
     cx: &mut App,
 ) -> Hsla {
     let reduce = cx.reduce_motion();
-    let state = window.use_keyed_state(key, cx, |_, _| ColorFade { on, fading: None });
-    state.update(cx, |fade, _| {
+    let state = window.use_keyed_state(key, cx, |_, _| ColorFade {
+        on,
+        fading: None,
+        _landing: None,
+    });
+    state.update(cx, |fade, cx| {
         let now = Animated::now();
         if fade.on != on {
             fade.on = on;
@@ -278,8 +310,20 @@ pub(crate) fn fade(
                     );
                     (slot, now + Motion::LEAVE)
                 });
+            // One wake at the landing, which draws the plain colour and lets
+            // the slot go.
+            fade._landing = fade.fading.as_ref().map(|(_, lands)| {
+                // Counted to the landing on the present clock, which runs
+                // ahead of the wall clock: woken then, the draw sees it landed.
+                let wait = lands.saturating_duration_since(Instant::now());
+                cx.spawn(async move |fade, cx| {
+                    cx.background_executor().timer(wait).await;
+                    fade.update(cx, |_, cx| cx.notify()).ok();
+                })
+            });
         } else if fade.fading.as_ref().is_some_and(|(_, lands)| now >= *lands) {
             fade.fading = None;
+            fade._landing = None;
         }
         match &fade.fading {
             Some((slot, _)) => slot.hsla(1.0),
@@ -292,8 +336,8 @@ pub(crate) fn fade(
 /// A panel's openness between 0 and 1, eased toward `on` over `duration`
 /// from wherever it stood and kept under `key`: what `Slide` and
 /// `SplitView::shown` lay a width out by. Layout moves on the CPU, frame by
-/// frame while it eases, until panels slide as animated layers the GPU
-/// composes. Instant with Reduce Motion.
+/// frame while it eases, the page beside the panel with it. Instant with
+/// Reduce Motion.
 pub(crate) fn ease(
     key: ElementId,
     on: bool,
@@ -371,34 +415,66 @@ pub fn focus_ring(handle: &FocusHandle, window: &Window, cx: &App) -> Option<Div
     ring(handle, &Look::of(window, cx), window)
 }
 
+/// Where a list's or a grid's keyboard cursor was last laid out, owned by
+/// the page that has the cursor and handed to what draws it (`.spot`). The
+/// cursor's ring writes its bounds here as it is laid out, so the page's
+/// scroll area can bring it into view (`ScrollArea::follow`) and the menu
+/// key can open under it, both from layout rather than from a global.
+#[derive(Clone, Default)]
+pub struct CursorSpot(std::rc::Rc<Spot>);
+
+#[derive(Default)]
+struct Spot {
+    bounds: std::cell::Cell<Option<Bounds<Pixels>>>,
+    /// Bumped each time the keys move the cursor: what a scroll area
+    /// follows, so moving to the same item again still scrolls to it.
+    moves: std::cell::Cell<u64>,
+}
+
+impl CursorSpot {
+    /// The keys moved the cursor: where it was is no longer where it is,
+    /// and the next layout brings it into view.
+    pub fn moved(&self) {
+        self.0.bounds.set(None);
+        self.0.moves.set(self.0.moves.get() + 1);
+    }
+
+    /// Where the cursor's ring was laid out since it last moved.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.bounds.get()
+    }
+
+    /// Where the cursor was laid out is no longer trusted, its moves left
+    /// alone: the next layout says again.
+    pub(crate) fn forget_bounds(&self) {
+        self.0.bounds.set(None);
+    }
+
+    pub(crate) fn moves(&self) -> u64 {
+        self.0.moves.get()
+    }
+
+    fn record(&self, bounds: Bounds<Pixels>) {
+        self.0.bounds.set(Some(bounds));
+    }
+}
+
 /// The focus ring drawn inside a row, for the row a list's keyboard cursor
 /// is on: the list holds the focus, so the row's ring sits within it rather
-/// than standing off over its neighbours.
-pub(crate) fn cursor_ring(look: &Look) -> Div {
-    div()
+/// than standing off over its neighbours. Laid out, it tells `spot` where.
+pub(crate) fn cursor_ring(look: &Look, spot: Option<&CursorSpot>) -> Div {
+    let ring = div()
         .absolute()
         .inset_0()
         .border(MARK)
-        .border_color(look.accent.hsla())
-        .child(
-            canvas(
-                |bounds, window, cx| {
-                    let id = window.window_handle().window_id();
-                    cx.default_global::<CursorAt>().0 = Some((id, bounds));
-                },
-                |_, _, _, _| {},
-            )
-            .size_full(),
-        )
+        .border_color(look.accent.hsla());
+    match spot.cloned() {
+        Some(spot) => {
+            ring.child(canvas(move |bounds, _, _| spot.record(bounds), |_, _, _, _| {}).size_full())
+        }
+        None => ring,
+    }
 }
-
-/// Where the keyboard's cursor ring was drawn, and in which window: what the
-/// menu key opens a context menu under. The key clears it and lets a frame
-/// draw, so only a ring drawn in that frame counts.
-#[derive(Default)]
-pub(crate) struct CursorAt(pub Option<(gpui_kit::WindowId, Bounds<Pixels>)>);
-
-impl Global for CursorAt {}
 
 /// A fill or an outline following a control's state on the GPU: lit at once
 /// as the state comes on (the pointer arrives), and faded out over
@@ -453,23 +529,89 @@ pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut
     })
 }
 
-/// A fill under a control, in `color`, faded with `transition`.
+/// The fill under a control that lights under the pointer, as every
+/// control's does: `surface` arriving with the pointer, `hover` while
+/// pressed, fading out over `Motion::LEAVE` once it has gone. The caller
+/// tracks `pointer` on the control with `track` and adds the fill before its
+/// content, so the content draws over it.
+pub(crate) fn hover_fill(
+    id: &ElementId,
+    look: &Look,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<Pointer>, AnyElement) {
+    let state = pointer(&child(id, "pointer"), window, cx);
+    let (hovered, pressed) = {
+        let p = state.read(cx);
+        (p.hovered, p.pressed)
+    };
+    let color = if pressed {
+        look.palette.hover.hsla()
+    } else {
+        look.palette.surface.hsla()
+    };
+    let lit = transition(child(id, "lit"), hovered || pressed, window, cx);
+    (state, fill(color, &lit))
+}
+
+/// A control of a page's own whose colour changes under the pointer as the
+/// kit's controls' do: to `lit` at once as the pointer arrives, back to
+/// `rest` over `Motion::LEAVE` once it has gone. Returns the element, named
+/// `id` and following the pointer, and the colour its content draws in now.
+pub fn hover_tint(
+    id: impl Into<ElementId>,
+    rest: Hsla,
+    lit: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Stateful<Div>, Hsla) {
+    let id = id.into();
+    let state = pointer(&child(&id, "pointer"), window, cx);
+    let hovered = state.read(cx).hovered;
+    let color = fade(child(&id, "tint"), hovered, rest, lit, window, cx);
+    (track(div().id(id), &state), color)
+}
+
+/// A row a click acts on, lit under the pointer as controls are (`surface`,
+/// leaving over `Motion::LEAVE`): its content goes in as children, over the
+/// fill.
+pub fn lit_row(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let id = id.into();
+    let look = Look::of(window, cx);
+    let (state, fill) = hover_fill(&id, &look, window, cx);
+    track(div().id(id), &state)
+        .relative()
+        .cursor_pointer()
+        .child(fill)
+}
+
+/// A fill under a control, in `color`, faded with `transition`. Out, and
+/// not fading, it is nothing: a control at rest puts no quad in the scene.
 pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
+    if transition.at(0, Animated::now()) <= 0.0 && !transition.moving() {
+        return gpui::Empty.into_any_element();
+    }
     if !SHADED {
-        let amount = transition.at(0, Animated::now());
+        let amount = plain_amount(transition);
         return div()
             .absolute()
-            .size_full()
+            .inset_0()
             .bg(color.opacity(amount))
             .into_any_element();
     }
-    let rgba = color.to_rgb();
-    transition.set_all(0, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
+    transition.set_color(0, color);
+    transition.set(4, 0.0);
     AnimatedQuad::new(&TRANSITION, transition)
         .decorative()
         .absolute()
-        .size_full()
+        .inset_0()
         .into_any_element()
+}
+
+/// How lit a fill is where the renderer draws no shaders: no fade, since
+/// nothing draws the frames between, so the state as it is headed.
+fn plain_amount(transition: &Animated) -> f32 {
+    transition.track(0).to
 }
 
 /// A control as a screen reader meets it: its role and its name. The tree
@@ -477,7 +619,7 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
 /// nothing otherwise. See docs/design/koan-kit.md, "Accessibility".
 pub(crate) fn accessible<E: StatefulInteractiveElement>(
     element: E,
-    role: gpui_kit::Role,
+    role: gpui::Role,
     name: Option<SharedString>,
 ) -> E {
     let element = element.role(role);
@@ -487,7 +629,6 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
     }
 }
 
-/// Answers a screen reader's click as a pointer's would, with `handler`.
 /// A row's or a tile's parts as a screen reader says them: the non-empty
 /// ones, in order, between commas. What `TableRow::spoken` takes.
 pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
@@ -514,44 +655,73 @@ pub(crate) fn announced<E: StatefulInteractiveElement>(
     accessible(
         element,
         if alarm {
-            gpui_kit::Role::Alert
+            gpui::Role::Alert
         } else {
-            gpui_kit::Role::Status
+            gpui::Role::Status
         },
         Some(text.clone()),
     )
     .aria_value(text)
     .aria_live(if alarm {
-        gpui_kit::accesskit::Live::Assertive
+        gpui::accesskit::Live::Assertive
     } else {
-        gpui_kit::accesskit::Live::Polite
+        gpui::accesskit::Live::Polite
     })
 }
 
 /// A checked state as AccessKit has it.
-pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
+pub(crate) fn toggled(on: bool) -> gpui::Toggled {
     if on {
-        gpui_kit::Toggled::True
+        gpui::Toggled::True
     } else {
-        gpui_kit::Toggled::False
+        gpui::Toggled::False
     }
 }
 
+/// Answers a screen reader's click as a pointer's would, with `handler`.
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
-    handler: Handler<gpui_kit::ClickEvent>,
+    handler: Handler<gpui::ClickEvent>,
 ) -> E {
-    element.on_a11y_action(gpui_kit::AccessibleAction::Click, move |_, window, cx| {
-        handler(&gpui_kit::ClickEvent::default(), window, cx)
+    element.on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+        handler(&gpui::ClickEvent::default(), window, cx)
     })
+}
+
+pub use popover::{Selectable, opens_panel};
+pub use root::Root;
+pub use scrollbar::{ScrollSource, Scrollbar};
+
+/// The window root's and the panels' keys, bound once by `theme::init`.
+pub(crate) fn bind_root(cx: &mut gpui::App) {
+    root::bind(cx);
+    popover::bind(cx);
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// Without shaders nothing draws a fade's frames, so a fill shows the
+    /// state it is headed to: lit as the pointer arrives, gone as it leaves.
+    #[test]
+    fn a_plain_fill_reads_where_its_state_is_headed() {
+        let lit = Animated::new();
+        lit.hold(0, 1.0);
+        assert_eq!(plain_amount(&lit), 1.0, "lit at once");
+        lit.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
+        assert!(lit.at(0, Animated::now()) > 0.5, "the GPU's fade has begun");
+        assert_eq!(plain_amount(&lit), 0.0, "gone at once without it");
+    }
 }
 
 /// What the components' tests share: a window holding a component, the
 /// pointer and the keys reaching it, and the node a screen reader meets.
 #[cfg(test)]
 pub(crate) mod testing {
-    use gpui_kit::accesskit::{Action, ActionRequest, NodeId, TreeId};
-    use gpui_kit::{
+    use gpui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+    use gpui::{
         AnyElement, Bounds, Context, Entity, IntoElement, Modifiers, ParentElement, Pixels, Point,
         Render, Styled, TestAppContext, VisualTestContext, Window, div, px,
     };
@@ -567,14 +737,11 @@ pub(crate) mod testing {
 
     impl Render for Stage {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .w(px(600.))
-                .flex()
-                .flex_col()
-                .items_start()
-                .children((self.build)(window, cx).into_iter().map(|(name, element)| {
+            div().w(px(600.)).flex().flex_col().items_start().children(
+                (self.build)(window, cx).into_iter().map(|(name, element)| {
                     div().debug_selector(move || name.into()).child(element)
-                }))
+                }),
+            )
         }
     }
 
@@ -582,11 +749,10 @@ pub(crate) mod testing {
     /// reader attached, so the accessibility tree is built.
     pub fn stage(
         cx: &mut TestAppContext,
-        build: impl Fn(&mut Window, &mut Context<Stage>) -> Vec<(&'static str, AnyElement)>
-        + 'static,
+        build: impl Fn(&mut Window, &mut Context<Stage>) -> Vec<(&'static str, AnyElement)> + 'static,
     ) -> (Entity<Stage>, &mut VisualTestContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
+            gpui::init(cx);
             crate::theme::init(cx);
         });
         let (stage, cx) = cx.add_window_view(|_, _| Stage {

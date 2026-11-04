@@ -1,0 +1,1 @@
+- **Commands from the desktop app reach the engine as they are made.** Each joined the engine's ordered lane only when the main thread next polled it; now every command joins at the call, so none waits a turn and all keep the order they were made in.

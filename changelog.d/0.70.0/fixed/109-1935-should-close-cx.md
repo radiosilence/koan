@@ -1,0 +1,1 @@
+- **The desktop app builds without warnings again.** The window's close handler ignores a context it no longer uses.

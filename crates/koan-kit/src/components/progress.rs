@@ -7,8 +7,8 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Animated, AnimatedQuad, Ease, Handler, Repeat, SHADED, ShaderProgram};
 use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, TypeRole};
@@ -104,10 +104,9 @@ impl RenderOnce for ProgressBar {
                     .into_any_element()
             }
             None if SHADED && KoanTheme::motion_allowed(cx) => {
-                let rgba = accent.to_rgb();
                 let running = Animated::new();
                 running.set_all(0, &[0.0, 0.3, 0.0, 0.0]);
-                running.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+                running.set_color(4, accent);
                 running.segment(
                     0,
                     0.0,
@@ -240,7 +239,7 @@ impl RenderOnce for ProgressRow {
         // it has come where that is known, its counts as the value said.
         super::accessible(
             div().id(self.id.clone()),
-            gpui_kit::Role::ProgressIndicator,
+            gpui::Role::ProgressIndicator,
             Some(self.title.clone()),
         )
         .when_some(self.fraction, |d, f| {

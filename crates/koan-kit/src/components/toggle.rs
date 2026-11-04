@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
-    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+use gpui::prelude::FluentBuilder;
+use gpui::{
+    App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
@@ -55,6 +55,24 @@ impl RenderOnce for Toggle {
         let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
+        // Its tick draws itself in, or erases, however it was turned:
+        // a click, Settings read again, a shortcut. With icons hidden, a
+        // ring as before.
+        let icons = look.icons;
+        if icons {
+            answers.follow(
+                self.checked as u64,
+                Answer::Tick(self.checked),
+                accent,
+                window,
+                cx,
+            );
+        } else {
+            follow_on(&answers, self.checked, accent, window, cx);
+        }
+        let tick_side = px(crate::theme::icons::side(BOX * 0.64));
+        let drawing = answers.glyph_live(cx);
+        let tick_drawn = answers.glyph_layer(tick_side, look.palette.bg.hsla(), None, window, cx);
         let edge = fade(
             child(&self.id, "edge"),
             self.checked,
@@ -101,13 +119,19 @@ impl RenderOnce for Toggle {
                             .items_center()
                             .justify_center()
                             .bg(ground)
-                            .when(self.checked, |cell| {
-                                cell.child(
-                                    KoanIcon::new(Icon::Check)
-                                        .points(BOX * 0.64)
-                                        .color(look.palette.bg.hsla()),
-                                )
-                            }),
+                            .child(
+                                div()
+                                    .relative()
+                                    .size(tick_side)
+                                    .when(self.checked && !drawing, |cell| {
+                                        cell.child(
+                                            KoanIcon::new(Icon::Check)
+                                                .points(BOX * 0.64)
+                                                .color(look.palette.bg.hsla()),
+                                        )
+                                    })
+                                    .children(tick_drawn),
+                            ),
                     )
                     .children(answers.layer(window, cx)),
             );
@@ -116,11 +140,13 @@ impl RenderOnce for Toggle {
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let flip: Handler<gpui_kit::ClickEvent> = {
+            let flip: Handler<gpui::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
                 Arc::new(move |_, window, cx| {
-                    if !checked {
+                    if icons {
+                        answers.start(Answer::Tick(!checked), accent, cx);
+                    } else if !checked {
                         answers.start(Answer::Ring, accent, cx);
                     }
                     on_change(&!checked, window, cx)
@@ -130,7 +156,9 @@ impl RenderOnce for Toggle {
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
-                    if !checked {
+                    if icons {
+                        answers.start(Answer::Tick(!checked), accent, cx);
+                    } else if !checked {
                         answers.start(Answer::Ring, accent, cx);
                     }
                     on_change(&!checked, window, cx)
@@ -182,6 +210,7 @@ impl RenderOnce for IconToggle {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
+        follow_on(&answers, self.checked, look.accent.hsla(), window, cx);
         let color = fade(
             child(&self.id, "on"),
             self.checked,
@@ -226,7 +255,7 @@ impl RenderOnce for IconToggle {
         } else if let Some(on_change) = self.on_change {
             let (checked, accent) = (self.checked, look.accent.hsla());
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let flip: Handler<gpui_kit::ClickEvent> = {
+            let flip: Handler<gpui::ClickEvent> = {
                 let on_change = on_change.clone();
                 let answers = answers.clone();
                 Arc::new(move |_, window, cx| {
@@ -252,17 +281,17 @@ impl RenderOnce for IconToggle {
 
 /// A toggle as a screen reader meets it: a switch, named, on or off.
 fn switch(
-    element: gpui_kit::Stateful<gpui_kit::Div>,
+    element: gpui::Stateful<gpui::Div>,
     name: SharedString,
     checked: bool,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
+) -> gpui::Stateful<gpui::Div> {
+    accessible(element, gpui::Role::Switch, Some(name)).aria_toggled(toggled(checked))
 }
 
 /// The accent hairline a toggle shows while on, 5 points under its glyph
 /// and as wide as it: positioned outside the layout, so a toggle's glyph sits
 /// where every other glyph in its row does.
-pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
+pub(crate) fn on_mark(color: gpui::Hsla, look: &Look) -> gpui::Div {
     div()
         .absolute()
         .left_0()
@@ -272,13 +301,23 @@ pub(crate) fn on_mark(color: gpui_kit::Hsla, look: &Look) -> gpui_kit::Div {
         .bg(color)
 }
 
+/// A toggle's ring for turning on however it was turned: the click answers
+/// at once, and a change made elsewhere answers as the toggle next draws.
+fn follow_on(answers: &Answerer, on: bool, accent: Hsla, window: &mut Window, cx: &mut App) {
+    if on {
+        answers.follow(1, Answer::Ring, accent, window, cx);
+    } else {
+        answers.note(0, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::accesskit::Action;
-    use gpui_kit::{IntoElement, TestAppContext};
+    use gpui::accesskit::Action;
+    use gpui::{IntoElement, TestAppContext};
 
     use super::*;
     use crate::components::testing::{act, click, node, redraw, stage};
@@ -289,7 +328,7 @@ mod tests {
         cx: &mut TestAppContext,
         on: Rc<Cell<bool>>,
         refused: Rc<Cell<bool>>,
-    ) -> &mut gpui_kit::VisualTestContext {
+    ) -> &mut gpui::VisualTestContext {
         let (_, cx) = stage(cx, move |_, _| {
             let (on, refused) = (on.clone(), refused.clone());
             vec![
@@ -316,7 +355,7 @@ mod tests {
         cx
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_click_flips_the_value_and_the_switch_reports_it(cx: &mut TestAppContext) {
         let on = Rc::new(Cell::new(false));
         let cx = toggles(cx, on.clone(), Rc::default());
@@ -331,7 +370,7 @@ mod tests {
         assert!(!on.get());
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn the_keyboard_flips_a_focused_toggle(cx: &mut TestAppContext) {
         let on = Rc::new(Cell::new(false));
         let cx = toggles(cx, on.clone(), Rc::default());
@@ -340,7 +379,7 @@ mod tests {
         assert!(on.get(), "space did not reach the toggle");
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_screen_reader_s_click_flips_it(cx: &mut TestAppContext) {
         let on = Rc::new(Cell::new(false));
         let cx = toggles(cx, on.clone(), Rc::default());
@@ -348,7 +387,7 @@ mod tests {
         assert!(on.get());
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_disabled_toggle_refuses_input_and_says_so(cx: &mut TestAppContext) {
         let refused = Rc::new(Cell::new(false));
         let cx = toggles(cx, Rc::default(), refused.clone());
@@ -358,7 +397,7 @@ mod tests {
         assert_eq!(node(cx, "locked").1["disabled"], true);
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn an_icon_toggle_is_a_switch_named_by_its_text(cx: &mut TestAppContext) {
         let cx = toggles(cx, Rc::default(), Rc::default());
         let (_, group) = node(cx, "group by album");

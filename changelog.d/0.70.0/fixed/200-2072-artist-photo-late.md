@@ -1,0 +1,1 @@
+- **Artist photos after a search.** An artist shown in the search box before their details had been looked up no longer keeps an empty photo slot on their page until koan restarts: the photo the page's lookup finds is fetched.

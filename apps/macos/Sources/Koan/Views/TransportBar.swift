@@ -336,7 +336,7 @@ struct SeekBar: View {
                         }
                         .onEnded { value in
                             guard player.canSeek else { return player.explainUnseekable() }
-                            player.seek(fraction: (value.location.x / geo.size.width).clamped())
+                            player.endScrub(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
                 #endif

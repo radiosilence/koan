@@ -1,0 +1,1 @@
+- **Search answers as you type.** In the GUI app the search box, and the album, artist and track browsers' filters, ask on every keystroke instead of waiting for typing to pause, and the search reads its three kinds side by side with each kind's matches checked once; over 30,000 tracks a keystroke's results draw in about 30 ms rather than 150.

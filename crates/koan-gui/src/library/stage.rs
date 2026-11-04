@@ -28,14 +28,25 @@ impl LibraryStage {
         // A page is dropped when the shell shows a page of its own, so a
         // hidden grid neither reloads nor keeps its sleeves ranked on screen;
         // its place comes back from the navigator's offsets.
-        let subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
+        let mut subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
             show_record(nav.read(cx).current(cx), cx);
             if !Self::draws(nav.read(cx).current(cx)) {
                 this.page = None;
+                this.focus_on_arrival = false;
                 this.controls.update(cx, |c, cx| c.clear(cx));
             }
             cx.notify();
         })];
+        // Gone with its window (closed, the app kept running): no record's
+        // page shows, and the windows left follow the playing record.
+        subscriptions.push(cx.on_release(|_, cx| {
+            if cx
+                .try_global::<crate::root::ShownRecord>()
+                .is_some_and(|s| s.0.is_some())
+            {
+                cx.set_global(crate::root::ShownRecord(None));
+            }
+        }));
         show_record(lib.nav.read(cx).current(cx), cx);
         Self {
             lib,
@@ -53,10 +64,19 @@ impl LibraryStage {
         self.page_focus.clone()
     }
 
-    /// The next page made takes the keyboard: the shell has just moved to
-    /// it.
-    pub fn focus_on_arrival(&mut self) {
-        self.focus_on_arrival = true;
+    /// The page showing takes the keyboard: at once when it is already
+    /// made (back from the shortcuts or the artwork viewer), else as the
+    /// stage makes it. Only a page about to be made is waited for, so a wait
+    /// never outlives the frame and takes the keyboard from a field later.
+    pub fn take_keyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.lib.nav.read(cx).current(cx);
+        match (&self.page, &self.page_focus) {
+            (Some((page, _)), Some(focus)) if *page == current => {
+                self.focus_on_arrival = false;
+                window.focus(focus, cx);
+            }
+            _ => self.focus_on_arrival = true,
+        }
     }
 
     /// What the library's pages read and act through.

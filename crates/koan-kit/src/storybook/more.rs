@@ -1,22 +1,22 @@
 //! The storybook's pages for containers and moving parts: collections,
 //! tables and lists, panels and sheets, motion and drag.
 
-use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use crate::components::field::FieldState as InputState;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
     Align, BarLevels, Burst, Collection, CollectionSection, CollectionWidth, Column, CommandBar,
-    CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget,
-    EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector, KoanContextMenu,
-    MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars,
-    Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader, SectionHeading, Sheen,
-    ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel, SuggestionRow,
-    SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text,
-    name_line, plain_text, table_list,
+    CommandResults, CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip,
+    DropTarget, EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector,
+    KoanContextMenu, MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton,
+    PlayingBars, Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader,
+    SectionHeading, Sheen, ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel,
+    SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action,
+    link_text, name_line, plain_text, table_list,
 };
-use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
+use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What the components on these pages hold.
 pub struct State {
@@ -161,7 +161,11 @@ impl StoryContent {
                             .flex()
                             .flex_col()
                             .gap(look.space(Space::Xs))
-                            .child(TileArt::new(grid.side, TileSleeve::Colour(colour)))
+                            .child(TileArt::new(
+                                ("grid-tile", index),
+                                grid.side,
+                                TileSleeve::Colour(colour),
+                            ))
                             .child(text(
                                 ["Low Tide Arcade", "Breakwater", "Coin Return"][index],
                                 TypeRole::Control,
@@ -237,6 +241,27 @@ impl StoryContent {
             Story::Lists => {
                 let ink = look.palette.ink.hsla();
                 vec![
+                    SectionHeader::new(
+                        "The scrollbar: shown as it scrolls or under the pointer, faded out after a rest",
+                    )
+                    .into_any_element(),
+                    div()
+                        .w(look.spaced(260.0))
+                        .h(look.spaced(160.0))
+                        .border(look.hairline)
+                        .border_color(look.palette.rule.hsla())
+                        .child(crate::components::ScrollArea::new(
+                            "story-scrollbar",
+                            div().flex().flex_col().children((1..=40).map(|n| {
+                                div()
+                                    .px(look.space(Space::M))
+                                    .py(look.space(Space::Xs))
+                                    .text_role(TypeRole::Body, look)
+                                    .text_color(look.palette.ink.hsla())
+                                    .child(format!("Track {n}"))
+                            })),
+                        ))
+                        .into_any_element(),
                     SectionHeader::new("Navigation headings and notes").into_any_element(),
                     div()
                         .w(look.spaced(240.0))
@@ -357,6 +382,11 @@ impl StoryContent {
                     CopyText::new("story-copy-text", "koan.rocks/pair/7KQ2-M9XD")
                         .help("copy the link")
                         .into_any_element(),
+                    SectionHeader::new("Popover panel").into_any_element(),
+                    crate::components::popover_panel(240.0, look)
+                        .child(div().child("Codec: FLAC"))
+                        .child(div().child("Sample rate: 96 kHz"))
+                        .into_any_element(),
                     SectionHeader::new("Filter field and suggestions").into_any_element(),
                     div()
                         .relative()
@@ -400,34 +430,37 @@ impl StoryContent {
                     frame(420.0)
                         .relative()
                         .child(
-                            CommandBar::new("story-command", &self.more.command)
-                                .section(
-                                    "Records",
-                                    vec![
-                                        SuggestionRow::new("story-command-1", "Polar Bear")
-                                            .detail("Polar Bear")
-                                            .figure("2008")
-                                            .icon(Icon::Album),
-                                        SuggestionRow::new("story-command-2", "Peepers")
-                                            .detail("Polar Bear")
-                                            .figure("2010")
-                                            .icon(Icon::Album)
-                                            .picked(true),
-                                    ],
-                                )
-                                .section(
-                                    "Artists",
-                                    vec![
-                                        SuggestionRow::new("story-command-3", "Polar Bear")
-                                            .icon(Icon::Artist),
-                                    ],
-                                )
-                                .lit(Some(0))
-                                .key("↩", "play")
-                                .key("⌘↩", "play next")
-                                .key("⌥↩", "add to queue")
-                                .key("⇥", "tick")
-                                .key("esc", "clear"),
+                            CommandBar::new("story-command", CommandBar::field(&self.more.command))
+                                .results(
+                                    CommandResults::new("story-command-results")
+                                        .section(
+                                            "Records",
+                                            vec![
+                                                SuggestionRow::new("story-command-1", "Polar Bear")
+                                                    .detail("Polar Bear")
+                                                    .figure("2008")
+                                                    .icon(Icon::Album),
+                                                SuggestionRow::new("story-command-2", "Peepers")
+                                                    .detail("Polar Bear")
+                                                    .figure("2010")
+                                                    .icon(Icon::Album)
+                                                    .picked(true),
+                                            ],
+                                        )
+                                        .section(
+                                            "Artists",
+                                            vec![
+                                                SuggestionRow::new("story-command-3", "Polar Bear")
+                                                    .icon(Icon::Artist),
+                                            ],
+                                        )
+                                        .lit(Some(0))
+                                        .key("↩", "play")
+                                        .key("⌘↩", "play next")
+                                        .key("⌥↩", "add to queue")
+                                        .key("⇥", "tick")
+                                        .key("esc", "clear"),
+                                ),
                         )
                         .into_any_element(),
                     SectionHeader::new("Inspector and synced lines").into_any_element(),
@@ -635,10 +668,25 @@ impl StoryContent {
                     frame(340.0)
                         .relative()
                         .overflow_hidden()
+                        // The stage is the prism's window: its size, as laid
+                        // out, is what the spots and hearts are placed in.
+                        .child({
+                            let prism = prism.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    prism.window(
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    )
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
                         .child(overlay(prism.wash().size_full().into_any_element()))
                         .child(overlay(prism.disco().size_full().into_any_element()))
                         .child(overlay(prism.party().size_full().into_any_element()))
-                        .child(overlay(prism.pulse().size_full().into_any_element()))
                         .child(
                             div()
                                 .absolute()
@@ -711,7 +759,7 @@ impl StoryContent {
                             Slider::new("story-trail", 0.62)
                                 .compact()
                                 .glide(&self.more.glide)
-                                .prism(true),
+                                .prism(Some(false)),
                         )
                         .into_any_element(),
                 ]

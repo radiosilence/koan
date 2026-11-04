@@ -6,8 +6,8 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use koan_ffi::{Album, Track};
 use koan_kit::app::*;
+use koan_runtime::{Album, Track};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 
@@ -93,8 +93,13 @@ pub struct AlbumPage {
     scroll: UniformListScrollHandle,
     /// The keyboard's place among the tracks.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
+    /// The list takes the keyboard at the next frame: a track was picked
+    /// for it from the search box.
+    take_focus: bool,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
@@ -115,6 +120,12 @@ impl AlbumPage {
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
+            // A track picked for this record while it is already showing.
+            cx.observe(&lib.nav, |this, _, cx| {
+                if !this.tracks.is_empty() {
+                    this.take_pick(cx);
+                }
+            }),
             cx.subscribe(&lib.covers, |this, _, gone: &super::covers::Evicted, cx| {
                 let tracks: std::collections::HashSet<i64> = gone.tracks.iter().copied().collect();
                 this.selection
@@ -139,12 +150,14 @@ impl AlbumPage {
             _slow: None,
             scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
+            take_focus: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
             menu: None,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -184,19 +197,57 @@ impl AlbumPage {
                     Ok(page) if page.album.is_some() => {
                         this.lines = lines(&page.tracks);
                         this.album = page.album;
+                        let ids = |t: &[Track]| -> Vec<i64> { t.iter().map(|t| t.id).collect() };
+                        this.cursor.relocate(&ids(&this.tracks), &ids(&page.tracks));
                         this.tracks = page.tracks;
                         this.gone = None;
+                        this.take_pick(cx);
                     }
-                    Ok(_) => this.gone = Some(false),
+                    Ok(_) => {
+                        this.gone = Some(false);
+                        this.drop_pick(cx);
+                    }
                     Err(e) => {
                         log::warn!("album {id}: {e}");
                         this.gone = Some(true);
+                        this.drop_pick(cx);
                     }
                 }
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// The record did not load: a track picked for it has nowhere to be.
+    fn drop_pick(&mut self, cx: &mut Context<Self>) {
+        let album = self.album_id;
+        if self.lib.nav.read(cx).pick.is_some_and(|(a, _)| a == album) {
+            self.lib.nav.update(cx, |nav, _| nav.pick = None);
+        }
+    }
+
+    /// A track picked for this record in the search box: the cursor and the
+    /// selection on it, as a click on its row puts them, and scrolled into
+    /// view.
+    fn take_pick(&mut self, cx: &mut Context<Self>) {
+        let Some((album, track)) = self.lib.nav.read(cx).pick else {
+            return;
+        };
+        if album != self.album_id {
+            return;
+        }
+        self.lib.nav.update(cx, |nav, _| nav.pick = None);
+        let Some(index) = self.tracks.iter().position(|t| t.id == track) else {
+            return;
+        };
+        self.cursor.click(index, false);
+        self.selection.only(Playable::Track(track));
+        super::keys::KeyedList::reveal(self, index, cx);
+        self.take_focus = true;
+        // Drawn now, focus included: a record already showing has nothing
+        // else to redraw it.
+        cx.notify();
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
@@ -237,7 +288,22 @@ impl AlbumPage {
         let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
+                // A heading to a screen reader, carrying the reveal on to the
+                // tracks below it as their rows do.
+                let scroll = self.scroll.clone();
+                let count = self.lines.len();
+                let list_view = cx.entity_id();
                 return div()
+                    .id(("disc", i))
+                    .role(a11y::Role::Heading)
+                    .aria_label(title.clone())
+                    .aria_level(3)
+                    .when(p.a11y, |d| {
+                        d.on_a11y_action(a11y::AccessibleAction::ScrollIntoView, move |_, _, cx| {
+                            Reveal::Uniform(scroll.clone(), i, count).run();
+                            cx.notify(list_view);
+                        })
+                    })
                     .w_full()
                     .h(height)
                     .flex()
@@ -272,7 +338,7 @@ impl AlbumPage {
             drag,
             kind,
             note: None,
-            cursor: self.keyed && self.cursor.at == Some(index),
+            cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             place: Some((index, self.tracks.len())),
             reveal: p
                 .a11y
@@ -292,8 +358,8 @@ impl AlbumPage {
         let side = RowMetrics::header_art(&p.look);
         let key = Key::new(Art::Album(self.album_id), side, window.scale_factor());
         let owner = cx.entity_id();
-        let sleeve = self.lib.covers.update(cx, |c: &mut Covers, _| {
-            c.request(owner, [(key, Priority::Visible)]);
+        let sleeve = self.lib.covers.update(cx, |c: &mut Covers, cx| {
+            c.request(owner, [(key, Priority::Visible)], cx);
             c.sleeve(key)
         });
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
@@ -398,6 +464,10 @@ impl actions::Menus for AlbumPage {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for AlbumPage {
@@ -418,8 +488,7 @@ impl TrackList for AlbumPage {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -514,12 +583,16 @@ impl Render for AlbumPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(crate::components::Spinner::new(
-                    p.look.font_size(crate::theme::TypeRole::Body),
-                ))
+                .child(
+                    crate::components::Spinner::new(p.look.font_size(crate::theme::TypeRole::Body))
+                        .announced("record-loading", "loading the record"),
+                )
                 .into_any_element(),
             _ => div().into_any_element(),
         };
+        if std::mem::take(&mut self.take_focus) {
+            window.focus(&self.focus, cx);
+        }
         self.keyed = self.focus.is_focused(window);
         actions::list_menu(
             super::keys::keyed(
@@ -527,6 +600,7 @@ impl Render for AlbumPage {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -551,6 +625,10 @@ impl super::keys::KeyedList for AlbumPage {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.tracks.len()
     }
@@ -558,7 +636,7 @@ impl super::keys::KeyedList for AlbumPage {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }
@@ -588,7 +666,12 @@ impl super::keys::KeyedList for AlbumPage {
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
         self.menu = ix.map(|ix| {
             let track = &self.tracks[ix];
-            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Track(track.id),
+                track.album_id,
+                None,
+            )
         });
     }
 }

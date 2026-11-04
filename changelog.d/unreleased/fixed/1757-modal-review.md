@@ -1,1 +1,0 @@
-- **Keys no longer act behind a question or a menu in the desktop app.** Space with a confirmation up used to play or pause the music. Following the playing track survives a track that is still downloading, and the sidebar's foot says when sharing this computer's library failed.

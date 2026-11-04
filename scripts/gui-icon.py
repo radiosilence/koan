@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """The desktop app's icons, from crates/koan-gui/packaging/AppIcon.svg.
 
-AppIcon.svg is the one drawing. From it this writes AppIcon-launch.svg, the
-icon a build outside a bundle sets at launch: the tile on Apple's macOS icon
-grid with the template's shadow, the drawing inlined rather than referenced,
-so every renderer draws it. Then it renders AppIcon.icns (macOS) and
-AppIcon-launch.png with rsvg-convert.
+AppIcon.svg is the one drawing, the installed app's icon. It renders to
+AppIcon.icns (macOS) with rsvg-convert.
 
-At 16 and 32 pixels the spindle at the circle's centre is drawn larger: at
-its own size it is under a pixel there, and the desktop app's icon would be
-the Mac app's.
+AppIcon-dev.svg and AppIcon-dev.icns are the same drawing with a spindle at
+the circle's centre, the icon of the dev bundle, so a dev build is told apart
+from the installed app in the Dock. AppIcon-launch.svg is the dev drawing as
+a build outside a bundle sets it at launch, which only a dev build is: the
+tile on Apple's macOS icon grid with the template's shadow, the drawing
+inlined rather than referenced, so every renderer draws it; AppIcon-launch.png
+is its render. At 16 and 32 pixels the spindle is drawn
+larger: at its own size it is under a pixel there.
 
-    scripts/gui-icon.py           write the launch SVG, the .icns and the PNG
+    scripts/gui-icon.py           write the SVGs, the .icns files and the PNG
     scripts/gui-icon.py --check   fail if any of them differs from AppIcon.svg
 """
 
@@ -30,6 +32,8 @@ SOURCE = os.path.join(DIR, "AppIcon.svg")
 LAUNCH_SVG = os.path.join(DIR, "AppIcon-launch.svg")
 LAUNCH_PNG = os.path.join(DIR, "AppIcon-launch.png")
 ICNS = os.path.join(DIR, "AppIcon.icns")
+DEV_SVG = os.path.join(DIR, "AppIcon-dev.svg")
+DEV_ICNS = os.path.join(DIR, "AppIcon-dev.icns")
 
 # Apple's macOS icon grid at 1024: the tile 824 wide, centred, and its shadow
 # 10 down with a blur of 10. Halved for the 512 canvas.
@@ -39,6 +43,10 @@ SHADOW_DY = 5
 SHADOW_SIGMA = 2.5
 
 SPINDLE = re.compile(r'(<circle cx="256" cy="253" r=")15(")')
+SPINDLE_SVG = """    <!-- A spindle at the circle's centre, so the circle reads as a record. -->
+    <circle cx="256" cy="253" r="15" fill="#EDEAE2"/>
+  </g>
+</svg>"""
 # A spindle of at least a pixel and a half across at 16 pixels.
 SMALL_SPINDLE = 36
 
@@ -82,9 +90,12 @@ def launch_svg(source: str) -> str:
 """
 
 
+def dev(source: str) -> str:
+    head, tail = source.rsplit("  </g>\n</svg>", 1)
+    return head + SPINDLE_SVG + tail
+
+
 def small(source: str) -> str:
-    if not SPINDLE.search(source):
-        sys.exit("gui-icon: the spindle in AppIcon.svg has moved; update SPINDLE")
     return SPINDLE.sub(rf"\g<1>{SMALL_SPINDLE}\g<2>", source)
 
 
@@ -92,27 +103,40 @@ def render(svg: str, px: int, out: str) -> None:
     subprocess.run(["rsvg-convert", "-w", str(px), "-h", str(px), svg, "-o", out], check=True)
 
 
-def build(into: str) -> tuple[str, str, str | None]:
-    """The launch SVG, the launch PNG and the .icns (None off macOS), in `into`."""
+def iconset(source_svg: str, small_svg: str, into: str, name: str) -> str:
+    """`name`.icns from the iconset, small sizes drawn from `small_svg`."""
+    folder = os.path.join(into, f"{name}.iconset")
+    os.mkdir(folder)
+    for px, entry in ICONSET:
+        render(small_svg if px <= 32 else source_svg, px, os.path.join(folder, f"{entry}.png"))
+    icns = os.path.join(into, f"{name}.icns")
+    subprocess.run(["iconutil", "-c", "icns", folder, "-o", icns], check=True)
+    return icns
+
+
+def build(into: str) -> list[str | None]:
+    """The launch SVG, launch PNG, .icns, dev SVG and dev .icns (the .icns None off macOS), in `into`."""
     with open(SOURCE) as f:
         source = f.read()
     launch = os.path.join(into, "AppIcon-launch.svg")
     with open(launch, "w") as f:
-        f.write(launch_svg(source))
-    small_svg = os.path.join(into, "AppIcon-small.svg")
-    with open(small_svg, "w") as f:
-        f.write(small(source))
+        f.write(launch_svg(dev(source)))
     png = os.path.join(into, "AppIcon-launch.png")
     render(launch, 1024, png)
+    dev_source = dev(source)
+    if not SPINDLE.search(dev_source):
+        sys.exit("gui-icon: the spindle has moved; update SPINDLE")
+    dev_svg = os.path.join(into, "AppIcon-dev.svg")
+    with open(dev_svg, "w") as f:
+        f.write(dev_source)
     if not shutil.which("iconutil"):
-        return launch, png, None
-    iconset = os.path.join(into, "AppIcon.iconset")
-    os.mkdir(iconset)
-    for px, name in ICONSET:
-        render(small_svg if px <= 32 else SOURCE, px, os.path.join(iconset, f"{name}.png"))
-    icns = os.path.join(into, "AppIcon.icns")
-    subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns], check=True)
-    return launch, png, icns
+        return [launch, png, None, dev_svg, None]
+    small_svg = os.path.join(into, "AppIcon-dev-small.svg")
+    with open(small_svg, "w") as f:
+        f.write(small(dev_source))
+    icns = iconset(SOURCE, SOURCE, into, "AppIcon")
+    dev_icns = iconset(dev_svg, small_svg, into, "AppIcon-dev")
+    return [launch, png, icns, dev_svg, dev_icns]
 
 
 def main() -> None:
@@ -122,7 +146,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as into:
         made = build(into)
         stale = []
-        for built, kept in zip(made, (LAUNCH_SVG, LAUNCH_PNG, ICNS)):
+        for built, kept in zip(made, (LAUNCH_SVG, LAUNCH_PNG, ICNS, DEV_SVG, DEV_ICNS)):
             if built is None:
                 continue
             if check:

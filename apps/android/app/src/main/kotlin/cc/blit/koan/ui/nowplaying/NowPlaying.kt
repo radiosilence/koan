@@ -32,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -311,9 +312,20 @@ private fun Modifier.link(enabled: Boolean, label: String? = null, onClick: () -
     if (enabled) clickable(interactionSource = null, indication = null, onClickLabel = label, role = Role.Button, onClick = onClick) else this
 
 /**
- * The seek bar. Counts on from the playhead's anchor; a drag holds the thumb
- * where it was let go until the engine sends the next anchor, so it does not
- * jump back to the old place and forward again.
+ * A thumb let go. On this device `after` is the seek count it waits past;
+ * while another device is controlled, whose reports answer no seek, `after`
+ * is null and it stands only until the command is sent. `release` tells a
+ * late send from a later release.
+ */
+private data class LetGo(val share: Float, val after: Long?, val release: Int)
+
+/**
+ * The seek bar. Counts on from the engine's playhead anchor and predicts
+ * nothing. A thumb let go on this device stands where it was let go until the
+ * engine answers the seek: the first playhead whose `seek` count is past the
+ * one it waits for, wherever that put the playhead. A playhead from before
+ * the seek leaves it standing. A second release before the first is answered
+ * waits past the first's answer.
  */
 @Composable
 private fun SeekBar(now: NowPlaying?) {
@@ -322,18 +334,39 @@ private fun SeekBar(now: NowPlaying?) {
     val duration = now.length()
     val position = rememberPosition(playhead, duration)
     var dragging by remember { mutableStateOf<Float?>(null) }
-    var landing by remember { mutableStateOf<Float?>(null) }
-    LaunchedEffect(playhead) { landing = null }
-    val held = dragging ?: landing
+    val target = app.mirror.devices.collectAsStateWithLifecycle().value.target
+    var letGo by remember { mutableStateOf<LetGo?>(null) }
+    var waiting by remember { mutableStateOf<Long?>(null) }
+    var releases by remember { mutableIntStateOf(0) }
+    LaunchedEffect(playhead) {
+        if (waiting?.let { playhead.seek > it } == true) waiting = null
+        if (letGo?.after?.let { playhead.seek > it } == true) letGo = null
+    }
+    // A thumb let go for one device is not held on another.
+    LaunchedEffect(target) {
+        letGo = null
+        waiting = null
+    }
+    val held = dragging ?: letGo?.share
     val fraction = held ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shown = if (held != null) (held * duration).toLong() else position
     KoanSlider(
         value = fraction,
         onValueChange = { dragging = it },
         onValueChangeFinished = {
-            dragging?.let {
-                landing = it
-                app.player.seek((it * duration).toLong())
+            dragging?.let { share ->
+                val ms = (share * duration).toLong()
+                releases += 1
+                val release = releases
+                if (target == null) {
+                    val after = waiting?.let { maxOf(playhead.seek, it + 1) } ?: playhead.seek
+                    waiting = after
+                    letGo = LetGo(share, after, release)
+                    app.player.seek(ms)
+                } else {
+                    letGo = LetGo(share, null, release)
+                    app.player.seek(ms) { if (letGo?.release == release) letGo = null }
+                }
             }
             dragging = null
         },

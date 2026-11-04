@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui_kit::{
+use gpui::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -16,6 +16,7 @@ pub struct Segmented {
     id: ElementId,
     options: Vec<SharedString>,
     selected: usize,
+    name: Option<SharedString>,
     on_change: Option<Handler<usize>>,
 }
 
@@ -29,8 +30,16 @@ impl Segmented {
             id: id.into(),
             options: options.into_iter().map(label).collect(),
             selected,
+            name: None,
             on_change: None,
         }
+    }
+
+    /// What it chooses, for a screen reader: "sign in with". Its id, read
+    /// as words, otherwise.
+    pub fn named(mut self, name: impl AsRef<str>) -> Self {
+        self.name = Some(label(name));
+        self
     }
 
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
@@ -46,7 +55,15 @@ impl RenderOnce for Segmented {
         let selected = self.selected;
         let count = self.options.len();
         let accent = look.accent.hsla();
-        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, None)
+        let name = self.name.clone().or_else(|| super::spoken_id(&self.id));
+        // The option chosen before, so the new one draws its mark in from
+        // the side the last stood on, as if the mark had moved across.
+        let was = window.use_keyed_state(super::child(&self.id, "was"), cx, |_, _| selected);
+        let before = *was.read(cx);
+        if before != selected {
+            was.update(cx, |w, _| *w = selected);
+        }
+        let mut row = accessible(div().id(self.id.clone()), gpui::Role::RadioGroup, name)
             .relative()
             .flex()
             .items_center()
@@ -56,6 +73,14 @@ impl RenderOnce for Segmented {
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
             let answers = super::Answerer::of(&key, window, cx);
             let chosen = index == selected;
+            // The option coming to be chosen draws its mark in from the side
+            // the last choice stood, by click or by the arrows alike.
+            if chosen {
+                let from_leading = before <= index;
+                answers.follow(1, super::Answer::Slide(from_leading), accent, window, cx);
+            } else {
+                answers.note(0, cx);
+            }
             let edge = fade(
                 ElementId::NamedChild(Arc::new(key.clone()), "edge".into()),
                 chosen,
@@ -74,7 +99,7 @@ impl RenderOnce for Segmented {
             );
             let mut option = accessible(
                 div().id(index),
-                gpui_kit::Role::RadioButton,
+                gpui::Role::RadioButton,
                 Some(option.clone()),
             )
             .aria_toggled(toggled(index == selected))
@@ -91,16 +116,9 @@ impl RenderOnce for Segmented {
             .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-                let choose: Handler<gpui_kit::ClickEvent> = {
+                let choose: Handler<gpui::ClickEvent> = {
                     let on_change = on_change.clone();
-                    let answers = answers.clone();
-                    // The chosen option's mark draws in from its leading edge.
-                    Arc::new(move |_, window, cx| {
-                        if index != selected {
-                            answers.start(super::Answer::Sweep, accent, cx);
-                        }
-                        on_change(&index, window, cx)
-                    })
+                    Arc::new(move |_, window, cx| on_change(&index, window, cx))
                 };
                 option = answers_click(option, choose.clone())
                     .cursor_pointer()
@@ -130,8 +148,8 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use gpui_kit::accesskit::Action;
-    use gpui_kit::{IntoElement, TestAppContext, VisualTestContext, point};
+    use gpui::accesskit::Action;
+    use gpui::{IntoElement, TestAppContext, VisualTestContext, point};
 
     use super::*;
     use crate::components::testing::{act, bounds, click_at, node, redraw, stage, tree};
@@ -149,11 +167,15 @@ mod tests {
         cx
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_radio_group_of_options_one_toggled(cx: &mut TestAppContext) {
         let cx = looks(cx, Rc::new(Cell::new(1)));
         assert!(tree(cx).to_string().contains("RadioGroup"));
-        for (name, at, on) in [("kōan", 1, "False"), ("system", 2, "True"), ("plain", 3, "False")] {
+        for (name, at, on) in [
+            ("kōan", 1, "False"),
+            ("system", 2, "True"),
+            ("plain", 3, "False"),
+        ] {
             let (_, option) = node(cx, name);
             assert_eq!(option["role"], "RadioButton");
             assert_eq!(option["toggled"], on, "{name}");
@@ -162,12 +184,12 @@ mod tests {
         }
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_click_chooses_an_option(cx: &mut TestAppContext) {
         let chosen = Rc::new(Cell::new(0));
         let cx = looks(cx, chosen.clone());
         let b = bounds(cx, "look");
-        click_at(cx, point(b.right() - gpui_kit::px(4.), b.center().y));
+        click_at(cx, point(b.right() - gpui::px(4.), b.center().y));
         assert_eq!(chosen.get(), 2);
         redraw(cx);
         assert_eq!(node(cx, "plain").1["toggled"], "True");
@@ -175,7 +197,7 @@ mod tests {
         assert_eq!(chosen.get(), 0);
     }
 
-    #[gpui_kit::test]
+    #[gpui::test]
     fn arrows_move_the_choice_and_stop_at_the_ends(cx: &mut TestAppContext) {
         let chosen = Rc::new(Cell::new(0));
         let cx = looks(cx, chosen.clone());

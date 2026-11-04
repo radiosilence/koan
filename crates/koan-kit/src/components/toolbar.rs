@@ -2,8 +2,8 @@
 //! SwiftUI's `ToolbarItem` placements are, at the toolbar's height and gaps;
 //! and the toolbar button, a glyph in a 36-point cell.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, KoanTheme, Look};
@@ -100,7 +100,7 @@ impl Toolbar {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        super::accessible(div().id("toolbar"), gpui_kit::Role::Toolbar, None)
+        super::accessible(div().id("toolbar"), gpui::Role::Toolbar, None)
             .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()
@@ -197,34 +197,39 @@ impl ParentElement for ToolbarGroup {
 
 impl RenderOnce for ToolbarGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        // One row, the groups apart by a fixed spacer: every item is the
+        // row's own, so when the toolbar is narrow a filter field gives up
+        // its width down to its minimum while buttons and spacers keep
+        // theirs. Nested rows would each count the field's whole measure as
+        // the least they can be, and shrinking them would squeeze the
+        // buttons' rows too. The row itself may shrink below its content
+        // (`min_w_0`) for the same reason.
+        let spacer = ToolbarMetrics::SPACER - ToolbarMetrics::GROUP_GAP * 2.;
+        let mut items: Vec<AnyElement> = Vec::new();
+        for group in self.groups.into_iter().filter(|g| !g.is_empty()) {
+            if !items.is_empty() {
+                items.push(div().flex_none().w(spacer).into_any_element());
+            }
+            items.extend(group);
+        }
         div()
-            .flex_none()
+            .flex_shrink_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap(ToolbarMetrics::SPACER)
-            .children(
-                self.groups
-                    .into_iter()
-                    .filter(|g| !g.is_empty())
-                    .map(|group| {
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(ToolbarMetrics::GROUP_GAP)
-                            .children(group)
-                    }),
-            )
+            .gap(ToolbarMetrics::GROUP_GAP)
+            .children(items)
     }
 }
 
-/// A toolbar's button: the glyph in `ink` in a 36-point cell, `surface`
-/// under the pointer and `hover` pressed; the word in its place with icons
+/// A toolbar's button: the glyph in `ink` in a 36-point cell with no ground.
+/// Only its colour answers: `strong` under the pointer, the accent pressed,
+/// arriving at once and fading on leaving. Selected it rests at `strong` and
+/// the pointer takes it to the accent. The word takes its place with icons
 /// off.
 #[derive(IntoElement)]
 pub struct ToolbarButton {
     button: Button,
-    selected: bool,
 }
 
 impl ToolbarButton {
@@ -232,7 +237,6 @@ impl ToolbarButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon, label: impl AsRef<str>) -> Self {
         Self {
             button: Button::new(id, ButtonKind::Toolbar).icon(icon).label(label),
-            selected: false,
         }
     }
 
@@ -247,11 +251,10 @@ impl ToolbarButton {
         self
     }
 
-    /// Drawn pressed: a toggle that is on, or a menu or panel it opened
-    /// that is showing.
+    /// Drawn on, in `strong`: a toggle that is on, or a menu or panel it
+    /// opened that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
-        self.selected = selected;
         self
     }
 
@@ -265,13 +268,9 @@ impl ToolbarButton {
 }
 
 /// A popover's trigger: drawn pressed while what it opened shows.
-impl gpui_kit::base::Selectable for ToolbarButton {
+impl super::Selectable for ToolbarButton {
     fn selected(self, selected: bool) -> Self {
         ToolbarButton::selected(self, selected)
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
     }
 }
 
@@ -314,32 +313,10 @@ impl ToolbarMenu {
 impl RenderOnce for ToolbarMenu {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let content = self.content;
-        opens_panel(self.id, self.button, move |dismiss, window, cx| {
+        super::opens_panel(self.id, self.button, move |dismiss, window, cx| {
             content(dismiss, window, cx).into_any_element()
         })
     }
-}
-
-/// A control that opens a panel under it, made each time it opens: a
-/// toolbar's menu, a filter's choices, the selection's playlists. The
-/// trigger is drawn pressed while the panel shows; the panel's rows call
-/// the `Dismiss` they are given before they act. A press outside closes it.
-pub fn opens_panel<T: gpui_kit::base::Selectable + IntoElement + 'static>(
-    id: impl Into<ElementId>,
-    trigger: T,
-    content: impl Fn(Dismiss, &mut Window, &mut App) -> AnyElement + 'static,
-) -> impl IntoElement {
-    gpui_kit::component::popover::Popover::new(id)
-        .appearance(false)
-        .arrow(false)
-        .trigger(trigger)
-        .content(move |_, window, cx| {
-            let state = cx.weak_entity();
-            let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
-                state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
-            });
-            content(dismiss, window, cx)
-        })
 }
 
 /// A word that opens a panel (`opens_panel`): a filter's value, "add to
@@ -362,14 +339,10 @@ impl TextTrigger {
     }
 }
 
-impl gpui_kit::base::Selectable for TextTrigger {
+impl super::Selectable for TextTrigger {
     fn selected(mut self, selected: bool) -> Self {
         self.open = selected;
         self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.open
     }
 }
 

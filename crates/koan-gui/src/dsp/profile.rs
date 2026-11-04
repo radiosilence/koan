@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{
+use koan_kit::app::input::{InputEvent, InputState};
+use koan_kit::app::*;
+use koan_runtime::{
     DspDeviceAction, DspEarKind, DspLayerInfo, DspOverview, DspProfileDetail, DspRole,
     DspTargetName, DspTargetOption, DspTargets, DspTuningEntry,
 };
-use koan_kit::app::input::{InputEvent, InputState};
-use koan_kit::app::*;
 
 use super::bands::{self, Fields};
 use super::graph::{Editing, Graph, Part, Stroke};
@@ -326,7 +326,7 @@ impl ProfileBody {
 
     fn sync_graph(
         &mut self,
-        response: Option<koan_ffi::DspResponse>,
+        response: Option<koan_runtime::DspResponse>,
         stamp: (u64, u64),
         cx: &mut Context<Self>,
     ) {
@@ -351,7 +351,11 @@ impl ProfileBody {
     /// from the tuning alone: with the target difference its Made against
     /// asks for, so a wrong choice shows as a preference doubled or taken
     /// out.
-    fn on_correction(&self, d: &DspProfileDetail, r: Option<&koan_ffi::DspResponse>) -> Vec<Part> {
+    fn on_correction(
+        &self,
+        d: &DspProfileDetail,
+        r: Option<&koan_runtime::DspResponse>,
+    ) -> Vec<Part> {
         let (Some(r), Some(db)) = (r, self.previews.get(d.tuned_for.as_deref().unwrap_or("")))
         else {
             return Vec::new();
@@ -454,7 +458,7 @@ impl ProfileBody {
         let (device, shown) = self.target_device(cx)?;
         let in_chain = shown.chain.iter().any(|e| e.name == d.name);
         let action =
-            koan_ffi::dsp_device_action(d.name.clone(), d.role, shown.active.clone(), in_chain);
+            koan_runtime::dsp_device_action(d.name.clone(), d.role, shown.active.clone(), in_chain);
         let words = match action {
             DspDeviceAction::StopCorrecting => "Stop using for",
             DspDeviceAction::MoveToFilters => "Play it in the filters instead on",
@@ -524,7 +528,7 @@ impl ProfileBody {
             let from2 = from.clone();
             d.act_then(
                 cx,
-                move |e| async move { e.dsp_save_as_copy(from2, (!new.is_empty()).then_some(new), kept, on).await },
+                move |e| e.dsp_save_as_copy(from2, (!new.is_empty()).then_some(new), kept, on),
                 move |copy, cx| {
                     let Some(copy) = copy else { return };
                     this.update(cx, |p, cx| {
@@ -838,7 +842,7 @@ impl ProfileBody {
     fn channels(
         &self,
         d: &DspProfileDetail,
-        layout: koan_ffi::DspChannelLayout,
+        layout: koan_runtime::DspChannelLayout,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1039,12 +1043,15 @@ impl ProfileBody {
                                 .map(|t| t.name.clone())
                                 .unwrap_or_else(|| id.clone())
                         };
+                        // Cells of one width, so the previews stand in
+                        // columns; a long name ends in an ellipsis.
                         div()
+                            .w(look.spaced(150.0))
                             .flex()
                             .flex_col()
                             .gap(look.spaced(2.0))
                             .child(thumb(db.clone(), Stroke::eq(1), Some(range)))
-                            .child(note(name, Tone::Muted, &look))
+                            .child(note(name, Tone::Muted, &look).truncate())
                     });
                 rows.push(
                     div()
@@ -1365,9 +1372,11 @@ impl ProfileBody {
                             .text_color(look.palette.ink.hsla())
                             .child(layer.profile.clone()),
                     )
-                    .children(
-                        role.map(|r| Badge::new(role_label(r)).accent(r == DspRole::Correction)),
-                    )
+                    .children(role.map(|r| {
+                        Badge::new(role_label(r))
+                            .accent(r == DspRole::Correction)
+                            .key(("layer-role", i))
+                    }))
                     .child(menu(
                         ("layer-options", i),
                         label("Options"),
@@ -1544,13 +1553,14 @@ impl ProfileBody {
                             run: Rc::new(move |_, cx| {
                                 let (n, band) = (n.clone(), band.clone());
                                 dsp.update(cx, |d, cx| {
-                                    d.act(cx, move |e| async move {
-                                        match e.dsp_remove_edited(n, i as u32, band).await? {
-                                            koan_ffi::DspEdited::Changed => Err(koan_ffi::KoanError::Refused {
+                                    d.act(cx, move |e| {
+                                        let removed = e.dsp_remove_edited(n, i as u32, band);
+                                        async move { match removed.await? {
+                                            koan_runtime::DspEdited::Changed => Err(koan_runtime::KoanError::Refused {
                                                 message: "The filters changed since they were shown, so nothing was removed. They are shown again as they are now.".into(),
                                             }),
-                                            koan_ffi::DspEdited::Stored { .. } => Ok(()),
-                                        }
+                                            koan_runtime::DspEdited::Stored { .. } => Ok(()),
+                                        } }
                                     })
                                 });
                             }),
@@ -1581,8 +1591,9 @@ impl ProfileBody {
                         .on_click(move |_, _, cx| {
                             let name = name.clone();
                             dsp.update(cx, |d, cx| {
-                                d.act(cx, move |e| async move {
-                                    e.dsp_add_band(name, channel).await.map(|_| ())
+                                d.act(cx, move |e| {
+                                    let added = e.dsp_add_band(name, channel);
+                                    async move { added.await.map(|_| ()) }
                                 })
                             });
                         })
@@ -1765,7 +1776,7 @@ fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
                 c.clone(),
                 false,
             ),
-            None => line(DspRole::Correction, "None".into(), true),
+            None => line(DspRole::Correction, label("none").to_string(), true),
         })
         .when(!d.tunings.is_empty(), |el| {
             el.child(line(DspRole::Tuning, d.tunings.join(", "), false))

@@ -9,8 +9,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 use koan_kit::components::Spinner;
 use koan_kit::theme;
 
@@ -30,14 +30,13 @@ impl Render for One {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let text_system = gpui_kit::platform::current_platform(true).text_system();
+    let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
-        gpui_kit::platform::current_headless_renderer,
+        gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
     });
     let window: AnyWindowHandle = cx

@@ -39,11 +39,10 @@ fn main() {
         platform::residency::launched_at_login();
         #[cfg(target_os = "macos")]
         platform::about::icon_unbundled();
-        koan_kit::app::platform::init(cx);
         theme::init(cx);
         quit_on_signal(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
-            let engine = match koan_ffi::KoanEngine::open_desktop().await {
+            let engine = match koan_runtime::KoanEngine::open_desktop().await {
                 Ok(engine) => engine,
                 // A database from a newer koan, a configuration that does not
                 // parse, another desktop app on this configuration that got

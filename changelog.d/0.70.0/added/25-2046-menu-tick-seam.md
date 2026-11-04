@@ -1,0 +1,1 @@
+- **A menu's tick draws itself in, and a drop's line closes into the rows.** Choosing in a menu draws the new choice's tick along its stroke as a toggle's is. Rows dropped into the queue take the insertion line into the first of them, the line closing from both ends as their ground lifts.

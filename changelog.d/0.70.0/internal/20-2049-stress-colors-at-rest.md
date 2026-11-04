@@ -1,0 +1,1 @@
+- **The presenter stress test no longer fails after the accent tests.** It waits for colours an earlier test left settling to land, and refreshes the colour table at each present as a renderer does.

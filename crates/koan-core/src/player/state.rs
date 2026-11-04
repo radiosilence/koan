@@ -11,21 +11,6 @@ use crate::remote::downloads::{ByteFeed, DownloadStore};
 /// Kept back from the end of a track when seeking, so dragging the thumb all
 /// the way over lands in the last moment of it rather than in the next track.
 pub(crate) const SEEK_END_GUARD_MS: u64 = 500;
-/// How long a seek sent to the player is read as the playhead before it is
-/// given up on: long enough for a decoder to restart on a slow disk.
-const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// A seek on its way to the player.
-#[derive(Clone, Copy, Debug)]
-struct PendingSeek {
-    /// What the sender asked for, which names the command that takes it.
-    asked: u64,
-    position_ms: u64,
-    at: std::time::Instant,
-    /// The playhead was moving when it was asked for.
-    moving: bool,
-}
-
 /// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueueItemId(pub Uuid);
@@ -825,11 +810,29 @@ pub struct QueueReading {
     pub error: Option<String>,
 }
 
+/// An output opening for the player off its thread: the device asked for
+/// (`None`, the system's default) and since when. While one is, the playhead
+/// stands still, and a front end says what it waits for once it has waited a
+/// while (`OUTPUT_WAIT_NOTE`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputOpening {
+    pub device: Option<String>,
+    pub since: std::time::Instant,
+    /// An earlier attempt is still stuck in the audio system, so asking
+    /// again is refused until it returns.
+    pub stuck: bool,
+}
+
+/// How long an output may take to open before the front ends say so.
+pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Shared player state — atomics for lock-free reads from UI thread.
 ///
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The output opening, while one is (`OutputOpening`).
+    output_opening: parking_lot::Mutex<Option<OutputOpening>>,
     /// The playback state, with `WAITING` set while the player waits for a
     /// track it was asked for. One atomic, so no reader sees one updated
     /// without the other.
@@ -906,10 +909,8 @@ pub struct SharedPlayerState {
     /// own clock: where it was last heard to be, and since when it has been
     /// running from there. Read in place of the timeline while set.
     renderer_clock: parking_lot::Mutex<Option<RendererClock>>,
-    /// A seek sent to the player and not yet taken by it. Read in place of
-    /// the playhead meanwhile, so the gap between asking and the decoder
-    /// restarting never reads as the old position (`request_seek`).
-    pending_seek: parking_lot::Mutex<Option<PendingSeek>>,
+    /// How many seeks the player has taken (`seek_answered`).
+    seeks: AtomicU64,
 
     /// The UPnP renderer playing in place of the local output, if one is.
     renderer: parking_lot::RwLock<Option<crate::upnp::Output>>,
@@ -923,6 +924,27 @@ pub struct SharedPlayerState {
     sleep: parking_lot::RwLock<Option<Sleep>>,
     /// The sleep timer is fading playback out.
     sleep_fading: AtomicBool,
+    /// Whether the saved session may be written now, as the process that
+    /// owns it decides: an app holds it back until its restore has landed.
+    /// Saves from outside the player's owner, such as `savePlaybackState`,
+    /// ask it. None allows them.
+    save_gate: SaveGateSlot,
+}
+
+/// See [`SharedPlayerState::may_save_session`].
+pub type SaveGate = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// The owner's save gate, if it set one. A closure has no `Debug`, so this
+/// says only whether one is set.
+#[derive(Default)]
+struct SaveGateSlot(parking_lot::RwLock<Option<SaveGate>>);
+
+impl std::fmt::Debug for SaveGateSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SaveGateSlot")
+            .field(&self.0.read().is_some())
+            .finish()
+    }
 }
 
 /// A renderer's playhead: `position_ms`, plus the time since `running` if it
@@ -961,12 +983,25 @@ impl SharedPlayerState {
             start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
-            pending_seek: parking_lot::Mutex::new(None),
+            output_opening: parking_lot::Mutex::new(None),
+            seeks: AtomicU64::new(0),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
             sleep: parking_lot::RwLock::new(None),
             sleep_fading: AtomicBool::new(false),
+            save_gate: SaveGateSlot::default(),
         })
+    }
+
+    /// Installs the owner's rule for when the saved session may be written.
+    pub fn set_save_gate(&self, gate: SaveGate) {
+        *self.save_gate.0.write() = Some(gate);
+    }
+
+    /// Whether a save of the session from outside its owner may go ahead: the
+    /// owner's gate, or yes where it set none.
+    pub fn may_save_session(&self) -> bool {
+        self.save_gate.0.read().as_ref().is_none_or(|gate| gate())
     }
 
     // --- Playback state ---
@@ -1004,6 +1039,20 @@ impl SharedPlayerState {
         self.transport() == (PlaybackState::Stopped, false)
     }
 
+    /// The output opening, while one is.
+    pub fn output_opening(&self) -> Option<OutputOpening> {
+        self.output_opening.lock().clone()
+    }
+
+    pub(crate) fn set_output_opening(&self, opening: Option<OutputOpening>) {
+        let mut held = self.output_opening.lock();
+        if *held != opening {
+            *held = opening;
+            drop(held);
+            self.changed();
+        }
+    }
+
     /// Publish the playback state and the wait together.
     pub fn set_transport(&self, state: PlaybackState, waiting: bool) {
         let bits = state as u8 | if waiting { WAITING } else { 0 };
@@ -1015,9 +1064,6 @@ impl SharedPlayerState {
     /// Where the playhead is, read off the samples the output has played, so
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
-        if let Some(seek) = self.pending_seek() {
-            return seek;
-        }
         let clock = *self.renderer_clock.lock();
         if let Some(clock) = clock {
             let at = clock.now_ms();
@@ -1030,24 +1076,6 @@ impl SharedPlayerState {
             return playhead.position_ms;
         }
         self.position_ms.load(Ordering::Acquire)
-    }
-
-    /// Where a seek on its way to the player lands, counting on from there
-    /// while the playhead was moving. One the player never took lapses after
-    /// `SEEK_PATIENCE`, giving the playhead back.
-    pub(crate) fn pending_seek(&self) -> Option<u64> {
-        let mut pending = self.pending_seek.lock();
-        let seek = (*pending)?;
-        let since = seek.at.elapsed();
-        if since >= SEEK_PATIENCE {
-            *pending = None;
-            return None;
-        }
-        Some(if seek.moving {
-            seek.position_ms + since.as_millis() as u64
-        } else {
-            seek.position_ms
-        })
     }
 
     /// Where a seek to `position_ms` lands: held inside what has arrived of
@@ -1063,35 +1091,20 @@ impl SharedPlayerState {
         Some(position_ms.min(ceiling))
     }
 
-    /// A seek to `position_ms` is about to be sent to the player: the
-    /// playhead reads as having landed from now, for every front end, until
-    /// the player takes it (`seek_taken`). Call it before sending
-    /// `PlayerCommand::Seek` to this device's own player, and `seek_taken`
-    /// if the send fails.
-    pub fn request_seek(&self, position_ms: u64) {
-        let Some(target) = self.seek_target(position_ms) else {
-            return;
-        };
-        let moving = self.playhead_moving();
-        *self.pending_seek.lock() = Some(PendingSeek {
-            asked: position_ms,
-            position_ms: target,
-            at: std::time::Instant::now(),
-            moving,
-        });
+    /// The player has taken a seek: wherever it put the playhead (where it
+    /// was asked, clamped to what can be reached, or left where it was for
+    /// a seek declined), the playhead reads there from now. A front end that
+    /// asked for a seek after reading `seeks` knows a playhead read after the
+    /// count moved past it answers that seek.
+    pub fn seek_answered(&self) {
+        self.seeks.fetch_add(1, Ordering::SeqCst);
         crate::signal::engine_changed().bump();
     }
 
-    /// The player took the seek to `asked`, or it never reached the player:
-    /// the playhead is read from the timeline again. A newer seek asked for
-    /// meanwhile stays pending until the player takes that one.
-    pub fn seek_taken(&self, asked: u64) {
-        let mut pending = self.pending_seek.lock();
-        if pending.is_some_and(|p| p.asked == asked) {
-            *pending = None;
-            drop(pending);
-            crate::signal::engine_changed().bump();
-        }
+    /// How many seeks the player has taken. Read it before the playhead: a
+    /// seek counted has already moved it.
+    pub fn seeks(&self) -> u64 {
+        self.seeks.load(Ordering::SeqCst)
     }
 
     /// The timeline the playhead is read from. Set once, by the player.
@@ -1118,6 +1131,10 @@ impl SharedPlayerState {
     /// A renderer playing a file keeps its clock here; one playing a stream
     /// processed here keeps it on the timeline, in time into the stream.
     pub fn playhead_moving(&self) -> bool {
+        // Nothing plays until the output has opened, whatever was asked.
+        if self.output_opening.lock().is_some() {
+            return false;
+        }
         let clock =
             (*self.renderer_clock.lock()).or_else(|| self.timeline.get().and_then(|t| t.clock()));
         match clock {
@@ -1924,6 +1941,21 @@ impl SharedPlayerState {
             self.bump_version();
         }
         failed
+    }
+
+    /// The items for `track_id` that failed as cancelled, to be given the file
+    /// that arrived after all.
+    pub fn cancelled_items(&self, track_id: i64) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter(|item| {
+                item.db_id == Some(track_id)
+                    && matches!(&item.state, ItemState::Failed(reason)
+                        if reason == crate::remote::downloads::CANCELLED)
+            })
+            .map(|item| item.id)
+            .collect()
     }
 
     /// Every item for one of `track_ids` that failed goes back to waiting for

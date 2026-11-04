@@ -86,7 +86,7 @@ installed it opens the app, which trades the token for an API key of its own
 and syncs the library with no further steps. Each device the link is opened on
 gets its own key, named after the device, which appears under API keys and can
 be revoked on its own. Elsewhere, koan.rocks shows the downloads and an Open in
-koan button. The Mac app is not a universal link target, since a Developer ID
+koan button. The desktop app is not a universal link target, since a Developer ID
 build carries no associated domains: there the page opens and its button hands
 over through `koan://join`. Pasting the link into Server URL in Settings works
 on either. The link is in the fragment, which browsers never send, so koan.rocks

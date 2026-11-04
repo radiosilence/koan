@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use gpui::prelude::FluentBuilder;
+use gpui::{
     Anchor, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
@@ -80,18 +80,31 @@ impl RenderOnce for Picker {
         let open = window.use_keyed_state(child(&self.id, "open"), cx, |_, _| false);
         let is_open = *open.read(cx) && !self.disabled;
         let handle = focus(&self.id, window, cx);
-        let color = look.palette.ink.hsla();
-        let shown = self
+        // Nothing to choose from, or nothing chosen: said in `muted`, so the
+        // control is never an empty box.
+        let chosen = self
             .selected
-            .and_then(|index| self.options.get(index).cloned())
-            .unwrap_or_default();
+            .and_then(|index| self.options.get(index).cloned());
+        let color = if chosen.is_some() {
+            look.palette.ink.hsla()
+        } else {
+            look.palette.muted.hsla()
+        };
+        let shown = chosen.unwrap_or_else(|| {
+            label(if self.options.is_empty() {
+                "none"
+            } else {
+                "choose"
+            })
+        });
 
         let toggle = open.clone();
+        let (pointer, lit) = super::hover_fill(&self.id, &look, window, cx);
         // A combo box to a screen reader: what is chosen is its value, and
         // a click opens it as the pointer's does.
         let mut picker = accessible(
             div().id(self.id.clone()),
-            gpui_kit::Role::ComboBox,
+            gpui::Role::ComboBox,
             self.name.clone(),
         )
         .aria_disabled(self.disabled)
@@ -103,12 +116,20 @@ impl RenderOnce for Picker {
         .items_center()
         .gap(look.space(Space::Xs))
         // The theme's bordered button, as a form's dropdown is.
-        .py(look.spaced(6.))
-        .px(look.spaced(12.))
-        .border(look.hairline)
-        .border_color(look.palette.muted.hsla())
+        .py(look.spaced(6.) + look.hairline)
+        .px(look.spaced(12.) + look.hairline)
         .text_role(TypeRole::Control, &look)
         .text_color(color)
+        // The fill and the outline are siblings sized alike, so they are one
+        // box whatever the content measures.
+        .when(!self.disabled, |d| d.child(lit))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .border(look.hairline)
+                .border_color(look.palette.muted.hsla()),
+        )
         .child(div().whitespace_nowrap().child(shown))
         .child(
             KoanIcon::new(Icon::Choose)
@@ -118,8 +139,7 @@ impl RenderOnce for Picker {
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
-            let (surface, pressed) = (look.palette.surface.hsla(), look.palette.hover.hsla());
-            let opens: Handler<gpui_kit::ClickEvent> = {
+            let opens: Handler<gpui::ClickEvent> = {
                 let toggle = open.clone();
                 std::sync::Arc::new(move |_, _, cx| {
                     toggle.update(cx, |open, cx| {
@@ -128,10 +148,8 @@ impl RenderOnce for Picker {
                     })
                 })
             };
-            picker = answers_click(picker, opens)
+            picker = super::track(answers_click(picker, opens), &pointer)
                 .cursor_pointer()
-                .hover(move |s| s.bg(surface))
-                .active(move |s| s.bg(pressed))
                 .track_focus(&handle)
                 // Opens only: a click on the picker while the panel is up
                 // lands outside the panel, which closes it.

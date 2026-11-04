@@ -37,22 +37,75 @@ pub enum SignInError {
 /// server; tracks from local files stay. A sync from it stops where it is.
 /// The link and the network advert follow.
 pub fn sign_out() -> Result<(), crate::config::ConfigError> {
+    sign_out_then().map(|forget| forget())
+}
+
+/// `sign_out`, returning once the device is signed out and the front end has
+/// let go of the server's queue, with the forgetting of its library left to
+/// the closure returned, for a caller that shows the change before that work
+/// is done. The forgetting waits for a sync still finishing its page, and
+/// deleting a large library takes seconds. Until the closure has run, the old
+/// rows are still there and a sign-in waits for it.
+pub fn sign_out_then() -> Result<impl FnOnce() + Send + 'static, crate::config::ConfigError> {
     let cfg = Config::load()?;
     retire_push(&cfg);
     crate::remote::devices::forget_shares();
-    leave(&cfg, None, |cfg| {
+    let left = crate::remote::sync::left_now();
+    if !cfg.remote.url.is_empty() {
+        crate::remote::sync::cancel(&cfg.remote.url, &cfg.remote.username);
+    }
+    Config::persist(|cfg| {
         cfg.remote.enabled = false;
         cfg.remote.password = String::new();
         cfg.remote.api_key = String::new();
         cfg.remote.device_key = String::new();
-    })?;
+    })
+    .inspect_err(|_| crate::remote::sync::restore_left(left))?;
+    *FORGETTING.lock() += 1;
+    let forgetting = Forgetting;
+    crate::playlists::forget_unsent_order();
+    let hook = ON_LEAVE.read().clone();
+    if let Some(hook) = hook {
+        hook();
+    }
     crate::remote::proof::forget();
     crate::remote::offline::set_manual(false);
     crate::remote::link::relink();
     crate::remote::nearby::readvertise();
     // The apps' banner reads the credentials, which no link event announces.
     crate::remote::devices::touch();
-    Ok(())
+    Ok(move || {
+        let _forgetting = forgetting;
+        let _syncs = crate::helpers::hold_syncs();
+        let forgotten = crate::db::pool::shared()
+            .get()
+            .and_then(|db| crate::helpers::forget_server(&db, &cfg));
+        if let Err(e) = forgotten {
+            log::warn!("could not forget the server's library: {e}");
+        }
+    })
+}
+
+/// Libraries signed out of and not yet forgotten.
+static FORGETTING: parking_lot::Mutex<usize> = parking_lot::Mutex::new(0);
+static FORGOTTEN: parking_lot::Condvar = parking_lot::Condvar::new();
+
+/// One library waiting to be forgotten; dropped once it is, or once its
+/// closure is dropped unrun.
+struct Forgetting;
+
+impl Drop for Forgetting {
+    fn drop(&mut self) {
+        *FORGETTING.lock() -= 1;
+        FORGOTTEN.notify_all();
+    }
+}
+
+fn wait_for_forgetting() {
+    let mut pending = FORGETTING.lock();
+    while *pending > 0 {
+        FORGOTTEN.wait(&mut pending);
+    }
 }
 
 /// What a front end that owns a player does when this device leaves a server:
@@ -64,8 +117,8 @@ static ON_LEAVE: parking_lot::RwLock<Option<OnLeave>> = parking_lot::RwLock::new
 /// signing in as another account: once the change is kept and before the
 /// server's library is forgotten, which on a large library takes seconds the
 /// queue should not be on screen for. Set by the front end that owns the
-/// player; `None` removes it. It runs with every sync held off, so it must not
-/// block for long.
+/// player; `None` removes it. It runs on the signing-out or signing-in path,
+/// and on signing in with every sync held off, so it must not block for long.
 pub fn on_leaving_server(hook: Option<OnLeave>) {
     *ON_LEAVE.write() = hook;
 }
@@ -91,6 +144,9 @@ fn leave(
     }
     let _syncs = crate::helpers::hold_syncs();
     Config::persist(change).inspect_err(|_| crate::remote::sync::restore_left(left))?;
+    // An order not yet sent names the playlists about to be forgotten: sent
+    // to the next account, it would overwrite that account's order.
+    crate::playlists::forget_unsent_order();
     let hook = ON_LEAVE.read().clone();
     if let Some(hook) = hook {
         hook();
@@ -262,6 +318,8 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     };
+    // A library still being forgotten would be forgotten under the sign-in.
+    wait_for_forgetting();
     if same_account(&before.remote, url, username) {
         // Signed out of earlier: its syncs may run again, from before the
         // write that wakes the automatic one, unless the write fails.
@@ -708,6 +766,32 @@ mod refusal_tests {
         assert!(cfg.remote.api_key.is_empty());
         assert_eq!(remote_credential(&cfg).map(|_| ()), None);
         assert!(!crate::remote::offline::manual());
+    }
+
+    /// Signed out before the library is forgotten, and a sign-in waits for
+    /// the forgetting.
+    #[test]
+    fn signed_out_before_the_library_is_forgotten() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        })
+        .unwrap();
+
+        let forget = sign_out_then().unwrap();
+        assert!(!Config::load().unwrap().remote.enabled);
+        assert_eq!(*FORGETTING.lock(), 1, "the forgetting is still to come");
+        let waited = std::thread::spawn(wait_for_forgetting);
+        forget();
+        waited.join().unwrap();
+        assert_eq!(*FORGETTING.lock(), 0);
     }
 
     /// The front end hears that the server is left once the config says so,

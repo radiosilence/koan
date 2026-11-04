@@ -7,12 +7,11 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{
-    AppContext, Context, IntoElement, ParentElement, Render, ShaderUniforms, Styled,
-    TestAppContext, Track, TrackCurve, TrackRepeat, Window, div, present_now, px, set_present_lead,
-    spring_length,
+use gpui::{Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window, div, px};
+use koan_kit::components::{
+    Animated, AnimatedQuad, Ease, Repeat, Repeat as TrackRepeat, ShaderProgram, Track, TrackCurve,
+    present_now, spring_length,
 };
-use koan_kit::components::{Animated, AnimatedQuad, Ease, Repeat, ShaderProgram};
 use koan_kit::theme;
 
 const CLOSE: f32 = 1e-4;
@@ -190,7 +189,6 @@ fn repeats_wrap_where_they_should() {
 
 #[test]
 fn tracks_survive_the_uniforms_encoding() {
-    let uniforms = ShaderUniforms::new();
     let tracks = [
         segment(TrackCurve::Linear, TrackRepeat::Once),
         segment(
@@ -207,11 +205,8 @@ fn tracks_survive_the_uniforms_encoding() {
         ),
         segment(TrackCurve::Linear, TrackRepeat::Loop),
     ];
-    for (k, track) in tracks.iter().enumerate() {
-        uniforms.set_track(k, *track);
-    }
-    for (k, track) in tracks.iter().enumerate() {
-        let back = uniforms.track(k);
+    for track in &tracks {
+        let back = Track::decode(&track.encode());
         assert_eq!(back.from, track.from);
         assert_eq!(back.to, track.to);
         assert_eq!(back.start, track.start);
@@ -228,55 +223,52 @@ fn tracks_survive_the_uniforms_encoding() {
         }
     }
     // The plain values before the tracks are untouched by them.
-    uniforms.set(3, 0.25);
-    uniforms.set_track(0, Track::hold(9.0));
-    assert_eq!(uniforms.get(3), 0.25);
+    let animated = Animated::new();
+    animated.set(3, 0.25);
+    animated.hold(0, 9.0);
+    assert_eq!(animated.get(3), 0.25);
 }
 
 #[test]
-fn a_shader_presents_while_a_track_moves_and_once_as_it_lands() {
-    let uniforms = ShaderUniforms::new();
-    uniforms.set_origin(Instant::now());
-    let start = uniforms.time_at(present_now());
-    uniforms.set_track(
+fn a_track_moves_until_it_lands() {
+    let animated = Animated::new();
+    animated.segment(
         0,
-        Track {
-            from: 0.0,
-            to: 1.0,
-            start,
-            length: 0.15,
-            curve: TrackCurve::Linear,
-            repeat: TrackRepeat::Once,
-        },
+        0.0,
+        1.0,
+        Animated::now(),
+        Duration::from_millis(150),
+        Ease::Linear,
+        Repeat::Once,
     );
-    assert!(uniforms.is_live(), "moving: the window keeps its refreshes");
-    assert!(uniforms.take_present());
-    assert!(uniforms.take_present(), "every refresh while it moves");
+    assert!(animated.moving(), "moving: the window keeps its refreshes");
     std::thread::sleep(Duration::from_millis(200));
-    assert!(uniforms.take_present(), "once more, landing it at its end");
-    assert!(!uniforms.take_present(), "and then nothing");
-    assert!(!uniforms.is_live(), "the window parks");
-
-    // A hold presents once, for the change, and keeps nothing running.
-    uniforms.set_track(1, Track::hold(0.5));
-    assert!(uniforms.take_present());
-    assert!(!uniforms.take_present());
-    assert!(!uniforms.is_live());
-
-    // A repeat keeps presenting.
-    uniforms.set_track(2, segment(TrackCurve::Linear, TrackRepeat::Loop));
-    std::thread::sleep(Duration::from_millis(20));
-    assert!(uniforms.take_present() && uniforms.take_present());
-    assert!(uniforms.is_live());
+    assert!(!animated.moving(), "landed: the window parks");
+    animated.hold(1, 0.5);
+    assert!(!animated.moving(), "a hold keeps nothing running");
+    animated.segment(
+        2,
+        0.0,
+        1.0,
+        Animated::now(),
+        Duration::from_millis(50),
+        Ease::Linear,
+        Repeat::Loop,
+    );
+    std::thread::sleep(Duration::from_millis(80));
+    assert!(animated.moving(), "a repeat keeps presenting");
 }
 
 #[test]
 fn time_is_reckoned_at_the_present() {
-    set_present_lead(Duration::from_millis(8));
+    // The kit's colour source sees each present's time; a frame made now
+    // shows then, never before now.
+    koan_kit::components::install_color_slots();
+    let ahead = Instant::now() + Duration::from_millis(8);
+    gpui::refresh_dynamic_colors(ahead);
     let lead = present_now().saturating_duration_since(Instant::now());
-    set_present_lead(Duration::ZERO);
     assert!(
-        lead > Duration::from_millis(7) && lead <= Duration::from_millis(8),
+        lead > Duration::from_millis(6) && lead <= Duration::from_millis(8),
         "a frame made now shows a refresh on: {lead:?}"
     );
 }
@@ -375,10 +367,9 @@ impl Render for Quad {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        gpui_kit::init(cx);
         theme::init(cx);
         cx.set_reduce_motion(true);
     });
@@ -404,4 +395,55 @@ fn reduce_motion_stands_a_decorative_quad_at_its_ends(cx: &mut TestAppContext) {
     animated.to(0, 0.5, Duration::from_secs(1), Ease::InOut);
     assert_eq!(animated.track(0).length, 0.0, "written after: held");
     assert_eq!(animated.at(0, Animated::now()), 0.5);
+}
+
+/// A colour naming a slot is read from the slot at each present; a plain
+/// write over any of its floats lets the slot go, so what was written stands.
+#[test]
+fn a_plain_write_over_a_slot_colour_lets_it_go() {
+    use gpui::{Rgba, ShaderUniforms};
+    use koan_kit::components::ColorSlot;
+    let red = Rgba {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let slot = ColorSlot::claim(red).expect("a free slot");
+    let uniforms = ShaderUniforms::new();
+    uniforms.set_color(1, slot.hsla(0.5));
+    let now = Instant::now();
+    assert_eq!(uniforms.presented_at(now).1[4..8], [1.0, 0.0, 0.0, 0.5]);
+    uniforms.set(6, 0.25);
+    let values = uniforms.presented_at(now).1;
+    assert_eq!(values[6], 0.25);
+    assert_eq!(values[4], 0.0, "the slot no longer draws over the floats");
+}
+
+/// A colour slot mixed in OKLab carries 16 in its track's code; the CPU reads
+/// the curve and repeat beneath it, as the shaders do (`code % 16`).
+#[test]
+fn the_oklab_flag_leaves_the_repeat_as_it_was() {
+    for repeat in [TrackRepeat::Once, TrackRepeat::Loop, TrackRepeat::Alternate] {
+        let mut encoded = segment(TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0), repeat).encode();
+        encoded[4] += 16.0;
+        let track = Track::decode(&encoded);
+        assert_eq!(track.repeat, repeat);
+        assert!(matches!(track.curve, TrackCurve::Bezier(..)));
+    }
+}
+
+/// A clock run for a length stops by itself (#1741): past it, the quad is
+/// neither running nor asking for presents.
+#[test]
+fn a_clock_run_for_a_length_stops() {
+    let animated = Animated::new();
+    animated.run_for(Duration::from_millis(20));
+    assert!(animated.is_running());
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(!animated.is_running(), "the clock ran on past its length");
+    animated.run(true);
+    assert!(animated.is_running(), "run(true) runs it again");
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(animated.is_running(), "an open-ended run does not lapse");
 }

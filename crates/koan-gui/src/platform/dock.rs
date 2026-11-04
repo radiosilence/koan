@@ -6,9 +6,11 @@
 
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, RepeatMode, SleepTimer};
+use futures::FutureExt as _;
+
 use koan_kit::app::platform::{Menu, MenuItem, OperatingSystem};
 use koan_kit::app::{Action, App, Entity, Global};
+use koan_runtime::{KoanEngine, RepeatMode, SleepTimer};
 
 use super::actions::{Next, Previous, TogglePlayPause};
 use crate::mirror::{Devices, Mirror, Playback, Slice};
@@ -90,17 +92,20 @@ pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) {
 
 fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
     let engine = engine.clone();
-    let action = action.clone();
+    let favourite = matches!(action, Dock::Favourite(_));
+    // Built here, so a command joins the engine's lane as it is chosen.
+    let done = match action.clone() {
+        Dock::Favourite(id) => {
+            async move { engine.toggle_favourite(id).await.map(|_| ()) }.boxed_local()
+        }
+        Dock::Repeat(mode) => engine.set_repeat(mode).boxed_local(),
+        Dock::Shuffle(on) => engine.set_shuffle(on).boxed_local(),
+        Dock::Sleep(Some(timer)) => engine.set_sleep_timer(timer).boxed_local(),
+        Dock::Sleep(None) => engine.cancel_sleep_timer().boxed_local(),
+        Dock::PlayOn(id) => engine.control_device(id).boxed_local(),
+    };
     cx.spawn(async move |cx| {
-        let favourite = matches!(action, Dock::Favourite(_));
-        let done = match action {
-            Dock::Favourite(id) => engine.toggle_favourite(id).await.map(|_| ()),
-            Dock::Repeat(mode) => engine.set_repeat(mode).await,
-            Dock::Shuffle(on) => engine.set_shuffle(on).await,
-            Dock::Sleep(Some(timer)) => engine.set_sleep_timer(timer).await,
-            Dock::Sleep(None) => engine.cancel_sleep_timer().await,
-            Dock::PlayOn(id) => engine.control_device(id).await,
-        };
+        let done = done.await;
         if let Err(e) = done {
             log::warn!("dock menu: {e}");
         }
@@ -148,7 +153,7 @@ fn shown(playback: &Entity<Playback>, devices: &Entity<Slice<Devices>>, cx: &App
         }),
         track,
         favourite: track.is_some_and(|t| favourites.is_some_and(|ids| ids.contains(&t))),
-        playing: now.state == koan_ffi::PlayState::Playing,
+        playing: now.state == koan_runtime::PlayState::Playing,
         repeat: Some(now.repeat_mode),
         shuffle: now.shuffle,
         sleeping: now.sleep.is_some(),

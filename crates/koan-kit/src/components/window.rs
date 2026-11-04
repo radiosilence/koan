@@ -2,12 +2,33 @@
 //! beside it (Settings, EQ, About), titled, centred at their size in points,
 //! with a least size or none.
 
-use gpui_kit::base::InteractiveElementExt as _;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
 use super::ToolbarButton;
 use crate::theme::Icon;
+
+/// What a window's content sits in (`Root`): Tab and Shift-Tab kept inside
+/// an open sheet or menu. Every window and offscreen render goes through
+/// here.
+pub fn host(view: impl Into<AnyView>, _: &mut Window, cx: &mut App) -> Entity<super::Root> {
+    cx.new(|_| super::Root::new(view))
+}
+
+/// Opens a window with `build`'s view under `host`, handing back both.
+fn open_hosted<V: Render>(
+    options: WindowOptions,
+    cx: &mut App,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> Result<(AnyWindowHandle, Entity<V>)> {
+    let mut built = None;
+    let window = cx.open_window(options, |window, cx| {
+        let view = build(window, cx);
+        built = Some(view.clone());
+        host(view, window, cx)
+    })?;
+    Ok((window.into(), built.expect("the window ran its build")))
+}
 
 pub struct SecondaryWindow {
     title: SharedString,
@@ -77,7 +98,7 @@ impl SecondaryWindow {
         build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> Result<(AnyWindowHandle, Entity<V>)> {
         let options = self.options(cx);
-        gpui_kit::open_window(options, cx, build)
+        open_hosted(options, cx, build)
     }
 
     pub fn options(self, cx: &App) -> WindowOptions {
@@ -173,7 +194,7 @@ impl MainWindow {
             app_id: Some(self.app_id.to_string()),
             ..Default::default()
         };
-        gpui_kit::open_window(options, cx, build).map(|(handle, _)| handle)
+        open_hosted(options, cx, build).map(|(handle, _)| handle)
     }
 }
 
@@ -187,11 +208,12 @@ pub fn draws_decorations(window: &Window) -> bool {
 /// moves the window; double-clicked, it zooms it as the system's title bar
 /// would. `area`'s id keys whether a press is under way.
 pub fn moves_window(mut area: Stateful<Div>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    // A `Stateful` element always has its id.
     let id = area
         .interactivity()
         .element_id
         .clone()
-        .unwrap_or_else(|| ElementId::Name("window-move".into()));
+        .expect("a stateful element has an id");
     let pressed = window.use_keyed_state(super::child(&id, "pressed"), cx, |_, _| false);
     let set = |to: bool| {
         let pressed = pressed.clone();
@@ -208,7 +230,10 @@ pub fn moves_window(mut area: Stateful<Div>, window: &mut Window, cx: &mut App) 
                 window.start_window_move();
             }
         })
-        .on_double_click(|_, window, _| {
+        .on_click(|event, window, _| {
+            if event.click_count() != 2 {
+                return;
+            }
             if cfg!(target_os = "macos") {
                 window.titlebar_double_click();
             } else {

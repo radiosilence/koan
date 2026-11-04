@@ -14,18 +14,19 @@
 use std::error::Error;
 use std::time::Duration;
 
-use koan_ffi::KoanEngine;
 use koan_gui::mirror::Mirror;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
 use koan_kit::app::{
     AppContext, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point,
 };
+use koan_runtime::KoanEngine;
 // GPUI's start-up, headless rendering and synthetic input, which only the
 // app's entry and tools reach.
 use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, PlatformInput, point, px, size};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    koan_core::places::keep_with_config();
     if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
     }
@@ -53,7 +54,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
         koan_gui::library::bind_keys(cx);
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let made = cx.new(|cx| Shell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
-        cx.new(|cx| koan_kit::raw::base::Root::new(root, window, cx))
+        koan_kit::components::host(root, window, cx)
     })?;
     let shell = shell.expect("the window made its shell");
     let window: AnyWindowHandle = window.into();

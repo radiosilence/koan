@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 
 use super::graph::{Graph, Part, Stroke};
 
@@ -317,8 +317,9 @@ impl EqBody {
             Rc::new(move |cx: &mut App| {
                 let (name, device) = (name.clone(), device.clone());
                 dsp.update(cx, |d, cx| {
-                    d.act(cx, move |e| async move {
-                        e.dsp_save_preset(device, name).await.map(|_| ())
+                    d.act(cx, move |e| {
+                        let saved = e.dsp_save_preset(device, name);
+                        async move { saved.await.map(|_| ()) }
                     })
                 });
             })
@@ -347,7 +348,7 @@ impl EqBody {
 }
 
 /// Each stage playing, drawn as its block is.
-fn parts(o: &DspOverview, r: Option<&koan_ffi::DspResponse>) -> Vec<Part> {
+fn parts(o: &DspOverview, r: Option<&koan_runtime::DspResponse>) -> Vec<Part> {
     let Some(r) = r else { return Vec::new() };
     let eqs: Vec<(usize, &str, &Vec<f64>)> = o
         .chain
@@ -466,7 +467,9 @@ impl Render for EqBody {
                     .gap(look.space(Space::L))
                     .child(head)
                     .child(
-                        div().h(look.spaced(290.0)).child(
+                        // As the profile page's frame: the curve (`GRAPH_H`), its legend and
+                        // its brushes, which a scaled frame would clip.
+                        div().h(Pixels::from(290.0)).child(
                             koan_kit::app::AnyView::from(self.graph.clone())
                                 // the bounds a cached view keeps between frames.
                                 .cached(StyleRefinement::default().size_full()),
@@ -492,7 +495,7 @@ impl Render for EqBody {
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::L))
-                .max_w(look.spaced(720.0))
+                .max_w(look.sized(720.0))
                 .mx_auto()
                 .p(look.space(Space::Xl))
                 .child(content)
@@ -1440,7 +1443,7 @@ pub fn set_from_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koan_ffi::{DspProfileSummary, DspTuningEntry};
+    use koan_runtime::{DspProfileSummary, DspTuningEntry};
 
     fn overview(active: Option<&str>, chain: &[(&str, bool)]) -> DspOverview {
         DspOverview {

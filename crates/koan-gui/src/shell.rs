@@ -12,10 +12,9 @@ use crate::components::sheet::{self as ask, Layer};
 use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
-    NextRegion, PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
-    help,
+    self, ActualSize, AddMusic, Back, Bigger, FocusNext, FocusPrevious, Forward, NextRegion,
+    PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue,
+    ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -40,6 +39,8 @@ pub struct Shell {
     transport: Entity<Transport>,
     /// What is wrong with the server, across the top of every page.
     banner: Entity<crate::server_banner::ServerBanner>,
+    /// The output this device is still waiting for, once it has waited a while.
+    output_wait: Entity<crate::output_wait::OutputWaitBanner>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
     library: Option<Entity<LibraryStage>>,
@@ -48,7 +49,6 @@ pub struct Shell {
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
     /// The kōan menu, drawn in the window where there is no menu bar.
     koan_menu: crate::components::MenuSlot<()>,
-    /// The toolbar was pressed and the next move drags the window.
     /// Whether the sidebar shows, and how wide; kept with the window's
     /// bounds.
     sidebar_shown: bool,
@@ -67,7 +67,8 @@ pub struct Shell {
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
-    /// ⇧⌘K's picker, while it is open.
+    /// The search box over the window, while it is open.
+    _opened: Subscription,
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     /// What had the keyboard when the search box opened, which has it back
     /// when the box closes.
@@ -81,6 +82,19 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // A menu closing after what held the keyboard went (its page left
+        // behind) gives it to the page showing.
+        let (shell, here) = (cx.weak_entity(), window.window_handle());
+        crate::components::on_menu_focus_lost(
+            move |window, cx| {
+                if window.window_handle() == here {
+                    shell
+                        .update(cx, |shell, cx| shell.focus_page(window, cx))
+                        .ok();
+                }
+            },
+            cx,
+        );
         let nav = cx.new(|_| Navigator::default());
         // A measuring run can open on the page it measures.
         #[cfg(feature = "profiler")]
@@ -113,11 +127,14 @@ impl Shell {
                 let for_queue = lib.clone();
                 this.queue
                     .update(cx, |queue, cx| queue.set_lib(for_queue, cx));
+                let feed = lib.feed.clone();
+                this.transport
+                    .update(cx, |transport, cx| transport.set_feed(feed, cx));
                 let covers = lib.covers.clone();
                 let search = lib.search.clone();
                 this.sidebar.update(cx, |sidebar, cx| {
-                    sidebar.set_covers(covers.clone(), cx);
-                    sidebar.set_search(search, covers, window, cx);
+                    sidebar.set_covers(covers, cx);
+                    sidebar.set_search(search, cx);
                 });
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
@@ -125,10 +142,23 @@ impl Shell {
             .ok();
         })
         .detach();
+        let sidebar = cx.new(|cx| Sidebar::new(&nav, cx));
+        // The sidebar's click took the keyboard from the page; opening a
+        // place gives it to the page, the one showing included.
+        let opened = cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, _: &crate::sidebar::Opened, window, cx| {
+                this.arrived_at = this.nav.read(cx).current();
+                this.focus_page(window, cx);
+            },
+        );
         Self {
-            sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            _opened: opened,
+            sidebar,
             transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             banner: cx.new(crate::server_banner::ServerBanner::new),
+            output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             nav,
             focus: cx.focus_handle(),
             queue,
@@ -206,6 +236,12 @@ impl Shell {
         &self.queue
     }
 
+    /// The library's pages, once made, for tools that drive the window
+    /// headlessly.
+    pub fn library(&self) -> Option<&Entity<LibraryStage>> {
+        self.library.as_ref()
+    }
+
     /// Goes to `route`, as a link or a menu would.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
@@ -266,14 +302,8 @@ impl Shell {
         let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
             return;
         };
-        // The sidebar's field opened the box by taking the keyboard: given
-        // it back, it would open the box again, so the page has it instead.
-        let field = self.sidebar.read(cx).search_focus(cx);
         let route = self.nav.read(cx).current();
-        self.before_search = window
-            .focused(cx)
-            .filter(|f| field.as_ref() != Some(f))
-            .map(|f| (f, route));
+        self.before_search = window.focused(cx).map(|f| (f, route));
         let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
         let dismissed = cx.subscribe_in(
             &bar,
@@ -299,9 +329,16 @@ impl Shell {
 
     /// The page showing takes the keys again.
     fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Typing in a field moved the route (the sidebar's search lists its
-        // results as it is typed): the field keeps the keyboard.
-        if typing(&window.context_stack()) {
+        // Typing in a field that outlives the route moved it (the sidebar's
+        // search lists its results as it is typed): the field keeps the
+        // keyboard. A field of the page left behind (its filter, the picker)
+        // goes with it, so the page showing takes the keyboard instead.
+        let lasting = self.sidebar.focus_handle(cx).contains_focused(window, cx)
+            || self
+                .search_bar
+                .as_ref()
+                .is_some_and(|(bar, _)| bar.focus_handle(cx).contains_focused(window, cx));
+        if lasting && typing(&window.context_stack()) {
             cx.notify();
             return;
         }
@@ -320,7 +357,7 @@ impl Shell {
             // A library page is made as the stage draws it, and takes the
             // keyboard then.
             if let Some(library) = self.library.as_ref().filter(|_| LibraryStage::draws(route)) {
-                library.update(cx, |stage, _| stage.focus_on_arrival());
+                library.update(cx, |stage, cx| stage.take_keyboard(window, cx));
             }
         }
         cx.notify();
@@ -398,12 +435,7 @@ impl Shell {
 
     /// Asks before forgetting every cover kept on this device, saying how
     /// many and how much, then fetches what is on screen again.
-    fn clear_artwork(
-        &mut self,
-        _: &ClearArtworkCache,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn clear_artwork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(covers) = self.library.as_ref().map(|l| l.read(cx).covers()) else {
             return;
         };
@@ -553,7 +585,7 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The lyrics slid away: the panel goes with them.
+        // The width has eased to nothing: the panel goes with it.
         if !self.lyrics_shown && self.lyrics.is_some() && self.lyrics_slide.closed() {
             self.lyrics = None;
         }
@@ -612,11 +644,11 @@ impl Render for Shell {
             .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &FocusNext, window, cx| {
-                window.focus_next(cx);
+                crate::components::sheet::step_focus(true, window, cx);
                 this.focus_moved(cx);
             }))
             .on_action(cx.listener(|this, _: &FocusPrevious, window, cx| {
-                window.focus_prev(cx);
+                crate::components::sheet::step_focus(false, window, cx);
                 this.focus_moved(cx);
             }))
             .on_action(cx.listener(|this, _: &NextRegion, window, cx| this.region(1, window, cx)))
@@ -637,7 +669,6 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
-            .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))
@@ -725,6 +756,7 @@ impl Render for Shell {
                             .flex_col()
                             .child(self.toolbar(window, cx))
                             .child(self.banner.clone())
+                            .child(self.output_wait.clone())
                             .child(
                                 div()
                                     .flex_1()
@@ -740,8 +772,6 @@ impl Render for Shell {
                                             .h_full()
                                             .child(stage),
                                     )
-                                    // Drawn while empty too, so the first
-                                    // showing slides in rather than snapping.
                                     .child(
                                         Slide::new(
                                             "lyrics-slide",

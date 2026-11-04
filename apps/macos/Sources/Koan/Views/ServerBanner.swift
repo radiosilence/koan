@@ -46,3 +46,57 @@ struct ServerBanner: View {
         }
     }
 }
+
+/// The output this device is still waiting for, once it has taken a while
+/// (`NowPlaying.outputWait`): a busy audio system or a device waking. The
+/// player goes on taking commands and starts from wherever they leave it;
+/// Retry asks the device again, Cancel plays on the system's default instead.
+/// Reads the Playback slice itself, so its parent is not drawn again with
+/// every track.
+struct OutputWaitBanner: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let wait = mirror.playback.outputWait
+        VStack(spacing: 0) {
+            if let wait { Line(wait: wait) }
+        }
+        .koanAnimation(KoanTheme.Motion.normal, value: wait)
+    }
+
+    private struct Line: View {
+        @Environment(PlayerModel.self) private var player
+        let wait: OutputWait
+
+        private var title: String {
+            let device = wait.device ?? "the system's output"
+            return wait.stuck
+                ? "Waiting for \(device). An earlier attempt is still stuck."
+                : "Waiting for \(device)…"
+        }
+
+        var body: some View {
+            HStack(spacing: 12) {
+                KoanLabel(title, icon: Icon.speaker)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                // Refused while an earlier attempt is stuck: said instead.
+                if !wait.stuck {
+                    Button("Retry") { player.retryOutput() }
+                }
+                Button("Cancel") { player.cancelOutputWait() }
+            }
+            .font(.role(.fine, system: .callout))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            #if os(tvOS)
+            .koanMaterial(.regularMaterial)
+            #else
+            .koanMaterial(.bar)
+            #endif
+            .transition(.opacity)
+        }
+    }
+}

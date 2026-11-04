@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use gpui_kit::{AppContext, HeadlessAppContext, px, size};
+use gpui::{AppContext, HeadlessAppContext, px, size};
 use koan_kit::storybook::{Story, Storybook};
 use koan_kit::theme;
 
@@ -16,14 +16,14 @@ fn colours(shot: &image::RgbaImage) -> usize {
 
 #[test]
 fn every_page_draws_in_both_appearances() {
-    let text_system = gpui_kit::platform::current_platform(true).text_system();
+    let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         Arc::new(theme::icons::Assets),
-        gpui_kit::platform::current_headless_renderer,
+        gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        gpui::init(cx);
         theme::init(cx);
     });
 
@@ -34,7 +34,7 @@ fn every_page_draws_in_both_appearances() {
             .open_window(size(px(1280.0), px(1100.0)), |window, cx| {
                 let view = cx.new(|cx| Storybook::new(window, cx));
                 book = Some(view.clone());
-                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+                cx.new(|cx| gpui::base::Root::new(view, window, cx))
             })
             .expect("the window");
         let book = book.expect("the storybook");
@@ -63,5 +63,8 @@ fn every_page_draws_in_both_appearances() {
             }
         }
     }
-    assert_ne!(grounds[0], grounds[1], "dark and light draw the same ground");
+    assert_ne!(
+        grounds[0], grounds[1],
+        "dark and light draw the same ground"
+    );
 }

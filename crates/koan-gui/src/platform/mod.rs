@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
-use koan_ffi::KoanEngine;
 use koan_kit::app::{App, AsyncApp, Global};
+use koan_runtime::KoanEngine;
 
 use instance::Opened;
 
@@ -33,12 +33,15 @@ const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 /// Restore the queue, cursor and position the desktop app last saved. The
 /// session is the desktop app's own: the Mac app and the terminal UI on the
 /// same configuration directory keep theirs.
-async fn restore_session(engine: &Arc<KoanEngine>) -> Option<u32> {
-    match engine.clone().restore_session().await {
-        Ok(count) => Some(count),
-        Err(e) => {
-            log::warn!("could not restore the session: {e}");
-            None
+fn restore_session(engine: &Arc<KoanEngine>) -> impl Future<Output = Option<u32>> + use<> {
+    let restoring = engine.clone().restore_session();
+    async move {
+        match restoring.await {
+            Ok(count) => Some(count),
+            Err(e) => {
+                log::warn!("could not restore the session: {e}");
+                None
+            }
         }
     }
 }
@@ -114,8 +117,9 @@ pub fn init(
     .detach();
     let engine = engine.clone();
     let (restored, restoring) = futures_channel::oneshot::channel();
+    let session = restore_session(&engine);
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let outcome = restore_session(&engine).await;
+        let outcome = session.await;
         let _ = restored.send(outcome);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
@@ -157,13 +161,12 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
 /// Bring the app and its window to the front.
 pub fn to_front(cx: &mut App) {
     cx.activate(true);
-    // Kept running with the main window closed: it opens again.
-    if residency::keep_running(cx)
-        && crate::app::main_window(cx).is_none()
-        && crate::app::show_window(cx)
-    {
+    // The main window to the front, or open again where it was left: kept
+    // running with it closed, or another window (Settings, EQ) still open.
+    if crate::app::show_window(cx) {
         return;
     }
+    // Before launching has decided about the main window: whatever shows.
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }

@@ -1,0 +1,1 @@
+- **GPUI comes from koan's fork of Zed.** The patched copies in vendor/ are gone; every change they carried is a commit on radiosilence/zed, proposed upstream, and koan pins a revision of it.

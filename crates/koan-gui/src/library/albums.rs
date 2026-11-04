@@ -13,9 +13,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::components::{UniformListScrollHandle, uniform_list};
-use koan_ffi::{AlbumSort, BrowseFilter};
 use koan_kit::app::platform::TouchPhase;
 use koan_kit::app::*;
+use koan_runtime::{AlbumSort, BrowseFilter};
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -26,27 +26,12 @@ use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::navigator::{Listing, Shelf};
 
-/// How long typing in the filter field waits for the next keystroke before
-/// asking again: each answer is the whole listing, and asking per keystroke
-/// queues listings nobody will see.
-const TYPING: Duration = Duration::from_millis(80);
-
 #[derive(Clone, PartialEq)]
 struct Query {
     search: Option<String>,
     filter: BrowseFilter,
     sort: AlbumSort,
     seed: i64,
-}
-
-impl Query {
-    /// Only the search differs: a keystroke.
-    fn typed(&self, other: &Query) -> bool {
-        self.search != other.search
-            && self.filter == other.filter
-            && self.sort == other.sort
-            && self.seed == other.seed
-    }
 }
 
 /// What the cover ranking depends on, coarsely, within one listing: the rows
@@ -90,9 +75,10 @@ struct KeptAlbums {
 }
 
 pub struct AlbumGrid {
-    /// A load failed before any landed: the page draws its header and empty
-    /// state rather than staying held, so the query can still be changed.
-    failed: bool,
+    /// A load failed before any landed, and why: the page draws its header
+    /// and the failure with a retry rather than staying held, so the query
+    /// can still be changed. Cleared by the next listing that lands.
+    failed: Option<String>,
     lib: Lib,
     /// A shelf's "see all": the shelf's filter and order in place of the
     /// shared ones, and no controls to change them.
@@ -132,6 +118,8 @@ pub struct AlbumGrid {
     focus: FocusHandle,
     /// The keyboard's place in the grid, by record.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The grid holds the keyboard, as of the last frame.
     keyed: bool,
     search: Entity<chrome::SearchField>,
@@ -224,7 +212,7 @@ impl AlbumGrid {
             aimed: None,
             order,
             loaded,
-            failed: false,
+            failed: None,
             loading: None,
             request: 0,
             _load: None,
@@ -240,8 +228,9 @@ impl AlbumGrid {
             starting: HashSet::new(),
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             search,
             filters,
@@ -249,25 +238,39 @@ impl AlbumGrid {
             waits: 0,
             _subscriptions: subscriptions,
         };
-        // A kept listing draws at once, where the last visit left it.
-        if this.loaded.is_some() {
-            this.restore_scroll();
-        }
-        // A listing kept from a visit under another query (a shelf's "see
-        // all" changed the filter) is not drawn: the page waits for its own,
-        // as a first visit does, rather than drawing the old rows and
-        // swapping them.
-        if this
+        // A kept listing draws at once, where the last visit left it. One
+        // from another query, or from before the library moved, is not drawn:
+        // the page waits for its own, as a first visit does, rather than
+        // drawing old rows and landing the kept place on other records. The
+        // place is kept for a listing of the same query.
+        let version = this.lib.feed.read(cx).library_version;
+        let query = this.query(cx);
+        match this
             .loaded
             .as_ref()
-            .is_some_and(|(q, _)| *q != this.query(cx))
+            .map(|loaded| chrome::kept(loaded, &query, version))
         {
-            this.records = Rc::new(Vec::new());
-            this.order.clear();
-            this.loaded = None;
+            Some(chrome::Kept::Draw) => this.restore_scroll(),
+            Some(kept) => {
+                if kept == chrome::Kept::Forget {
+                    this.restore = None;
+                }
+                this.records = Rc::new(Vec::new());
+                this.order.clear();
+                this.loaded = None;
+            }
+            None => {}
         }
         this.reload(cx);
         this
+    }
+
+    /// The failure's "try again": the same listing asked for afresh.
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        self.failed = None;
+        self.loading = None;
+        self.reload(cx);
+        cx.notify();
     }
 
     fn query(&self, cx: &App) -> Query {
@@ -291,7 +294,8 @@ impl AlbumGrid {
     /// Ask for the listing again when what it answers to has moved: the
     /// query, or the library under it. What is on screen stays until the new
     /// listing lands, so the scroll and the pick are not lost meanwhile. A
-    /// keystroke waits a moment for the next one.
+    /// keystroke asks at once; the answer to one typed over is dropped by
+    /// `request` when it lands.
     fn reload(&mut self, cx: &mut Context<Self>) {
         // The engine's first report comes within a frame or two; loading
         // before it would load twice.
@@ -302,20 +306,12 @@ impl AlbumGrid {
         if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
             return;
         }
-        let typed = self
-            .loading
-            .as_ref()
-            .or(self.loaded.as_ref())
-            .is_some_and(|(q, v)| *v == version && wanted.0.typed(q));
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         let q = wanted.0.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
-            if typed {
-                cx.background_executor().timer(TYPING).await;
-            }
             let albums = engine
                 .albums(None, q.sort, q.seed, q.search, q.filter)
                 .await;
@@ -338,11 +334,12 @@ impl AlbumGrid {
                         this.records = Rc::new(records.into_iter().map(Rc::new).collect());
                         this.aimed = None;
                         this.loaded = Some(wanted);
+                        this.failed = None;
                         this.restore_scroll();
                     }
                     Err(e) => {
                         log::warn!("albums: {e}");
-                        this.failed = true;
+                        this.failed = Some(crate::settings::model::describe(&e));
                     }
                 }
                 cx.notify();
@@ -484,7 +481,7 @@ impl AlbumGrid {
         let owner = cx.entity_id();
         self.lib
             .covers
-            .update(cx, |covers, _| covers.request(owner, ranked));
+            .update(cx, |covers, cx| covers.request(owner, ranked, cx));
     }
 
     /// The pick's drag payload, built once per change to the pick.
@@ -559,7 +556,8 @@ impl AlbumGrid {
                 selecting: self.selection.is_active(),
                 selected,
                 starting: self.starting.contains(&record.id),
-                cursor: self.keyed && self.cursor.at == Some(start + ix),
+                cursor: (self.keyed && self.cursor.at == Some(start + ix))
+                    .then(|| self.spot.clone()),
                 show_artist: true,
                 side: grid.side,
                 sleeve,
@@ -777,10 +775,14 @@ impl actions::Menus for AlbumGrid {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TileHost for AlbumGrid {
-    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+    fn revealed(&mut self, album: i64, cx: &mut Context<Self>) {
         if let (Some(grid), Some(ix)) = (
             self.grid,
             self.records.iter().position(|record| record.id == album),
@@ -791,6 +793,9 @@ impl TileHost for AlbumGrid {
                 ix / columns,
                 self.records.len().div_ceil(columns),
             );
+            // A scroll handle asks for no frame: drawn again so the next row
+            // of tiles reaches the accessibility tree on an idle window.
+            cx.notify();
         }
     }
 
@@ -806,8 +811,7 @@ impl TileHost for AlbumGrid {
         let item = Playable::Album(album);
         // The keyboard carries on from the tile clicked.
         if let Some(index) = self.records.iter().position(|r| r.id == album) {
-            self.cursor.at = Some(index);
-            self.cursor.anchor = Some(index);
+            self.cursor.click(index, modifiers.shift);
         }
         if self
             .selection
@@ -907,6 +911,10 @@ impl Render for AlbumGrid {
             self.frame(grid, count, window, cx);
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no albums yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("albums", |shelf| {
@@ -922,23 +930,19 @@ impl Render for AlbumGrid {
 
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
-        let held = self.loaded.is_none() && !self.failed;
+        let held = self.loaded.is_none() && self.failed.is_none();
         let body = match self.grid {
             _ if held => div().into_any_element(),
-            _ if count == 0 => chrome::empty_state(
+            _ if self.loaded.is_none() => chrome::failed_state(
                 crate::theme::Icon::Album,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no albums yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
+                self.failed.as_deref().unwrap_or_default(),
+                cx.listener(|this, _, _, cx| this.retry(cx)),
             )
             .into_any_element(),
+            _ if count == 0 => {
+                chrome::empty_state(crate::theme::Icon::Album, empty_title, empty_detail)
+                    .into_any_element()
+            }
             Some(grid) => uniform_list(
                 "albums",
                 grid.rows(count),
@@ -970,6 +974,7 @@ impl Render for AlbumGrid {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         )
@@ -1009,6 +1014,10 @@ impl super::keys::KeyedList for AlbumGrid {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.records.len()
     }
@@ -1025,13 +1034,7 @@ impl super::keys::KeyedList for AlbumGrid {
     /// without starting a pick: the tiles still play on a click. A range
     /// starts one.
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        let item = |ix: usize| Playable::Album(self.records[ix].id);
-        if from == to {
-            self.selection.mark(item(from));
-        } else {
-            self.selection.only(item(from));
-            self.selection.click(item(to), true, &self.order);
-        }
+        super::keys::mark_range(&mut self.selection, &self.order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
@@ -1056,9 +1059,22 @@ impl super::keys::KeyedList for AlbumGrid {
             .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
     }
 
-    fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
+    fn menu_at(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let entity = cx.weak_entity();
         self.menu = ix.map(|ix| {
-            actions::keyed_target(&self.selection, Playable::Album(self.records[ix].id), None)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Album(self.records[ix].id),
+                None,
+                Some(std::rc::Rc::new(move |cx: &mut App| {
+                    entity
+                        .update(cx, |this, cx| {
+                            this.selection.end();
+                            cx.notify();
+                        })
+                        .ok();
+                })),
+            )
         });
     }
 }

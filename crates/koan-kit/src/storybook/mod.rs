@@ -14,17 +14,17 @@ mod playground;
 
 use std::sync::Arc;
 
-use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use crate::components::field::FieldState as InputState;
+use gpui::prelude::*;
+use gpui::*;
 
 use crate::components::{
     Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Cover, CoverArt,
     EmptyState, FormRow, IconToggle, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, NavRow,
     PageHeader, Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea,
     SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner,
-    StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextField, TileArt, TileMark, TileSleeve,
-    Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
+    StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark,
+    TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -39,6 +39,7 @@ pub enum Story {
     Icons,
     Controls,
     Forms,
+    Text,
     Rows,
     Menus,
     Badges,
@@ -55,12 +56,13 @@ pub enum Story {
 }
 
 impl Story {
-    pub const ALL: [Story; 18] = [
+    pub const ALL: [Story; 19] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
         Story::Controls,
         Story::Forms,
+        Story::Text,
         Story::Rows,
         Story::Menus,
         Story::Badges,
@@ -84,6 +86,7 @@ impl Story {
             Story::Icons => "icons",
             Story::Controls => "controls",
             Story::Forms => "fields and forms",
+            Story::Text => "text fields",
             Story::Rows => "rows",
             Story::Menus => "menus and tooltips",
             Story::Badges => "badges and chips",
@@ -144,8 +147,7 @@ impl Storybook {
 }
 
 impl Render for Storybook {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        KoanTheme::drive(window, cx);
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .relative()
             .size_full()
@@ -185,6 +187,13 @@ pub struct StoryContent {
     tab: usize,
     field: Entity<InputState>,
     empty_field: Entity<InputState>,
+    /// The text fields page's own: a long line, a password, a disabled
+    /// field and several lines.
+    long_field: Entity<InputState>,
+    secret: Entity<InputState>,
+    still: Entity<InputState>,
+    fixed: Entity<InputState>,
+    area: Entity<InputState>,
     tooltip: Entity<Tooltip>,
     outputs: Entity<Menu>,
     more: more::State,
@@ -196,6 +205,39 @@ impl StoryContent {
     fn new(wash: Entity<Wash>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| InputState::new(window, cx).default_value("Sunday morning"));
         let empty_field = cx.new(|cx| InputState::new(window, cx).placeholder("search"));
+        let long_field = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(
+                    "%album artist%/%date% - %album%/%disc%%tracknumber% %title% (%codec%, %bitrate%)",
+                )
+                // A code field: its owner's highlighter, the `%field%`s in
+                // the accent.
+                .highlight(|text| {
+                    let marks: Vec<usize> = text.match_indices('%').map(|(i, _)| i).collect();
+                    marks
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|[open, close]| (*open..close + 1, Tone::Accent))
+                        .collect()
+                })
+        });
+        let fixed = cx.new(|cx| {
+            InputState::new(window, cx)
+                .read_only(true)
+                .default_value("https://koan.blit.cc/invite/7Q4M")
+        });
+        let secret = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value("correct horse battery staple")
+        });
+        let still = cx.new(|cx| InputState::new(window, cx).default_value("signing in…"));
+        let area = cx.new(|cx| {
+            InputState::new(window, cx)
+                .rows(4)
+                .default_value("20 -1.2\n100 0.4\n1000 0.0\n10000 -2.1\n20000 -6.0")
+        });
         Self {
             wash,
             story: Story::Type,
@@ -213,6 +255,11 @@ impl StoryContent {
             tab: 0,
             field,
             empty_field,
+            long_field,
+            secret,
+            still,
+            fixed,
+            area,
             tooltip: cx.new(|_| Tooltip::new("add to queue")),
             outputs: Menu::build(window, cx, |menu, _, _| {
                 menu.section("output")
@@ -666,6 +713,46 @@ impl StoryContent {
                     .child(TextField::new(&self.empty_field).bare())
                     .into_any_element(),
             ],
+            Story::Text => {
+                let field = |state: &Entity<InputState>| {
+                    div().w(look.spaced(280.0)).child(TextField::new(state))
+                };
+                vec![
+                    SectionHeader::new("A line").into_any_element(),
+                    field(&self.field).into_any_element(),
+                    SectionHeader::new("Empty, with its placeholder").into_any_element(),
+                    field(&self.empty_field).into_any_element(),
+                    SectionHeader::new(
+                        "Longer than the field, its fields highlighted: it scrolls to the caret",
+                    )
+                    .into_any_element(),
+                    field(&self.long_field).into_any_element(),
+                    SectionHeader::new("A password").into_any_element(),
+                    field(&self.secret).into_any_element(),
+                    SectionHeader::new("Read-only: selected and copied, never changed")
+                        .into_any_element(),
+                    field(&self.fixed).into_any_element(),
+                    SectionHeader::new("Disabled").into_any_element(),
+                    div()
+                        .w(look.spaced(280.0))
+                        .child(TextField::new(&self.still).disabled(true))
+                        .into_any_element(),
+                    SectionHeader::new("Bare, on the page's ground").into_any_element(),
+                    div()
+                        .w(look.spaced(280.0))
+                        .child(
+                            TextField::new(&self.empty_field)
+                                .bare()
+                                .role(TypeRole::Title),
+                        )
+                        .into_any_element(),
+                    SectionHeader::new("Several lines").into_any_element(),
+                    div()
+                        .w(look.spaced(280.0))
+                        .child(TextArea::new(&self.area))
+                        .into_any_element(),
+                ]
+            }
             Story::Rows => {
                 let selected_row = self.selected_row;
                 vec![
@@ -772,6 +859,38 @@ impl StoryContent {
                     .into_any_element(),
                 SectionHeader::new("Tooltip").into_any_element(),
                 div().child(self.tooltip.clone()).into_any_element(),
+                SectionHeader::new(
+                    "Opening a panel: pressed while it shows; a press outside, Escape or the trigger closes it",
+                )
+                .into_any_element(),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(look.space(Space::L))
+                    .child(crate::components::ToolbarMenu::new(
+                        "story-panel-menu",
+                        crate::components::ToolbarButton::new("story-panel-sort", Icon::Sort, "sort"),
+                        |dismiss, _, _| {
+                            MenuPanel::new()
+                                .child(MenuRow::new("story-sort-title", "Title").checked(true))
+                                .child(
+                                    MenuRow::new("story-sort-year", "Year")
+                                        .checked(false)
+                                        .on_click(move |_, window, cx| dismiss(window, cx)),
+                                )
+                        },
+                    ))
+                    .child(crate::components::opens_panel(
+                        "story-panel-word",
+                        crate::components::TextTrigger::new("story-panel-trigger", "any genre"),
+                        |_, _, _| {
+                            MenuPanel::new()
+                                .child(MenuRow::new("story-genre-any", "Any").checked(true))
+                                .child(MenuRow::new("story-genre-jazz", "Jazz").checked(false))
+                                .into_any_element()
+                        },
+                    ))
+                    .into_any_element(),
             ],
             Story::Badges => vec![
                 SectionHeader::new("Badges").into_any_element(),
@@ -806,7 +925,7 @@ impl StoryContent {
             ],
             Story::Covers => {
                 let side = look.spaced(120.0);
-                let warm = gpui_kit::hsla(0.05, 0.6, 0.45, 1.0);
+                let warm = gpui::hsla(0.05, 0.6, 0.45, 1.0);
                 vec![
                     SectionHeader::new("Covers").into_any_element(),
                     row()
@@ -823,19 +942,28 @@ impl StoryContent {
                     SectionHeader::new("Record tiles").into_any_element(),
                     row()
                         .child(
-                            TileArt::new(side, TileSleeve::Colour(warm))
+                            TileArt::new(("story-tile", 1usize), side, TileSleeve::Colour(warm))
                                 .codec(Some("FLAC".into()))
                                 .badge(Some("Deluxe".into()))
-                                .heart(Some((true, false))),
+                                .heart(true, false, true),
                         )
-                        .child(TileArt::new(side, TileSleeve::Loading).mark(Some(TileMark::Play)))
                         .child(
-                            TileArt::new(side, TileSleeve::Missing)
+                            TileArt::new(("story-tile", 2usize), side, TileSleeve::Loading)
+                                .mark(Some(TileMark::Play)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 3usize), side, TileSleeve::Missing)
                                 .on_device(Some(0.4))
                                 .mark(Some(TileMark::Starting)),
                         )
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(true)))
-                        .child(TileArt::new(side, TileSleeve::Colour(warm)).pick(Some(false)))
+                        .child(
+                            TileArt::new(("story-tile", 4usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(true)),
+                        )
+                        .child(
+                            TileArt::new(("story-tile", 5usize), side, TileSleeve::Colour(warm))
+                                .pick(Some(false)),
+                        )
                         .into_any_element(),
                 ]
             }
@@ -890,6 +1018,10 @@ impl StoryContent {
                     Tone::Bad,
                 )
                 .into_any_element(),
+                Banner::new(Icon::Speaker, "Waiting for USB DAC…", Tone::Muted)
+                    .action("retry", |_, _, _| {})
+                    .action("cancel", |_, _, _| {})
+                    .into_any_element(),
                 SectionHeader::new("Status line").into_any_element(),
                 StatusLine::new("Signed in as james.", Tone::Muted, Some(Icon::Success))
                     .into_any_element(),
@@ -945,6 +1077,7 @@ impl StoryContent {
                                 .items_center()
                                 .child(ToolbarTitle::new("queue")),
                         )
+                        .trailing(ToolbarButton::new("tb-queue", Icon::Queue, "queue"))
                         .trailing(
                             ToolbarButton::new("tb-lyrics", Icon::Lyrics, "lyrics").selected(true),
                         )

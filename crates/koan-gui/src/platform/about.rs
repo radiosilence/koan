@@ -12,10 +12,9 @@ pub const BUILD: &str = env!("KOAN_BUILD");
 const SITE: &str = "https://koan.rocks";
 const SOURCE: &str = "https://github.com/radiosilence/koan";
 
-/// The desktop app's icon as a build outside a bundle sets it: kōan's, with a
-/// spindle at the circle's centre so it is told apart from the Mac app. AppKit
-/// draws a set image as it is, so this one sits on the macOS icon grid, where
-/// a bundle's `.icns` is fitted to it by the system.
+/// The desktop app's icon as a build outside a bundle sets it, with the dev
+/// spindle. AppKit draws a set image as it is, so this one sits on the macOS icon grid, where a
+/// bundle's `.icns` is fitted to it by the system.
 #[cfg(target_os = "macos")]
 const ICON: &[u8] = include_bytes!("../../packaging/AppIcon-launch.png");
 
@@ -32,8 +31,10 @@ pub fn name_unbundled() {
     use objc2::{class, msg_send};
     use objc2_foundation::NSString;
     // SAFETY: messages to AppKit's own classes on the main thread before
-    // the application runs; `setObject:forKey:` is sent only to a mutable
-    // dictionary.
+    // the application runs. Whether the bundle's dictionary is mutable
+    // cannot be asked: a CF dictionary is of the mutable class either way.
+    // An immutable one raises on `setObject:forKey:`, which `catch` turns
+    // into an error before it unwinds into Rust.
     unsafe {
         let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
         let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
@@ -44,13 +45,17 @@ pub fn name_unbundled() {
         if info.is_null() {
             return;
         }
-        // An immutable dictionary answers `respondsToSelector:` for the
-        // setter too, being of the same class cluster: its class says.
-        let mutable: bool = msg_send![info, isKindOfClass: class!(NSMutableDictionary)];
-        if mutable {
-            let name = NSString::from_str("kōan");
-            let key = NSString::from_str("CFBundleName");
+        let name = NSString::from_str("kōan");
+        let key = NSString::from_str("CFBundleName");
+        // Nothing the closure touches outlives it if it unwinds.
+        if objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
             let _: () = msg_send![info, setObject: &*name, forKey: &*key];
+        }))
+        .is_err()
+        {
+            log::debug!(
+                "the bundle's info dictionary is immutable; the menu bar keeps the binary's name"
+            );
         }
     }
 }
@@ -203,7 +208,10 @@ fn show(cx: &mut App) {
         .fixed()
         .options(cx);
     match cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
-        Ok(window) => cx.set_global(Open(Some(window))),
+        Ok(window) => {
+            cx.set_global(Open(Some(window)));
+            crate::platform::residency::settle_dock(cx);
+        }
         Err(e) => log::warn!("about: {e}"),
     }
 }

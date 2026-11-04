@@ -316,10 +316,7 @@ pub fn apply(
         LinkCommand::Clear => send(PlayerCommand::ClearPlaylist),
         LinkCommand::Undo => send(PlayerCommand::Undo),
         LinkCommand::Redo => send(PlayerCommand::Redo),
-        LinkCommand::Seek { position_ms } => {
-            state.request_seek(position_ms);
-            send(PlayerCommand::Seek(position_ms)).inspect_err(|_| state.seek_taken(position_ms))
-        }
+        LinkCommand::Seek { position_ms } => send(PlayerCommand::Seek(position_ms)),
         LinkCommand::Pause => send(PlayerCommand::Pause),
         LinkCommand::Resume => send(PlayerCommand::Resume),
         LinkCommand::Next => send(PlayerCommand::NextTrack),
@@ -791,10 +788,14 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         | PlayerCommand::RetryDownloads(_)
         | PlayerCommand::SignedOut
         | PlayerCommand::DecodeFinished(_)
+        | PlayerCommand::OutputOpened(_)
+        | PlayerCommand::RetryOutput
+        | PlayerCommand::CancelOutput
         | PlayerCommand::TrackQueued
         | PlayerCommand::SetOutputDevice(_)
         | PlayerCommand::ClearOutputDevice
         | PlayerCommand::ReloadDsp
+        | PlayerCommand::DspLoaded(_)
         | PlayerCommand::RouteChanged
         | PlayerCommand::RestartOutput
         | PlayerCommand::UseRenderer(_)

@@ -78,7 +78,14 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     fun previous() = mirror.launch { previous() }
 
-    fun seek(positionMs: Long) = mirror.launch { seek(positionMs.coerceAtLeast(0).toULong()) }
+    /** `sent` runs once the command has been sent, or has failed to be. */
+    fun seek(positionMs: Long, sent: () -> Unit = {}) = mirror.launch {
+        try {
+            seek(positionMs.coerceAtLeast(0).toULong())
+        } finally {
+            sent()
+        }
+    }
 
     fun setShuffle(on: Boolean) = mirror.launch { setShuffle(on) }
 

@@ -1,4 +1,4 @@
-use gpui_kit::{
+use gpui::{
     App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
     div, px,
 };
@@ -43,15 +43,15 @@ impl RenderOnce for EmptyState {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         // A group to a screen reader, named by what it says.
-        let spoken: gpui_kit::SharedString = match &self.detail {
+        let spoken: gpui::SharedString = match &self.detail {
             Some(detail) => format!("{}. {detail}", self.title).into(),
             None => self.title.clone(),
         };
         super::accessible(
-            div().id(gpui_kit::ElementId::Name(
+            div().id(gpui::ElementId::Name(
                 format!("empty-{}", self.title).into(),
             )),
-            gpui_kit::Role::Group,
+            gpui::Role::Group,
             Some(spoken),
         )
         .size_full()
@@ -65,8 +65,10 @@ impl RenderOnce for EmptyState {
                 .items_center()
                 .gap(look.space(Space::M))
                 .p(look.space(Space::Xxl))
-                // Room for a title on one line, at the size type is drawn.
-                .max_w(px(420.0 * look.scale.text))
+                // Room for a title on one line, and a sentence of detail on
+                // one or two with no word left alone on the last, at the size
+                // type is drawn.
+                .max_w(px(480.0 * look.scale.text))
                 .text_center()
                 .child(
                     KoanIcon::new(self.icon)

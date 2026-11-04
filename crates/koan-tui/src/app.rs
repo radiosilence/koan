@@ -3678,9 +3678,8 @@ impl App {
             ));
             return;
         }
-        self.tx
-            .send(PlayerCommand::Seek(target_ms.min(seekable)))
-            .ok();
+        // The bar moves when the player has taken the seek.
+        let _ = self.tx.send(PlayerCommand::Seek(target_ms.min(seekable)));
     }
 
     /// The track info modal renders nothing once its track leaves the queue,

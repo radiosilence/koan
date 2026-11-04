@@ -47,6 +47,3 @@ __pycache__/
 crates/koan-server/assets/ui.js
 crates/koan-server/assets/player.js
 crates/koan-server/assets/share.js
-
-# scripts/vendor-gpui.sh works beside the vendored copies while it runs.
-vendor/.tmp.*

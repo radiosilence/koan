@@ -1,0 +1,1 @@
+- **The album and artist hearts pop and deflate.** The header heart answers a change as the hearts on track rows do.

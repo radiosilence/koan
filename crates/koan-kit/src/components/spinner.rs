@@ -18,9 +18,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
+
+use futures::FutureExt as _;
+use futures::future::Shared;
 use std::time::{Duration, Instant};
 
-use gpui_kit::*;
+use gpui::*;
 use smallvec::SmallVec;
 
 use super::placeholder::TRACE;
@@ -42,6 +45,8 @@ pub struct Spinner {
     /// arrives: the spinner is centred in it.
     reserve: Option<Size<Pixels>>,
     color: Option<Hsla>,
+    /// What a screen reader announces while it shows, under its id.
+    announce: Option<(ElementId, SharedString)>,
 }
 
 impl Spinner {
@@ -51,7 +56,17 @@ impl Spinner {
             side,
             reserve: None,
             color: None,
+            announce: None,
         }
+    }
+
+    /// Standing for content on its way, as a loading pane's spinner does:
+    /// a screen reader announces `label` ("loading keys") politely as it
+    /// appears. A spinner beside words that already say so, or in a control
+    /// that has its own name, stays decorative.
+    pub fn announced(mut self, id: impl Into<ElementId>, label: impl AsRef<str>) -> Self {
+        self.announce = Some((id.into(), crate::theme::label(label)));
+        self
     }
 
     /// Drawn in `color` rather than `muted`: the placeholder's faded mark.
@@ -250,8 +265,42 @@ struct Field {
     half_brush: f32,
 }
 
-thread_local! {
-    static FIELD_IMAGE: Rc<Field> = Rc::new(bake_field());
+/// The field, baked once for every spinner.
+static FIELD_IMAGE: OnceLock<Field> = OnceLock::new();
+
+/// The bake in flight, for each spinner drawn before it lands to wait on.
+struct Baking(Shared<Task<()>>);
+
+impl Global for Baking {}
+
+/// The field, once baked. The bake measures every texel against every
+/// segment of the trace, too long for the main thread, so the first spinner
+/// starts it on the background executor and draws its square empty; the
+/// view that drew it is drawn again when the field lands.
+fn baked(window: &mut Window, cx: &mut App) -> Option<&'static Field> {
+    if let Some(field) = FIELD_IMAGE.get() {
+        return Some(field);
+    }
+    let baking = match cx.try_global::<Baking>() {
+        Some(baking) => baking.0.clone(),
+        None => {
+            let task = cx
+                .background_executor()
+                .spawn(async {
+                    FIELD_IMAGE.get_or_init(bake_field);
+                })
+                .shared();
+            cx.set_global(Baking(task.clone()));
+            task
+        }
+    };
+    let view = window.current_view();
+    cx.spawn(async move |cx| {
+        baking.await;
+        cx.update(|cx| cx.notify(view));
+    })
+    .detach();
+    None
 }
 
 /// For each texel of a unit square holding the ensō as `lay_out` fits it,
@@ -330,10 +379,25 @@ impl RenderOnce for Spinner {
         let look = Look::of(window, cx);
         let color = self.color.unwrap_or(look.palette.muted.hsla());
         let moving = KoanTheme::motion_allowed(cx);
+        let announce = self.announce.clone();
+        let mark = self.mark(color, moving, window, cx);
+        match announce {
+            Some((id, label)) => super::announced(div().id(id), label, crate::theme::Tone::Muted)
+                .flex_none()
+                .child(mark)
+                .into_any_element(),
+            None => mark,
+        }
+    }
+}
+
+impl Spinner {
+    fn mark(self, color: Hsla, moving: bool, window: &mut Window, cx: &mut App) -> AnyElement {
         if SHADED {
-            let field = FIELD_IMAGE.with(Rc::clone);
+            let Some(field) = baked(window, cx) else {
+                return reserving(div().size(self.side).flex_none(), self.reserve);
+            };
             let side = f32::from(self.side) * window.scale_factor();
-            let rgba = color.to_rgb();
             let animated = Animated::new();
             animated.set_all(
                 0,
@@ -345,7 +409,7 @@ impl RenderOnce for Spinner {
                     field.range * side,
                 ],
             );
-            animated.set_all(8, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            animated.set_color(8, color);
             // Every spinner turns in step, from the first one drawn.
             animated.segment(
                 0,

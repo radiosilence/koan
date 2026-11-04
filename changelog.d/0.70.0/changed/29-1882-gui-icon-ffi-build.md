@@ -1,0 +1,1 @@
+- **The launch icon follows Apple's template, and `just gui-run` builds only what it links.** The launch icon's shadow follows Apple's template, and its SVG carries the drawing rather than referring to another file. koan-ffi is a Rust library, so the desktop app's builds no longer also build it as a static and a dynamic library; the Apple and Android builds ask for theirs.

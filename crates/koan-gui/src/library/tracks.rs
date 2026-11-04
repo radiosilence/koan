@@ -9,10 +9,9 @@
 
 use std::collections::HashSet;
 use std::ops::Range;
-use std::time::Duration;
 
-use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
 use koan_kit::app::*;
+use koan_runtime::{BrowseFilter, Track, TrackBrowseSort};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use crate::components::{UniformListScrollHandle, uniform_list};
 
@@ -26,7 +25,6 @@ use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::navigator::{Listing, Shelf};
 
 const PAGE: u32 = 1000;
-const TYPING: Duration = Duration::from_millis(80);
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -44,9 +42,10 @@ struct KeptTracks {
 }
 
 pub struct TrackBrowser {
-    /// A load failed before any landed: the page draws its header and empty
-    /// state rather than staying held, so the query can still be changed.
-    failed: bool,
+    /// A load failed before any landed, and why: the page draws its header
+    /// and the failure with a retry rather than staying held, so the query
+    /// can still be changed. Cleared by the next listing that lands.
+    failed: Option<String>,
     lib: Lib,
     /// A shelf's "see all": the shelf's filter and order in place of the
     /// shared ones, and no controls to change them.
@@ -65,6 +64,8 @@ pub struct TrackBrowser {
     scroll: UniformListScrollHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
+    /// Where the cursor was laid out, for the menu key and the scroll.
+    spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
     /// The rows on screen as of the last frame.
@@ -167,13 +168,14 @@ impl TrackBrowser {
             tracks,
             total,
             loaded,
-            failed: false,
+            failed: None,
             loading: None,
             stale: false,
             request: 0,
             _load: None,
             scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
+            spot: Default::default(),
             keyed: false,
             visible: 0..0,
             selection: Selection::default(),
@@ -181,32 +183,47 @@ impl TrackBrowser {
             menu: None,
             restore,
             rewinds,
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             search,
             filters,
             viewport: 0.0,
             waits: 0,
             _subscriptions: subscriptions,
         };
-        // A kept listing draws at once, where the last visit left it.
-        if this.loaded.is_some() {
-            this.restore_scroll();
-        }
-        // A listing kept from a visit under another query (a shelf's "see
-        // all" changed the filter) is not drawn: the page waits for its own,
-        // as a first visit does, rather than drawing the old rows and
-        // swapping them.
-        if this
+        // A kept listing draws at once, where the last visit left it. One
+        // from another query, or from before the library moved, is not drawn:
+        // the page waits for its own, as a first visit does, rather than
+        // drawing old rows and landing the kept place on other records. The
+        // place is kept for a listing of the same query.
+        let version = this.lib.feed.read(cx).library_version;
+        let query = this.query(cx);
+        match this
             .loaded
             .as_ref()
-            .is_some_and(|(q, _)| *q != this.query(cx))
+            .map(|loaded| chrome::kept(loaded, &query, version))
         {
-            this.tracks = Default::default();
-            this.total = 0;
-            this.loaded = None;
+            Some(chrome::Kept::Draw) => this.restore_scroll(),
+            Some(kept) => {
+                if kept == chrome::Kept::Forget {
+                    this.restore = None;
+                }
+                this.tracks = Default::default();
+                this.cursor = Default::default();
+                this.total = 0;
+                this.loaded = None;
+            }
+            None => {}
         }
         this.reload(cx);
         this
+    }
+
+    /// The failure's "try again": the same listing asked for afresh.
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        self.failed = None;
+        self.loading = None;
+        self.reload(cx);
+        cx.notify();
     }
 
     fn query(&self, cx: &App) -> Query {
@@ -241,24 +258,11 @@ impl TrackBrowser {
             return;
         }
         self.stale = false;
-        let typed = self
-            .loading
-            .as_ref()
-            .or(self.loaded.as_ref())
-            .is_some_and(|(q, v)| {
-                *v == version
-                    && q.search != wanted.0.search
-                    && q.filter == wanted.0.filter
-                    && q.sort == wanted.0.sort
-            });
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
-            if typed {
-                cx.background_executor().timer(TYPING).await;
-            }
             let q = wanted.0.clone();
             // Read until the listing covers the rows on screen, then swapped
             // in whole; after that each page is appended as it lands.
@@ -279,7 +283,7 @@ impl TrackBrowser {
                                 return;
                             }
                             this.loading = None;
-                            this.failed = true;
+                            this.failed = Some(crate::settings::model::describe(&e));
                             cx.notify();
                             // Swapped in but not whole: not the listing, so
                             // the next change reads it again.
@@ -308,9 +312,15 @@ impl TrackBrowser {
                                 let covers =
                                     list.len() >= this.visible.end.min(page.total as usize);
                                 if covers || done {
-                                    this.tracks = pending.take().unwrap_or_default();
+                                    let tracks = pending.take().unwrap_or_default();
+                                    let ids = |t: &[Track]| -> Vec<i64> {
+                                        t.iter().map(|t| t.id).collect()
+                                    };
+                                    this.cursor.relocate(&ids(&this.tracks), &ids(&tracks));
+                                    this.tracks = tracks;
                                     this.total = page.total;
                                     this.loaded = Some(wanted.clone());
+                                    this.failed = None;
                                     this.restore_scroll();
                                     cx.notify();
                                 }
@@ -374,7 +384,7 @@ impl TrackBrowser {
         let owner = cx.entity_id();
         self.lib
             .covers
-            .update(cx, |covers, _| covers.request(owner, ranked));
+            .update(cx, |covers, cx| covers.request(owner, ranked, cx));
     }
 
     fn row(
@@ -413,7 +423,7 @@ impl TrackBrowser {
             transfer: feed.transfers.get(&id).copied(),
             drag,
             note: None,
-            cursor: self.keyed && self.cursor.at == Some(index),
+            cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             kind: crate::components::RowKind::Art,
             place: Some((index, self.total as usize)),
             reveal: p
@@ -453,6 +463,10 @@ impl actions::Menus for TrackBrowser {
     fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
         &self.menu
     }
+
+    fn cursor_spot(&self) -> Option<crate::components::CursorSpot> {
+        Some(self.spot.clone())
+    }
 }
 
 impl TrackList for TrackBrowser {
@@ -473,8 +487,7 @@ impl TrackList for TrackBrowser {
         match part {
             RowPart::Row => {
                 // The keyboard carries on from the row clicked.
-                self.cursor.at = Some(index);
-                self.cursor.anchor = Some(index);
+                self.cursor.click(index, event.modifiers().shift);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
@@ -529,6 +542,10 @@ impl Render for TrackBrowser {
                 .set_offset(Point::default());
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
+        // A shelf's "see all" has no filter of its own: it says what the
+        // shelf holds, not what the library browser's filter left.
+        let (empty_title, empty_detail) =
+            super::scope::empty(self.scope, narrowed, "no tracks yet");
         let header = chrome::page_header(
             p,
             self.scope.map_or("tracks", |shelf| {
@@ -568,24 +585,19 @@ impl Render for TrackBrowser {
         self.aim(first..last, window, cx);
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
-        let held = self.loaded.is_none() && !self.failed;
+        let held = self.loaded.is_none() && self.failed.is_none();
         let body = if held {
             div().into_any_element()
-        } else if self.total == 0 {
-            chrome::empty_state(
+        } else if self.loaded.is_none() {
+            chrome::failed_state(
                 crate::theme::Icon::Track,
-                if narrowed {
-                    "nothing matches"
-                } else {
-                    "no tracks yet"
-                },
-                if narrowed {
-                    "try a different filter."
-                } else {
-                    "add a music folder in settings, or sign in to a server."
-                },
+                self.failed.as_deref().unwrap_or_default(),
+                cx.listener(|this, _, _, cx| this.retry(cx)),
             )
             .into_any_element()
+        } else if self.total == 0 {
+            chrome::empty_state(crate::theme::Icon::Track, empty_title, empty_detail)
+                .into_any_element()
         } else {
             // Rows past what has arrived are drawn empty, so the scroll bar
             // is the listing's length from the first page.
@@ -617,6 +629,7 @@ impl Render for TrackBrowser {
                 cx,
             ),
             cx.weak_entity(),
+            actions::Menus::cursor_spot(self),
             window,
             cx,
         );
@@ -652,6 +665,10 @@ impl super::keys::KeyedList for TrackBrowser {
         &mut self.cursor
     }
 
+    fn spot(&self) -> Option<&crate::components::CursorSpot> {
+        Some(&self.spot)
+    }
+
     fn len(&self) -> usize {
         self.tracks.len()
     }
@@ -659,7 +676,7 @@ impl super::keys::KeyedList for TrackBrowser {
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
         self.selection.only(order[from]);
-        if to > from {
+        if to != from {
             self.selection.click(order[to], true, &order);
         }
     }
@@ -682,7 +699,12 @@ impl super::keys::KeyedList for TrackBrowser {
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
         self.menu = ix.map(|ix| {
             let track = &self.tracks[ix];
-            actions::keyed_target(&self.selection, Playable::Track(track.id), track.album_id)
+            actions::keyed_target(
+                &self.selection,
+                Playable::Track(track.id),
+                track.album_id,
+                None,
+            )
         });
     }
 }

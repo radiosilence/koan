@@ -22,7 +22,9 @@ impl Render for Bars {
         div().size_full().bg(rgb(0x000000)).child(
             canvas(
                 |_, _, _| {},
-                move |bounds, _, window, _| window.paint_shader(bounds, &BARS, uniforms.clone()),
+                move |bounds, _, window, _| {
+                    window.paint_shader(bounds, BARS.gpui(), uniforms.clone())
+                },
             )
             .absolute()
             .left(px(10.))

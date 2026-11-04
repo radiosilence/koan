@@ -4,8 +4,8 @@
 //! `places::cache`, each keyed by the config directory.
 //!
 //! An earlier version wrote them into the config directory; on start-up
-//! they are moved to their places, once and silently, so the window, the
-//! browsers' sorts and the desktop device's identity survive the upgrade.
+//! they are moved to their places, once and silently, so the window and the
+//! browsers' sorts survive the upgrade.
 
 use koan_core::places;
 
@@ -20,12 +20,7 @@ pub fn adopt() {
     if let Err(e) = std::fs::create_dir_all(&state) {
         log::warn!("state directory {}: {e}", state.display());
     }
-    for name in [
-        crate::window_state::FILE,
-        crate::library::browse::STATE,
-        "desktop-devices.json",
-        "desktop-device-id",
-    ] {
+    for name in [crate::window_state::FILE, crate::library::browse::STATE] {
         places::adopt(name, &state);
     }
     // A lock is not moved: one an earlier version still holds stays with

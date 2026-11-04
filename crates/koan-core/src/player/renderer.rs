@@ -390,9 +390,12 @@ impl Player {
         {
             return;
         }
-        let carry = self
-            .session()
-            .map(|s| (s.track.id, self.shared_state.position_ms(), s.run));
+        let carry = match &self.transport {
+            Transport::Opening(pending) => Some((pending.id, pending.position_ms, pending.start)),
+            _ => self
+                .session()
+                .map(|s| (s.track.id, self.shared_state.position_ms(), s.run)),
+        };
         log::info!(
             "upnp: switching output{} to {}",
             carry.map_or(String::new(), |(_, at, run)| format!(
@@ -409,6 +412,11 @@ impl Player {
         );
 
         self.stop_engine();
+        // A session still waiting for the local output goes with it; the
+        // open lands with nobody waiting and is kept or dropped as any is.
+        if matches!(self.transport, Transport::Opening(_)) {
+            self.transport = Transport::Idle;
+        }
         self.leave_renderer();
 
         if let Some(connection) = connection {
@@ -1502,7 +1510,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake = FakeRenderer::start(sink, gapless, true);
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2306,7 +2314,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2462,7 +2470,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2645,7 +2653,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut player = Player::new();
-        player.backend = Box::new(crate::player::tests::StuckBackend {
+        player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 44_100.0,
             asked: Default::default(),
             starts: Default::default(),
@@ -2840,7 +2848,7 @@ mod tests {
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             let fake = FakeRenderer::start(WAV, rng.coin(), true);
             let mut player = Player::new();
-            player.backend = Box::new(crate::player::tests::StuckBackend {
+            player.backend = Arc::new(crate::player::tests::StuckBackend {
                 rate: 8_000.0,
                 asked: Default::default(),
                 starts: Default::default(),
@@ -3338,7 +3346,7 @@ mod tests {
         let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
         r.player.use_renderer(None);
         let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        r.player.backend = Box::new(crate::player::tests::StuckBackend {
+        r.player.backend = Arc::new(crate::player::tests::StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
             starts: starts.clone(),

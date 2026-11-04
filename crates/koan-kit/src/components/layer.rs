@@ -5,10 +5,9 @@
 //! The content is laid out and painted as it would be unwrapped, so it takes
 //! the pointer where it stands; only how it shows moves.
 
-use gpui_kit::*;
+use gpui::*;
 
-use super::{Animated, Ease, Repeat, ShaderProgram};
-use crate::theme::{KoanTheme, Motion};
+use super::{Animated, ShaderProgram};
 
 /// The layer's composition. Tracks: 0 the opacity, 1 and 2 the offset in
 /// device pixels, 3 how much of it shows, from the top left, 0 to 1.
@@ -53,12 +52,23 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
+/// What writes a layer's placement uniforms: its bounds and the window's scale.
+type Placed = Box<dyn Fn(Bounds<Pixels>, f32)>;
+
 /// `child` drawn as a layer whose opacity, offset and reveal `animated`'s
 /// tracks move (`LAYER`). Decorative: under Reduce Motion it stands at its
 /// tracks' ends.
 pub struct AnimatedLayer {
     child: AnyElement,
     animated: Animated,
+    program: &'static ShaderProgram,
+    /// Composed by the program at rest too, not only while it moves.
+    always: bool,
+    /// What it shows is information, so its tracks move under Reduce Motion.
+    informative: bool,
+    /// Writes the uniforms that depend on where it is painted, given its
+    /// bounds and the window's scale, each time it paints.
+    placed: Option<Placed>,
 }
 
 impl AnimatedLayer {
@@ -67,7 +77,35 @@ impl AnimatedLayer {
         Self {
             child: child.into_any_element(),
             animated: animated.clone(),
+            program: &LAYER,
+            always: false,
+            informative: false,
+            placed: None,
         }
+    }
+
+    /// Composed by `program` rather than `LAYER`, at rest as well as in
+    /// motion: a layer whose look is its program's (the lyrics' opacities
+    /// and edges).
+    pub fn program(mut self, program: &'static ShaderProgram) -> Self {
+        self.program = program;
+        self.always = true;
+        self
+    }
+
+    /// Its motion says something (which line is sung): under Reduce Motion
+    /// its tracks still move, as their owner sets them.
+    pub fn informative(mut self) -> Self {
+        self.informative = true;
+        self
+    }
+
+    /// `placed` writes the uniforms that follow where the layer is painted,
+    /// with its bounds and the window's scale, each paint: a scroll that
+    /// moves what is inside it.
+    pub fn placed(mut self, placed: impl Fn(Bounds<Pixels>, f32) + 'static) -> Self {
+        self.placed = Some(Box::new(placed));
+        self
     }
 }
 
@@ -110,7 +148,7 @@ impl Element for AnimatedLayer {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.animated.attach(true, window, cx);
+        self.animated.attach(!self.informative, window, cx);
         self.child.prepaint(window, cx);
     }
 
@@ -126,15 +164,34 @@ impl Element for AnimatedLayer {
     ) {
         // A layer only while it moves: settled, it is painted as it stands,
         // with no texture of its own.
-        if !self.animated.moving() {
+        if !self.always && !self.animated.moving() {
             self.child.paint(window, cx);
             return;
         }
+        if let Some(placed) = &self.placed {
+            placed(bounds, window.scale_factor());
+        }
         let child = &mut self.child;
         self.animated
-            .paint_layer(&LAYER, bounds, window, cx, |window, cx| {
+            .paint_layer(self.program, bounds, window, cx, |window, cx| {
                 child.paint(window, cx)
             });
+        // Its view drawn again once it settles, which paints it with no
+        // group: a cached view would otherwise go on replaying the group,
+        // and its texture, until something else drew it (#1878). A layer
+        // composed at rest too keeps its group, so nothing is owed it: asked
+        // at rest, the wait is nothing and the view would draw again at
+        // once, every frame.
+        if !self.always
+            && let Some(wait) = self.animated.settled_in()
+        {
+            let view = window.current_view();
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(wait).await;
+                cx.update(|cx| cx.notify(view));
+            })
+            .detach();
+        }
     }
 }
 
@@ -144,87 +201,4 @@ pub fn standing(animated: &Animated) {
     animated.hold(1, 0.0);
     animated.hold(2, 0.0);
     animated.hold(3, 1.0);
-}
-
-/// A column that slides in and out at an edge (a panel, the sidebar): its
-/// slot laid out at its full width at once, so what is beside it moves in
-/// one step, and its content sliding by the layer's offset track. Gone, the
-/// slot is let go once the slide out ends.
-pub(crate) struct Sliding {
-    /// Whether the slot is laid out: shown, or still sliding out.
-    pub laid_out: bool,
-    pub animated: Animated,
-}
-
-/// The slide for `key`, `travel` device pixels toward the edge the column
-/// leaves by (negative for the leading edge).
-pub(crate) fn sliding(
-    key: ElementId,
-    shown: bool,
-    travel: f32,
-    window: &mut Window,
-    cx: &mut App,
-) -> Sliding {
-    struct State {
-        shown: bool,
-        laid_out: bool,
-        animated: Animated,
-        _gone: Option<Task<()>>,
-    }
-    let state = window.use_keyed_state(key, cx, |_, _| {
-        let animated = Animated::new();
-        standing(&animated);
-        State {
-            shown,
-            laid_out: shown,
-            animated,
-            _gone: None,
-        }
-    });
-    let moving = KoanTheme::motion_allowed(cx);
-    state.update(cx, |s, cx| {
-        if s.shown != shown {
-            s.shown = shown;
-            let now = Animated::now();
-            if !moving {
-                s.laid_out = shown;
-                s._gone = None;
-                s.animated.hold(1, 0.0);
-            } else if shown {
-                s.laid_out = true;
-                s._gone = None;
-                s.animated.segment(
-                    1,
-                    travel,
-                    0.0,
-                    now,
-                    Motion::SETTLE,
-                    Ease::QuickOut,
-                    Repeat::Once,
-                );
-            } else {
-                s.animated.segment(
-                    1,
-                    0.0,
-                    travel,
-                    now,
-                    Motion::SETTLE,
-                    Ease::QuickOut,
-                    Repeat::Once,
-                );
-                s._gone = Some(cx.spawn(async move |s, cx| {
-                    cx.background_executor().timer(Motion::SETTLE).await;
-                    s.update(cx, |s, cx| {
-                        s.laid_out = false;
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-            }
-        }
-        Sliding {
-            laid_out: s.laid_out,
-            animated: s.animated.clone(),
-        }
-    })
 }

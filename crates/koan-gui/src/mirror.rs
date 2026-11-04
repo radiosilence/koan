@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use koan_ffi::{
+use koan_kit::app::{App, AppContext, Entity, Global};
+use koan_runtime::{
     ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo,
     QueueItem, QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer,
     TransferFigure,
 };
-use koan_kit::app::{App, AppContext, Entity, Global};
 
 use crate::queue::rows::{self, Row};
 
@@ -42,6 +42,8 @@ pub struct Playhead {
     pub seekable_ms: u64,
     pub playing: bool,
     pub at: Instant,
+    /// The seeks the engine had answered when it said this (`KoanEngine::seeks`).
+    pub seek: u64,
 }
 
 impl Playhead {
@@ -66,7 +68,9 @@ impl Playhead {
 #[derive(Default)]
 pub struct Queue {
     /// The rows as last sent whole, each with its status as it was then.
-    pub base: Vec<QueueItem>,
+    /// Shared, so a regroup hands it to the background executor without
+    /// copying fifty thousand rows on the main thread.
+    pub base: Arc<Vec<QueueItem>>,
     /// `base` with the latest patch applied: what a row reads now.
     pub items: Vec<QueueItem>,
     pub version: u64,
@@ -104,7 +108,7 @@ impl Queue {
         let track_rows = track_rows(&rows, &items);
         Self {
             items: items.clone(),
-            base: items,
+            base: Arc::new(items),
             version,
             whole: 0,
             at,
@@ -256,16 +260,16 @@ pub struct Mirror {
 impl Global for Mirror {}
 
 impl Mirror {
-    /// Starts following the engine. The loop ends when the engine goes, since
-    /// the stream holds it weakly and answers `None` then.
-    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
-        let mirror = Self {
+    /// Every slice as it stands before the engine says anything.
+    pub fn empty(cx: &mut App) -> Self {
+        Self {
             playback: cx.new(|_| Playback(idle())),
             playhead: cx.new(|_| Playhead {
                 position_ms: 0,
                 seekable_ms: 0,
                 playing: false,
                 at: Instant::now(),
+                seek: 0,
             }),
             queue: cx.new(|_| Queue::default()),
             library: cx.new(|_| Library {
@@ -284,9 +288,18 @@ impl Mirror {
             devices: cx.new(|_| Slice(Devices::default())),
             connection: cx.new(|_| Slice(None)),
             renderers: cx.new(|_| Slice(Renderers::default())),
-        };
+        }
+    }
+
+    /// Starts following the engine. The loop ends when the engine goes, since
+    /// the stream holds it weakly and answers `None` then.
+    pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) -> Self {
+        let mirror = Self::empty(cx);
         let stream = engine.observe();
         let held = mirror.clone();
+        // Whether the app is still there: the engine can outlive it, as in
+        // the benches, which open one engine for several apps.
+        let app = mirror.playback.downgrade();
         let background = cx.background_executor().clone();
         cx.spawn(async move |cx| {
             loop {
@@ -304,6 +317,9 @@ impl Mirror {
                     })
                     .await;
                 let Some(batch) = batch else { break };
+                if app.upgrade().is_none() {
+                    break;
+                }
                 let replaced = cx.update(|cx| held.apply(batch, cx));
                 if !replaced.is_empty() {
                     background.spawn(async move { drop(replaced) }).detach();
@@ -445,11 +461,13 @@ impl From<StateSlice> for Prepared {
                 position_ms,
                 seekable_ms,
                 playing,
+                seek,
             } => Prepared::Playhead(Playhead {
                 position_ms,
                 seekable_ms,
                 playing,
                 at: Instant::now(),
+                seek,
             }),
             other => Prepared::Other(other),
         }
@@ -458,7 +476,7 @@ impl From<StateSlice> for Prepared {
 
 fn idle() -> NowPlaying {
     NowPlaying {
-        state: koan_ffi::PlayState::Stopped,
+        state: koan_runtime::PlayState::Stopped,
         waiting: false,
         position_ms: 0,
         duration_ms: 0,
@@ -467,11 +485,87 @@ fn idle() -> NowPlaying {
         format: None,
         playlist_version: 0,
         shuffle: false,
-        repeat_mode: koan_ffi::RepeatMode::Off,
+        repeat_mode: koan_runtime::RepeatMode::Off,
         undo_shuffles: 0,
         queue_shufflable: false,
         sleep: None,
         sleep_fading: false,
         start_failure: None,
+        output_wait: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::prelude::v1::test;
+
+    use koan_kit::app::test::TestAppContext;
+    use koan_runtime::{EntryStatus, QueueItem, RunRole};
+
+    use super::*;
+
+    /// A queue of `n` rows, ten to a record, with words the length a library's
+    /// are, so a clone costs what it would.
+    fn items(n: usize) -> Vec<QueueItem> {
+        (0..n)
+            .map(|i| QueueItem {
+                queue_item_id: format!("0190a3f2-7c4e-7b9a-8d1e-{i:012}"),
+                track_id: Some(i as i64),
+                album_id: Some((i / 10) as i64),
+                artist_id: Some(1),
+                album_artist_id: Some(1),
+                title: format!("A track title of some length {i}"),
+                artist: "An Artist Name".into(),
+                album_artist: "An Artist Name".into(),
+                artist_credit: Vec::new(),
+                album_artist_credit: Vec::new(),
+                credit_differs: false,
+                run: if i % 10 == 0 {
+                    RunRole::Opens
+                } else {
+                    RunRole::Continues
+                },
+                album: format!("A record title {}", i / 10),
+                year: Some("1999".into()),
+                codec: Some("FLAC".into()),
+                track_number: Some((i % 10) as i64 + 1),
+                disc: Some(1),
+                duration_ms: Some(240_000),
+                status: EntryStatus::Queued,
+                playlist_entry_id: None,
+                failure_reason: None,
+                on_server: false,
+                on_disk: true,
+            })
+            .collect()
+    }
+
+    /// What a regroup of 50,000 rows costs the main thread: the hand-off,
+    /// not the layout, which is the background executor's.
+    #[koan_kit::app::test::test]
+    fn a_regroup_hands_the_queue_off_at_no_cost(cx: &mut TestAppContext) {
+        let queue = cx.update(|cx| cx.new(|_| Queue::prepare(items(50_000), 1)));
+        let mut spent = Vec::new();
+        for i in 0..10 {
+            let took = cx.update(|cx| {
+                let start = std::time::Instant::now();
+                regroup(&queue, i % 2 == 0, cx);
+                start.elapsed()
+            });
+            spent.push(took);
+            cx.run_until_parked();
+        }
+        spent.sort();
+        println!(
+            "regroup of 50,000 rows, main thread: median {:?}, most {:?}",
+            spent[spent.len() / 2],
+            spent[spent.len() - 1]
+        );
+        // Copying the rows took about 9 ms here in a debug build; handing
+        // them off takes microseconds.
+        assert!(
+            spent[spent.len() / 2] < std::time::Duration::from_millis(1),
+            "the main thread copied the queue"
+        );
     }
 }

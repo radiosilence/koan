@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window, div};
+use gpui::{App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Task, Window, div};
 
 use super::{Handler, Slider, child};
 use crate::theme::{Icon, KoanIcon, Look, Space, Tone};
@@ -161,7 +161,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use gpui_kit::{
+    use gpui::{
         AnyWindowHandle, AppContext, Context, Modifiers, MouseButton, MouseDownEvent,
         MouseMoveEvent, MouseUpEvent, PlatformInput, Render, TestAppContext, point, px,
     };
@@ -214,10 +214,9 @@ mod tests {
 
     /// A drag sends nothing until it is let go, then the value it reached,
     /// once; the slider shows the drag meanwhile, not the value it was given.
-    #[gpui_kit::test]
+    #[gpui::test]
     fn a_drag_commits_once_when_let_go(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            gpui_kit::init(cx);
             crate::theme::init(cx);
         });
         let commits = Rc::new(RefCell::new(Vec::new()));

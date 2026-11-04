@@ -30,13 +30,15 @@ pub enum Anchored {
         features: bool,
     },
     Track(i64),
+    /// The biography at the page's end.
+    About,
 }
 
 /// A heading on a page, by what it heads rather than where it falls, since
 /// headings come and go as sections do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heading {
-    Section(koan_ffi::ReleaseSection),
+    Section(koan_runtime::ReleaseSection),
     Features,
     Appearances,
 }
@@ -50,15 +52,24 @@ pub struct Nav {
     anchors: HashMap<Page, Anchor>,
     /// The track whose details are open over the page.
     pub info: Option<i64>,
+    /// A track to pick on its record's page as that page opens, as (record,
+    /// track): what choosing a track in the search box does.
+    pub pick: Option<(i64, i64)>,
     _navigator: Subscription,
 }
 
 impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
-        // A track's details belong to the page they were opened on.
-        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+        // A track's details belong to the page they were opened on, and a
+        // pick to the record it was made for: a move anywhere else drops it.
+        let watch = cx.observe(&navigator, |nav: &mut Self, navigator, cx| {
             nav.info = None;
+            if let Some((album, _)) = nav.pick
+                && navigator.read(cx).current() != Page::Album(album)
+            {
+                nav.pick = None;
+            }
             cx.notify()
         });
         Self {
@@ -66,6 +77,7 @@ impl Nav {
             offsets: HashMap::new(),
             anchors: HashMap::new(),
             info: None,
+            pick: None,
             _navigator: watch,
         }
     }

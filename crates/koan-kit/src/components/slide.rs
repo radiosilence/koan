@@ -1,20 +1,17 @@
-//! A panel at the trailing edge of a page that slides in and out rather
-//! than snapping: the lyrics, an inspector. Where the renderer draws shaders
-//! its slot takes the panel's width at once and the panel slides in over
-//! `Motion::SETTLE` as an `AnimatedLayer`, with no frame drawn (#1859);
-//! sliding out, the slot is let go as the slide ends. Elsewhere its width
-//! eases on frames. At once under Reduce Motion. The owner keeps the panel
-//! while it slides out and lets it go once its `SlideState` says it has
-//! gone.
+//! A panel at the trailing edge of a page whose width eases in and out over
+//! `Motion::SETTLE`: the lyrics, an inspector. The panel is laid out at its
+//! full width and clipped, so it does not reflow; the page beside it does,
+//! each frame. At once under Reduce Motion. The owner keeps the panel while
+//! the width eases away and lets it go once its `SlideState` says it has
+//! closed; a closed panel draws nothing.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use gpui::prelude::*;
+use gpui::*;
 
-use super::layer::{AnimatedLayer, sliding};
-use super::{SHADED, child};
+use super::child;
 use crate::theme::Motion;
 
 /// How far a slide stands open, as last drawn: held by the owner, which
@@ -56,27 +53,6 @@ impl Slide {
 
 impl RenderOnce for Slide {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if SHADED {
-            let travel = f32::from(self.width) * window.scale_factor();
-            let slide = sliding(child(&self.id, "open"), self.shown, travel, window, cx);
-            self.state.0.set(if slide.laid_out { 1.0 } else { 0.0 });
-            let leaving = slide.laid_out && !self.shown;
-            return div()
-                .relative()
-                .h_full()
-                .flex_none()
-                .w(if slide.laid_out { self.width } else { px(0.) })
-                .overflow_hidden()
-                .when(slide.laid_out, |d| {
-                    d.child(AnimatedLayer::new(
-                        &slide.animated,
-                        div().w(self.width).h_full().children(self.content),
-                    ))
-                })
-                // Sliding out, it takes no clicks: what it covers is going.
-                .when(leaving, |d| d.child(div().absolute().inset_0().occlude()))
-                .into_any_element();
-        }
         let open = super::ease(
             child(&self.id, "open"),
             self.shown,
@@ -97,6 +73,5 @@ impl RenderOnce for Slide {
             .when(open > 0.0, |d| {
                 d.child(div().w(self.width).h_full().children(self.content))
             })
-            .into_any_element()
     }
 }

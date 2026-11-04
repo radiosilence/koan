@@ -249,7 +249,9 @@ struct PlaylistView: View {
                     { ids, before in mover(IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } }), before) }
                 },
                 accept: { dropped, index in
-                    playlists.insert(dropped: dropped, into: playlistId, at: position(index))
+                    playlists.insert(
+                        dropped: dropped, into: playlistId, before: entries[safe: position(index)]?.entryId
+                    )
                     return true
                 },
                 insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
@@ -568,8 +570,10 @@ struct PlaylistView: View {
             .flatMap { entries[safe: $0]?.entryId }
         var order = entries.enumerated().filter { !seen.contains($0.offset) }.map(\.element.entryId)
         let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
-        order.insert(contentsOf: moving.compactMap { entries[safe: $0]?.entryId }, at: at)
-        playlists.reorder(entryIds: order, in: playlistId)
+        let moved = moving.compactMap { entries[safe: $0]?.entryId }
+        order.insert(contentsOf: moved, at: at)
+        // By entry: offline the rows shown are only some of the playlist's.
+        playlists.move(entryIds: moved, before: anchor, shown: order, in: playlistId)
     }
 }
 

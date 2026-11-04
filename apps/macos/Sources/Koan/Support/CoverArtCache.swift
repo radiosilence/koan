@@ -200,7 +200,15 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 // cached copy goes so a later launch asks the server again.
                 // Not for full size, which can fail on an image that
                 // thumbnails fine, nor for bytes an eviction has replaced.
-                if size.fetched == 600 { self.discard(record, from: epoch) }
+                if size.fetched == 600 {
+                    self.discard(record, from: epoch)
+                    // The engine's kept copy too, or the next ask gets the
+                    // same bytes back without reaching the server.
+                    if case .album(let albumId) = source {
+                        let engine = self.engine
+                        Task { try? await engine.discardAlbumCover(albumId: albumId) }
+                    }
+                }
                 return nil
             }
             // Full size belongs to whichever sheet asked for it and goes when
@@ -618,6 +626,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// directory on its own.
     func purge() {
         memory.removeAllObjects()
+        // The engine's kept covers too, or it answers from them.
+        let engine = self.engine
+        Task { try? await engine.forgetKeptCovers() }
         locked {
             absent.removeAll()
             colours.removeAllObjects()

@@ -3,14 +3,14 @@
 //! select toggle and the bar a pick acts through. Drawn in the kōan look:
 //! square, flat, lowercase, one hairline where a region needs one.
 
-use koan_ffi::BrowseChoices;
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
+use koan_runtime::BrowseChoices;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
 use super::selection::Selection;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::Paint;
 use super::{Lib, actions};
 use crate::components::{
     Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, MenuSeparator, SelectionBar,
@@ -62,6 +62,54 @@ pub fn empty_state(icon: Icon, title: &'static str, detail: &'static str) -> Div
         .items_center()
         .justify_center()
         .child(EmptyState::new(icon, title).detail(detail))
+}
+
+/// What a browser does with the listing its last visit kept, against the
+/// query and the library's version now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kept {
+    /// The same listing: drawn at once, where the last visit left it.
+    Draw,
+    /// The same query over a library that has moved: not drawn, since its
+    /// rows may no longer be the library's; the place is kept for the new
+    /// listing.
+    Wait,
+    /// Another query (a filter changed on another page): neither the rows
+    /// nor the place are this listing's.
+    Forget,
+}
+
+/// See `Kept`. A version not yet known is taken as the same: the engine's
+/// first report is a frame away, and the load it brings checks again.
+pub fn kept<Q: PartialEq>(kept: &(Q, u64), query: &Q, version: Option<u64>) -> Kept {
+    if kept.0 != *query {
+        Kept::Forget
+    } else if version.is_some_and(|v| v != kept.1) {
+        Kept::Wait
+    } else {
+        Kept::Draw
+    }
+}
+
+/// A listing that could not be read, why, and a way to ask again: what a
+/// browser draws in place of "no albums yet" when the library did not answer.
+pub fn failed_state(
+    icon: Icon,
+    why: &str,
+    retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .child(
+            EmptyState::new(icon, "could not read the library")
+                .warning()
+                .detail(why.to_string()),
+        )
+        .child(text_button("retry-listing", "try again").on_click(retry))
 }
 
 /// A text button: an app word in `muted`, `ink` under the pointer.
@@ -162,7 +210,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
                         dismiss(window, cx);
                         browse.update(cx, |b, cx| {
                             // Random again is a new shuffle.
-                            if sort == koan_ffi::AlbumSort::Random && b.album_sort == sort {
+                            if sort == koan_runtime::AlbumSort::Random && b.album_sort == sort {
                                 b.reshuffle(cx);
                             }
                             b.update(cx, |b| b.album_sort = sort);
@@ -177,7 +225,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 /// since a new deal is something tried until one is liked, and a menu makes
 /// each try two clicks.
 pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
-    let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
+    let random = lib.browse.read(cx).effective_album_sort() == koan_runtime::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
         ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again")
@@ -500,13 +548,13 @@ pub fn selection_bar<V: Picking>(
         .verb(
             "sel-next",
             "play next",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Next, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Next, cx).detach()),
         )
         .verb_help(
             "sel-queue",
             "add to queue",
             "add the selection to the end of the queue",
-            verb(|lib, p, cx| actions::queue(lib, p, koan_ffi::Placement::Append, cx).detach()),
+            verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()),
         )
         .element(crate::components::opens_panel(
             "sel-playlist",
@@ -548,6 +596,31 @@ pub fn selection_bar<V: Picking>(
 }
 
 #[cfg(test)]
+mod kept_tests {
+    use super::{Kept, kept};
+
+    #[test]
+    fn a_kept_listing_is_drawn_only_while_it_is_the_listing() {
+        assert_eq!(kept(&("rock", 4), &"rock", Some(4)), Kept::Draw);
+        assert_eq!(
+            kept(&("rock", 4), &"rock", None),
+            Kept::Draw,
+            "not yet known"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"rock", Some(5)),
+            Kept::Wait,
+            "the library moved"
+        );
+        assert_eq!(
+            kept(&("rock", 4), &"jazz", Some(4)),
+            Kept::Forget,
+            "another filter"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use core::prelude::v1::test;
@@ -559,7 +632,6 @@ mod tests {
     #[koan_kit::app::test::test]
     fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            koan_kit::app::platform::init(cx);
             crate::theme::init(cx);
         });
         let browse = cx.new(|_| Browse::fresh());

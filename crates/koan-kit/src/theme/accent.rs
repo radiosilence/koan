@@ -10,12 +10,11 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::LazyLock;
-use std::time::Instant;
 
-use gpui_kit::{Hsla, Rgba};
+use gpui::{Hsla, Rgba};
 use parking_lot::Mutex;
 
-use super::tokens::{Motion, Palette};
+use super::tokens::Palette;
 
 /// One appearance's accent, as gamma-encoded sRGB in 0..=1. `reads_as_text`
 /// is whether it reaches 4.5:1 on `bg` and `surface`; where it does not, it
@@ -24,6 +23,10 @@ use super::tokens::{Motion, Palette};
 pub struct Shade {
     pub rgb: [f64; 3],
     pub reads_as_text: bool,
+    /// The colour slots it is drawn through, as fills and as text, while the
+    /// accent moves on the GPU: what `hsla` and `text_hsla` name. `rgb` is
+    /// where the slots are headed.
+    pub slot: Option<[Hsla; 2]>,
 }
 
 impl Shade {
@@ -36,19 +39,43 @@ impl Shade {
         }
     }
 
+    /// The colour to draw fills, rings and indicators in: the accent's slot
+    /// when it has one, so a new record's accent settles with no frame drawn.
     pub fn hsla(self) -> Hsla {
-        self.rgba().into()
+        self.slot
+            .map_or_else(|| self.rgba().into(), |[fill, _]| fill)
+    }
+
+    /// The colour to draw text in: the accent where it reads as text, `ink`
+    /// where it does not.
+    pub fn text_hsla(self, ink: Hsla) -> Hsla {
+        match self.slot {
+            Some([_, text]) => text,
+            None if self.reads_as_text => self.rgba().into(),
+            None => ink,
+        }
     }
 
     /// With more contrast asked for: the same hue, its lightness moved away
     /// from the ground (lighter in dark mode, darker in light) until it
     /// reaches `minimum` on `bg` and `surface`. Worked out once per shade.
     pub fn held(self, minimum: f64, dark: bool, tokens: Palette) -> Shade {
-        type Key = ([u64; 3], bool, u64);
+        // The grounds it is held against are part of what it is: the same
+        // shade held on another palette is another shade.
+        type Key = ([u64; 3], bool, u64, [u32; 2]);
         static CACHE: LazyLock<Mutex<HashMap<Key, Shade>>> = LazyLock::new(Default::default);
-        let key = (self.rgb.map(f64::to_bits), dark, minimum.to_bits());
+        let key = (
+            self.rgb.map(f64::to_bits),
+            dark,
+            minimum.to_bits(),
+            [tokens.bg.0, tokens.surface.0],
+        );
+        // Kept by colour alone: the slot it is drawn through is the caller's.
         if let Some(held) = CACHE.lock().get(&key) {
-            return *held;
+            return Shade {
+                slot: self.slot,
+                ..*held
+            };
         }
         let channels = |hex: super::tokens::Hex| hex.channels().map(|v| v as f64 / 255.0);
         let bg = oklch::luminance(channels(tokens.bg));
@@ -73,6 +100,7 @@ impl Shade {
             .map_or(self, |rgb| Shade {
                 rgb,
                 reads_as_text: true,
+                slot: self.slot,
             });
         let mut cache = CACHE.lock();
         if cache.len() >= 64 {
@@ -108,6 +136,7 @@ impl Accent {
                 0xA7 as f64 / 255.0,
             ],
             reads_as_text: true,
+            slot: None,
         },
         light: Shade {
             rgb: [
@@ -116,6 +145,7 @@ impl Accent {
                 0x50 as f64 / 255.0,
             ],
             reads_as_text: true,
+            slot: None,
         },
     };
 
@@ -194,6 +224,7 @@ fn shade(hue: f64, chroma: f64, band: (f64, f64), dark: bool, tokens: Palette) -
                 return Some(Shade {
                     rgb,
                     reads_as_text: text,
+                    slot: None,
                 });
             }
         }
@@ -375,69 +406,7 @@ pub mod oklch {
     }
 }
 
-/// The accent as it is drawn: the record's, arriving over `Motion::SETTLE`
-/// from wherever the last one had reached, through OKLab so the hue turns
-/// rather than passing through grey.
-#[derive(Clone, Debug)]
-pub struct AccentState {
-    target: Accent,
-    from: Accent,
-    started: Option<Instant>,
-}
-
-impl Default for AccentState {
-    fn default() -> Self {
-        Self {
-            target: Accent::MINT,
-            from: Accent::MINT,
-            started: None,
-        }
-    }
-}
-
-impl AccentState {
-    pub fn target(&self) -> Accent {
-        self.target
-    }
-
-    /// Moves to `accent`. A colour already in hand lands with the record;
-    /// one worked out after it arrived eases in. With reduced motion it lands.
-    pub fn set(&mut self, accent: Accent, ease: bool, now: Instant) {
-        if accent == self.target {
-            return;
-        }
-        self.from = self.at(now);
-        self.target = accent;
-        self.started = ease.then_some(now);
-    }
-
-    /// Whether the accent is still moving, and frames should be drawn.
-    pub fn settling(&self, now: Instant) -> bool {
-        self.started
-            .is_some_and(|started| now.duration_since(started) < Motion::SETTLE)
-    }
-
-    pub fn at(&self, now: Instant) -> Accent {
-        let Some(started) = self.started else {
-            return self.target;
-        };
-        let elapsed = now.duration_since(started);
-        if elapsed >= Motion::SETTLE {
-            return self.target;
-        }
-        let t = Motion::quick_out(elapsed.as_secs_f32() / Motion::SETTLE.as_secs_f32()) as f64;
-        let mix = |a: Shade, b: Shade| Shade {
-            rgb: mix_oklab(a.rgb, b.rgb, t),
-            // Whether it is drawn on text is the arriving record's.
-            reads_as_text: b.reads_as_text,
-        };
-        Accent {
-            dark: mix(self.from.dark, self.target.dark),
-            light: mix(self.from.light, self.target.light),
-        }
-    }
-}
-
+#[cfg(test)]
 fn mix_oklab(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     let la = oklch::lab(a.map(oklch::linear));
     let lb = oklch::lab(b.map(oklch::linear));
@@ -532,18 +501,32 @@ mod tests {
         assert!((hue - blue).abs() < 1.0, "hue {hue}, blue {blue}");
     }
 
+    /// The GPU's mix of a slot's ends in OKLab, as the CPU reads the table,
+    /// agrees with the accent's own OKLab mix: a record's accent turns
+    /// through the hues between, never through grey.
     #[test]
-    fn settling_eases_then_lands() {
-        let start = Instant::now();
-        let mut state = AccentState::default();
-        let blue = Accent::of(Some([0.1, 0.2, 0.9]));
-        state.set(blue, true, start);
-        assert!(state.settling(start));
-        let mid = state.at(start + Motion::SETTLE / 2);
-        assert_ne!(mid, blue);
-        assert_eq!(state.at(start + Motion::SETTLE), blue);
-        state.set(Accent::MINT, false, start);
-        assert!(!state.settling(start));
-        assert_eq!(state.at(start), Accent::MINT);
+    fn slots_mix_the_accent_in_oklab() {
+        use crate::components::{ColorSlot, Repeat as TrackRepeat, Track, TrackCurve};
+        let mint = Accent::MINT.dark;
+        let blue = Accent::of(Some([0.1, 0.2, 0.9])).dark;
+        let slot = ColorSlot::claim(mint.rgba()).expect("a free slot");
+        let length = 1.0e6;
+        slot.to_oklab(
+            blue.rgba(),
+            Track {
+                from: 0.0,
+                to: 1.0,
+                start: 0.0,
+                length,
+                curve: TrackCurve::Linear,
+                repeat: TrackRepeat::Once,
+            },
+        );
+        let half = std::time::Instant::now() + std::time::Duration::from_secs_f32(length / 2.0);
+        let gpu = slot.at(half);
+        let cpu = mix_oklab(mint.rgb, blue.rgb, 0.5);
+        for (a, b) in [gpu.r, gpu.g, gpu.b].into_iter().zip(cpu) {
+            assert!((a as f64 - b).abs() < 2e-3, "{gpu:?} against {cpu:?}");
+        }
     }
 }

@@ -1,0 +1,1 @@
+- **Clock tests no longer depend on timing.** `a_seek_back_past_the_end_starts_the_clock_again` and `a_resume_starts_the_clock_again` asserted readings within 100 ms of the whole second, which a loaded CI runner overslept; they now bound readings by a second and wait up to ten.
