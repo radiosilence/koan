@@ -32,7 +32,7 @@ The app shows what is playing in the system's controls, cover included, and take
 
 ## The Dock
 
-On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a spindle at the circle's centre, so it is told apart from the old SwiftUI Mac app in the Dock and the app switcher.
+On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here.
 
 ## Keys
 
