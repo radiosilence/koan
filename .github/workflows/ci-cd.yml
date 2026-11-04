@@ -1537,7 +1537,7 @@ jobs:
 
             depends_on macos: :tahoe
 
-            app "kōan desktop.app"
+            app "kōan.app"
 
             uninstall quit: "cc.blit.koan.desktop"
 

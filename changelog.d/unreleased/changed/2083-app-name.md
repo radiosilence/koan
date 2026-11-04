@@ -1,0 +1,1 @@
+- **The Mac app is kōan.app.** The desktop app installs as `kōan.app`, its DMG volume named kōan, in place of `kōan desktop.app`.
