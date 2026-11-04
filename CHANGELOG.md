@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.70.5
+
+### Added
+
+- **Artist pages open with their biography and photograph already there.** A koan server now looks up its whole library's artists ahead of time, by MusicBrainz id, and serves the answers through `getArtistInfo2` and the new `koanArtistInfo` extension; the apps read them from the server instead of each asking MusicBrainz and Wikimedia, and a device with a library of its own looks its artists up in the background too, shown as a "looking up artists" row while it runs.
+
+### Changed
+
+- **Sheets come and go with motion.** In the desktop app, sheets, questions and the command bar fade and rise in, briefly, so they read as arriving over the page; the command bar, the shortcuts, presented sheets and questions fade out as they go. At once under Reduce Motion.
+- **One Homebrew tap.** Install from `radiosilence/tap`, which holds every radiosilence formula and cask; `brew update` moves installs from the old per-project tap.
+
+### Fixed
+
+- **Hover highlights fade out.** A highlight left as the pointer goes now visibly fades over 130 ms; the old curve lost most of it within two frames, so it looked like a cut.
+- **A toggle's tick is seen drawing in and erasing.** It eases both ways instead of appearing whole within a few frames, and a box turned off keeps its fill until the tick has erased.
+- **The desktop app no longer crashes within seconds of launch on macOS 27.** A window's display link now lets go of its layer before the window draws to it again.
+
+### Internal
+
+- **Kit tests ignore the host's accessibility settings.** A machine asking for less motion no longer lands the transitions the rest tests catch in flight.
+- **Colour liveness per slot.** A shader or window keeps presenting only while a colour slot it draws with moves, not while any slot in the app does, such as the accent settling.
+- **Linux build.** The updater's macOS-only helpers no longer fail Linux's clippy as dead code.
+- **A question fading out runs its action once.** Answering its still-drawn verb again, through a screen reader or the keyboard, no longer repeats a destructive action.
+
 ## 0.70.4
 
 ### Added
