@@ -67,6 +67,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::TV_PAIRING, &[1]),
     (koan_core::remote::profile::PLAYLIST_ORDER, &[1]),
     (koan_core::remote::profile::COVERS, &[1]),
+    (koan_core::remote::profile::ARTIST_INFO, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -2344,6 +2345,130 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
         })
     })
     .await
+}
+
+/// An artist's biography and photograph, resolved by MusicBrainz id
+/// (`koan_core::artist_info`): from what the walk already holds, or looked up
+/// now. Beside Subsonic's fields, koan's (`koanArtistInfo`): the article the
+/// biography opens, the photograph's credit, and whether `koanArtistImage`
+/// has it. A lookup that failed is an error, so a client resolves the artist
+/// itself rather than remembering a miss; one that found nothing is an
+/// empty answer.
+async fn get_artist_info2(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IdParam>,
+) -> Response {
+    offload_response(move || {
+        respond(&state, &params.auth, |_, b| {
+            use rusqlite::OptionalExtension as _;
+            let (artist_id, mbid) = {
+                let db = state.open_db()?;
+                let artist_id = require_id(&db, params.id.as_deref(), EntityKind::Artist)?;
+                let mbid: Option<String> = db
+                    .conn
+                    .query_row(
+                        "SELECT mbid FROM artists WHERE id = ?1",
+                        rusqlite::params![artist_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+                    .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+                (artist_id, mbid.filter(|m| !m.is_empty()))
+            };
+            // No connection is held while MusicBrainz and Wikimedia answer.
+            let info = koan_core::artist_info::fetch(&state.pool, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .unwrap_or_default();
+            Ok(b.child(artist_info_node(&info, mbid.as_deref())))
+        })
+    })
+    .await
+}
+
+fn artist_info_node(info: &koan_core::artist_info::ArtistInfo, mbid: Option<&str>) -> XmlNode {
+    let text = |tag: &str, value: &str| XmlNode::scalar(tag, AttrValue::Str(value.into()));
+    let mut node = XmlNode::new("artistInfo2");
+    if let Some(bio) = &info.bio {
+        node = node.child(text("biography", bio));
+    }
+    if let Some(mbid) = mbid {
+        node = node.child(text("musicBrainzId", mbid));
+    }
+    let image = info.image_url.as_deref().filter(|u| !u.is_empty());
+    if let Some(url) = image {
+        for tag in ["smallImageUrl", "mediumImageUrl", "largeImageUrl"] {
+            node = node.child(text(tag, url));
+        }
+    }
+    if let Some(url) = &info.bio_url {
+        node = node.child(text("koanBioUrl", url));
+    }
+    if let Some(credit) = image.and(info.image_credit.as_deref()) {
+        node = node.child(text("koanImageCredit", credit));
+    }
+    node.child(XmlNode::scalar(
+        "koanImage",
+        AttrValue::Bool(image.is_some()),
+    ))
+}
+
+/// `koanArtistImage`: the artist's photograph as this server keeps it,
+/// downloaded and kept first where the walk has not reached the artist yet.
+/// Not found (70) when the artist has none.
+async fn koan_artist_image(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IdParam>,
+) -> Response {
+    offload_response(move || {
+        let json = params.auth.wants_json();
+        let answer = (|| {
+            let artist_id = {
+                let db = authed_db(&state, &params.auth)?;
+                require_id(&db, params.id.as_deref(), EntityKind::Artist)?
+            };
+            koan_core::artist_info::image(&state.pool, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Artist image"))
+        })();
+        match answer {
+            Ok(bytes) => (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, image_mime(&bytes)),
+                    (header::CACHE_CONTROL, "max-age=86400"),
+                ],
+                bytes,
+            )
+                .into_response(),
+            Err(e) => SubsonicResponse::error(json, &e),
+        }
+    })
+    .await
+}
+
+/// An image's type, from its first bytes.
+fn image_mime(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        [b'G', b'I', b'F', ..] => "image/gif",
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => "image/webp",
+        _ => "image/jpeg",
+    }
 }
 
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
@@ -6690,6 +6815,18 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/getArtists.view", get(get_artists).post(get_artists))
         .route("/rest/getArtist", get(get_artist).post(get_artist))
         .route("/rest/getArtist.view", get(get_artist).post(get_artist))
+        .route(
+            "/rest/getArtistInfo2",
+            get(get_artist_info2).post(get_artist_info2),
+        )
+        .route(
+            "/rest/getArtistInfo2.view",
+            get(get_artist_info2).post(get_artist_info2),
+        )
+        .route(
+            "/rest/koanArtistImage",
+            get(koan_artist_image).post(koan_artist_image),
+        )
         .route("/rest/getAlbum", get(get_album).post(get_album))
         .route("/rest/getAlbum.view", get(get_album).post(get_album))
         .route(

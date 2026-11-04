@@ -19,9 +19,9 @@ use std::time::Instant;
 
 use koan_kit::app::{App, AppContext, Entity, Global};
 use koan_runtime::{
-    ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo,
-    QueueItem, QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer,
-    TransferFigure,
+    ArtistWalk, ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, KoanEngine, NowPlaying,
+    OutputsInfo, QueueItem, QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress,
+    Transfer, TransferFigure,
 };
 
 use crate::queue::rows::{self, Row};
@@ -252,6 +252,7 @@ pub struct Mirror {
     pub tasks: Entity<Slice<Tasks>>,
     pub sync: Entity<Slice<Option<SyncProgress>>>,
     pub covers: Entity<Slice<Option<CoverPreload>>>,
+    pub artists: Entity<Slice<Option<ArtistWalk>>>,
     pub devices: Entity<Slice<Devices>>,
     pub connection: Entity<Slice<Option<ConnectionInfo>>>,
     pub renderers: Entity<Slice<Renderers>>,
@@ -285,6 +286,7 @@ impl Mirror {
             tasks: cx.new(|_| Slice(Tasks::default())),
             sync: cx.new(|_| Slice(None)),
             covers: cx.new(|_| Slice(None)),
+            artists: cx.new(|_| Slice(None)),
             devices: cx.new(|_| Slice(Devices::default())),
             connection: cx.new(|_| Slice(None)),
             renderers: cx.new(|_| Slice(Renderers::default())),
@@ -400,6 +402,7 @@ impl Mirror {
                 }
                 StateSlice::Sync { progress } => set(&self.sync, progress, cx),
                 StateSlice::Covers { progress } => set(&self.covers, progress, cx),
+                StateSlice::Artists { progress } => set(&self.artists, progress, cx),
                 StateSlice::Devices {
                     devices,
                     target,

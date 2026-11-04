@@ -4,8 +4,9 @@
 //!
 //! A scan or rebuild started here reports through a `ProgressReporter`; a
 //! scan the folder watcher started and every sync, wherever it began, are
-//! read from the engine's `Tasks` and `Sync` slices, and the covers being
-//! fetched ahead from its `Covers` slice.
+//! read from the engine's `Tasks` and `Sync` slices, the covers being
+//! fetched ahead from its `Covers` slice, and the artists being looked up
+//! ahead from its `Artists` slice.
 
 use std::sync::Arc;
 
@@ -59,17 +60,18 @@ pub struct Activity {
     syncing: bool,
     /// The last task's failure, until another starts.
     problem: Option<SharedString>,
-    _watch: [Subscription; 3],
+    _watch: [Subscription; 4],
 }
 
 /// The library menu's actions, and the activity rows the sidebar shows.
 pub fn init(cx: &mut App) {
     let activity = cx.new(|cx: &mut Context<Activity>| {
         let mirror = cx.global::<Mirror>();
-        let (tasks, sync, covers) = (
+        let (tasks, sync, covers, artists) = (
             mirror.tasks.clone(),
             mirror.sync.clone(),
             mirror.covers.clone(),
+            mirror.artists.clone(),
         );
         Activity {
             scan: None,
@@ -80,6 +82,7 @@ pub fn init(cx: &mut App) {
                 cx.observe(&tasks, |_, _, cx| cx.notify()),
                 cx.observe(&sync, |_, _, cx| cx.notify()),
                 cx.observe(&covers, |_, _, cx| cx.notify()),
+                cx.observe(&artists, |_, _, cx| cx.notify()),
             ],
         }
     });
@@ -329,6 +332,17 @@ impl Activity {
                 unit: Some("records"),
                 detail: None,
                 stop: Some(stop_cover_preload),
+            });
+        }
+        if let Some(artists) = mirror.artists.read(cx).0 {
+            rows.push(Row {
+                id: "activity-artists",
+                label: "looking up artists".into(),
+                done: Some(artists.done),
+                total: Some(artists.total).filter(|t| *t > 0),
+                unit: Some("artists"),
+                detail: None,
+                stop: None,
             });
         }
         rows

@@ -236,7 +236,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 | `scrobbling.rs` | Forwarding plays to ListenBrainz and Last.fm (`scrobbling/lastfm.rs`: signed calls, the sign-in round trip, the API key from `[lastfm]`): one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
-| `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included |
+| `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included. Asked of a koan server offering `koanArtistInfo` for its artists; everything else resolved ahead of time by the walk (`start`, the `Artists` slice), newest first, photos kept in the cache directory |
 
 ### koan-tui (`crates/koan-tui/src/`)
 

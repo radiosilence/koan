@@ -6084,6 +6084,9 @@ impl KoanEngine {
                     out.publish(StateSlice::Covers {
                         progress: koan_core::remote::covers::progress().map(Into::into),
                     });
+                    out.publish(StateSlice::Artists {
+                        progress: koan_core::artist_info::progress().map(Into::into),
+                    });
 
                     // Both of the heavy reads, and both guarded. The queue is
                     // derived and joined against the library; the lock is two
@@ -6891,6 +6894,9 @@ impl KoanEngine {
         // Sleeps on the change signal until a remote library has covers to
         // fetch ahead.
         koan_core::remote::covers::start();
+        // Sleeps until the library changes or a day passes, then looks up
+        // the artists due a biography and photograph.
+        koan_core::artist_info::start();
         Ok(engine)
     }
 

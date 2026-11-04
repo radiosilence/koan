@@ -399,6 +399,11 @@ pub fn set_constrained(constrained: bool) {
     }
 }
 
+/// Whether the app said the device is on a metered network or saving power.
+pub fn constrained() -> bool {
+    CONSTRAINED.load(Ordering::Relaxed)
+}
+
 /// The preload's progress while it runs; `None` otherwise.
 pub fn progress() -> Option<Preload> {
     *PROGRESS.lock()

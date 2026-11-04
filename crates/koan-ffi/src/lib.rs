@@ -24,7 +24,7 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use koan_runtime::{
     AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-    Appearance, ArtEvictions, Artist, ArtistInfo, Assistants, AttestedKey, AutoEqEntry,
+    Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey, AutoEqEntry,
     AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared, CommandNotice,
     ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp, Device,
     DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush, DspChannelLayout,
@@ -2873,15 +2873,15 @@ mod serve {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, Assistants, AttestedKey, AutoEqEntry,
-        AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared, CommandNotice,
-        ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp, Device,
-        DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush, DspChannelLayout,
-        DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin, DspImportPlan,
-        DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin, DspLayerCurve,
-        DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput, DspMixSource,
-        DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary, DspResponse,
-        DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
+        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
+        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
+        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
+        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
+        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
+        DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
+        DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
@@ -3041,15 +3041,15 @@ mod state {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, Assistants, AttestedKey, AutoEqEntry,
-        AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared, CommandNotice,
-        ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp, Device,
-        DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush, DspChannelLayout,
-        DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin, DspImportPlan,
-        DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin, DspLayerCurve,
-        DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput, DspMixSource,
-        DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary, DspResponse,
-        DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
+        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
+        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
+        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
+        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
+        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
+        DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
+        DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
@@ -3152,6 +3152,9 @@ mod state {
         /// How far fetching every record's cover ahead has got
         /// (`remote.preload_covers`). `None` when it is not running.
         Covers { progress: Option<CoverPreload> },
+        /// How far looking up the library's artists' biographies and
+        /// photographs ahead has got. `None` when it is not running.
+        Artists { progress: Option<ArtistWalk> },
         /// The other devices koan can play on, and which one this app is
         /// controlling: `None` for this one. While it is another, `Playback`,
         /// `Playhead` and `Queue` describe that device rather than this one, so
@@ -3212,15 +3215,15 @@ mod types {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, Assistants, AttestedKey, AutoEqEntry,
-        AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared, CommandNotice,
-        ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp, Device,
-        DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush, DspChannelLayout,
-        DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin, DspImportPlan,
-        DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin, DspLayerCurve,
-        DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput, DspMixSource,
-        DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary, DspResponse,
-        DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
+        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
+        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
+        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
+        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
+        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
+        DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
+        DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
         DspTuningEntry, EntryStatus, FuzzyMatch, HeldInfo, ImportSummary, InfoField, Invite,
         InviteTo, KoanError, LibraryFolder, LyricLine, Lyrics, MixerEncoding, MixerFormat,
         MoveResult, NearbyServer, NewApiKey, NewAppPassword, NowPlaying, OrganizeEntry,
@@ -3845,6 +3848,14 @@ mod types {
     /// without one.
     #[uniffi::remote(Record)]
     pub struct CoverPreload {
+        pub done: u64,
+        pub total: u64,
+    }
+
+    /// How far looking up artists' biographies and photographs ahead has
+    /// got: artists done of those due a lookup.
+    #[uniffi::remote(Record)]
+    pub struct ArtistWalk {
         pub done: u64,
         pub total: u64,
     }

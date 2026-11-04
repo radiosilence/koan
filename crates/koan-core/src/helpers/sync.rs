@@ -131,6 +131,7 @@ pub fn sync_remote(
     cancelled()?;
     // The cover preload wakes before the EQ's round trips, not after them.
     crate::remote::covers::synced();
+    crate::artist_info::library_changed();
     let step = std::time::Instant::now();
     let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
     let after = AfterLibrary {
