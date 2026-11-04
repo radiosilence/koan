@@ -1371,7 +1371,7 @@ mod tests {
         let (status, page) = get(&format!("/share/{id}"));
         assert_eq!(status, StatusCode::OK);
         assert!(String::from_utf8(page).unwrap().contains("Wet Moss"));
-        let (status, audio) = get(&format!("/share/{id}/0"));
+        let (status, audio) = get(&format!("/share/{id}/1"));
         assert_eq!(status, StatusCode::OK);
         assert_eq!(audio, b"audio");
         assert_eq!(get("/share/assets/player.js").0, StatusCode::OK);
