@@ -14,9 +14,9 @@ license = "MIT"
 # with koan's commits, each proposed upstream, published as gpui-koan-*.
 # Pinned to a revision; the library names stay Zed's (`gpui`,
 # `gpui_platform`).
-gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "09634b50aeb0940159786311cffc380dc02d3242" }
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "06fb8fb1354b07509f38213314d8bf558a6dc73a" }
 # `font-kit` is the macOS text system: without it GPUI draws no text.
-gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "09634b50aeb0940159786311cffc380dc02d3242", features = ["font-kit"] }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "06fb8fb1354b07509f38213314d8bf558a6dc73a", features = ["font-kit"] }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
