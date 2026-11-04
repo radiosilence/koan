@@ -1,0 +1,1 @@
+- **The desktop app no longer crashes shortly after opening on macOS.** A synchronous draw could ask the window's layer for a drawable while the display link that held it was still letting go, which aborted the app; the draw now waits until the link has released the layer.
