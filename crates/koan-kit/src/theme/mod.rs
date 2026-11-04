@@ -131,6 +131,16 @@ pub fn init(cx: &mut App) {
     cx.set_global(KoanTheme::default());
     crate::components::install_color_slots();
     let feed = cx.new(|_| AccentFeed::new());
+    // The slots are one table for the process: an app that quits gives its
+    // accent's back, so apps made after it (each test's) find them free.
+    cx.on_app_quit({
+        let feed = feed.clone();
+        move |cx| {
+            feed.update(cx, |feed, _| feed.slots = None);
+            async {}
+        }
+    })
+    .detach();
     cx.set_global(AccentHandle(feed));
     read_system_settings(cx);
     #[cfg(target_os = "macos")]
