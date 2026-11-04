@@ -31,7 +31,7 @@ To look around first, sign in to [demo.koan.rocks](https://demo.koan.rocks) as `
 Desktop app (macOS and Linux):
 
 ```bash
-brew install --cask radiosilence/koan/koan-app
+brew install --cask radiosilence/tap/koan-app
 ```
 
 You may have to update brew's trust settings to trust the tap.
@@ -46,7 +46,7 @@ CLI/TUI:
 mise use -g github:radiosilence/koan@latest
 
 # homebrew
-brew install radiosilence/koan/koan
+brew install radiosilence/tap/koan
 
 # or via cargo
 cargo install koan-cli

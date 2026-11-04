@@ -1354,8 +1354,8 @@ jobs:
             ## Install
 
             ```bash
-            brew install radiosilence/koan/koan            # the CLI and TUI
-            brew install --cask radiosilence/koan/koan-app # the desktop app
+            brew install radiosilence/tap/koan            # the CLI and TUI
+            brew install --cask radiosilence/tap/koan-app # the desktop app
             ```
 
             macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac; the SwiftUI Mac app is no longer released. It uses the old app's configuration, device id and saved queue, so quit the old kōan app and replace it rather than running both.
@@ -1409,7 +1409,7 @@ jobs:
             sha256sum "$file" | awk '{print $1}'
           }
           ARM_SHA=$(shasum_of koan-macos-arm64.tar.gz)
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" /tmp/tap
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-tap.git" /tmp/tap
           cd /tmp/tap
           cat > Formula/koan.rb <<FORMULA
           class Koan < Formula
@@ -1505,7 +1505,7 @@ jobs:
         run: |
           set -euo pipefail
           DMG_SHA=$(shasum -a 256 stapled/Koan.dmg | awk '{print $1}')
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/radiosilence/homebrew-koan.git" "$RUNNER_TEMP/tap"
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/radiosilence/homebrew-tap.git" "$RUNNER_TEMP/tap"
           cd "$RUNNER_TEMP/tap"
           mkdir -p Casks
           # Named koan-app so `brew install koan` stays the command-line player.
