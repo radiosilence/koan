@@ -17,6 +17,7 @@ pub mod shortcuts_sheet;
 pub mod startup_error;
 #[cfg(target_os = "macos")]
 pub mod status_item;
+pub mod update;
 
 use std::sync::Arc;
 
@@ -88,6 +89,7 @@ pub fn init(
     residency::init(engine, cx);
     actions::register(engine, cx);
     about::init(cx);
+    update::init(engine, cx);
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);

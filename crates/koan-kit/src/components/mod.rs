@@ -306,7 +306,7 @@ pub(crate) fn fade(
                             to: 1.0,
                             start: 0.0,
                             length: Motion::LEAVE.as_secs_f32(),
-                            curve: TrackCurve::Bezier(0.2, 0.9, 0.3, 1.0),
+                            curve: curve(Ease::InOut),
                             repeat: Repeat::Once,
                         },
                     );
@@ -524,7 +524,7 @@ pub(crate) fn transition(key: ElementId, on: bool, window: &mut Window, cx: &mut
             if on {
                 animated.hold(0, 1.0);
             } else {
-                animated.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
+                animated.to(0, 0.0, Motion::LEAVE, Ease::InOut);
             }
         }
         animated.clone()
@@ -712,9 +712,24 @@ mod fallback_tests {
         let lit = Animated::new();
         lit.hold(0, 1.0);
         assert_eq!(plain_amount(&lit), 1.0, "lit at once");
-        lit.to(0, 0.0, Motion::LEAVE, Ease::QuickOut);
+        lit.to(0, 0.0, Motion::LEAVE, Ease::InOut);
         assert!(lit.at(0, Animated::now()) > 0.5, "the GPU's fade has begun");
         assert_eq!(plain_amount(&lit), 0.0, "gone at once without it");
+    }
+
+    /// A leave the eye can follow: most of the highlight is still there a
+    /// frame after the pointer goes, and half of it midway (#2054).
+    #[test]
+    fn a_leave_is_seen_fading() {
+        let lit = Animated::new();
+        lit.hold(0, 1.0);
+        lit.to(0, 0.0, Motion::LEAVE, Ease::InOut);
+        let track = lit.track(0);
+        let frame = 1.0 / 60.0;
+        assert!(track.at(track.start + frame) > 0.9, "one frame in");
+        assert!(track.at(track.start + 2.0 * frame) > 0.75, "two frames in");
+        let midway = track.at(track.start + track.length / 2.0);
+        assert!((midway - 0.5).abs() < 0.05, "midway: {midway}");
     }
 }
 
