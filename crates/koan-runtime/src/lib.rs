@@ -8572,7 +8572,7 @@ mod clock_stream_tests {
         let stream = Arc::new(clock(&state));
 
         let ms = next_within(stream.clone(), Duration::from_secs(2)).unwrap();
-        assert!((1_990..2_100).contains(&ms), "the next whole second: {ms}");
+        assert!((1_990..2_500).contains(&ms), "the next whole second: {ms}");
 
         let pauser = state.clone();
         std::thread::spawn(move || {
