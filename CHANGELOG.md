@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.70.2
+
+### Changed
+
+- **The Mac app is kōan.app.** The desktop app installs as `kōan.app`, its DMG volume named kōan, in place of `kōan desktop.app`.
+
+### Fixed
+
+- **Commands from the desktop app reach the engine as they are made.** Each joined the engine's ordered lane only when the main thread next polled it; now every command joins at the call, so none waits a turn and all keep the order they were made in.
+- **The desktop app no longer crashes shortly after opening on macOS.** A synchronous draw could ask the window's layer for a drawable while the display link that held it was still letting go, which aborted the app; the draw now waits until the link has released the layer.
+- **Creating the sharing account no longer crashes the desktop app, and signing out shows at once.** Making the account started sharing from inside the update that recorded it, which GPUI refuses; the callback now runs after that update ends. Signing out returns once the credentials are gone and forgets the server's library afterwards on a thread of its own, rather than waiting for a sync to stop and for the library's rows to be deleted; a sign-in that follows waits for the forgetting.
+
 ## 0.70.1
 
 ### Fixed
