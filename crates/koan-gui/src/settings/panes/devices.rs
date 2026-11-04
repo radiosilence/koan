@@ -2,7 +2,7 @@
 //! reaching devices on networks that do not announce them, who is
 //! connected now, and the accounts this device is shared with. With a
 //! server: approving a device that signs in by code, and keeping the queue
-//! on the server.
+//! on the server. Keeping this copy of kōan up to date.
 
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
@@ -482,6 +482,9 @@ impl Render for DevicesPane {
         ));
 
         sections.push(background(&settings, &model, &look, cx));
+        if let Some(updates) = updates(&settings, &model, &look, cx) {
+            sections.push(updates);
+        }
 
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
@@ -774,6 +777,95 @@ fn background(
         "With its window closed, kōan keeps running, signed in to your server and listening on this network, so your other devices can see and control this computer; opening kōan again brings its window back. A computer cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again."
     };
     section(Some("In the background"), rows, Some(footer.into()), look)
+}
+
+/// Keeping this copy of kōan up to date, where it can be: nothing for a
+/// build from source.
+fn updates(
+    settings: &koan_runtime::Settings,
+    model: &Entity<crate::settings::model::SettingsModel>,
+    look: &Look,
+    cx: &App,
+) -> Option<AnyElement> {
+    use crate::platform::update::{self, Install, State};
+    let install = update::install_kind(cx);
+    let told = match &install {
+        Install::Unknown | Install::Source => return None,
+        Install::Told(why) => Some(*why),
+        Install::Bundle { .. } | Install::AppImage(_) => None,
+    };
+    let label = if told.is_some() {
+        "Check for new versions"
+    } else {
+        "Update automatically"
+    };
+    let toggle = {
+        let model = model.clone();
+        Toggle::new("updates-auto", label, settings.updates_auto)
+            .on_change(move |on, _, cx| {
+                let on = *on;
+                model.update(cx, |m, cx| {
+                    m.edit(cx, move |s| s.updates_auto = on);
+                    m.when_written(cx, move |_, cx| update::follow(on, cx));
+                });
+            })
+            .into_any_element()
+    };
+    let state = update::state(cx);
+    let busy = matches!(state, State::Checking | State::Fetching(_));
+    let (detail, tone) = match &state {
+        State::Idle => (
+            format!("kōan {}", crate::platform::about::VERSION),
+            Tone::Muted,
+        ),
+        State::Checking => ("Checking…".into(), Tone::Muted),
+        State::Current => (
+            format!(
+                "kōan {} is the latest version",
+                crate::platform::about::VERSION
+            ),
+            Tone::Muted,
+        ),
+        State::Fetching(v) => (format!("Downloading kōan {v}…"), Tone::Muted),
+        State::Ready(v) => (format!("kōan {v} opens next time kōan starts"), Tone::Muted),
+        State::Available { version, .. } => (format!("kōan {version} is out"), Tone::Muted),
+        State::Failed(e) => (e.clone(), Tone::Bad),
+    };
+    let mut buttons = vec![
+        Button::new("updates-check", ButtonKind::Bordered)
+            .label("Check now")
+            .disabled(busy || matches!(state, State::Ready(_)))
+            .on_click(|_, _, cx| update::check(cx))
+            .into_any_element(),
+    ];
+    match state {
+        State::Ready(_) => buttons.push(
+            Button::new("updates-restart", ButtonKind::Prominent)
+                .label("Restart now")
+                .on_click(|_, _, cx| update::restart(cx))
+                .into_any_element(),
+        ),
+        State::Available { page, .. } => buttons.push(
+            Button::new("updates-page", ButtonKind::Bordered)
+                .label("Release notes")
+                .on_click(move |_, _, cx| cx.open_url(&page))
+                .into_any_element(),
+        ),
+        _ => {}
+    }
+    let mut rows = vec![
+        toggle,
+        text(detail, TypeRole::Fine, tone, look).into_any_element(),
+    ];
+    rows.push(crate::settings::form::buttons(buttons, look));
+    let footer = told.map_or_else(
+        || {
+            "New versions are downloaded from GitHub, checked, and installed when kōan quits."
+                .to_owned()
+        },
+        str::to_owned,
+    );
+    Some(section(Some("Updates"), rows, Some(footer.into()), look))
 }
 
 #[cfg(test)]

@@ -1,0 +1,1 @@
+- **Hover highlights fade out.** A highlight left as the pointer goes now visibly fades over 130 ms; the old curve lost most of it within two frames, so it looked like a cut.

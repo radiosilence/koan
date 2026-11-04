@@ -283,7 +283,9 @@ impl Motion {
     pub const NORMAL: Duration = Duration::from_millis(120);
     /// A state going off: a hover's highlight lingering as the pointer
     /// leaves, a toggle or a selection let go. Barely seen, so leaving is
-    /// not a hard cut; a state coming on shows at once.
+    /// not a hard cut; a state coming on shows at once. Taken on the
+    /// ease-in-out curve: on the quick-out, half the fade is gone by the
+    /// first frame and three quarters by the second, which reads as a cut.
     pub const LEAVE: Duration = Duration::from_millis(130);
     /// A record arriving: the wash dissolving into its field and the accent
     /// turning to its colour, together and on the same curve
