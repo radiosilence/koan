@@ -293,6 +293,7 @@ impl SettingsModel {
                 // the terminal UI or by hand.
                 if let Some(shown) = model.draft.as_ref().map(Draft::drawn) {
                     crate::platform::residency::follow_file(shown.devices_keep_running, cx);
+                    crate::platform::update::follow(shown.updates_auto, cx);
                 }
                 model.redraw(cx);
             })
@@ -798,6 +799,7 @@ mod tests {
             devices_refused: Vec::new(),
             devices_nearby_control: "full".into(),
             devices_keep_running: false,
+            updates_auto: true,
             share_enabled: false,
             share_port: port,
             share_invite_to: koan_runtime::InviteTo::Network,

@@ -21,6 +21,7 @@ pub mod shelves;
 pub mod signal;
 pub mod smart;
 pub mod tailscale;
+pub mod updates;
 pub mod upnp;
 
 pub use sift::format;
