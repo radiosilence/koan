@@ -1349,12 +1349,10 @@ impl KoanEngine {
     /// Sent on the ordered lane; nothing is shown until the player, or the
     /// device being controlled, says where it is. The future resolves once
     /// the command is sent: for another device, the most a client can know
-    /// of it until that device reports. Handed to the lane as this is called,
-    /// not when the future is first polled.
-    pub fn seek(
-        self: Arc<Self>,
-        position_ms: u64,
-    ) -> impl std::future::Future<Output = Result<(), KoanError>> + Send + 'static {
+    /// of it until that device reports. Like every command, it takes its
+    /// place on the lane when first polled, so commands keep the order they
+    /// were polled in.
+    pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         offload::sequenced(move || {
             let remote = koan_core::remote::devices::target().is_some();
             let sent = self.send(PlayerCommand::Seek(position_ms));
@@ -1365,6 +1363,7 @@ impl KoanEngine {
             }
             sent
         })
+        .await
     }
 
     /// How many seeks this device's player has answered: a Playhead slice
