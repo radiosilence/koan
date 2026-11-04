@@ -69,26 +69,6 @@ fn free_slots() -> usize {
     held.len()
 }
 
-/// Waits for colours an earlier test set moving to land. The accent tests
-/// retarget against the real clock and move only the executor's, so the
-/// accent may still be settling as the next test starts, and whether colours
-/// move is one answer for the whole table.
-fn colors_at_rest() {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let now = Instant::now();
-        gpui::refresh_dynamic_colors(now);
-        if !gpui::dynamic_colors_moving(now) {
-            return;
-        }
-        assert!(
-            now < deadline,
-            "a colour an earlier test set moving never lands"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
 fn finite(c: Rgba) -> bool {
     [c.r, c.g, c.b, c.a]
         .iter()
@@ -148,7 +128,6 @@ fn the_slot_table_survives_many_threads_and_frees_what_they_drop() {
 #[test]
 fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     let _clock = CLOCK.lock();
-    colors_at_rest();
     let uniforms = Arc::new(ShaderUniforms::new());
     uniforms.set_origin(Instant::now());
     let slots: Arc<Vec<ColorSlot>> = Arc::new(
