@@ -225,14 +225,38 @@ final class PlayerModel {
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 
-    /// The engine's seek count when the thumb was let go. The thumb stands
-    /// where it was let go until a playhead past it arrives, the engine's
-    /// answer wherever it put the playhead; nothing else is predicted.
+    /// Let go on this device, the engine's seek count the thumb waits past:
+    /// it stands where it was let go until a playhead past it arrives, the
+    /// engine's answer wherever it put the playhead. Nothing is predicted.
     @ObservationIgnored private var letGoAfter: UInt64?
+    /// The count the latest seek let go here waits past, kept through a new
+    /// drag, so a second release does not take the first one's answer.
+    @ObservationIgnored private var waitingAfter: UInt64?
+    /// Let go while another device is controlled, whose reports answer no
+    /// seek: the release the thumb stands for until its command is sent.
+    @ObservationIgnored private var sendingRelease: Int?
+    @ObservationIgnored private var releases = 0
+    /// The device controlled as of the last look: a thumb let go for one is
+    /// not held on another.
+    @ObservationIgnored private var scrubTarget: String?
 
-    /// Let the thumb go once the engine has answered its seek.
+    /// Let the thumb go once the engine has answered its seek, or the device
+    /// controlled has changed. Reads the playhead and the target every time,
+    /// so the observation that calls this is armed on both.
     private func settleScrub() {
-        guard let after = letGoAfter, mirror.playhead.seek > after else { return }
+        let seek = mirror.playhead.seek
+        let target = mirror.target
+        if let waiting = waitingAfter, seek > waiting { waitingAfter = nil }
+        if target != scrubTarget {
+            scrubTarget = target
+            waitingAfter = nil
+            if letGoAfter != nil || sendingRelease != nil {
+                letGoAfter = nil
+                sendingRelease = nil
+                scrubbing = nil
+            }
+        }
+        guard let after = letGoAfter, seek > after else { return }
         letGoAfter = nil
         scrubbing = nil
     }
@@ -242,20 +266,42 @@ final class PlayerModel {
         seek(toMs: UInt64(clamp(fraction) * Double(durationMs)))
     }
 
-    /// Let go of the thumb: it stands where it was let go until the engine
-    /// answers the seek.
+    /// Let go of the thumb. On this device it stands where it was let go
+    /// until the engine answers the seek; while another device is
+    /// controlled, until the command has been sent, and then shows what that
+    /// device reports.
     func endScrub(fraction: Double) {
         guard canSeek else { return explainUnseekable() }
         let share = clamp(fraction)
+        let ms = UInt64(share * Double(durationMs))
         scrubbing = share
-        letGoAfter = engine.seeks()
-        attempt { try await self.engine.seek(positionMs: UInt64(share * Double(self.durationMs))) }
+        if mirror.target == nil {
+            let count = engine.seeks()
+            let after = waitingAfter.map { max(count, $0 + 1) } ?? count
+            waitingAfter = after
+            letGoAfter = after
+            attempt { try await self.engine.seek(positionMs: ms) }
+        } else {
+            releases += 1
+            let release = releases
+            sendingRelease = release
+            attempt {
+                defer {
+                    if self.sendingRelease == release {
+                        self.sendingRelease = nil
+                        self.scrubbing = nil
+                    }
+                }
+                try await self.engine.seek(positionMs: ms)
+            }
+        }
     }
 
     /// Called as the thumb is dragged: the person is the authority on where
     /// the thumb is until they let go.
     func beginScrub(fraction: Double) {
         letGoAfter = nil
+        sendingRelease = nil
         scrubbing = clamp(fraction)
     }
 

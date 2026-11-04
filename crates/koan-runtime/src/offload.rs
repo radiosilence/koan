@@ -46,19 +46,25 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
         .expect("a runtime to start")
 });
 
-/// Run `f` off the calling thread.
+/// Run `f` off the calling thread, starting it as this is called rather than
+/// when the answer is first awaited: a caller whose executor polls a new
+/// future only on its next turn (GPUI's main thread) does not hold the work
+/// back by that turn.
 ///
 /// Order between concurrent calls is undefined — use [`sequenced`] where it
 /// matters. A panic in `f` is re-raised here, so uniffi reports it as it would
 /// a panic in a synchronous call.
-pub async fn offload<T, F>(f: F) -> T
+pub fn offload<T, F>(f: F) -> impl std::future::Future<Output = T> + Send + 'static
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    match RUNTIME.spawn_blocking(f).await {
-        Ok(value) => value,
-        Err(e) => std::panic::resume_unwind(e.into_panic()),
+    let work = RUNTIME.spawn_blocking(f);
+    async move {
+        match work.await {
+            Ok(value) => value,
+            Err(e) => std::panic::resume_unwind(e.into_panic()),
+        }
     }
 }
 
@@ -90,10 +96,13 @@ where
 /// could undo the drop before it landed. A pool cannot promise that ordering,
 /// so this is one thread and a queue.
 ///
+/// Handed to the lane as this is called, as [`offload`] starts its work, so
+/// its place in the order is the call's.
+///
 /// A panic in `f` is caught on the lane and re-raised here, as [`offload`]
 /// does: the call that panicked fails, and the lane goes on running every
 /// command after it.
-pub async fn sequenced<T, F>(f: F) -> T
+pub fn sequenced<T, F>(f: F) -> impl std::future::Future<Output = T> + Send + 'static
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
@@ -106,10 +115,12 @@ where
     }))
     .expect("the command lane outlives the engine");
 
-    match rx.await {
-        Ok(Ok(value)) => value,
-        Ok(Err(payload)) => std::panic::resume_unwind(payload),
-        Err(_) => panic!("the command lane stopped running"),
+    async move {
+        match rx.await {
+            Ok(Ok(value)) => value,
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(_) => panic!("the command lane stopped running"),
+        }
     }
 }
 

@@ -2076,9 +2076,10 @@ mod tests {
             total_ms,
             info.duration_ms
         );
-        // Landing is frame-granular, never sample-exact.
+        // What the decoder lands on before the request is discarded, so
+        // playback resumes, and the playhead reads, at the request.
         assert!(
-            reported_start_ms.abs_diff(seek_ms) < 100,
+            reported_start_ms.abs_diff(seek_ms) <= 1,
             "seek to {}ms reported {}ms",
             seek_ms,
             reported_start_ms

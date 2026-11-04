@@ -1379,21 +1379,25 @@ fn shown_position(
     }
 }
 
-/// The thumb while the person has it. Held, it follows the pointer; let go,
-/// it stands where it was let go until the engine answers the seek, the
-/// first playhead whose `seek` count is past `after` (the engine's count when
-/// it was let go). What the slider shows otherwise is the engine's playhead,
-/// and nothing else: no position is predicted.
+/// The thumb while the person has it. Held, it follows the pointer. Let go
+/// on this device, it stands where it was let go until the engine answers
+/// the seek: the first playhead whose `seek` count is past `after`. Let go
+/// while another device is controlled, whose reports answer no seek, it
+/// stands, marked pending, only until the command is sent (`sent`, the
+/// release it belongs to), and the slider then shows what that device
+/// reports. What the slider shows otherwise is the engine's playhead, and
+/// nothing else: no position is predicted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Thumb {
     Held(f32),
     LetGo { share: f32, after: u64 },
+    Sending { share: f32, sent: u64 },
 }
 
 impl Thumb {
     fn share(self) -> f32 {
         match self {
-            Thumb::Held(share) | Thumb::LetGo { share, .. } => share,
+            Thumb::Held(share) | Thumb::LetGo { share, .. } | Thumb::Sending { share, .. } => share,
         }
     }
 }
@@ -1406,6 +1410,14 @@ fn thumb_after(thumb: Option<Thumb>, playhead: &Playhead) -> Option<Thumb> {
         Some(Thumb::LetGo { after, .. }) if playhead.seek > after => None,
         thumb => thumb,
     }
+}
+
+/// The count a seek let go now waits past: the engine's, or, while an
+/// earlier release here is still unanswered (`waiting`, the count that one
+/// waits past), one more than that, so the first seek's answer does not
+/// release the thumb onto the first seek's place.
+fn answer_after(waiting: Option<u64>, count: u64) -> u64 {
+    waiting.map_or(count, |earlier| count.max(earlier + 1))
 }
 
 /// The seek slider and the times either side of it.
@@ -1431,6 +1443,15 @@ pub struct Seek {
     heard: Option<(u64, Instant)>,
     /// While the person has the thumb.
     thumb: Option<Thumb>,
+    /// The count the latest seek let go here waits past, until a playhead
+    /// past it arrives.
+    waiting: Option<u64>,
+    /// Releases made while another device is controlled, so a send that
+    /// finishes late does not take the thumb from a later one.
+    sends: u64,
+    /// The device controlled when the thumb was last let go: a release on
+    /// one device is not held on another.
+    target: Option<String>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1440,8 +1461,23 @@ impl Seek {
         let mirror = cx.global::<Mirror>().clone();
         let mut subscriptions = vec![
             cx.observe(&mirror.playhead, |this, playhead, cx| {
-                this.thumb = thumb_after(this.thumb, playhead.read(cx));
+                let playhead = playhead.read(cx);
+                this.thumb = thumb_after(this.thumb, playhead);
+                this.waiting = this.waiting.filter(|after| playhead.seek <= *after);
                 this.moved(cx);
+            }),
+            // Another device taken control of, or given back: a thumb let go
+            // for the one before is not this one's to hold.
+            cx.observe(&mirror.devices, |this, devices, cx| {
+                let target = devices.read(cx).0.target.clone();
+                if target != this.target {
+                    this.target = target;
+                    this.waiting = None;
+                    if !matches!(this.thumb, Some(Thumb::Held(_))) {
+                        this.thumb = None;
+                    }
+                    this.moved(cx);
+                }
             }),
             cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
             // The fill is the accent.
@@ -1466,6 +1502,9 @@ impl Seek {
             clock: None,
             heard: None,
             thumb: None,
+            waiting: None,
+            sends: 0,
+            target: mirror.devices.read(cx).0.target.clone(),
             glide: Glide::new(),
         };
         seek.schedule(cx);
@@ -1531,11 +1570,33 @@ impl Seek {
         // download, or declined) is its to say; the thumb waits for that.
         let target = (share as f64 * duration as f64) as u64;
         let engine = engine(cx);
-        self.thumb = Some(Thumb::LetGo {
-            share,
-            after: engine.seeks(),
-        });
-        command(cx, "seek", move |_| engine.seek(target));
+        if self.target.is_none() {
+            let after = answer_after(self.waiting, engine.seeks());
+            self.waiting = Some(after);
+            self.thumb = Some(Thumb::LetGo { share, after });
+            command(cx, "seek", move |_| engine.seek(target));
+        } else {
+            self.sends += 1;
+            let sent = self.sends;
+            self.thumb = Some(Thumb::Sending { share, sent });
+            let seek = engine.seek(target);
+            cx.spawn(async move |this, cx| {
+                if let Err(e) = seek.await {
+                    log::warn!("seek: {e}");
+                }
+                this.update(cx, |this, cx| {
+                    if this
+                        .thumb
+                        .is_some_and(|t| t == Thumb::Sending { share, sent })
+                    {
+                        this.thumb = None;
+                        this.moved(cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
         self.schedule(cx);
         cx.notify();
     }
@@ -1577,6 +1638,7 @@ impl Render for Seek {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
             .when(self.thumb.is_none(), |slider| slider.glide(&self.glide))
+            .pending(matches!(self.thumb, Some(Thumb::Sending { .. })))
             .prism(crate::theme::KoanTheme::prism(cx))
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
@@ -1625,7 +1687,7 @@ fn controlled_shown(view: &Devices) -> ControlledShown {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Thumb, shown_position, thumb_after};
+    use super::{Thumb, answer_after, shown_position, thumb_after};
     use crate::mirror::Playhead;
 
     fn playhead(position_ms: u64, seek: u64) -> Playhead {
@@ -1661,6 +1723,24 @@ mod tests {
             after: 4,
         });
         assert_eq!(thumb_after(let_go, &playhead(30_000, 5)), None);
+    }
+
+    /// Let go twice before the first seek is answered: the second waits past
+    /// the first's answer, so the thumb is not released onto the first
+    /// seek's place.
+    #[test]
+    fn a_second_release_waits_for_its_own_answer() {
+        assert_eq!(answer_after(None, 4), 4);
+        let second = answer_after(Some(4), 4);
+        assert_eq!(second, 5);
+        let let_go = Some(Thumb::LetGo {
+            share: 0.5,
+            after: second,
+        });
+        assert_eq!(thumb_after(let_go, &playhead(12_000, 5)), let_go);
+        assert_eq!(thumb_after(let_go, &playhead(60_000, 6)), None);
+        // The first already answered by the engine, not yet heard here.
+        assert_eq!(answer_after(Some(4), 5), 5);
     }
 
     /// With nothing let go, every playhead is followed, a seek made elsewhere

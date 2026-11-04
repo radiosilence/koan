@@ -849,13 +849,6 @@ pub struct KoanEngine {
     /// prefix (`LinkIdentity::files`). Another device on the same config
     /// directory keeps a session of its own.
     session: &'static str,
-    /// The seeks the device being controlled has answered: its first report
-    /// after a seek was sent to it (`remote_seek_sent`) counts one. What the
-    /// Playhead slice carries as `seek` while another device is controlled.
-    remote_seeks: std::sync::atomic::AtomicU64,
-    /// A seek was sent to the device being controlled, and it has not
-    /// reported since.
-    remote_seek_sent: std::sync::atomic::AtomicBool,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -1354,38 +1347,32 @@ impl KoanEngine {
     }
 
     /// Sent on the ordered lane; nothing is shown until the player, or the
-    /// device being controlled, says where it is.
-    pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
-        let remote = koan_core::remote::devices::target().is_some();
-        let engine = self.clone();
-        let sent = offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await;
-        if sent.is_err() && !remote {
-            // Never reached the player, so answered here: the playhead stays.
-            engine.state.seek_answered();
-        }
-        if remote {
-            let answered = &engine.remote_seek_sent;
-            match sent {
-                Ok(()) => answered.store(true, std::sync::atomic::Ordering::SeqCst),
-                // Never sent, so answered here: the playhead stays.
-                Err(_) => {
-                    engine
-                        .remote_seeks
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    koan_core::signal::engine_changed().bump();
-                }
+    /// device being controlled, says where it is. The future resolves once
+    /// the command is sent: for another device, the most a client can know
+    /// of it until that device reports. Handed to the lane as this is called,
+    /// not when the future is first polled.
+    pub fn seek(
+        self: Arc<Self>,
+        position_ms: u64,
+    ) -> impl std::future::Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || {
+            let remote = koan_core::remote::devices::target().is_some();
+            let sent = self.send(PlayerCommand::Seek(position_ms));
+            // Never reached this device's player, so answered here: the
+            // playhead stays where it was.
+            if sent.is_err() && !remote {
+                self.state.seek_answered();
             }
-        }
-        sent
+            sent
+        })
     }
 
-    /// How many seeks the device in view has answered: a Playhead slice
+    /// How many seeks this device's player has answered: a Playhead slice
     /// whose `seek` is past this answers a seek asked for after it was read.
+    /// Only this device's: another device's reports carry no answer to a
+    /// seek, so while one is controlled the count does not move.
     pub fn seeks(&self) -> u64 {
-        match koan_core::remote::devices::target() {
-            None => self.state.seeks(),
-            Some(_) => self.remote_seeks.load(std::sync::atomic::Ordering::SeqCst),
-        }
+        self.state.seeks()
     }
 
     // --- Observable state --------------------------------------------------
@@ -5819,9 +5806,6 @@ impl KoanEngine {
                     let target = koan_core::remote::devices::target();
                     if target != last_target {
                         last_target = target.clone();
-                        engine
-                            .remote_seek_sent
-                            .store(false, std::sync::atomic::Ordering::SeqCst);
                         anchor = None;
                         last_seekable = u64::MAX;
                         last_queue = u64::MAX;
@@ -5844,16 +5828,6 @@ impl KoanEngine {
                             connection: connection_info(),
                         });
                         if let Some(t) = &target {
-                            // The device's first report after a seek was sent
-                            // to it is its answer.
-                            if engine
-                                .remote_seek_sent
-                                .swap(false, std::sync::atomic::Ordering::SeqCst)
-                            {
-                                engine
-                                    .remote_seeks
-                                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            }
                             engine.publish_remote(list.iter().find(|d| d.id == *t));
                         }
                     }
@@ -6333,7 +6307,7 @@ impl KoanEngine {
                 output_wait: None,
             },
         });
-        let seek = self.remote_seeks.load(std::sync::atomic::Ordering::SeqCst);
+        let seek = self.state.seeks();
         out.publish(StateSlice::Playhead {
             position_ms: device.map_or(0, |d| d.position_ms()),
             seekable_ms: st.duration_ms,
@@ -6751,8 +6725,6 @@ impl KoanEngine {
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             session_gate: parking_lot::Mutex::new(SessionGate::Unread { baseline }),
             session: identity.files,
-            remote_seeks: Default::default(),
-            remote_seek_sent: Default::default(),
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
