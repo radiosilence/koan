@@ -798,6 +798,7 @@ mod tests {
             devices_refused: Vec::new(),
             devices_nearby_control: "full".into(),
             devices_keep_running: false,
+            updates_auto: true,
             share_enabled: false,
             share_port: port,
             share_invite_to: koan_runtime::InviteTo::Network,
