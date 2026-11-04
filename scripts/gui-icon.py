@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """The desktop app's icons, from crates/koan-gui/packaging/AppIcon.svg.
 
-AppIcon.svg is the one drawing. From it this writes AppIcon-launch.svg, the
-icon a build outside a bundle sets at launch: the tile on Apple's macOS icon
-grid with the template's shadow, the drawing inlined rather than referenced,
-so every renderer draws it. Then it renders AppIcon.icns (macOS) and
-AppIcon-launch.png with rsvg-convert.
+AppIcon.svg is the one drawing, the installed app's icon. It renders to
+AppIcon.icns (macOS) with rsvg-convert.
 
 AppIcon-dev.svg and AppIcon-dev.icns are the same drawing with a spindle at
 the circle's centre, the icon of the dev bundle, so a dev build is told apart
-from the installed app in the Dock. At 16 and 32 pixels the spindle is drawn
+from the installed app in the Dock. AppIcon-launch.svg is the dev drawing as
+a build outside a bundle sets it at launch, which only a dev build is: the
+tile on Apple's macOS icon grid with the template's shadow, the drawing
+inlined rather than referenced, so every renderer draws it; AppIcon-launch.png
+is its render. At 16 and 32 pixels the spindle is drawn
 larger: at its own size it is under a pixel there.
 
     scripts/gui-icon.py           write the SVGs, the .icns files and the PNG
@@ -119,7 +120,7 @@ def build(into: str) -> list[str | None]:
         source = f.read()
     launch = os.path.join(into, "AppIcon-launch.svg")
     with open(launch, "w") as f:
-        f.write(launch_svg(source))
+        f.write(launch_svg(dev(source)))
     png = os.path.join(into, "AppIcon-launch.png")
     render(launch, 1024, png)
     dev_source = dev(source)

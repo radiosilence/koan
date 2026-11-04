@@ -1,1 +1,1 @@
-- **The desktop app's icon drops the spindle.** The spindle told the app from the SwiftUI Mac app, which 0.70 replaces. The `just gui-run` dev bundle keeps it, so a dev build is told apart from the installed app.
+- **The desktop app's icon drops the spindle.** The spindle told the app from the SwiftUI Mac app, which 0.70 replaces. The `just gui-run` dev bundle and the launch icon of builds outside a bundle keep it, so a dev build is told apart from the installed app.
