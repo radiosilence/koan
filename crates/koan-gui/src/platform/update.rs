@@ -467,6 +467,7 @@ fn run(program: &str, args: &[&std::ffi::OsStr]) -> Result<String, String> {
 }
 
 /// The `.app` an executable inside `Contents/MacOS` belongs to.
+#[cfg(any(target_os = "macos", test))]
 fn bundle_of(exe: &Path) -> Option<PathBuf> {
     let app = exe.parent()?.parent()?.parent()?;
     app.extension()
@@ -476,6 +477,7 @@ fn bundle_of(exe: &Path) -> Option<PathBuf> {
 
 /// A bundle's signing identifier and team, when it has a team: a build signed
 /// ad hoc or with the self-signed development certificate has none.
+#[cfg(target_os = "macos")]
 fn signature(app: &Path) -> Option<(String, String)> {
     let out = std::process::Command::new("codesign")
         .args(["-dv", "--verbose=2"])
