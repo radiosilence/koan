@@ -17,6 +17,7 @@ mod slot;
 mod track;
 pub(crate) use animated::curve;
 mod answer;
+mod appear;
 mod arrive;
 mod availability;
 mod badge;
@@ -96,6 +97,7 @@ pub use animated::{
     ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
+pub use appear::{Fading, Rise, Veil};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};

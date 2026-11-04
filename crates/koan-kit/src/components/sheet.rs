@@ -5,12 +5,13 @@
 //! question lives here instead.
 
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::components::field::{FieldState as InputState, InputEvent};
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{Button, ButtonKind, TextField};
+use super::{Button, ButtonKind, Fading, Rise, TextField, Veil};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
@@ -99,7 +100,8 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 
 /// What a sheet sits on: the whole window dimmed, taking every click, the
 /// panel hung near the top. The owner listens to it for a click outside the
-/// panel, which the panel stops.
+/// panel, which the panel stops. The dim fades in as it comes up; the owner
+/// draws its panel in a `Rise`.
 pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
     div()
         .id(id.into())
@@ -109,8 +111,8 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .justify_center()
         .items_start()
         .pt(look.space(Space::Xxl))
-        .bg(look.veil(0.6))
         .occlude()
+        .child(Veil::new(look.veil(0.6)))
 }
 
 /// A band under the head or over the foot: a sheet's segmented choice.
@@ -201,6 +203,29 @@ pub struct Asking {
     /// The sheet is busy with something it must see through (organise
     /// moving files): Escape leaves it be.
     held: bool,
+    /// The sheet and the question put away last, fading out where they
+    /// stood.
+    leaving_sheet: Option<(AnyView, Fading)>,
+    leaving_ask: Option<(Ask, Fading)>,
+}
+
+/// Lets go, once a fade started now has run, of what began fading by then.
+fn let_go(cx: &mut App) {
+    let host = asking(cx);
+    let started = Instant::now();
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(Fading::LENGTH).await;
+        cx.update(|cx| {
+            host.update(cx, |a, cx| {
+                let sheet = a.leaving_sheet.take_if(|(_, f)| f.began_by(started));
+                let ask = a.leaving_ask.take_if(|(_, f)| f.began_by(started));
+                if sheet.is_some() || ask.is_some() {
+                    cx.notify();
+                }
+            })
+        });
+    })
+    .detach();
 }
 
 /// Shows `view` as the window's sheet, over the shell and under the
@@ -220,6 +245,7 @@ pub fn present(view: impl Into<AnyView>, window: &mut Window, cx: &mut App) {
             None => before,
         };
         a.sheet = Some(view);
+        a.leaving_sheet = None;
         a.sheet_focus = Some((focus, before));
         a.restore = None;
         a.held = false;
@@ -237,13 +263,17 @@ pub fn hold(held: bool, cx: &mut App) {
 /// Takes the sheet away. The keyboard goes back to what had it before, on
 /// the window's next draw.
 pub fn close(cx: &mut App) {
-    asking(cx).update(cx, |a, cx| {
+    let fading = asking(cx).update(cx, |a, cx| {
         a.held = false;
-        if a.sheet.take().is_some() {
-            a.restore = a.sheet_focus.take();
-            cx.notify();
-        }
+        let view = a.sheet.take()?;
+        a.restore = a.sheet_focus.take();
+        a.leaving_sheet = Fading::start(cx).map(|f| (view, f));
+        cx.notify();
+        a.leaving_sheet.is_some().then_some(())
     });
+    if fading.is_some() {
+        let_go(cx);
+    }
 }
 
 /// Where an overlay stands among the window's layers, lowest first. Every
@@ -294,20 +324,28 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     if let Some((sheet, before)) = asking.update(cx, |a, _| a.restore.take())
         // Unless something in the sheet's last moments took it elsewhere.
         && (sheet.contains_focused(window, cx) || window.focused(cx).is_none())
-        && let Some(before) = before
     {
-        window.focus(&before, cx);
+        // Nothing had it before: the sheet fading out does not keep it.
+        match before {
+            Some(before) => window.focus(&before, cx),
+            None => window.blur(cx),
+        }
     }
-    let (view, focus) = {
+    // Put away, it is drawn where it stood as it fades, holding nothing.
+    let (view, focus, fading) = {
         let a = asking.read(cx);
-        (
-            a.sheet.clone()?,
-            a.sheet_focus.as_ref().map(|(f, _)| f.clone()),
-        )
+        match (&a.sheet, &a.leaving_sheet) {
+            (Some(view), _) => (
+                view.clone(),
+                a.sheet_focus.as_ref().map(|(f, _)| f.clone()),
+                None,
+            ),
+            (None, Some((view, fading))) => (view.clone(), None, Some(fading.clone())),
+            (None, None) => return None,
+        }
     };
     let look = Look::of(window, cx);
-    let scrim = div()
-        .id("sheet")
+    let scrim = scrim("sheet", &look)
         // The window's bare keys are bound outside `Ask`.
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
@@ -324,17 +362,12 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 }
             }
         })
-        .absolute()
-        .inset_0()
-        .flex()
-        .justify_center()
-        .items_start()
-        .pt(look.space(Space::Xxl))
-        .bg(look.veil(0.6))
-        .occlude()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(view);
-    Some(trapped(scrim, focus.as_ref(), cx))
+        .child(Rise::new(view));
+    match fading {
+        Some(fading) => Some(fading.draw(scrim)),
+        None => Some(trapped(scrim, focus.as_ref(), cx)),
+    }
 }
 
 /// A scrim holding the keyboard keeps Tab inside it.
@@ -446,17 +479,30 @@ pub fn name(
 fn show(ask: Ask, cx: &mut App) {
     asking(cx).update(cx, |a, cx| {
         a.ask = Some(ask);
+        a.leaving_ask = None;
         cx.notify();
     });
 }
 
 fn dismiss(window: &mut Window, cx: &mut App) {
-    let before = asking(cx).update(cx, |a, cx| {
+    let Some((before, fading)) = asking(cx).update(cx, |a, cx| {
         cx.notify();
-        a.ask.take().and_then(|ask| ask.before)
-    });
-    if let Some(before) = before {
-        window.focus(&before, cx);
+        let mut ask = a.ask.take()?;
+        ask._enter = None;
+        let before = ask.before.take();
+        a.leaving_ask = Fading::start(cx).map(|f| (ask, f));
+        Some((before, a.leaving_ask.is_some()))
+    }) else {
+        return;
+    };
+    match before {
+        Some(before) => window.focus(&before, cx),
+        // Nothing had the keyboard before: the field fading out does not
+        // keep it.
+        None => window.blur(cx),
+    }
+    if fading {
+        let_go(cx);
     }
 }
 
@@ -464,7 +510,13 @@ fn dismiss(window: &mut Window, cx: &mut App) {
 pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let host = asking(cx);
     let a = host.read(cx);
-    let ask = a.ask.as_ref()?;
+    // Put away, it is drawn where it stood as it fades, taking no keys.
+    let (ask, fading) = match (&a.ask, &a.leaving_ask) {
+        (Some(ask), _) => (ask, None),
+        (None, Some((ask, fading))) => (ask, Some(fading.clone())),
+        (None, None) => return None,
+    };
+    let live = fading.is_none();
     let look = Look::of(window, cx);
     let typed = ask
         .name
@@ -503,19 +555,21 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .into_iter()
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
-    let focus = ask.focus.clone();
+    let focus = ask.focus.clone().filter(|_| live);
     let scrim = scrim("ask", &look)
         .key_context("Ask")
-        .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
-        .on_key_down(
-            move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
-                "escape" => dismiss(window, cx),
-                "enter" if !named => go(window, cx),
-                _ => {}
-            },
-        )
+        .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
+        .when(live, |d| {
+            d.on_key_down(
+                move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
+                    "escape" => dismiss(window, cx),
+                    "enter" if !named => go(window, cx),
+                    _ => {}
+                },
+            )
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(
+        .child(Rise::new(
             panel(ask.title.as_ref(), &look)
                 .child(head(
                     ask.title.as_ref(),
@@ -531,8 +585,11 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                             d.child(note(n, Tone::Muted, &look))
                         }),
                 ),
-        );
-    Some(trapped(scrim, focus.as_ref(), cx))
+        ));
+    match fading {
+        Some(fading) => Some(fading.draw(scrim)),
+        None => Some(trapped(scrim, focus.as_ref(), cx)),
+    }
 }
 
 #[cfg(test)]

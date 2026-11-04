@@ -119,12 +119,12 @@ impl Render for TrackInfo {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.lib.nav.update(cx, |nav, cx| nav.close_info(cx));
             }))
-            .child(
+            .child(crate::components::Rise::new(
                 ask::panel("track info", look)
                     .id("track-info")
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(ask::head("track info", vec![done.into_any_element()], look))
                     .child(body),
-            )
+            ))
     }
 }

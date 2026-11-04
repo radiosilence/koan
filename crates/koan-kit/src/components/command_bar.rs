@@ -16,7 +16,7 @@ use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{ScrollArea, SuggestionHeading, SuggestionRow, TextField, sheet};
+use super::{Rise, ScrollArea, SuggestionHeading, SuggestionRow, TextField, sheet};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A group of results under its heading.
@@ -90,7 +90,7 @@ impl RenderOnce for CommandBar {
                     dismiss(&(), window, cx)
                 })
             })
-            .child(
+            .child(Rise::new(
                 // A dialog to a screen reader, holding the query and its
                 // results.
                 super::accessible(
@@ -136,7 +136,7 @@ impl RenderOnce for CommandBar {
                     .child(div().flex_1().min_w_0().child(self.field)),
                 )
                 .children(self.results),
-            )
+            ))
     }
 }
 

@@ -1,0 +1,1 @@
+- **Sheets come and go with motion.** In the desktop app, sheets, questions and the command bar fade and rise in, briefly, so they read as arriving over the page; the command bar, the shortcuts, presented sheets and questions fade out as they go. At once under Reduce Motion.

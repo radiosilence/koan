@@ -6,7 +6,8 @@ use std::rc::Rc;
 
 use koan_kit::app::*;
 
-use crate::components::{Button, ButtonKind};
+use crate::components::sheet::scrim;
+use crate::components::{Button, ButtonKind, Rise};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
 /// The sheet's parts are koan-kit's.
@@ -99,18 +100,9 @@ impl Sheets {
                     confirm_body(c, this.clone(), &look).into_any_element(),
                 ),
             };
-            div()
-                .id(("dsp-sheet", depth))
-                .absolute()
-                .inset_0()
-                .flex()
-                .justify_center()
-                .items_start()
-                .pt(look.space(Space::Xxl))
-                .bg(look.veil(0.6))
-                .occlude()
+            scrim(("dsp-sheet", depth), &look)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(panel(name, &look).child(body))
+                .child(Rise::new(panel(name, &look).child(body)))
         });
         Some(
             div()

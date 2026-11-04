@@ -413,17 +413,11 @@ impl Sheets {
         let panel = crate::components::sheet::trap_focus(panel, &focus, cx);
 
         Some(
-            div()
-                .id("sheet-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
+            // Every click on the window behind goes nowhere.
+            crate::components::sheet::scrim("sheet-scrim", look)
                 .items_center()
-                .justify_center()
-                .bg(look.veil(0.6))
-                // Every click on the window behind goes nowhere.
-                .occlude()
-                .child(panel)
+                .pt_0()
+                .child(crate::components::Rise::new(panel))
                 .into_any_element(),
         )
     }
