@@ -1,0 +1,1 @@
+- **Control fills and outlines.** A control's hover fill and a picker's outline cover the control exactly, instead of starting at its padding and running past its right edge.
