@@ -99,18 +99,23 @@ impl RenderOnce for Rise {
         if !moves(cx) {
             return self.child;
         }
-        let step = f32::from(Look::of(window, cx).space(Space::S)) * window.scale_factor();
-        AnimatedLayer::new(&entrance("rise", step, window, cx), self.child).into_any_element()
+        let step = Look::of(window, cx).space(Space::S);
+        let device = f32::from(step) * window.scale_factor();
+        // Composed over a step more than the panel, so its foot is not cut
+        // off while it stands lower.
+        AnimatedLayer::new(&entrance("rise", device, window, cx), self.child)
+            .room_below(step)
+            .into_any_element()
     }
 }
 
 /// Something put away, fading out where it stood. Its owner keeps what it
 /// drew beside this, draws it through `draw` in the place it stood until
-/// `gone`, and lets it go then: `LENGTH` after it started.
+/// it has run, `LENGTH` after it started, and lets it go then.
 #[derive(Clone)]
 pub struct Fading {
     animated: Animated,
-    ends: Instant,
+    started: Instant,
 }
 
 impl Fading {
@@ -124,23 +129,18 @@ impl Fading {
         let animated = Animated::new();
         standing(&animated);
         let now = Animated::now();
-        animated.segment(
-            0,
-            1.0,
-            0.0,
-            now,
-            Self::LENGTH,
-            Ease::QuickOut,
-            Repeat::Once,
-        );
+        animated.segment(0, 1.0, 0.0, now, Self::LENGTH, Ease::QuickOut, Repeat::Once);
         Some(Self {
             animated,
-            ends: now + Self::LENGTH,
+            started: Instant::now(),
         })
     }
 
-    pub fn gone(&self) -> bool {
-        Animated::now() >= self.ends
+    /// Whether it began fading by `when`: an owner's timer, set going with a
+    /// fade and waking `LENGTH` later, lets go of every fade this is true of,
+    /// and leaves a later one to its own timer.
+    pub fn began_by(&self, when: Instant) -> bool {
+        self.started <= when
     }
 
     /// `child` fading out, composed until its owner lets it go, and covered

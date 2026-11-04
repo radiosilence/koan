@@ -290,10 +290,11 @@ impl Shell {
             return;
         };
         self.leaving = Some((view, fading));
+        let started = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Fading::LENGTH).await;
             this.update(cx, |this, cx| {
-                if this.leaving.take_if(|(_, f)| f.gone()).is_some() {
+                if this.leaving.take_if(|(_, f)| f.began_by(started)).is_some() {
                     cx.notify();
                 }
             })

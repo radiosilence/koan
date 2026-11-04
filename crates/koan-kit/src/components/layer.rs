@@ -69,6 +69,8 @@ pub struct AnimatedLayer {
     /// Writes the uniforms that depend on where it is painted, given its
     /// bounds and the window's scale, each time it paints.
     placed: Option<Placed>,
+    /// Room composed below its bounds, for content offset down into it.
+    below: Pixels,
 }
 
 impl AnimatedLayer {
@@ -81,7 +83,15 @@ impl AnimatedLayer {
             always: false,
             informative: false,
             placed: None,
+            below: Pixels::ZERO,
         }
+    }
+
+    /// Composed over `below` more than its bounds at the foot, so content
+    /// its offset moves down is drawn there rather than cut off.
+    pub fn room_below(mut self, below: Pixels) -> Self {
+        self.below = below;
+        self
     }
 
     /// Composed by `program` rather than `LAYER`, at rest as well as in
@@ -171,6 +181,8 @@ impl Element for AnimatedLayer {
         if let Some(placed) = &self.placed {
             placed(bounds, window.scale_factor());
         }
+        let mut bounds = bounds;
+        bounds.size.height += self.below;
         let child = &mut self.child;
         self.animated
             .paint_layer(self.program, bounds, window, cx, |window, cx| {
