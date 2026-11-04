@@ -501,6 +501,7 @@ impl ApiServer {
 
         let serving = stop.clone();
         let serving_key = host_key.clone();
+        let kept_policy = browser_policy.clone();
         let thread = std::thread::Builder::new()
             .name("koan-api".into())
             .spawn(move || {
@@ -736,7 +737,7 @@ impl ApiServer {
             host_key,
             stop,
             thread: Some(thread),
-            browser_policy,
+            browser_policy: kept_policy,
         })
     }
 
