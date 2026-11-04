@@ -637,9 +637,9 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE) || '' }}
 
-  # Apple is checked on three runners, split by what each needs built first:
-  # the engine's tests (`apple`), the iOS typecheck over one FFI build
-  # (`apple-app`), and the Apple TV app over its own (`apple-tv`).
+  # Apple platforms are checked on three runners, split by what each needs
+  # built first: the workspace on macOS (`macos`), the iOS typecheck over one
+  # FFI build (`ios`), and the Apple TV app over its own (`tvos`).
   # They contend for the account's few macOS runners, which costs less than
   # running them on one runner's three cores.
   #
@@ -650,14 +650,14 @@ jobs:
   #
   # A release push is not checked again: its pull request and main's previous
   # push were. The release builds belong to `macos-release`.
-  apple:
-    name: Apple
+  macos:
+    name: macOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: macos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     env:
       # Everything: main and manual runs.
@@ -688,14 +688,14 @@ jobs:
   # The shared sources typechecked for iOS against bindings generated from
   # this build of koan-ffi: the check catches drift between the Rust surface
   # and the Swift that calls it.
-  apple-app:
+  ios:
     name: iOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: ios-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -720,14 +720,14 @@ jobs:
   # The Apple TV app, on pull requests as well as main: tvOS compiles the
   # shared sources under its own rules, and a break only it sees otherwise
   # surfaces at a release. The xcodebuild is the typecheck.
-  apple-tv:
-    name: Apple TV
+  tvos:
+    name: tvOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-tv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: tvos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -845,7 +845,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, macos, ios, tvos, android]
     if: always()
     steps:
       - env:
