@@ -1,6 +1,6 @@
 # koan-kit: the design system
 
-How the desktop app stays consistent: one design system, the one the Mac app already has (`docs/design/koan-theme.md` and the roles in `apps/macos/Sources/Koan/Support/KoanTheme.swift`), rebuilt for GPUI role for role. Pages declare what they show; where it sits, how big it is and what colour it takes are decided below them.
+How the desktop app stays consistent: one design system, the one the Mac app already has (`docs/design/koan-theme.md` and the roles in `apps/ios/Sources/Koan/Support/KoanTheme.swift`), rebuilt for GPUI role for role. Pages declare what they show; where it sits, how big it is and what colour it takes are decided below them.
 
 ## Why
 

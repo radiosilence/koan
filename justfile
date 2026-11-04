@@ -45,29 +45,6 @@ gui-walk out="target/gui-walk" albums="300" tracks="10":
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
     KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example walk -- "{{out}}"
 
-# The SwiftUI app's evidence renders beside the GUI walk's, page by page,
-# with the edges that disagree marked: {{out}}/sheets. Both apps draw
-# offscreen against copies of the same library; nothing reads the screen.
-gui-compare out="target/gui-compare":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just gui-walk "{{out}}/gui"
-    just macos-bundle
-    cfg="$PWD/{{out}}/mac-config"
-    rm -rf "$cfg" "{{out}}/mac" && cp -R "{{out}}/gui/config" "$cfg"
-    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
-    # The record, artist and playlist the walk drew.
-    set -a && . "{{out}}/gui/ids.env" && set +a
-    KOAN_CONFIG_DIR="$cfg" KOAN_PLACES_DIR="$cfg/places" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
-        KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
-        -ApplePersistenceIgnoreState YES
-    cargo run --release -p koan-gui --features runtime-shaders --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
-
-# The parity inventory: what the SwiftUI app has, as a checklist for #1625.
-# `--summary` for the counts alone.
-gui-parity *args:
-    python3 scripts/gui-parity.py {{args}}
-
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the
@@ -119,7 +96,7 @@ css:
 js:
     tsc -p crates/koan-server/scripts
 
-# Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
+# Compile the kōan icon set (apps/ios/Resources/Icons/*.svg) into
 # Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
 icons *args:
     python3 scripts/icons.py {{args}}
@@ -131,8 +108,8 @@ icons-sheet: icons
     set -euo pipefail
     out="${CARGO_TARGET_DIR:-target}"
     mkdir -p "$out"
-    swiftc -O -o "$out/icons-sheet" apps/macos/tools/icons-sheet/main.swift \
-        apps/macos/Sources/Koan/Support/KoanGlyph.swift apps/macos/Sources/Koan/Support/KoanGlyphs.swift
+    swiftc -O -o "$out/icons-sheet" apps/ios/tools/icons-sheet/main.swift \
+        apps/ios/Sources/Koan/Support/KoanGlyph.swift apps/ios/Sources/Koan/Support/KoanGlyphs.swift
     "$out/icons-sheet" "$out/icons-sheet.png" site/public/geist-mono.woff2
 
 # Install dev build to ~/.local/bin/koan-dev
@@ -150,31 +127,10 @@ watch-dev:
 clean:
     cargo clean
 
-# --- macOS app ---------------------------------------------------------------
-# The SwiftUI app links koan-core through the koan-ffi static library, so the
-# Rust side must be built and its bindings regenerated before `swift build`.
+# --- Swift bindings -----------------------------------------------------------
 
 bundle_id := "cc.blit.koan"
-app_dir := "apps/macos"
-
-# Regenerate AppIcon.icns from AppIcon.svg.
-#
-# The .icns is committed so a build needs no render tooling; run this after
-# editing the SVG. Needs rsvg-convert (brew install librsvg).
-macos-icon:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    set="{{app_dir}}/Resources/AppIcon.iconset"
-    rm -rf "$set" && mkdir -p "$set"
-    # Each macOS icon slot, and the pixel size it wants.
-    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
-                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
-        px="${spec%% *}"; name="${spec##* }"
-        rsvg-convert -w "$px" -h "$px" {{app_dir}}/Resources/AppIcon.svg -o "$set/$name.png"
-    done
-    iconutil -c icns "$set" -o {{app_dir}}/Resources/AppIcon.icns
-    echo "built {{app_dir}}/Resources/AppIcon.icns"
+app_dir := "apps/ios"
 
 # Regenerate the desktop app's AppIcon.icns from its AppIcon.svg, AppIcon-launch.png,
 # the same icon on the macOS icon grid, which a build outside a bundle sets at
@@ -183,42 +139,21 @@ macos-icon:
 gui-icon *args:
     python3 scripts/gui-icon.py {{args}}
 
-# Build the FFI static library and regenerate the Swift bindings.
-#
-# One slice, for the machine doing the building: a universal binary is two
-# cross builds lipo'd together, most of a release job's time and disk.
-# `macos-verify` fails if the assembled app is not the architecture asked for.
+# The Swift bindings from a host build of koan-ffi, for the typechecks: the
+# bindings are the same for every target, so no iOS or tvOS build is needed.
 #
 # `KOAN_FFI_PROFILE=debug` builds the dev profile instead, which shares its
-# dependencies with `cargo test`: pull request CI checks the app against it.
-macos-ffi:
+# dependencies with `cargo test`: pull request CI checks the apps against it.
+swift-bindings:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Match what SwiftPM links against. Without it cargo builds for the host's
-    # OS and every link is a page of "built for newer macOS version" warnings.
-    export MACOSX_DEPLOYMENT_TARGET=26.0
     profile=${KOAN_FFI_PROFILE:-release}
     case "$profile" in
         release) cargo rustc --release -p koan-ffi --crate-type staticlib ;;
         debug) cargo rustc -p koan-ffi --crate-type staticlib ;;
         *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
     esac
-    lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
-    # Stage the archive somewhere holding nothing else, and link against that.
-    #
-    # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
-    # .dylib, and an older build of the crate as a cdylib may have left one
-    # next to the archive. The release DMG shipped
-    # an app that referenced
-    # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
-    # could not launch anywhere. A directory with one file in it cannot produce
-    # that outcome.
-    rm -rf target/swift-link
-    mkdir -p target/swift-link
-    cp "$lib" target/swift-link/libkoan_ffi.a
-
-    just ffi-bindings "$lib"
-    echo "koan-ffi ready: $lib"
+    just ffi-bindings "${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a"
 
 # Generate the Swift bindings from a built koan-ffi library: from the metadata
 # embedded in it, not the sources, so any build of the engine serves, the iOS
@@ -233,135 +168,17 @@ ffi-bindings lib:
     cp target/uniffi/koan_ffi.swift {{app_dir}}/Sources/KoanFFI/
     cp target/uniffi/koan_ffiFFI.h {{app_dir}}/Sources/koan_ffiFFI/
 
-# Compile the SwiftUI app.
-macos-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just macos-ffi
-    # SwiftPM links libkoan_ffi.a through a systemLibrary target and linker
-    # flags, so it has no idea the library is an input: a Rust change with no
-    # Swift change leaves the previous binary in place and the app silently runs
-    # the old engine. Dropping the product when the library is newer forces the
-    # relink.
-    product={{app_dir}}/.build/release/Koan
-    for lib in target/swift-link/libkoan_ffi.a; do
-        if [ -f "$lib" ] && [ -f "$product" ] && [ "$lib" -nt "$product" ]; then
-            echo "koan-ffi is newer than the built app — forcing a relink"
-            rm -f "$product"
-        fi
-    done
-    cd {{app_dir}} && swift build -c release
-
-# Assemble kōan.app.
-macos-bundle: macos-build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-    app="{{app_dir}}/.build/pkg/kōan.app"
-    rm -rf "$app"
-    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
-    echo "app binary: $(lipo -archs "$app/Contents/MacOS/koan-app")"
-    [ -f {{app_dir}}/Resources/AppIcon.icns ] && cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/" || true
-    # Geist Mono, for the kōan theme: the site's own file, read by Core Text as it is.
-    cp site/public/geist-mono.woff2 "$app/Contents/Resources/"
-    # The accent colour. macOS paints list selection, focus rings and controls
-    # from the app's accent, and reads it from a compiled asset catalog — there
-    # is no way to set it from SwiftUI, which is why `.tint` leaves sidebar
-    # selection stubbornly blue. actool ships with Xcode proper, not the command
-    # line tools, so a machine without it gets a working app with the system
-    # accent rather than a failed build.
-    if /usr/bin/actool --version >/dev/null 2>&1; then
-        /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
-            --compile "$app/Contents/Resources" \
-            --platform macosx --minimum-deployment-target 26.0 \
-            --output-partial-info-plist /dev/null >/dev/null
-        accent='<key>NSAccentColorName</key><string>AccentColor</string>'
-    else
-        echo "note: actool unavailable (needs full Xcode) — building with the system accent"
-        accent=''
-    fi
-    cat > "$app/Contents/Info.plist" <<PLIST
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-        <key>CFBundleExecutable</key><string>koan-app</string>
-        <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
-        <key>CFBundleName</key><string>kōan</string>
-        <key>CFBundleDisplayName</key><string>kōan</string>
-        <key>CFBundlePackageType</key><string>APPL</string>
-        <key>CFBundleShortVersionString</key><string>${version}</string>
-        <key>CFBundleVersion</key><string>${version}</string>
-        <key>CFBundleIconFile</key><string>AppIcon</string>
-        ${accent}
-        <key>LSMinimumSystemVersion</key><string>26.0</string>
-        <key>NSHighResolutionCapable</key><true/>
-        <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
-        <!-- macOS asks before an app talks to the local network, and an app
-             that gives no reason is never asked: its SSDP and Bonjour traffic
-             is dropped without a word, so no UPnP renderer or nearby koan
-             appears. The iOS bundle declares the same. -->
-        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
-        <key>CFBundleURLTypes</key>
-        <array>
-            <dict>
-                <key>CFBundleURLName</key><string>{{bundle_id}}</string>
-                <key>CFBundleURLSchemes</key><array><string>koan</string></array>
-            </dict>
-        </array>
-        <key>UTExportedTypeDeclarations</key>
-        <array>
-            <dict>
-                <key>UTTypeIdentifier</key><string>cc.blit.koan.playable</string>
-                <key>UTTypeDescription</key><string>koan playable</string>
-                <key>UTTypeConformsTo</key>
-                <array><string>public.data</string></array>
-                <key>UTTypeTagSpecification</key><dict/>
-            </dict>
-        </array>
-    </dict>
-    </plist>
-    PLIST
-    # Signing identity. Ad-hoc ("-") derives the identity from the binary's own
-    # hash, so every rebuild is a different app to macOS and any TCC grant —
-    # removable volumes, files and folders — has to be given again. Set
-    # KOAN_SIGN_IDENTITY to a stable certificate (a self-signed one in your
-    # login keychain is enough) and the grants stick across rebuilds.
-    #
-    # It does nothing for Gatekeeper. A downloaded app is refused unless it is
-    # signed with a Developer ID certificate *and* notarised by Apple, which
-    # needs a paid developer account — a self-signed certificate is no more
-    # trusted than ad-hoc.
-    # A Developer ID signature is for distribution: notarisation requires the
-    # hardened runtime and a secure timestamp, and only an Apple-issued
-    # identity can get the timestamp, so a self-signed dev certificate keeps
-    # the plain signature.
-    id="${KOAN_SIGN_IDENTITY:--}"
-    case "$id" in
-        "Developer ID Application"*)
-            codesign --force --options runtime --timestamp --sign "$id" "$app" ;;
-        *)
-            codesign --force --deep --sign "$id" "$app" ;;
-    esac
-    codesign --verify --strict --verbose=2 "$app"
-    echo "built $app"
-
-# Create the self-signed certificate that dev builds sign with.
+# Create the self-signed certificate that desktop app's dev bundle signs with.
 #
 # Ad-hoc signing derives the app's identity from the binary's own hash, so every
 # rebuild is a different application to macOS. Keychain items and TCC grants are
 # both keyed on that identity, which is why the app asks for keychain access
 # again after every build and forgets its permission to read removable volumes.
 #
-# A stable certificate fixes both. It does nothing for Gatekeeper — a self-signed
-# certificate is no more trusted than ad-hoc, and only Developer ID plus
-# notarisation clears that — so this is for development, not distribution.
 #
 
 # Run once, then export KOAN_SIGN_IDENTITY="koan development".
-macos-signing-cert:
+signing-cert:
     #!/usr/bin/env bash
     set -euo pipefail
     name="koan development"
@@ -405,113 +222,6 @@ macos-signing-cert:
     echo "created. add this to your shell profile:"
     echo "    export KOAN_SIGN_IDENTITY=\"$name\""
 
-# Check a built kōan.app is shippable.
-#
-# Two ways the bundle has gone out broken, both of which built and signed
-# cleanly and neither of which showed until someone downloaded it:
-#   - linked against cargo's dylib by absolute path, so it died in dyld on any
-#     machine but the one that built it
-#   - arm64 only, from a build that had compiled x86_64 as well
-#
-# ARCHES is what the binary must contain, e.g. "arm64 x86_64".
-macos-verify *ARCHES:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    bin="{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app"
-    [ -f "$bin" ] || { echo "no app bundle at $bin"; exit 1; }
-
-    if otool -L "$bin" | grep -q koan_ffi; then
-        echo "app links koan_ffi dynamically — it will not run off this machine:"
-        otool -L "$bin" | grep koan_ffi
-        exit 1
-    fi
-
-    have=$(lipo -archs "$bin")
-    for want in {{ARCHES}}; do
-        case " $have " in
-            *" $want "*) ;;
-            *) echo "app binary is [$have], missing $want"; exit 1 ;;
-        esac
-    done
-    echo "app binary: [$have], statically linked"
-
-# Build and launch the app bundle.
-#
-# Quits any running instance first — `open` on a live app just focuses it, so
-# without this you get the old binary back and none of your changes.
-macos-run: macos-bundle
-    #!/usr/bin/env bash
-    set -euo pipefail
-    osascript -e 'quit app "kōan"' 2>/dev/null || true
-    # Wait for it to exit before replacing it.
-    for _ in $(seq 20); do
-        pgrep -qf 'kōan.app/Contents/MacOS/koan-app' || break
-        sleep 0.2
-    done
-    pkill -f 'kōan.app/Contents/MacOS/koan-app' 2>/dev/null || true
-    open {{app_dir}}/.build/pkg/kōan.app
-    echo "launched $(date +%H:%M:%S)"
-
-# Run the app from the terminal: logs on stderr. Against your own config it
-# runs with no local library folders, so macOS stops asking for disk and
-# removable-volume access on every launch; a `KOAN_CONFIG_DIR` of its own
-# keeps its folders, since adding them is usually what the run is for.
-# Env vars only reach the process this way — `open` does not pass them on.
-macos-dev *ARGS: macos-bundle
-    #!/usr/bin/env bash
-    set -euo pipefail
-    osascript -e 'quit app "kōan"' 2>/dev/null || true
-    if [ -z "${KOAN_CONFIG_DIR:-}" ]; then export KOAN_LIBRARY__FOLDERS='[]'; fi
-    RUST_LOG="${RUST_LOG:-info}" \
-        {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
-
-# Package the app as a DMG for release.
-# The window opens with the app, an Applications link to drop it on, and a
-# background drawn by `dmg/background.swift`. dmgbuild lays the window out by
-# writing .DS_Store directly, so this needs no Finder session and runs in CI.
-# It comes from uv where there is one, else pipx (preinstalled on GitHub's
-# macOS runners).
-#
-# Package kōan.app into Koan.dmg.
-macos-dmg: macos-bundle
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out={{app_dir}}/.build/pkg
-    bg={{app_dir}}/.build/dmg
-    mkdir -p "$bg"
-    swift {{app_dir}}/dmg/background.swift {{app_dir}}/Resources/AppIcon.svg site/public/geist-mono.woff2 "$bg"
-    tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
-    if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
-    else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
-    rm -f "$out/Koan.dmg"
-    "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
-        -D app="$out/kōan.app" -D background="$bg/background.tiff" \
-        -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
-        kōan "$out/Koan.dmg"
-    echo "built $out/Koan.dmg"
-
-# Needs KOAN_SIGN_IDENTITY (a "Developer ID Application" identity in the
-# keychain) and an App Store Connect API key: APPLE_API_KEY_PATH (the .p8),
-# APPLE_API_KEY_ID and APPLE_API_ISSUER_ID. The stapled ticket lets Gatekeeper
-# open the DMG without asking and without the network.
-#
-# Sign the DMG with the Developer ID, notarise it with Apple, and staple the ticket.
-macos-notarize: macos-dmg
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dmg={{app_dir}}/.build/pkg/Koan.dmg
-    codesign --force --timestamp --sign "$KOAN_SIGN_IDENTITY" "$dmg"
-    xcrun notarytool submit "$dmg" \
-        --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" \
-        --wait --timeout 30m
-    xcrun stapler staple "$dmg"
-    xcrun stapler validate "$dmg"
-    spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
-
-# Run the macOS app's tests.
-macos-test: macos-ffi
-    cd {{app_dir}} && swift test
-
 # --- iOS --------------------------------------------------------------------
 
 
@@ -550,14 +260,14 @@ theme-leaks:
     # Icons go through the theme's role, which draws the kōan set in the theme
     # and SF Symbols otherwise; every `Icon` has a glyph.
     python3 scripts/icons.py --check || found=1
-    hits=$(grep -rnE 'Image\(systemName:|systemImage:|systemSymbolName:|UIImage\(systemName:' apps/macos/Sources --include='*.swift' \
-        | grep -v -e 'Support/Icons.swift' -e 'Support/KoanGlyph.swift' -e 'Views/LayerSymbol.swift' -e '// theme: raw')
+    hits=$(grep -rnE 'Image\(systemName:|systemImage:|systemSymbolName:|UIImage\(systemName:' apps/ios/Sources --include='*.swift' \
+        | grep -v -e 'Support/Icons.swift' -e 'Support/KoanGlyph.swift' -e '// theme: raw')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"
     fi
     for pattern in "${patterns[@]}"; do
-        hits=$(grep -rnE "$pattern" apps/macos/Sources --include='*.swift' \
+        hits=$(grep -rnE "$pattern" apps/ios/Sources --include='*.swift' \
             | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'NSFont.role(' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize' -e 'koanBad(' -e 'koanSelection(')
         if [ -n "$hits" ]; then
             found=1
@@ -566,7 +276,7 @@ theme-leaks:
     done
     # The wash is the only gradient: no fades, scrims or gradient masks.
     # Support/Rainbow.swift is the deliberate exception.
-    hits=$(grep -rnE '(Linear|Radial|Angular|Elliptical)Gradient|CAGradientLayer|\.mask\(' apps/macos/Sources --include='*.swift' \
+    hits=$(grep -rnE '(Linear|Radial|Angular|Elliptical)Gradient|CAGradientLayer|\.mask\(' apps/ios/Sources --include='*.swift' \
         | grep -v -e 'Views/ArtworkBleed.swift' -e 'Views/DriftingWash.swift' -e 'Support/Rainbow.swift' -e '// theme: raw')
     if [ -n "$hits" ]; then
         found=1
@@ -575,7 +285,7 @@ theme-leaks:
     # The wash is the only ground; pages are transparent over it. Nothing paints
     # a page black or in the system's background colours.
     hits=$(grep -rnE '(\.background|containerBackground)\(Color\.black[^.]|Color\.black\.ignoresSafeArea|(Color|UIColor|NSColor)\(?\.?(systemBackground|secondarySystemBackground|systemGroupedBackground|windowBackgroundColor)|\.background\(\.background\)' \
-        apps/macos/Sources --include='*.swift' | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw')
+        apps/ios/Sources --include='*.swift' | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"
@@ -586,7 +296,7 @@ theme-leaks:
     # which draw the platform's look only with the theme off.
     # `SidebarGround.swift` finds the sidebar's glass to take it away.
     hits=$(grep -rnE '\.glassEffect\(|GlassEffectContainer|buttonStyle\(\.glass|NSGlassEffectView|UIGlassEffect|NSVisualEffectView|UIVisualEffectView|UIBlurEffect|(ultraThin|thin|regular|thick|ultraThick)Material\b|\(\.bar\)|toolbarBackground\(|\.popover\(|\.searchable\(|scrollEdgeEffectStyle\(.*\.soft' \
-        apps/macos/Sources --include='*.swift' \
+        apps/ios/Sources --include='*.swift' \
         | grep -v -e 'Support/KoanTheme.swift' -e 'Support/Graphics.swift' -e 'Views/SidebarGround.swift' -e '// theme: raw' -e 'koanMaterial(' -e '\.glass(' -e 'KoanTheme\.ground(' -e 'scrollEdgeEffectStyle(.*KoanTheme\.isOn')
     if [ -n "$hits" ]; then
         found=1
@@ -598,7 +308,7 @@ theme-leaks:
     # `KoanChoices`, `koanToggle`, `koanField`, `koanButton(_:system:)`,
     # `KoanSlider` or `KoanStepper`.
     hits=$(grep -rnE 'pickerStyle\(\.(segmented|wheel|radioGroup|menu)\)|toggleStyle\(\.(switch|button|checkbox)\)|textFieldStyle\(\.(roundedBorder|squareBorder)\)|buttonStyle\(\.(bordered|borderedProminent)\)|(^|[^A-Za-z])(Slider|Stepper) *[({]' \
-        apps/macos/Sources --include='*.swift' \
+        apps/ios/Sources --include='*.swift' \
         | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'koanButton(.*system:')
     if [ -n "$hits" ]; then
         found=1
@@ -646,22 +356,16 @@ theme-leaks:
             found=1
             echo "$hits"
         fi
-    done < <(find apps/macos/Sources -name '*.swift' ! -path '*/KoanFFI/*' ! -name 'KoanTheme.swift')
+    done < <(find apps/ios/Sources -name '*.swift' ! -path '*/KoanFFI/*' ! -name 'KoanTheme.swift')
     [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
 
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #
-# The bindings are target-independent, so this needs `macos-ffi` and nothing
-# else: no Rust iOS build, no simulator runtime, a few seconds in CI.
-#
-# The excluded files are the macOS shell — the scene root, the split view, the
-# menu bar and the machinery that serves it. They have no iOS counterpart.
-ios-typecheck: macos-ffi
+# The bindings are target-independent, so this needs `swift-bindings` and
+# nothing else: no Rust iOS build, no simulator runtime, a few seconds in CI.
+ios-typecheck: swift-bindings
     #!/usr/bin/env bash
     set -euo pipefail
-    shell=(KoanApp Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet)
-    find_args=()
-    for f in "${shell[@]}"; do find_args+=(! -name "$f.swift"); done
     mod=$(mktemp -d)
     trap 'rm -rf "$mod"' EXIT
     ffi={{app_dir}}/Sources/koan_ffiFFI
@@ -679,8 +383,7 @@ ios-typecheck: macos-ffi
         -package-name koan \
         -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
-        $(find {{app_dir}}/Sources/Koan -name '*.swift' "${find_args[@]}")
+        $(find {{app_dir}}/Sources/KoanIOS {{app_dir}}/Sources/Koan -name '*.swift')
     echo "the shared sources still build for iOS"
 
 
@@ -698,7 +401,7 @@ ios-ffi platform="iphonesimulator":
     esac
     # Without this rustc targets arm64-apple-ios10.0.0 while every C dependency
     # compiled against the current SDK, and the link dies in a wall of "built
-    # for newer iOS version". `macos-ffi` exports the macOS equivalent.
+    # for newer iOS version".
     export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
     # A target directory per deployment target, because cargo does not count
     # that variable as a reason to rebuild: lowering it relinked objects built
@@ -707,18 +410,17 @@ ios-ffi platform="iphonesimulator":
     cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
-    # From this build rather than the Mac's, so an iOS build needs no second
-    # build of the engine for the host.
+    # From this build rather than a host one, so an iOS build needs no second
+    # build of the engine.
     just ffi-bindings "target/ios-link/{{platform}}/libkoan_ffi.a"
     echo "koan-ffi ready for {{platform}}"
 
 # Assemble koan.app for the iOS simulator.
 #
-# By hand, exactly as `macos-bundle` does, and for the same reason: SwiftPM has
-# no app product. A simulator bundle is the one case where that is enough — it
-# needs no provisioning profile and no signature. A device build does, and that
+# By hand, without the Xcode project. A simulator bundle is the one case where
+# that is enough: it needs no provisioning profile and no signature. A device build does, and that
 # is what an Xcode project is for.
-ios-bundle: macos-ffi ios-ffi
+ios-bundle: ios-ffi
     #!/usr/bin/env bash
     set -euo pipefail
     app=target/ios-app/koan.app
@@ -745,11 +447,7 @@ ios-bundle: macos-ffi ios-ffi
         -L "$PWD/target/ios-link/iphonesimulator" -lkoan_ffi \
         -framework AudioToolbox -framework AVFAudio -framework AVKit -framework MediaPlayer \
         -o "$app/koan" \
-        $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
-        $(find {{app_dir}}/Sources/Koan -name '*.swift' \
-            ! -name 'KoanApp.swift' ! -name 'Hotkeys.swift' \
-            ! -name 'TextFocus.swift' ! -name 'EditCommands.swift' \
-            ! -name 'MenuShortcuts.swift' ! -name 'ShortcutsSheet.swift')
+        $(find {{app_dir}}/Sources/KoanIOS {{app_dir}}/Sources/Koan -name '*.swift')
     # The accent colour comes from the compiled catalog, exactly as on macOS —
     # `Color("AccentColor")` finds nothing without it and every tinted control
     # renders in nothing.
@@ -1159,14 +857,11 @@ ios-phone config="Debug": (ios-ffi "iphoneos")
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
 
 # Type-check the shared SwiftUI sources against the tvOS SDK: what
-# `ios-typecheck` is for the phone. The excluded files are the Mac's shell and
-# sidebar, and the phone's Live Activity, none of which tvOS has.
-tv-typecheck: macos-ffi
+# `ios-typecheck` is for the phone. The phone's Live Activity is left out, since
+# tvOS has no ActivityKit.
+tv-typecheck: swift-bindings
     #!/usr/bin/env bash
     set -euo pipefail
-    shell=(KoanApp Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet SidebarView)
-    find_args=()
-    for f in "${shell[@]}"; do find_args+=(! -name "$f.swift"); done
     mod=$(mktemp -d)
     trap 'rm -rf "$mod"' EXIT
     ffi={{app_dir}}/Sources/koan_ffiFFI
@@ -1182,7 +877,7 @@ tv-typecheck: macos-ffi
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         $(find {{app_dir}}/Sources/KoanIOS -name '*.swift' ! -name 'RemoteActivity*') \
         $(find {{app_dir}}/Sources/KoanTV -name '*.swift') \
-        $(find {{app_dir}}/Sources/Koan -name '*.swift' "${find_args[@]}")
+        $(find {{app_dir}}/Sources/Koan -name '*.swift')
     echo "the shared sources still build for tvOS"
 
 # Build the television app for the simulator, unsigned: the engine for tvOS,
@@ -2033,10 +1728,9 @@ gui-bundle: gui-build
         *) echo "gui-bundle: macOS and Linux only (see #1600)" >&2; exit 1 ;;
     esac
 
-# The .app sits beside the SwiftUI app, never in its place: its own bundle id
-# keeps its preferences and privacy grants apart, as its device id keeps it
-# apart on the network. Signed as `macos-bundle` signs; the DMG laid out as
-# `macos-dmg` lays one out, and signed with a Developer ID when there is one.
+# Its own bundle id keeps its preferences and privacy grants apart from the
+# SwiftUI app's of earlier releases, as its device id keeps it apart on the
+# network. Signed with a Developer ID when there is one, and the DMG with it.
 _gui-macos:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2076,12 +1770,12 @@ _gui-macos:
     codesign --verify --strict --verbose=2 "$app"
     bg="$out/dmg"
     mkdir -p "$bg"
-    swift {{app_dir}}/dmg/background.swift {{app_dir}}/Resources/AppIcon.svg site/public/geist-mono.woff2 "$bg"
+    swift crates/koan-gui/packaging/dmg/background.swift crates/koan-gui/packaging/AppIcon.svg site/public/geist-mono.woff2 "$bg"
     tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
     if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
     else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
     rm -f "$out/koan-gui.dmg"
-    "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
+    "${dmgbuild[@]}" -s crates/koan-gui/packaging/dmg/settings.py \
         -D app="$app" -D background="$bg/background.tiff" \
         -D volume_icon=crates/koan-gui/packaging/AppIcon.icns \
         "kōan" "$out/koan-gui.dmg"

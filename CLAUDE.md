@@ -2,7 +2,7 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: the kōan GUI app (GPUI) on macOS and Linux, the only Mac app released from 0.70; SwiftUI on iOS and tvOS; Compose on Android. Eight crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: the kōan GUI app (GPUI) on macOS and Linux, the only desktop app; SwiftUI on iOS and tvOS; Compose on Android. Eight crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
@@ -15,13 +15,13 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
-Plus **apps/macos** — the SwiftUI sources (SwiftPM, Swift 6, macOS 26+) the iOS and tvOS apps build from. Links koan-ffi. Its macOS app still builds for development but is no longer released; on a configuration the GUI app has taken over it runs as `LinkIdentity::native_app`'s `(legacy)` device.
+Plus **apps/ios** — the SwiftUI app for iOS and tvOS (Swift 6, iOS and tvOS 26+), built through an Xcode project XcodeGen generates from `project.yml`. Links koan-ffi.
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
 Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-runtime embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-ffi depends only on koan-runtime, and nothing but the native apps' bindings depends on koan-ffi; koan-gui depends on koan-runtime and koan-kit, and nothing else depends on it; koan-kit depends on neither the engine nor kōan's data. Native clients reach koan-core through koan-ffi, the GUI through koan-runtime. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-runtime, with its binding in koan-ffi, so the Mac app could share it.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The apps link the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The desktop, iOS and Android apps all link the core. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -120,13 +120,10 @@ just theme-leaks    # styling in the apps that bypasses the kōan theme's roles
 just protocol-schema # regenerate docs/reference/protocol/schema/ from the message types
 just cli            # cargo run --release -p koan-cli -- <args>
 just build          # cargo build --release
-just macos-run      # build + launch the macOS app
-just macos-dmg      # package the app for release
 just css            # compile the web UI's Tailwind stylesheets (output is committed)
 just js             # typecheck the web UI's TypeScript (cargo strips the types itself, in koan-server's build.rs)
 just ios-typecheck  # the shared SwiftUI sources still build for iOS
 just tv-typecheck   # the same for tvOS
-just macos-test     # the macOS package's Swift tests
 just ios-run        # build and launch on a booted simulator
 just ios-smoke FILE # play a file through the real Player on the simulator
 just ios-phone      # install on the plugged-in iPhone (personal team)
@@ -155,17 +152,15 @@ just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an
 just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode; on macOS launched as a dev bundle, so it has Local Network permission of its own
 just gui-smoke  # the GUI app headlessly as used: playing, seeking, hovering every page; fails on a panic, a hang or no track change
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
-just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
-just gui-parity # the parity inventory: the Mac app's views, actions, settings, tooltips as a checklist
 just gui-build  # release build of the GUI app
 just gui-library DIR [ALBUMS] [TRACKS] # generate and scan a large throwaway library for the GUI benches
 just gui-theme-leaks # koan-gui's reach past koan-kit, against the ratchet in crates/koan-gui/theme-leaks.toml
 just gui-bundle # package the desktop app for this machine: .app + DMG on macOS, AppImage + .deb on Linux
 ```
 
-The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
+The Swift bindings are generated from a built koan-ffi: `swift-bindings` (a host build, for the typechecks), `ios-ffi` and `tv-ffi` each make them.
 
-Development builds are signed with a self-signed certificate — `just macos-signing-cert` creates it, once. Without it the app is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
+The desktop app's dev bundle is signed with a self-signed certificate — `just signing-cert` creates it, once. Without it the bundle is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git push` and refuses the push if it changed anything. Clippy and the tests are CI's, so a push is never held up running them locally.
 
@@ -280,7 +275,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 
 `lib.rs` is the whole of it: koan-runtime's records, enums and errors re-declared under `#[uniffi::remote(...)]`, the objects (`KoanEngine`, `StateStream`, `VizStream`, `BarHeights`, `OrganizeSelection`) wrapping koan-runtime's with exports that delegate, the traits the apps implement (`ProgressReporter`, `PushAttester`, the audio session and output hosts, `NearbyHost`, `MulticastHost`) with bridges into koan-runtime's, and the free functions. A change to the facade's surface is made in koan-runtime and repeated here: the compiler checks a remote record against its original, and the delegating method is one line. `android.rs` is the JNI glue. `uniffi.toml` names the Kotlin package.
 
-Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
+Swift bindings are generated, not checked in — `just swift-bindings`, `ios-ffi` or `tv-ffi` builds the lib and regenerates them.
 
 ### koan-gui (`crates/koan-gui/src/`)
 
@@ -316,7 +311,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `desktop-window` in the configuration's state directory (`places::state`) |
 | `time.rs` | A duration as a clock: `m:ss`, or `h:mm:ss` from an hour |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `fling` flings the album grid to its end and back and prints the process's footprint at each stage (`KOAN_GUI_FLING_STEP` sets its speed); `play-albums` and `play-minimised` play with the album grid showing or the window minimised; `play` (filling an empty queue from the library first), `hidden` and `play-hidden` set the app up for its CPU use to be read from outside; `frames` and `play-frames` count the frames asked for, skipped and drawn over 20 s |
-| `examples/walk.rs`, `examples/compare.rs` | `just gui-walk`: every page offscreen against a throwaway library, a PNG of each named as the Mac's evidence renders are, and each page's frame times (layout and paint) while scrolled by wheel events; `just gui-compare` sets those beside the SwiftUI app's `KOAN_RENDER_EVIDENCE` renders with the edges either draws alone marked |
+| `examples/walk.rs` | `just gui-walk`: every page offscreen against a throwaway library, a PNG of each, and each page's frame times (layout and paint) while scrolled by wheel events |
 | `examples/smoke.rs` | `just gui-smoke`: the real engine on a muted, generated library, playing, seeking and pausing while the pointer sweeps every page in both appearances, rainbow on; fails on a panic (101), a hang (124) or no track change. Refuses any configuration but a throwaway one |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `examples/` (others) | `search_shot.rs` (the search box over a generated library, nothing lit, lit and scrolled to its end, at a large and a small window, the small one scrolled by the wheel too, after thirty timed keystrokes), `settings_shot.rs` (each Settings pane to a PNG), `sheet_shot.rs` (each sheet over the window, dark and light: search, shortcuts, artwork, organise, a confirmation, a name; `KOAN_SHEETS` picks), `cold_covers.rs` (a screen of sleeves from a cold cache), `settings_frames.rs` (offscreen frame times), `filter_check.rs`, and `gen_library.rs`, which `just gui-library` runs |
@@ -394,18 +389,16 @@ GPUI comes from koan's fork of Zed, radiosilence/zed, whose default branch `koan
 
 `LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-runtime) make it the machine's app: the app's files, id and session in the config directory, as the Mac app had. The terminal UI stays a device of its own. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 
-### apps/macos (`apps/macos/Sources/`)
+### apps/ios (`apps/ios/Sources/`)
 
-`Koan/` is the app: models, pages and rows, shared by every platform. `KoanIOS/`
-is the iOS scene root and audio session — the phone's shell over the same state,
-which tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as
-a page, share links as codes to scan. What tvOS lacks — hover, drag, the
-pasteboard, sliders, keyboard shortcuts, selection menus — goes through small
-shims in `Support/Platform.swift` that leave a view as it is there.
-The directory is still called `macos` because the macOS app is what it builds
-with SwiftPM. iOS device builds and the UI walk go through an Xcode project that
-XcodeGen generates from `apps/ios/project.yml` (`just ios-project`); it is not
-checked in.
+`Koan/` holds the models, pages and rows both platforms share. `KoanIOS/` is
+the scene root and audio session: the phone's shell over that state, which
+tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as a
+page, share links as codes to scan. What tvOS lacks — hover, drag, the
+pasteboard, sliders, selection menus — goes through small shims in
+`Support/Platform.swift` that leave a view as it is there. Builds, device
+installs and the UI walks go through an Xcode project that XcodeGen generates
+from `apps/ios/project.yml` (`just ios-project`); it is not checked in.
 
 On iOS each tab is a `NavigationStack` with its own path of `Route`s. Pages draw
 from the route that pushed them, never from `nav.current`, and the navigator
@@ -413,14 +406,11 @@ follows the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|
-| `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
 | `KoanIOS/PushDelegate.swift` | Push: registers for a token and hands it to the engine for the relay; wakes to link on a background push; sends a tapped notification's claim up the link. `KoanIOS/AppAttest.swift` attests for the relay |
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
 | `Support/Pairing.swift` | Approving a device that is waiting to sign in: a `koan.rocks/pair/` link arriving through `AppState.open(url:)`, or a code typed in Settings, asks the server for the device's name and then the person, as invites do |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
-| `Support/SharingModel.swift` | The Mac serving its own library: the account it is shared under, starting at launch when `share.enabled`, and why a start failed. `Views/ShareSettings.swift` is Settings → Server's mode choice and the line, there and at the foot of the sidebar, saying what the Mac is doing |
 | `Support/KoanTheme.swift` | The kōan theme: tokens, the record accent (OKLCH, cached per colour), motion, and the roles views use instead of colours, fonts, corners and materials. Each role draws the platform's look unchanged when the theme is off. Spec: `docs/design/koan-theme.md`; `just theme-leaks` finds what bypasses it |
-| `Support/KoanThemeSheet.swift` | Every component of the theme on one page, for the evidence renderer |
 | `Support/Icons.swift` | `Icon.*`, every icon the apps draw, named once by its SF Symbol, and `Image(koan:)`, `Label(_:koan:)`, `Button(_:koan:)` for the places that take only an image |
 | `Support/KoanGlyph.swift` | The kōan icon set: glyphs compiled from `Resources/Icons/*.svg` by `just icons` into `KoanGlyphs.swift`, the stroke rule, drawing. `KoanIcon` and `Symbol.image` draw them in the theme |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
@@ -430,25 +420,18 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/PlayableSelection.swift` | Things picked out of a page to play or queue together — the album grid, an artist's records, search results of every kind. A mode, because a click already plays or navigates. Held in tick order, so a pick can span several filters or queries |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Deliberately off the main actor — see the note there. Each miss is an HTTP round trip on remote libraries |
 | `Support/ImageWork.swift` | The two lanes image work runs in, neither of them the cooperative pool: a wide one for blocking file reads, a bounded one for decoding that runs what is on screen first and drops what nobody is waiting for |
-| `Support/Platform.swift` | The few types AppKit and UIKit disagree about. `KoanApp`, `RootView`, `Hotkeys`, `TextFocus`, `EditCommands`, `MenuShortcuts` and `ShortcutsSheet` are the macOS shell and have no iOS counterpart; everything else builds for both |
+| `Support/Platform.swift` | The shims that let a view written for iOS build for tvOS unchanged, and the UIKit types the views share |
 | `Views/DriftingWash.swift` | The window's wash, as Core Animation. Drift, blur and dissolve belong to the compositor; nothing here costs a main-thread frame |
 | `Support/FrameTimer.swift` | Times a tap against the display link, so the region after a body evaluation — layout, the commit, the render server — is measurable at all. See CONTRIBUTING |
 | `Support/TransferMeter.swift` | Download progress at the display's rate: a display link, alive only while a transfer runs and something on screen draws it, reading byte counts per frame and handing them to rings and bars as layer geometry |
 | `Support/PlayingLevels.swift` | One analyser subscription for every playing indicator on screen, handing each frame straight to the bars as layer geometry — nothing observable, nothing SwiftUI re-runs. Reads the stream only while a bar is attached, which is what lets the analyser park |
-| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. On the Mac a `KoanTable` of `QueueTableRow`s. Never torn down: `StageView` keeps it mounted behind other pages, so its place and its playing row survive a visit elsewhere. The album and artist browsers are rebuilt on each visit and restore their scroll position; kept mounted, they made every page switch lay them out |
-| `Views/AlbumCollection.swift` | The Mac's album grid: `NSCollectionView`, tiles of layers and labels. SwiftUI's grid cost 22–27 ms per scroll step at 4K; this one 11–12. Behaviour mirrors `AlbumGridCell`, which iOS and the artist page keep. AppKit controls are SwiftUI graphs on macOS 26, so a tile makes its few only while showing them. Fetches covers ahead of the scroll from its speed and a flick's landing spot, and makes the nearest rows' tiles off screen |
-| `Views/KoanTable.swift` | The Mac's lists: an `NSTableView` of `TableRow`s, made of layers and labels. SwiftUI's `List` on macOS sets up every row in the data set before a page draws; a table makes the rows on screen. Selection, keys, drags and the SwiftUI menus hosted. iOS keeps `List` |
-| `Views/TrackTableRow.swift` | The Mac's track row, for album pages, history and favourites: number or time, bars, sleeve, links, availability, heart, format, length — and day headings |
-| `Views/QueueTableRow.swift` | The Mac's queue and playlist row: a record heading, or a track with its status, place or sleeve, availability, heart, codec and length |
-| `Views/AvailabilityMark.swift` | Where a track's file is or how its download is going, as one layer every Mac row draws |
-| `Views/MixedCollection.swift` | Favourites and search on the Mac: pills, record tiles and track rows in one collection view, each made as it scrolls in. Search's pick works across all three |
-| `Views/LayerSymbol.swift` | SF Symbols drawn once into bitmaps for layers. One colour is a template, as SwiftUI draws it |
-| `Support/RowMetrics.swift` | How tall rows are, on every list and both platforms |
+| `Views/QueueView.swift` | The queue — album-grouped, drag reorder, multi-select |
+| `Support/RowMetrics.swift` | How tall rows are, on every list |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
 | `Views/SettingsView.swift` | Library / Server / Playback / Devices / Appearance — everything needed to set koan up without a terminal |
-| `Views/ActivityIndicator.swift` | The running-task rows at the foot of the sidebar |
+| `Views/ActivityIndicator.swift` | The running-task rows |
 | `Views/FavouriteButton.swift` | The heart, wherever something can be favourited |
 | `Views/DevicePicker.swift` | Play on: pick a device to control, Move here to send the music there. While another device is controlled the engine publishes its state as the app's own — see ARCHITECTURE |
 | `KoanIOS/RemoteActivity.swift` | The Live Activity for a device the phone controls, and the intent its buttons run. Compiled into the widget extension too (`apps/ios/Widgets`) |

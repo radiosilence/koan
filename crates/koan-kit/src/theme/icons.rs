@@ -1,7 +1,7 @@
 //! The kōan icon set, drawn through GPUI's SVG sprites.
 //!
 //! `glyphs` is compiled by `just icons` from the SVGs the apps draw
-//! (`apps/macos/Resources/Icons`). The stroke is not scaled with the drawing:
+//! (`apps/ios/Resources/Icons`). The stroke is not scaled with the drawing:
 //! its width is set by the size of the type beside the glyph, so each glyph is
 //! rasterised per stroke width. Every (glyph, width, layer) is a path served
 //! by `Assets`, which writes the SVG on first use; GPUI keeps the rendered

@@ -1,0 +1,188 @@
+import KoanFFI
+import SwiftUI
+
+/// The signed-in account's API keys: for other Subsonic apps, and one per
+/// device kōan has signed in on, invited ones included. Revoking one is how a
+/// lost phone is cut off.
+@MainActor
+@Observable
+final class ApiKeysModel {
+    private let engine: KoanEngine
+    private(set) var keys: [ApiKeyInfo]?
+    /// A key just made, shown until dismissed and then never again.
+    var made: NewApiKey?
+    var error: String?
+
+    init(engine: KoanEngine) {
+        self.engine = engine
+    }
+
+    func load() async {
+        do {
+            keys = try await engine.apiKeys()
+        } catch {
+            self.error = SettingsModel.describe(error)
+        }
+    }
+
+    func create(name: String) async -> Bool {
+        do {
+            made = try await engine.createApiKey(name: name)
+            error = nil
+            await load()
+            return true
+        } catch {
+            self.error = SettingsModel.describe(error)
+            return false
+        }
+    }
+
+    func revoke(_ key: ApiKeyInfo) async {
+        do {
+            try await engine.revokeApiKey(id: key.id)
+            error = nil
+        } catch {
+            self.error = SettingsModel.describe(error)
+        }
+        await load()
+    }
+}
+
+struct ApiKeysSettings: View {
+    static let extensionName = "koanApiKeys"
+    @Environment(LibraryModel.self) private var library
+    @State private var model: ApiKeysModel?
+    @State private var name = ""
+    @State private var revoking: ApiKeyInfo?
+
+    var body: some View {
+        Section {
+            if let model, let keys = model.keys {
+                ForEach(keys, id: \.id) { key in
+                    row(key)
+                }
+                HStack {
+                    TextField("Name", text: $name, prompt: Text("The app it is for"))
+                        .verbatimEntry()
+                        .koanField(name, prompt: "The app it is for")
+                    Button("New Key") {
+                        Task {
+                            if await model.create(name: name.trimmingCharacters(in: .whitespaces)) {
+                                name = ""
+                            }
+                        }
+                    }
+                    .koanButton(.bordered)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .rowButtons()
+            } else if model?.error == nil {
+                ProgressView()
+            }
+        } header: {
+            KoanSectionHeader("API keys")
+        } footer: {
+            Text(model?.error ?? "A key signs another Subsonic app in as you, without your password. Each device kōan is signed in on has one too; revoking it signs that device out.")
+                .koanText(.fine, model?.error == nil ? .muted : .bad)
+        }
+        .sheet(item: Binding(
+            get: { model?.made.map(MadeKey.init) },
+            set: { if $0 == nil { model?.made = nil } }
+        )) { item in
+            NewSecretSheet(kind: "Key", name: item.key.name, secret: item.key.key)
+        }
+        .confirmationDialog(
+            "Revoke \u{201C}\(revoking?.name ?? "")\u{201D}?",
+            isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } })
+        ) {
+            Button("Revoke", role: .destructive) {
+                if let key = revoking { Task { await model?.revoke(key) } }
+            }
+        } message: {
+            Text("Whatever signs in with it stops working.")
+        }
+        .task {
+            let model = model ?? ApiKeysModel(engine: library.engine)
+            self.model = model
+            await model.load()
+        }
+    }
+
+    private func row(_ key: ApiKeyInfo) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(key.name)
+                Text(detail(key))
+                    .koanText(.fine, .muted)
+            }
+            Spacer()
+            if key.thisDevice {
+                // Revoking it is signing out, which Sign Out does properly.
+                Text("This device").koanCase()
+                    .font(.role(.control, system: .body))
+                    .foregroundStyle(KoanTheme.style(.muted))
+                    .help("To stop using it, sign out")
+            } else {
+                Button("Revoke", role: .destructive) { revoking = key }
+                    .koanButton(.bordered, system: .borderless)
+            }
+        }
+    }
+
+    private func detail(_ key: ApiKeyInfo) -> String {
+        let date = { (secs: Int64) in
+            Date(timeIntervalSince1970: TimeInterval(secs)).formatted(date: .abbreviated, time: .omitted)
+        }
+        let made = key.created.map { "Made \(date($0))" }
+        let used = key.lastUsed.map { "last used \(date($0))" } ?? "never used"
+        return [made, used].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+private struct MadeKey: Identifiable {
+    let key: NewApiKey
+    var id: String { key.key }
+}
+
+/// A key or app password just made: shown this once, since the server keeps
+/// only its hash or a sealed copy.
+struct NewSecretSheet: View {
+    /// "Key" or "App Password".
+    let kind: String
+    let name: String
+    let secret: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            KoanForm {
+                Section {
+                    LabeledContent(kind, value: secret)
+                        .selectableText()
+                    #if os(iOS)
+                    Button {
+                        Pasteboard.write(text: secret)
+                        copied = true
+                    } label: {
+                        KoanLabel(copied ? "Copied" : "Copy \(kind)", icon: Icon.copy)
+                    }
+                    .koanButton(.bordered)
+                    #endif
+                } header: {
+                    KoanSectionHeader("\(kind) for \(name)")
+                } footer: {
+                    Text("This is the only time it is shown. Copy it into the app now; if it is lost, revoke it and make another.")
+                        .koanText(.fine, .muted)
+                }
+            }
+            .koanSheet()
+            .navigationTitle(KoanTheme.label("New \(kind)"))
+            .toolbar {
+                KoanSheetAction(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}

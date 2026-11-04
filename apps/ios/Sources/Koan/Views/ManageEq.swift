@@ -1,0 +1,344 @@
+import KoanFFI
+import SwiftUI
+
+/// Every correction, EQ and preset, where each is used, and what can be done
+/// to it: open, rename, copy, revert, keep on every device, delete. Groups
+/// are headings, their members under them. Reached from the EQ page, which
+/// shows one device; this shows them all.
+struct ManageEq: View {
+    @Environment(AppState.self) private var app
+    @Environment(EngineMirror.self) private var mirror
+    /// The device the EQ page shows, which Add to Tuning adds to, with its
+    /// correction and tuning.
+    let device: String?
+    let active: String?
+    let chain: [DspTuningEntry]
+
+    @State private var importing = false
+    @State private var finding: AutoEqFind?
+    @State private var measuring = false
+    @State private var showing: ShownProfile?
+    @State private var renaming: ShownProfile?
+    @State private var copying: ShownProfile?
+    @State private var deleting: ShownProfile?
+    @State private var newName = ""
+
+    var body: some View {
+        let dsp = app.dsp
+        KoanForm {
+            if let o = dsp.overview {
+                let grouped = Set(o.profiles.flatMap(\.members))
+                let loose = o.profiles.filter { !$0.preset && $0.members.isEmpty && !grouped.contains($0.name) }
+                list("Corrections", loose.filter { $0.role != .tuning }, o)
+                list("EQs", loose.filter { $0.role == .tuning }, o)
+                ForEach(o.profiles.filter { !$0.members.isEmpty }, id: \.name) { group in
+                    groupSection(group, o)
+                }
+                list("Presets", o.profiles.filter(\.preset), o)
+            }
+            #if os(iOS)
+            RecentlyDeletedEq()
+            Section {
+                Button("Import a File…") { importing = true }
+                    .koanButton(.bordered)
+                Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
+                    .koanButton(.bordered)
+                Button("Find a Measurement…") { measuring = true }
+                    .koanButton(.bordered)
+                if let summary = dsp.importSummary {
+                    Text(summary).koanText(.fine, .muted)
+                }
+                if let error = dsp.lastError {
+                    Text(error).koanText(.fine, .bad)
+                }
+            } header: {
+                KoanSectionHeader("Add")
+            } footer: {
+                Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing under a name already used adds to that EQ; several files at once become a group.")
+                    .koanText(.fine, .muted)
+            }
+            #endif
+        }
+        .navigationTitle(KoanTheme.label("Manage EQ"))
+        .task(id: dsp.stamp) { dsp.reload() }
+        #if os(iOS)
+        .filePicker(
+            isPresented: $importing,
+            allowedContentTypes: [.item, .folder],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result, !urls.isEmpty {
+                dsp.importFiles(urls)
+            }
+        }
+        .formTray(item: $finding) { find in
+            AutoEqSearch(dsp: dsp, query: find.query)
+        }
+        .formTray(isPresented: $measuring) {
+            MeasurementFlow(dsp: dsp)
+        }
+        .formTray(item: Binding(
+            get: { dsp.askRole },
+            // Swiped away, as Decide Later.
+            set: { if $0 == nil, let ask = dsp.askRole { dsp.answer(ask, nil) } }
+        )) { ask in
+            RoleQuestion(dsp: dsp, ask: ask)
+        }
+        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let old = renaming?.name { Task { _ = await dsp.rename(old, to: newName) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Save as New", isPresented: Binding(get: { copying != nil }, set: { if !$0 { copying = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let name = copying?.name {
+                    let new = newName.trimmingCharacters(in: .whitespaces)
+                    dsp.duplicate(name, as: new.isEmpty ? nil : new)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A copy as it is now, to change apart from the original.")
+        }
+        .confirmationDialog(
+            "Delete \(deleting?.name ?? "")?",
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let name = deleting?.name { dsp.delete(name) }
+            }
+        } message: {
+            Text(deleteMessage)
+        }
+        #endif
+        #if os(iOS)
+        .navigationDestination(item: $showing) { shown in
+            DspProfilePage(dsp: dsp, name: shown.name, device: device)
+                .koanPushedPage()
+        }
+        #endif
+    }
+
+    /// Where it goes from: the devices that play it, and the presets and
+    /// groups that hold it, which go on without it.
+    private var deleteMessage: String {
+        guard let name = deleting?.name,
+              let p = app.dsp.overview?.profiles.first(where: { $0.name == name })
+        else { return "" }
+        var lines: [String] = []
+        if !p.usedOn.isEmpty {
+            lines.append("Used on \(usedOn(p)), which will play without it.")
+        }
+        if !p.heldBy.isEmpty {
+            lines.append("It is taken out of \(ListFormatter.localizedString(byJoining: p.heldBy)).")
+        }
+        return lines.isEmpty ? "It is not used anywhere." : lines.joined(separator: " ")
+    }
+
+    @ViewBuilder private func list(_ title: String, _ profiles: [DspProfileSummary], _ o: DspOverview) -> some View {
+        if !profiles.isEmpty {
+            Section {
+                ForEach(profiles, id: \.name) { row($0, o) }
+            } header: {
+                KoanSectionHeader(title)
+            }
+        }
+    }
+
+    /// A group: a heading for the EQs or corrections in it, one of which
+    /// plays where the group is chosen. EQs can go into the tuning one at a
+    /// time or all at once.
+    @ViewBuilder private func groupSection(_ group: DspProfileSummary, _ o: DspOverview) -> some View {
+        let members = group.members.compactMap { name in o.profiles.first { $0.name == name } }
+        Section {
+            ForEach(members, id: \.name) { row($0, o) }
+        } header: {
+            HStack {
+                KoanSectionHeader(group.name)
+                Spacer()
+                #if os(iOS)
+                if let device, group.role == .tuning {
+                    Button("Add All to Filters") { addToTuning(group.members, device) }
+                        .koanButton(.link)
+                }
+                Menu("Options") { actions(group, o) }
+                    .koanControl()
+                    .fixedSize()
+                #endif
+            }
+        }
+    }
+
+    private func row(_ p: DspProfileSummary, _ o: DspOverview) -> some View {
+        HStack {
+            #if os(tvOS)
+            // Read here, changed on a phone or computer.
+            summary(p)
+            #else
+            Button { showing = ShownProfile(name: p.name) } label: {
+                summary(p)
+            }
+            .buttonStyle(.plain)
+            Menu("Options") { actions(p, o) }
+                .koanControl()
+                .fixedSize()
+            #endif
+        }
+        #if os(iOS)
+        .contextMenu { actions(p, o) }
+        #endif
+    }
+
+    private func summary(_ p: DspProfileSummary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(p.name)
+                if p.edited {
+                    Text("Edited").koanText(.fine, .muted)
+                }
+            }
+            if let problem = p.problem {
+                Text(problem).koanText(.fine, .bad)
+            } else {
+                let what = DspModel.describe(p)
+                Text([what, p.usedOn.isEmpty ? "Not used" : "Used on \(usedOn(p))"].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .koanText(.fine, .muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private func usedOn(_ p: DspProfileSummary) -> String {
+        ListFormatter.localizedString(byJoining: p.usedOn.map(app.dsp.label))
+    }
+
+    #if os(iOS)
+    @ViewBuilder private func actions(_ p: DspProfileSummary, _ o: DspOverview) -> some View {
+        let dsp = app.dsp
+        Button("Open") { showing = ShownProfile(name: p.name) }
+        if let device {
+            if p.preset {
+                Button("Use on \(dsp.label(device))") { dsp.applyPreset(p.name, to: device) }
+            } else if p.role == .tuning, p.rates.isEmpty, !chain.contains(where: { $0.name == p.name }) {
+                Button("Add to Filters") { addToTuning([p.name], device) }
+            } else if p.role != .tuning, active != p.name {
+                Button("Use as Correction") { dsp.assign(p.name, to: device) }
+            }
+        }
+        Divider()
+        Button("Rename…") {
+            newName = p.name
+            renaming = ShownProfile(name: p.name)
+        }
+        Button("Save as New…") {
+            newName = "\(p.name) copy"
+            copying = ShownProfile(name: p.name)
+        }
+        if p.edited {
+            Button("Revert to Imported") { dsp.revert(p.name) }
+        }
+        // A button rather than a toggle: a menu draws a toggle in the
+        // environment's style, and the theme's box comes apart there.
+        if mirror.offers(DspModel.syncExtension) {
+            if let why = p.scopeLocked {
+                Button {} label: {
+                    Text(p.everywhere ? "Kept on Every Device" : "Kept on This Device")
+                    Text(why)
+                }
+                .disabled(true)
+            } else {
+                Button(p.everywhere ? "Keep on This Device Only" : "Keep on Every Device") {
+                    dsp.setScope(p.name, everywhere: !p.everywhere)
+                }
+            }
+        }
+        Divider()
+        Button("Delete…", role: .destructive) { deleting = ShownProfile(name: p.name) }
+    }
+    #endif
+
+    private func addToTuning(_ names: [String], _ device: String) {
+        let added = names.filter { n in !chain.contains { $0.name == n } }
+        app.dsp.setTunings(chain + added.map { DspTuningEntry(name: $0, on: true) }, for: device)
+    }
+}
+
+#if os(iOS)
+/// EQs deleted in the last thirty days, which the server keeps: each with
+/// the days it has left and Restore, which brings it back on every device.
+/// Shown on a server that keeps them, saying so when there are none, so the
+/// place to look exists before it is needed. Nothing until the first read
+/// answers, and the last list kept while a new one is read.
+private struct RecentlyDeletedEq: View {
+    @Environment(AppState.self) private var app
+    @Environment(EngineMirror.self) private var mirror
+    @State private var deleted: [DeletedDsp]?
+    @State private var restoring: String?
+    @State private var error: String?
+
+    private var offered: Bool {
+        mirror.offers("koanDspDeleted") && mirror.connection?.offline != true
+    }
+
+    var body: some View {
+        Group {
+            if offered, let deleted {
+                Section {
+                    if deleted.isEmpty {
+                        Text("Nothing deleted in the last thirty days")
+                            .koanCase()
+                            .koanText(.fine, .muted)
+                    }
+                    ForEach(deleted, id: \.uid) { profile in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(profile.name)
+                                Text(profile.daysLeft == 1 ? "1 day left" : "\(profile.daysLeft) days left")
+                                    .koanText(.fine, .muted)
+                            }
+                            Spacer()
+                            Button("Restore") { restore(profile) }
+                                .koanButton(.bordered, system: .borderless)
+                                .disabled(restoring != nil)
+                        }
+                    }
+                } header: {
+                    KoanSectionHeader("Recently deleted")
+                } footer: {
+                    Text(error ?? "Kept on the server for thirty days after they were deleted. Restoring one brings it back on every device.")
+                        .koanText(.fine, error == nil ? .muted : .bad)
+                }
+            }
+        }
+        .task(id: "\(app.dsp.stamp) \(offered)") { await load() }
+    }
+
+    private func load() async {
+        guard offered else {
+            deleted = nil
+            return
+        }
+        // A failed read is not an empty one.
+        deleted = try? await app.engine.dspDeleted()
+    }
+
+    private func restore(_ profile: DeletedDsp) {
+        restoring = profile.uid
+        Task {
+            do {
+                try await app.engine.dspRestore(uid: profile.uid)
+                error = nil
+            } catch {
+                self.error = SettingsModel.describe(error)
+            }
+            restoring = nil
+            await load()
+        }
+    }
+}
+#endif

@@ -1,7 +1,7 @@
 //! The kōan icon set, as the web UI and the share page draw it.
 //!
 //! `glyphs` is compiled by `just icons` from the same SVGs the apps draw
-//! (`apps/macos/Resources/Icons`). Each glyph is plain 24-unit strokes on the
+//! (`apps/ios/Resources/Icons`). Each glyph is plain 24-unit strokes on the
 //! theme's stroke rule (docs/design/koan-theme.md#icons): square caps, mitred
 //! joins, the colour of the text beside it, and a width set by size.
 
