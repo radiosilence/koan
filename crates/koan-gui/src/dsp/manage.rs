@@ -181,8 +181,9 @@ impl ManageEq {
                 // Unnamed, the copy is "<name> copy".
                 let new = (!new.is_empty()).then_some(new);
                 self.dsp.update(cx, |d, cx| {
-                    d.act(cx, move |e| async move {
-                        e.dsp_duplicate(of, new).await.map(|_| ())
+                    d.act(cx, move |e| {
+                        let copied = e.dsp_duplicate(of, new);
+                        async move { copied.await.map(|_| ()) }
                     })
                 });
             }

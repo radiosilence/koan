@@ -317,8 +317,9 @@ impl EqBody {
             Rc::new(move |cx: &mut App| {
                 let (name, device) = (name.clone(), device.clone());
                 dsp.update(cx, |d, cx| {
-                    d.act(cx, move |e| async move {
-                        e.dsp_save_preset(device, name).await.map(|_| ())
+                    d.act(cx, move |e| {
+                        let saved = e.dsp_save_preset(device, name);
+                        async move { saved.await.map(|_| ()) }
                     })
                 });
             })

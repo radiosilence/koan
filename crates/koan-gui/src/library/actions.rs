@@ -46,7 +46,8 @@ pub(crate) fn arrived(playlist: Option<i64>, cx: &mut App) {
 pub fn queue(lib: &Lib, items: &[Playable], placement: Placement, cx: &mut App) -> Task<()> {
     let engine = lib.engine.clone();
     let sets = sources(items);
-    cx.spawn(async move |cx| match engine.queue(sets, placement).await {
+    let queued = engine.queue(sets, placement);
+    cx.spawn(async move |cx| match queued.await {
         Ok(_) => cx.update(|cx| arrived(None, cx)),
         Err(e) => log::warn!("queue: {e}"),
     })
@@ -68,15 +69,13 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
 /// click in a track list. Where showing the queue once it plays belongs, when
 /// the shell has one to show.
 pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
-    let engine = lib.engine.clone();
-    cx.spawn(async move |cx| {
-        match engine
-            .replace_queue(track_ids, Some(index as u32), false)
-            .await
-        {
-            Ok(_) => cx.update(|cx| arrived(None, cx)),
-            Err(e) => log::warn!("play: {e}"),
-        }
+    let replaced = lib
+        .engine
+        .clone()
+        .replace_queue(track_ids, Some(index as u32), false);
+    cx.spawn(async move |cx| match replaced.await {
+        Ok(_) => cx.update(|cx| arrived(None, cx)),
+        Err(e) => log::warn!("play: {e}"),
     })
     .detach();
 }
@@ -85,8 +84,9 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
     let engine = lib.engine.clone();
     let sets = sources(items);
     let feed = lib.feed.clone();
+    let added = engine.add_to_playlist(playlist, sets);
     cx.spawn(async move |cx| {
-        match engine.add_to_playlist(playlist, sets).await {
+        match added.await {
             Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
             Err(e) => log::warn!("add to playlist {playlist}: {e}"),
         }

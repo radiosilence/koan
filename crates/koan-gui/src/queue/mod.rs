@@ -627,12 +627,15 @@ impl QueueView {
             let Some(first) = id(0) else {
                 return;
             };
-            command(cx, "queue from the library", move |e| async move {
-                let added = e.clone().queue(sets, Placement::Append).await?;
-                if added.is_empty() {
-                    return Ok(());
+            command(cx, "queue from the library", move |e| {
+                let added = e.clone().queue(sets, Placement::Append);
+                async move {
+                    let added = added.await?;
+                    if added.is_empty() {
+                        return Ok(());
+                    }
+                    e.move_in_queue(added, first, false).await
                 }
-                e.move_in_queue(added, first, false).await
             });
         }
     }

@@ -61,11 +61,12 @@ impl PlaybackPane {
         cx.notify();
         let engine = self.ctx.model.read(cx).engine().clone();
         let model = self.ctx.model.clone();
+        let chosen = match name {
+            Some(name) => futures::future::Either::Left(engine.set_device(name)),
+            None => futures::future::Either::Right(engine.clear_device()),
+        };
         cx.spawn(async move |this, cx| {
-            let result = match name {
-                Some(name) => engine.set_device(name).await,
-                None => engine.clear_device().await,
-            };
+            let result = chosen.await;
             if let Err(e) = result {
                 model.update(cx, |model, cx| {
                     model.report(crate::settings::model::describe(&e), cx)
