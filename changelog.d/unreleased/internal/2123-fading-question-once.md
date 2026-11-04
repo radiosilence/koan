@@ -1,0 +1,1 @@
+- **A question fading out runs its action once.** Answering its still-drawn verb again, through a screen reader or the keyboard, no longer repeats a destructive action.
