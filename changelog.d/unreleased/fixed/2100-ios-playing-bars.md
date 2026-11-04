@@ -1,0 +1,1 @@
+- **iOS playing bars move again.** The analyser parked when the play head stalled for over a second, as it does while a streamed track starts or a seek waits for bytes, and nothing woke it once the music resumed; decoded audio arriving while a subscriber waits now wakes it.

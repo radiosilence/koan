@@ -61,6 +61,11 @@ impl Wake {
         *generation
     }
 
+    /// Whether an async caller holds a receiver from `subscribe`.
+    pub fn has_subscribers(&self) -> bool {
+        self.published.receiver_count() > 0
+    }
+
     /// A receiver that wakes on each bump, for an async caller. Its value is
     /// the generation, so a subscriber that slept through a burst sees one
     /// wake and reads the versions once — the same batching a thread gets.
