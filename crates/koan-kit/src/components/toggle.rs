@@ -144,29 +144,18 @@ impl RenderOnce for Toggle {
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
             #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let flip: Handler<gpui::ClickEvent> = {
-                let on_change = on_change.clone();
-                let answers = answers.clone();
-                Arc::new(move |_, window, cx| {
-                    if icons {
-                        answers.start(Answer::Tick(!checked), accent, cx);
-                    } else if !checked {
-                        answers.start(Answer::Ring, accent, cx);
-                    }
-                    on_change(&!checked, window, cx)
-                })
-            };
-            row = answers_click(row, flip)
+            let flip: Handler<gpui::ClickEvent> = Arc::new(move |_, window, cx| {
+                if icons {
+                    answers.start(Answer::Tick(!checked), accent, cx);
+                } else if !checked {
+                    answers.start(Answer::Ring, accent, cx);
+                }
+                on_change(&!checked, window, cx)
+            });
+            row = answers_click(row, flip.clone())
                 .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    if icons {
-                        answers.start(Answer::Tick(!checked), accent, cx);
-                    } else if !checked {
-                        answers.start(Answer::Ring, accent, cx);
-                    }
-                    on_change(&!checked, window, cx)
-                });
+                .on_click(move |event, window, cx| flip(event, window, cx));
         }
         row.children(ring(&handle, &look, window))
     }

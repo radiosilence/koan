@@ -960,6 +960,8 @@ impl Answerer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::animated::curve;
+    use super::super::track::Track;
     use super::*;
 
     /// A glyph's change of state answers with its own motion: play and
@@ -1102,24 +1104,20 @@ mod tests {
         }
     }
 
-    /// A tick is seen drawing (#2056): a quarter of the way through, less
-    /// than half of it is drawn.
+    /// A tick is seen drawing in and erasing (#2056): the shader draws
+    /// `e` of it in and `1 - e` of it out, so a quarter of the way through
+    /// either, less than half of the change has been made.
     #[test]
     fn a_tick_is_seen_drawing() {
-        for on in [true, false] {
-            let track = super::super::track::Track {
-                from: 0.0,
-                to: 1.0,
-                start: 0.0,
-                length: 1.0,
-                curve: super::super::animated::curve(Answer::Tick(on).ease()),
-                repeat: Repeat::Once,
-            };
-            assert!(
-                track.at(0.25) < 0.5,
-                "drawn {} at a quarter",
-                track.at(0.25)
-            );
-        }
+        let track = Track {
+            from: 0.0,
+            to: 1.0,
+            start: 0.0,
+            length: 1.0,
+            curve: curve(Answer::Tick(true).ease()),
+            repeat: Repeat::Once,
+        };
+        let e = track.at(0.25);
+        assert!(e < 0.5, "{e} of the change made at a quarter");
     }
 }
