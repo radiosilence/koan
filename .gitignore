@@ -31,13 +31,10 @@ config.local.toml
 *.sqlite*
 *.log
 
-# Generated uniffi bindings — produced by `just macos-ffi`
-apps/macos/Sources/KoanFFI/koan_ffi.swift
-apps/macos/Sources/koan_ffiFFI/koan_ffiFFI.h
-apps/macos/.build/
+# Generated uniffi bindings, produced by `just ffi-bindings`
+apps/ios/Sources/KoanFFI/koan_ffi.swift
+apps/ios/Sources/koan_ffiFFI/koan_ffiFFI.h
 
-# Generated from AppIcon.svg by `just macos-icon`
-apps/macos/Resources/AppIcon.iconset/
 apps/ios/Koan.xcodeproj/
 
 # Python bytecode, rewritten by every run of the scripts

@@ -1,0 +1,609 @@
+import KoanFFI
+import SwiftUI
+
+/// Anything you can put in the queue.
+///
+/// Tracks, albums and artists differ only in how many tracks they resolve to,
+/// so they get one set of actions rather than three near-identical menus that
+/// drift apart. Resolution is deferred until an action is chosen — an artist
+/// can be thousands of tracks, and building that list to draw a menu would be
+/// wasteful and slow.
+enum Playable {
+    case track(Track)
+    case album(Album)
+    case artist(id: Int64, name: String)
+    /// A playlist is playable like anything else, which is what lets it use the
+    /// same header buttons and the same drag payload as a record. It is not
+    /// *library* content, though — see `isLibraryContent` for what that costs.
+    case playlist(id: Int64, name: String)
+
+    var name: String {
+        switch self {
+        case .track(let t): t.title
+        case .album(let a): a.title
+        case .artist(_, let name): name
+        case .playlist(_, let name): name
+        }
+    }
+
+    /// Only things with children are worth shuffling.
+    var hasChildren: Bool {
+        switch self {
+        case .track: false
+        case .album, .artist, .playlist: true
+        }
+    }
+
+    /// Whether this *is* something in the library, rather than a list pointing
+    /// at things in it. Favouriting, sharing and organizing all act on library
+    /// rows; a playlist has none of its own, and offering them on one would
+    /// mean silently acting on its members instead.
+    var isLibraryContent: Bool {
+        if case .playlist = self { false } else { true }
+    }
+
+    /// What it is, without the row — enough to tell two apart when artists,
+    /// records and tracks share a page and their ids can collide.
+    struct Key: Hashable, Sendable {
+        let kind: PlayableTransfer.Kind
+        let id: Int64
+    }
+
+    /// What it names, for the engine to resolve on its command lane. Every
+    /// playable's kind is one the engine can name.
+    var source: TrackSet { TrackSet(key.kind, id: key.id)! }
+
+    var key: Key {
+        switch self {
+        case .track(let t): Key(kind: .track, id: t.id)
+        case .album(let a): Key(kind: .album, id: a.id)
+        case .artist(let id, _): Key(kind: .artist, id: id)
+        case .playlist(let id, _): Key(kind: .playlist, id: id)
+        }
+    }
+
+    func trackIds(using engine: KoanEngine) async -> [Int64] {
+        switch self {
+        case .track(let t):
+            return [t.id]
+        case .album(let a):
+            return (try? await engine.trackIds(albumId: a.id, artistId: nil)) ?? []
+        case .artist(let id, _):
+            return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
+        case .playlist(let id, _):
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
+        }
+    }
+}
+
+extension LibraryModel {
+    func isFavourite(_ playable: Playable) -> Bool {
+        switch playable {
+        case .track(let t): isFavourite(track: t.id)
+        case .album(let a): isFavourite(album: a.id)
+        case .artist(let id, _): isFavourite(artist: id)
+        case .playlist: false
+        }
+    }
+
+    func toggleFavourite(_ playable: Playable) {
+        switch playable {
+        case .track(let t): toggleFavourite(track: t.id)
+        case .album(let a): toggleFavourite(album: a.id)
+        case .artist(let id, _): toggleFavourite(artist: id)
+        case .playlist: break
+        }
+    }
+}
+
+/// The actions every playable thing offers. Drop into a `.contextMenu`.
+struct PlayableMenu: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+    @Environment(OrganizeModel.self) private var organize
+
+    var body: some View {
+        Button { playNow(shuffled: false) } label: {
+            Label("Play", koan: Icon.play)
+        }
+        Button { player.queue([playable.source], .next) } label: {
+            Label("Play Next", koan: Icon.playNext)
+        }
+        Button { player.queue([playable.source], .append) } label: {
+            Label("Add to Queue", koan: Icon.queue)
+        }
+        if playable.hasChildren {
+            Button { playNow(shuffled: true) } label: {
+                Label("Shuffle", koan: Icon.shuffle)
+            }
+        }
+
+        Divider()
+
+        AddToPlaylistMenu { [playable.source] }
+
+        // Favouriting, sharing and organizing act on library rows. A playlist
+        // has none of its own, so offering them on one would silently act on
+        // its members instead.
+        if playable.isLibraryContent {
+            Divider()
+
+            Button { library.toggleFavourite(playable) } label: {
+                Label(favouriteTitle, koan: isFavourite ? Icon.favourited : Icon.favourite)
+            }
+            Button { Share.link(for: playable, engine: library.engine, player: player) } label: {
+                Label(Share.label, koan: Icon.share)
+            }
+            // Renames files on disk; a phone has no library folder, and no
+            // Organize window to open.
+            // The cache looks after itself on a television, which has nowhere
+            // to keep a library for later.
+            #if os(iOS)
+            cacheActions
+            #endif
+        }
+
+        if case .track(let track) = playable, let albumId = track.albumId {
+            Divider()
+            Button { nav.open(album: albumId, highlighting: track.id) } label: {
+                Label("Go to Album", koan: Icon.album)
+            }
+            goToArtists(track.artistCredit)
+        }
+        // A television hosts no info view, and would be left a stray divider.
+        #if os(iOS)
+        if case .track(let track) = playable {
+            if track.albumId == nil { Divider() }
+            TrackInfoButton(trackId: track.id)
+        }
+        #endif
+        if case .album(let album) = playable {
+            Divider()
+            Button { nav.open(album: album.id) } label: {
+                Label("Go to Album", koan: Icon.album)
+            }
+            goToArtists(album.artistCredit)
+        }
+    }
+
+    /// One item per artist the credit links, each named when there are more
+    /// than one.
+    @ViewBuilder private func goToArtists(_ credit: [CreditPart]) -> some View {
+        let linked = credit.filter { $0.artistId != nil }
+        ForEach(Array(linked.enumerated()), id: \.offset) { _, part in
+            if let id = part.artistId {
+                Button { nav.open(artist: id) } label: {
+                    Label(linked.count == 1 ? "Go to Artist" : "Go to \(part.text)", koan: Icon.artist)
+                }
+            }
+        }
+    }
+
+    /// Fetching and throwing away, offered according to what is here.
+    ///
+    /// A single track knows whether its bytes are on the machine, so it is
+    /// offered one verb rather than two with one of them inert. A record or an
+    /// artist is usually part of the way there, and both apply: fetching skips
+    /// what is already down, and removing skips what is not.
+    @ViewBuilder
+    private var cacheActions: some View {
+        if case .track(let track) = playable {
+            if track.onDisk {
+                Button { act { library.clearDownloads(trackIds: $0) } } label: {
+                    Label("Remove Downloaded File", koan: Icon.clear)
+                }
+            } else {
+                Button { act { library.downloadToCache(trackIds: $0) } } label: {
+                    Label("Download to Cache", koan: Icon.downloads)
+                }
+            }
+        } else {
+            Button { act { library.downloadToCache(trackIds: $0) } } label: {
+                Label("Download All to Cache", koan: Icon.downloads)
+            }
+            Button { act { library.clearDownloads(trackIds: $0) } } label: {
+                Label("Remove Downloaded Files", koan: Icon.clear)
+            }
+        }
+    }
+
+    private var isFavourite: Bool { library.isFavourite(playable) }
+
+    /// An album or an artist is favourited as itself, not as its tracks.
+    /// Subsonic stars all three, and starring an album's tracks one by one
+    /// would flip the ones already favourited back off.
+    private var favouriteTitle: String {
+        if isFavourite { return "Remove Favourite" }
+        switch playable {
+        case .track: return "Favourite Track"
+        case .album: return "Favourite Album"
+        case .artist: return "Favourite Artist"
+        case .playlist: return ""  // Never shown — see `isLibraryContent`.
+        }
+    }
+
+    /// Replace the queue with this, in turn with every other request: see
+    /// `PlayerModel.playNow(_:named:shuffled:)`.
+    private func playNow(shuffled: Bool) {
+        player.playNow([playable.source], named: playable.name, shuffled: shuffled)
+    }
+
+    /// Resolve off the main actor, then act: for what is not a queue command,
+    /// such as fetching or organizing. An artist can be thousands of tracks
+    /// and the resolution is a database query.
+    private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
+        let engine = library.engine
+        let playable = self.playable
+        Task {
+            let ids = await playable.trackIds(using: engine)
+            guard !ids.isEmpty else { return }
+            body(ids)
+        }
+    }
+}
+
+/// Play / Play Next / Add to Queue for tracks already resolved.
+///
+/// A multi-selection has no single `Playable` behind it, but it offers the same
+/// three verbs.
+struct QueueActions: View {
+    let trackIds: [Int64]
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button { player.playNow(trackIds: trackIds) } label: {
+            Label("Play", koan: Icon.play)
+        }
+        Button { player.playNext(trackIds: trackIds) } label: {
+            Label("Play Next", koan: Icon.playNext)
+        }
+        Button { player.enqueue(trackIds: trackIds) } label: {
+            Label("Add to Queue", koan: Icon.queue)
+        }
+        Divider()
+        // A selection is usually mixed, so both apply: fetching skips what is
+        // already down and removing skips what is not.
+        Button { library.downloadToCache(trackIds: trackIds) } label: {
+            Label("Download to Cache", koan: Icon.downloads)
+        }
+        Button { library.clearDownloads(trackIds: trackIds) } label: {
+            Label("Remove Downloaded Files", koan: Icon.clear)
+        }
+    }
+}
+
+/// Creating a share link, in one place: the menu item and the button on an
+/// album or artist page must not drift apart.
+enum Share {
+    /// What the share action says. A television has no pasteboard: there the
+    /// link is shown as a code to scan rather than copied.
+    #if os(tvOS)
+    static let label = "Share…"
+    #else
+    static let label = "Copy Share Link"
+    #endif
+
+    /// Asks the remote server for a public link and copies it.
+    ///
+    /// Only tracks the server knows about can go in a link — it points at the
+    /// server, so a local-only file has nothing for it to point at. A mixed
+    /// selection shares what it can and says how much it left out. It goes to
+    /// the pasteboard because pasting it somewhere is the only thing anyone
+    /// does with a share link.
+    @MainActor
+    static func link(for playable: Playable, engine: KoanEngine, player: PlayerModel) {
+        let name = playable.name
+        Task {
+            let ids = await playable.trackIds(using: engine)
+            guard !ids.isEmpty else {
+                return deliver(.failure(ShareFailure.nothingToShare), to: player)
+            }
+            do {
+                let share = try await engine.createShare(trackIds: ids, description: name)
+                deliver(.success(share), to: player)
+            } catch {
+                deliver(.failure(error), to: player)
+            }
+        }
+    }
+
+    /// Share a set of tracks directly.
+    ///
+    /// The queue holds queue items, not library tracks — a queue entry can
+    /// outlive the row it came from — so it shares by the track ids it carries
+    /// rather than resolving a `Playable`.
+    @MainActor
+    static func link(trackIds: [Int64], named name: String, engine: KoanEngine, player: PlayerModel) {
+        guard !trackIds.isEmpty else {
+            player.report("Nothing here can be shared — these tracks aren't in the library.")
+            return
+        }
+        Task {
+            do {
+                let share = try await engine.createShare(trackIds: trackIds, description: name)
+                deliver(.success(share), to: player)
+            } catch {
+                deliver(.failure(error), to: player)
+            }
+        }
+    }
+
+    private enum ShareFailure: LocalizedError {
+        case nothingToShare
+        var errorDescription: String? { "these tracks aren't in the library" }
+    }
+
+    /// The engine says why it failed, so report that rather than assuming: a
+    /// server that refused, or none configured, is not a problem with the
+    /// library.
+    @MainActor
+    private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
+        switch result {
+        case .success(let share):
+            #if os(tvOS)
+            player.sharedLink = share.url
+            if share.skipped > 0 {
+                player.lastNotice =
+                    "\(share.shared) of \(share.shared + share.skipped) tracks are shared; "
+                    + "the rest aren't on your server."
+            }
+            #else
+            Pasteboard.write(text: share.url)
+            // Done, so a notice rather than an error: reported as one, iOS
+            // would title the link "Something went wrong".
+            if share.skipped > 0 {
+                player.lastNotice =
+                    "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
+                    + "the rest aren't on your server."
+            } else {
+                player.lastNotice = "Share link copied: \(share.url)"
+            }
+            #endif
+        case .failure(let error):
+            player.report("Couldn't create a share link — \(reason(for: error))")
+        }
+    }
+
+    private static func reason(for error: Error) -> String {
+        if case let KoanError.BadArgument(message) = error { return message }
+        return error.localizedDescription
+    }
+}
+
+/// Share button for an album or artist page.
+struct ShareButton: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button {
+            Share.link(for: playable, engine: library.engine, player: player)
+        } label: {
+            Label(Share.label, koan: Icon.share)
+        }
+        .help("Create a public link on your server and copy it")
+        .koanButtons(.compact)
+    }
+}
+
+/// The favourite button on a detail page. Labelled, unlike the hover heart on
+/// a row — a header has room and the state is worth stating outright.
+struct FavouriteHeaderButton: View {
+    let playable: Playable
+
+    @Environment(LibraryModel.self) private var library
+
+    private var isOn: Bool { library.isFavourite(playable) }
+
+    var body: some View {
+        Button { library.toggleFavourite(playable) } label: {
+            label
+                .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.ink, system: .primary))
+        }
+        .help(isOn ? "Remove from favourites" : "Add to favourites")
+        .koanButtons(.compact)
+    }
+
+    /// One control in the theme: the heart and its word at the theme's
+    /// smallest gap, where a `Label` sets them a column apart. The 44-point
+    /// target is the button's, around both.
+    @ViewBuilder private var label: some View {
+        let title = isOn ? "Favourited" : "Favourite"
+        let icon = isOn ? Icon.favourited : Icon.favourite
+        if KoanTheme.isOn {
+            HStack(spacing: KoanTheme.Space.xs) {
+                KoanIcon(icon).accessibilityHidden(true)
+                Text(title)
+            }
+        } else {
+            Label(title, koan: icon)
+        }
+    }
+}
+
+/// The big play button on an album or artist page, sat beside the title.
+///
+/// On an album you can already see what you started, so the page stays put. An
+/// artist page is a wall of covers with no tracks on it, and is the one place
+/// where nothing on screen would show that anything happened — so that one, and
+/// only that one, goes to the queue.
+struct PlayableHeaderButton: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+
+    /// This play is still finding its tracks.
+    private var loading: Bool { player.resolving == playable.name }
+
+    var body: some View {
+        Button {
+            guard !loading else { return }
+            let done = player.playNow([playable.source], named: playable.name)
+            if case .artist = playable {
+                Task {
+                    await done.value
+                    nav.showQueueWhenReady(watching: player)
+                }
+            }
+        } label: {
+            #if os(tvOS)
+            // A television's play is a labelled button leading the row of
+            // actions, the first thing focus lands on in a record's header.
+            Label(loading ? "Loading" : "Play", koan: Icon.play)
+            #else
+            ZStack {
+                // The theme's primary action: outlined in the accent, square.
+                if KoanTheme.isOn {
+                    Rectangle()
+                        .strokeBorder(.tint, lineWidth: KoanTheme.hairline)
+                        .frame(width: 44, height: 44)
+                } else {
+                    Circle()
+                        .fill(.tint)
+                        .frame(width: 44, height: 44)
+                }
+                if loading {
+                    ProgressView().controlSize(.small).tint(KoanTheme.metric(nil, system: .white))
+                } else {
+                    KoanIcon(Icon.play)
+                        .font(.system(size: 17))
+                        .foregroundStyle(KoanTheme.style(.accent, system: .white))
+                        .offset(x: 1)  // optical centring for a triangle
+                }
+            }
+            // The whole square or disc takes the click, not just the stroke
+            // and the glyph a plain button would hit-test.
+            .contentShape(KoanTheme.metric(AnyShape(Rectangle()), system: AnyShape(Circle())))
+            #endif
+        }
+        #if os(iOS)
+        .buttonStyle(.plain)
+        #endif
+        .help("Play \(playable.name)")
+    }
+}
+
+/// Beside the play button and quieter than it: the same tracks in place of
+/// the queue, shuffled, from one of them at random.
+struct ShuffleHeaderButton: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button {
+            let done = player.playNow([playable.source], named: playable.name, shuffled: true)
+            // As play does: an artist's page shows nothing of what started.
+            if case .artist = playable {
+                Task {
+                    await done.value
+                    nav.showQueueWhenReady(watching: player)
+                }
+            }
+        } label: {
+            #if os(tvOS)
+            Label("Shuffle", koan: Icon.shuffle)
+            #else
+            KoanIcon(Icon.shuffle)
+                .font(.system(size: 15))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            #endif
+        }
+        #if os(iOS)
+        .buttonStyle(.plain)
+        #endif
+        .disabled(player.resolving == playable.name)
+        .help("Shuffle \(playable.name)")
+    }
+}
+
+/// "Play Next" and "Queue", side by side under a page title.
+///
+/// One component rather than a pair written out per page: the album page and
+/// the artist page offer the same two verbs.
+struct QueueButtons: View {
+    let playable: Playable?
+
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { act(.next) } label: {
+                Label("Play Next", koan: Icon.playNext)
+            }
+            Button { act(.append) } label: {
+                Label("Queue", koan: Icon.queue)
+            }
+        }
+        .disabled(playable == nil)
+        .koanButtons(.compact)
+    }
+
+    private func act(_ placement: Placement) {
+        guard let playable else { return }
+        player.queue([playable.source], placement)
+    }
+}
+
+/// "Add to Playlist" — every playlist, plus a new one.
+///
+/// Its own view rather than lines inside each menu: the same submenu belongs on
+/// a library row, a queue row and a playlist row, and the three would otherwise
+/// drift. `sources` names the tracks rather than listing them: an artist is
+/// thousands of them, and the engine reads them once something is chosen.
+///
+/// "New Playlist…" only records the request; the dialog belongs to the window.
+/// A context menu is gone the moment you pick from it, and an alert attached to
+/// its contents goes with it.
+struct AddToPlaylistMenu: View {
+    let sources: @MainActor () -> [TrackSet]
+
+    var body: some View {
+        // A television plays playlists; they are made and filled elsewhere.
+        #if os(iOS)
+        Menu("Add to Playlist") { // theme: raw — a submenu
+            AddToPlaylistItems(sources: sources)
+        }
+        #endif
+    }
+}
+
+/// What "Add to Playlist" offers, for a menu of its own: every playlist that
+/// can take tracks, and a new one.
+struct AddToPlaylistItems: View {
+    let sources: @MainActor () -> [TrackSet]
+    /// After the choice is sent: a selection ends its mode.
+    var then: @MainActor () -> Void = {}
+
+    @Environment(PlaylistsModel.self) private var playlists
+
+    var body: some View {
+        Button("New Playlist…") {
+            playlists.beginNaming(sources: sources())
+            then()
+        }
+        let fillable = playlists.playlists.filter { !$0.readonly }
+        if !fillable.isEmpty {
+            Divider()
+            ForEach(fillable, id: \.id) { playlist in
+                Button(playlist.name) {
+                    playlists.add(sources: sources(), to: playlist.id)
+                    then()
+                }
+            }
+        }
+    }
+}

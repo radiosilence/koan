@@ -1,0 +1,1 @@
+- **The SwiftUI sources are the iOS and Apple TV app's alone.** The Mac app they also built, unreleased since 0.70, is removed with its shell, its AppKit views, its build recipes and its CI job; the sources move to `apps/ios`, beside the Xcode project that builds them.

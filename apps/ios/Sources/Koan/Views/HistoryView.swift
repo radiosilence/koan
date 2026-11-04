@@ -1,0 +1,287 @@
+import Foundation
+import KoanFFI
+import SwiftUI
+
+/// What you have listened to, most recent first.
+///
+/// A list of events, not of tracks: a record you played three times is three
+/// rows. Nothing here deduplicates or regroups by album the way the queue does
+/// — the only grouping is the day, which is how people reach for this ("what
+/// was that thing on Tuesday").
+///
+/// Rows link through to the album and the artist and offer the usual
+/// play/queue menu, and plays can be forgotten from it or with ⌫. Nothing
+/// reorders.
+struct HistoryView: View {
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlayerModel.self) private var player
+    @State private var selection: Set<Int64> = []
+    @State private var confirmingClear = false
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
+
+    private var entries: [PlayHistoryEntry] { library.visiblePlayHistory }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+                .padding(.bottom, 16)
+
+            if entries.isEmpty {
+                EmptyState(
+                    icon: Icon.history,
+                    title: library.filter.isEmpty ? "Nothing played yet" : "No matches",
+                    detail: library.filter.isEmpty
+                        ? "Everything you play lands here, most recent first." : nil
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                list
+            }
+        }
+        .alert("Clear History?", isPresented: $confirmingClear) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) { library.clearPlayHistory() }
+        } message: {
+            Text("Every play is forgotten. This cannot be undone.")
+        }
+    }
+
+    private var list: some View {
+                List(selection: $selection) {
+                    ForEach(days, id: \.key) { day in
+                        Section {
+                            ForEach(day.entries, id: \.id) { entry in
+                                HistoryRow(entry: entry)
+                                    .primaryTap { play([entry.id]) } menu: { menu(for: [entry.id]) }
+                                    .washedRow()
+                                    .tag(entry.id)
+                            }
+                        } header: {
+                            KoanSectionHeader(day.key)
+                        }
+                    }
+                }
+                .insetList()
+                .washedGround()
+                #if os(iOS)
+                .listSelectMode($editMode, selection: $selection) { ids in
+                    let tracks = ids.compactMap { id in entries.first { $0.id == id }?.track.id }
+                    return SelectionBar.Actions(
+                        favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
+                        sources: [.tracks(ids: tracks)],
+                        remove: .init(title: "Forget", noun: "play", count: ids.count) { library.forgetPlays(ids: Set(ids)) }
+                    )
+                }
+                #endif
+                .clearsSelection($selection)
+                .selectionMenu(for: Int64.self) { ids in
+                    menu(for: ids)
+                } primaryAction: { ids in
+                    play(ids)
+                }
+                .onKeyPress(.return) {
+                    play(selection)
+                    return .handled
+                }
+    }
+
+    private var header: some View {
+        PageHeader(
+            "History", appWords: true,
+            detail: { Text(Format.count(Int64(entries.count), "play")) },
+            trailing: {
+                Button { confirmingClear = true } label: { Text("Clear…").koanCase().font(.role(.control, system: .body)) }
+                    .disabled(entries.isEmpty)
+            }
+        )
+    }
+
+    /// Selection is by entry id, not track id — the same track can
+    /// legitimately appear many times and each row stands on its own.
+    private func tracks(for ids: Set<Int64>) -> [Track] {
+        entries.filter { ids.contains($0.id) }.map(\.track)
+    }
+
+    /// Plays the selection, keeping the rest of that run behind it.
+    private func play(_ ids: Set<Int64>) {
+        let chosen = tracks(for: ids)
+        guard !chosen.isEmpty else { return }
+        player.playNow(trackIds: chosen.map(\.id))
+    }
+
+    /// Forgets the selected plays. The tracks themselves are untouched —
+    /// history is a log, and this only erases the log.
+    private func forgetSelected() {
+        guard !selection.isEmpty else { return }
+        library.forgetPlays(ids: selection)
+        selection = []
+    }
+
+    /// The rows under the pointer, as a menu.
+    @ViewBuilder
+    private func menu(for ids: Set<Int64>) -> some View {
+        let chosen = tracks(for: ids)
+        if chosen.count == 1, let track = chosen.first {
+            PlayableMenu(playable: .track(track))
+        } else if !chosen.isEmpty {
+            QueueActions(trackIds: chosen.map(\.id))
+        }
+        if !chosen.isEmpty {
+            Divider()
+            Button { library.forgetPlays(ids: ids) } label: {
+                Label("Remove from History", koan: Icon.remove)
+            }
+        }
+    }
+
+    // MARK: - Day grouping
+
+    private struct Day {
+        let key: String
+        var entries: [PlayHistoryEntry]
+    }
+
+    /// Runs of consecutive entries that fall on the same day. The list is
+    /// already ordered by time, so a single pass is enough — no sorting, and
+    /// two visits to the same day cannot be separated.
+    private var days: [Day] {
+        var out: [Day] = []
+        for entry in entries {
+            let key = HistoryDate.day(entry.playedAt)
+            if out.last?.key == key {
+                out[out.count - 1].entries.append(entry)
+            } else {
+                out.append(Day(key: key, entries: [entry]))
+            }
+        }
+        return out
+    }
+}
+
+private struct HistoryRow: View {
+    let entry: PlayHistoryEntry
+
+    @State private var hovering = false
+
+    private var track: Track { entry.track }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // The widest time the locale prints holds the column, in
+            // whichever face and size it is drawn, so every title lines up.
+            ZStack(alignment: .trailing) {
+                ForEach(HistoryDate.shapes, id: \.self) { Text($0).hidden() }
+            }
+            .lineLimit(1)
+            .fixedSize()
+            .overlay(alignment: .trailing) {
+                if hovering {
+                    RowPlayButton(playable: .track(track), visible: true)
+                } else {
+                    Text(HistoryDate.time(entry.playedAt))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .font(.role(.fine, system: .caption.monospacedDigit()))
+
+            // The cover is what you recognise a record by, and scanning back
+            // through a week of listening is exactly that job.
+            TrackSleeve(albumId: track.albumId)
+                .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.title)
+                    .lineLimit(1)
+                ArtistAlbumLine(
+                    artist: track.artistCredit,
+                    album: track.albumTitle,
+                    albumId: track.albumId
+                )
+            }
+
+            Spacer(minLength: 8)
+
+            // A play recorded by another client scrobbling in did not happen
+            // here, and saying so stops it reading as a phantom.
+            if entry.source != "local" {
+                KoanIcon(Icon.renderer)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                    .help("Scrobbled by another client")
+            }
+
+            Text(Format.duration(track.durationMs))
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                .frame(width: HistoryColumns.duration, alignment: .trailing)
+        }
+        #if os(tvOS)
+        // Television type is taller than the sleeve; the row grows to it.
+        .frame(minHeight: RowMetrics.art)
+        #else
+        .frame(height: RowMetrics.art)
+        #endif
+        .contentShape(Rectangle())
+        .pointerHover { hovering = $0 }
+    }
+}
+
+/// Day and time labels for history rows, with the formatters built once —
+/// `DateFormatter` is expensive and a list rebuild would make hundreds.
+private enum HistoryDate {
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.doesRelativeDateFormatting = true  // gives "Today" / "Yesterday"
+        f.dateStyle = .full
+        f.timeStyle = .none
+        return f
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        return f
+    }()
+
+    static func day(_ unixSeconds: Int64) -> String {
+        dayFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
+    }
+
+    static func time(_ unixSeconds: Int64) -> String {
+        timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
+    }
+
+    /// Every shape a time in the column can take, its digits as the locale's
+    /// zero: a minute in each hour of a day, deduplicated. Digits are
+    /// monospaced, so the number of them and the period ("PM", "a.m.",
+    /// "下午") are what make one time wider than another. On a fixed day, so
+    /// a clock change never drops an hour.
+    static let shapes: [String] = {
+        let day = Date(timeIntervalSinceReferenceDate: 0)
+        let numbers = NumberFormatter()
+        numbers.locale = timeFormatter.locale
+        let zero = numbers.string(from: 0)?.first ?? "0"
+        var seen = Set<String>()
+        return (0..<24).compactMap { hour in
+            Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: day)
+                .map { String(timeFormatter.string(from: $0).map { $0.isNumber ? zero : $0 }) }
+        }
+        .filter { seen.insert($0).inserted }
+    }()
+}
+
+/// The length column, at a width television type fits in.
+private enum HistoryColumns {
+    #if os(tvOS)
+    static let duration = 96.0
+    #else
+    static let duration = 48.0
+    #endif
+}

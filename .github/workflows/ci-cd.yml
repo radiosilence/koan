@@ -192,7 +192,7 @@ jobs:
             # then caught on main, which runs the Apple job for any Rust.
             apple=false
             if [ "$release" = true ] || [ "$inputs_apple" = true ] \
-              || touches '^apps/(macos|ios)/|^crates/(koan-ffi|koan-runtime)/|^tools/uniffi-bindgen/|^\.cargo/|^rust-toolchain|^\.github/' \
+              || touches '^apps/ios/|^crates/(koan-ffi|koan-runtime)/|^tools/uniffi-bindgen/|^\.cargo/|^rust-toolchain|^\.github/' \
               || touches '^crates/koan-core/src/audio/(coreaudio_backend|device|engine|ios_backend|toolbox)\.rs$'; then
               apple=true
             # A Rust source or manifest changed near code for an Apple target:
@@ -637,9 +637,9 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE) || '' }}
 
-  # Apple is checked on three runners, split by what each needs built first:
-  # the engine's tests (`apple`), the macOS app and the iOS typecheck over one
-  # FFI build (`apple-app`), and the Apple TV app over its own (`apple-tv`).
+  # Apple platforms are checked on three runners, split by what each needs
+  # built first: the workspace on macOS (`macos`), the iOS typecheck over one
+  # FFI build (`ios`), and the Apple TV app over its own (`tvos`).
   # They contend for the account's few macOS runners, which costs less than
   # running them on one runner's three cores.
   #
@@ -650,14 +650,14 @@ jobs:
   #
   # A release push is not checked again: its pull request and main's previous
   # push were. The release builds belong to `macos-release`.
-  apple:
-    name: Apple
+  macos:
+    name: macOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: macos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     env:
       # Everything: main and manual runs.
@@ -685,20 +685,18 @@ jobs:
       - if: ${{ !cancelled() && env.FULL == 'true' }}
         run: cargo test --doc
 
-  # The macOS app, and the shared sources typechecked for iOS, against
-  # bindings generated from this build of koan-ffi: the build catches drift
-  # between the Rust surface and the Swift that calls it.
-  apple-app:
-    name: macOS and iOS
+  # The shared sources typechecked for iOS against bindings generated from
+  # this build of koan-ffi: the check catches drift between the Rust surface
+  # and the Swift that calls it.
+  ios:
+    name: iOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: ios-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -714,36 +712,22 @@ jobs:
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: just
-      - run: just macos-ffi
+      - run: just swift-bindings
         env:
           KOAN_FFI_PROFILE: debug
-      # Both at once; the typecheck is small beside the app build. Every log is
-      # printed, and every failure named, once both have finished.
-      - name: The app and the iOS typecheck
-        run: |
-          (cd apps/macos && swift build -c debug) > "$RUNNER_TEMP/app.log" 2>&1 & app=$!
-          just --no-deps ios-typecheck > "$RUNNER_TEMP/ios.log" 2>&1 & ios=$!
-          failed=()
-          wait $app || failed+=(app)
-          wait $ios || failed+=(ios-typecheck)
-          echo "::group::app"; cat "$RUNNER_TEMP/app.log"; echo "::endgroup::"
-          echo "::group::ios-typecheck"; cat "$RUNNER_TEMP/ios.log"; echo "::endgroup::"
-          if [ ${#failed[@]} -gt 0 ]; then
-            echo "::error::failed: ${failed[*]}"
-            exit 1
-          fi
+      - run: just --no-deps ios-typecheck
 
   # The Apple TV app, on pull requests as well as main: tvOS compiles the
   # shared sources under its own rules, and a break only it sees otherwise
   # surfaces at a release. The xcodebuild is the typecheck.
-  apple-tv:
-    name: Apple TV
+  tvos:
+    name: tvOS
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
     concurrency:
-      group: apple-tv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: tvos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -861,7 +845,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, macos, ios, tvos, android]
     if: always()
     steps:
       - env:

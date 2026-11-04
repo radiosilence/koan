@@ -31,6 +31,7 @@ pub fn set_favourite(
     id: i64,
     star: Option<bool>,
 ) -> rusqlite::Result<Option<bool>> {
+    super::wait_for_forget();
     let Some((now, queued)) = write_favourite(db, user, kind, id, star)? else {
         return Ok(None);
     };

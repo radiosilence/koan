@@ -1,0 +1,1 @@
+- **A sign-in that never reached the server says so.** It said the server did not accept the credentials; it now says it could not reach the address tried, keeping the credentials message for a server that answered and refused.

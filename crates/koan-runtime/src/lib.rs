@@ -2533,6 +2533,7 @@ impl KoanEngine {
         track_ids: Vec<i64>,
     ) -> Result<Playlist, KoanError> {
         offload::offload(move || {
+            koan_core::helpers::wait_for_forget();
             let db = self.db()?;
             let id = queries::atomically(&db.conn, || {
                 let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, &name, None)?;
@@ -2881,6 +2882,7 @@ impl KoanEngine {
             if !self.may_save_session() {
                 return Ok(());
             }
+            koan_core::helpers::wait_for_forget();
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
@@ -3033,6 +3035,11 @@ impl KoanEngine {
 
     /// `restore_session`'s reading and sending, on the command lane.
     pub fn restore_blocking(&self) -> Result<u32, KoanError> {
+        // The saved queue is the server's signed out of, about to be
+        // forgotten with its library.
+        if koan_core::helpers::forget_pending() {
+            return Ok(0);
+        }
         let db = self.db()?;
         // Before the queue and whether there is one: the mode is the
         // player's, and a shuffled queue's play order is drawn as it
@@ -5373,13 +5380,29 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let cfg = Config::cached();
-            koan_core::helpers::create_share(
-                &db,
-                queries::LOCAL_USER,
-                &cfg,
-                &koan_core::helpers::ShareTarget::Tracks(track_ids),
-                description.as_deref(),
-            )
+            let target = koan_core::helpers::ShareTarget::Tracks(track_ids);
+            // Sharing its own library, this device gives the link out on the
+            // address its invites carry, so the two never disagree.
+            let own = koan_core::helpers::subsonic_client(&cfg)
+                .is_none()
+                .then(serve::invite_base)
+                .flatten();
+            match own {
+                Some(base) => koan_core::helpers::create_native_share_at(
+                    &db,
+                    queries::LOCAL_USER,
+                    &base,
+                    &target,
+                    description.as_deref(),
+                ),
+                None => koan_core::helpers::create_share(
+                    &db,
+                    queries::LOCAL_USER,
+                    &cfg,
+                    &target,
+                    description.as_deref(),
+                ),
+            }
             .map(|outcome| Share {
                 url: outcome.url,
                 shared: outcome.shared as u32,
@@ -6765,6 +6788,25 @@ impl KoanEngine {
         }));
         engine.spawn_watcher();
         engine.spawn_figures();
+        // Versions before 0.71 kept the shared library's address apart.
+        if let Err(e) = Config::adopt_share_url() {
+            log::warn!("could not move share.url into server.url: {e}");
+        }
+        // A sign-out whose forgetting the last run did not finish.
+        if let Some(forget) = koan_core::helpers::resume_forget() {
+            let resumed = Arc::downgrade(&engine);
+            let spawned = std::thread::Builder::new()
+                .name("koan-forget-server".into())
+                .spawn(move || {
+                    forget();
+                    if let Some(engine) = resumed.upgrade() {
+                        engine.bump_library();
+                    }
+                });
+            if let Err(e) = spawned {
+                log::warn!("could not finish forgetting the server signed out of: {e}");
+            }
+        }
         // This device's own queue and transfers go with the server it leaves,
         // before its library is forgotten.
         let leaving = Arc::downgrade(&engine);
@@ -7664,6 +7706,18 @@ fn play_state(state: &koan_core::remote::link::LinkState) -> PlayState {
 }
 
 /// The server and the network, for Settings.
+/// Why this device cannot make a share link, or `None` when it can: signed
+/// in to a server, which makes them, or sharing its own library, or a server
+/// itself with a public address.
+fn share_links_unavailable(cfg: &Config) -> Option<String> {
+    let can = koan_core::helpers::subsonic_auth(cfg).is_some()
+        || serve::serving()
+        || cfg.server_url().is_some();
+    (!can).then(|| {
+        "Share links come from a server: sign in to one, or share this device's library".into()
+    })
+}
+
 fn connection_info() -> ConnectionInfo {
     use koan_core::remote::{devices, nearby};
     let p = serve::own_profile().or_else(profile::current);
@@ -7701,6 +7755,7 @@ fn connection_info() -> ConnectionInfo {
         offline_manual: koan_core::remote::offline::manual(),
         sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
         standing: koan_core::helpers::server_standing(&Config::cached()).into(),
+        share_links_unavailable: share_links_unavailable(&Config::cached()),
         nearby_servers: nearby::servers()
             .into_iter()
             .map(|(url, devices)| NearbyServer { url, devices })
@@ -7913,7 +7968,7 @@ fn read_settings(db: Option<&koan_core::db::connection::Database>) -> Settings {
         share_enabled: cfg.share.enabled,
         share_port: cfg.share.port,
         share_invite_to: cfg.share.invite_to.into(),
-        share_url: cfg.share.url.clone().unwrap_or_default(),
+        server_url: cfg.server_url().unwrap_or_default(),
     }
 }
 

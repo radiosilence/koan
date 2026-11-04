@@ -23,9 +23,7 @@ import sys
 import tomllib
 
 APPLE_ROOTS = {
-    "macos-ffi",
-    "macos-dmg",
-    "macos-verify",
+    "swift-bindings",
     "ios-typecheck",
     "tv-typecheck",
     "tv-build",

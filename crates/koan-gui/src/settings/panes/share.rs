@@ -23,9 +23,14 @@ pub struct ShareForm {
     address: Entity<InputState>,
     account_error: Option<SharedString>,
     creating: bool,
-    link: Option<(String, Entity<LinkDevice>)>,
+    /// The invite shown, made for this account and this address: a new
+    /// address makes a new invite, so its code never shows the last one.
+    link: Option<(MadeFor, Entity<LinkDevice>)>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// The account an invite is made for, and the address it carries.
+type MadeFor = (String, Option<String>);
 
 impl ShareForm {
     pub fn new(ctx: &Ctx, window: &mut Window, cx: &mut Context<ServerPane>) -> Self {
@@ -45,7 +50,7 @@ impl ShareForm {
         let port = field("4000", false, window, cx);
         let address = field("", false, window, cx);
         if let Some(settings) = ctx.model.read(cx).settings() {
-            let (p, a) = (settings.share_port.to_string(), settings.share_url.clone());
+            let (p, a) = (settings.share_port.to_string(), settings.server_url.clone());
             port.update(cx, |s, cx| s.set_value(p, window, cx));
             address.update(cx, |s, cx| s.set_value(a, window, cx));
         }
@@ -150,7 +155,7 @@ impl ShareForm {
         let Some(settings) = ctx.model.read(cx).settings() else {
             return;
         };
-        if typed == settings.share_url {
+        if typed == settings.server_url {
             return;
         }
         let port = settings.share_port;
@@ -268,14 +273,22 @@ impl ShareForm {
             sections.push(away_from_home(ctx, settings, &self.address, look, cx));
         }
         if ctx.sharing.read(cx).serving.is_some() {
+            let made_for = (
+                account.clone(),
+                ctx.sharing
+                    .read(cx)
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.current.clone()),
+            );
             let link = match &self.link {
-                Some((who, link)) if *who == account => link.clone(),
+                Some((made, link)) if *made == made_for => link.clone(),
                 _ => {
                     let engine = ctx.model.read(cx).engine().clone();
                     let link = cx.new(|cx| {
                         LinkDevice::new(engine, account.clone(), ctx.connection.clone(), cx)
                     });
-                    self.link = Some((account.clone(), link.clone()));
+                    self.link = Some((made_for, link.clone()));
                     link
                 }
             };
@@ -428,14 +441,15 @@ fn away_from_home(
         choice,
         serving,
     );
+    let tailscale_row = Row::new("Tailscale");
     let mut rows = vec![
-        Row::new("Tailscale")
-            .value(match (&tailscale, checked) {
-                (Some(t), _) => format!("Detected · {}", t.name),
-                (None, true) => "Not detected".to_owned(),
-                (None, false) => "Looking…".to_owned(),
-            })
-            .into_any_element(),
+        match (&tailscale, checked) {
+            (Some(t), _) => tailscale_row
+                .control(CopyText::new("copy-tailnet-name", t.name.clone()).help("Copy the name")),
+            (None, true) => tailscale_row.value("Not detected"),
+            (None, false) => tailscale_row.value("Looking…"),
+        }
+        .into_any_element(),
     ];
     let values: Vec<InviteTo> = options.iter().map(|(_, v)| *v).collect();
     let picker_ctx = ctx.clone();
@@ -479,6 +493,9 @@ fn away_from_home(
             )
             .into_any_element(),
     );
+    if let Some(warning) = tailscale_warning(choice, tailscale.as_ref(), checked) {
+        rows.push(note(warning, Icon::Warning, Tone::Bad, look));
+    }
     if serving && let Some(addresses) = &sharing.status {
         if choice == InviteTo::Custom {
             rows.push(
@@ -486,10 +503,10 @@ fn away_from_home(
                     .control(div().w_full().child(TextField::new(address)))
                     .into_any_element(),
             );
-        } else {
+        } else if let Some(current) = addresses.current.clone() {
             rows.push(
                 Row::new("Address")
-                    .value(addresses.current.clone().unwrap_or_default())
+                    .control(CopyText::new("copy-invite-address", current).help("Copy the address"))
                     .into_any_element(),
             );
         }
@@ -511,6 +528,26 @@ fn away_from_home(
         Some(invite_note(choice).into()),
         look,
     )
+}
+
+/// What stands between phones and the address chosen, from the engine's
+/// last reading of Tailscale: it is stopped, or the tailnet does not allow
+/// Funnel. Nothing until it has been read.
+fn tailscale_warning(
+    choice: InviteTo,
+    tailscale: Option<&koan_runtime::TailscaleStatus>,
+    checked: bool,
+) -> Option<&'static str> {
+    match (choice, tailscale) {
+        _ if !checked => None,
+        (InviteTo::Tailnet | InviteTo::Funnel, None) => Some(
+            "Tailscale is not running on this device, so invites point at an address nothing answers. Start Tailscale.",
+        ),
+        (InviteTo::Funnel, Some(t)) if !t.funnel_allowed => Some(
+            "Funnel is not available: this tailnet does not allow it, or HTTPS certificates are off. Turn both on in Tailscale's admin console.",
+        ),
+        _ => None,
+    }
 }
 
 fn invite_options(
@@ -573,7 +610,30 @@ fn after_start(model: Entity<SettingsModel>) -> Landed {
 
 #[cfg(test)]
 mod tests {
-    use super::{InviteTo, invite_options};
+    use super::{InviteTo, invite_options, tailscale_warning};
+
+    #[test]
+    fn says_when_tailscale_cannot_carry_the_invite() {
+        use InviteTo::*;
+        let up = |funnel_allowed| koan_runtime::TailscaleStatus {
+            name: "mac.tailnet.ts.net".into(),
+            funnel_allowed,
+        };
+        assert!(tailscale_warning(Tailnet, None, true).is_some(), "stopped");
+        assert!(tailscale_warning(Funnel, None, true).is_some(), "stopped");
+        assert!(
+            tailscale_warning(Funnel, Some(&up(false)), true).is_some(),
+            "no Funnel"
+        );
+        assert_eq!(tailscale_warning(Funnel, Some(&up(true)), true), None);
+        assert_eq!(tailscale_warning(Tailnet, Some(&up(false)), true), None);
+        assert_eq!(tailscale_warning(Network, None, true), None);
+        assert_eq!(
+            tailscale_warning(Tailnet, None, false),
+            None,
+            "not read yet"
+        );
+    }
 
     fn values(options: Vec<(String, InviteTo)>) -> Vec<InviteTo> {
         options.into_iter().map(|(_, v)| v).collect()

@@ -218,6 +218,7 @@ impl Writer {
                 track_id,
                 position_ms,
             } => {
+                crate::helpers::wait_for_forget();
                 match queries::record_play(&self.db.conn, queries::LOCAL_USER, track_id, None) {
                     Ok(id) => {
                         self.open = Some((id, track_id));

@@ -1,0 +1,110 @@
+import UIKit
+import ImageIO
+import SwiftUI
+
+/// koan's accent: the green koan.rocks and the web UI use, darker in light
+/// mode, where the mint would not read as text. What the room wears when the
+/// record playing gives no colour — no artwork, a sleeve with none in it, or
+/// nothing playing — and the app's tint outside it.
+///
+/// Not the asset catalog's `AccentColor`, which `NSAccentColorName` points
+/// AppKit at for list selection and focus rings. That one is a neutral grey so
+/// a selected row never argues with the tint, and as a tint it fails: the
+/// playing row's title and every borderless control are drawn in the tint,
+/// and in grey they read as disabled.
+extension Color {
+    static let koanAccent = KoanAccent.mint.color
+}
+
+extension Color {
+    /// The colour a record reads as, for tinting the app while it plays.
+    ///
+    /// Takes the encoded bytes rather than an `NSImage`, which is a class and
+    /// not `Sendable`, so work on one stays wherever the image already is.
+    /// `Data` travels, so this runs wherever it is sent.
+    static func dominant(ofEncoded data: Data) -> Color? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                  source, 0,
+                  [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceShouldCacheImmediately: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 32,
+                  ] as CFDictionary
+              )
+        else { return nil }
+        return dominant(of: thumbnail)
+    }
+
+    /// Not the average of the sleeve: averaging every pixel of a busy cover
+    /// gives the same brown-grey every time, because opposite hues cancel. This
+    /// is a circular mean of *hue* weighted by each sample's chroma, so the one
+    /// strong colour on a mostly black cover wins rather than being drowned by
+    /// the black. Samples are gated on chroma rather than brightness: thin
+    /// strokes on black come out of the downscale dark but still coloured.
+    ///
+    /// The result is forced into a band that stays legible as a tint on dark
+    /// chrome. A navy sleeve would otherwise give an accent invisible against
+    /// the window and a neon one would flare.
+    private static func dominant(of cgImage: CGImage) -> Color? {
+        let side = 32
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(
+                  data: &pixels,
+                  width: side,
+                  height: side,
+                  bitsPerComponent: 8,
+                  bytesPerRow: side * 4,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        var x = 0.0, y = 0.0, saturation = 0.0, total = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let (hue, sat, value) = hsb(
+                Double(pixels[i]) / 255,
+                Double(pixels[i + 1]) / 255,
+                Double(pixels[i + 2]) / 255
+            )
+            // Near-grey, near-black and blown-out samples say nothing about
+            // what colour the record is. The black floor sits under a thin
+            // stroke averaged into its sample, and over a dark sleeve's tint
+            // and its compression noise.
+            guard sat > 0.15, value > 0.1, value < 0.98 else { continue }
+            let weight = sat * value
+            let angle = hue * 2 * .pi
+            x += cos(angle) * weight
+            y += sin(angle) * weight
+            saturation += sat * weight
+            total += weight
+        }
+        guard total > 0 else { return nil }
+
+        let mean = atan2(y / total, x / total) / (2 * .pi)
+        return Color(
+            hue: mean < 0 ? mean + 1 : mean,
+            saturation: min(0.85, max(0.55, saturation / total)),
+            brightness: 0.80
+        )
+    }
+
+    /// Written out rather than going through `NSColor`, whose HSB components
+    /// are only valid in colour spaces it will happily hand you a colour
+    /// outside of.
+    private static func hsb(_ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
+        let high = max(r, g, b), low = min(r, g, b), delta = high - low
+        guard delta > 0 else { return (0, 0, high) }
+        var hue: Double
+        if high == r {
+            hue = ((g - b) / delta).truncatingRemainder(dividingBy: 6)
+        } else if high == g {
+            hue = (b - r) / delta + 2
+        } else {
+            hue = (r - g) / delta + 4
+        }
+        hue /= 6
+        return (hue < 0 ? hue + 1 : hue, high == 0 ? 0 : delta / high, high)
+    }
+}
