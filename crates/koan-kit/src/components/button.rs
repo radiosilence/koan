@@ -419,3 +419,103 @@ impl RenderOnce for Button {
         button.children(ring(&handle, &look, window))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::accesskit::Action;
+    use gpui::{IntoElement, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::components::testing::{act, click, node, press, stage};
+
+    /// A labelled button, a glyph named by its tooltip, and a disabled one,
+    /// each counting the clicks it is given.
+    fn buttons(cx: &mut TestAppContext, clicks: Rc<Cell<[u32; 3]>>) -> &mut VisualTestContext {
+        let (_, cx) = stage(cx, move |_, _| {
+            let count = |at: usize| {
+                let clicks = clicks.clone();
+                move |_: &ClickEvent, _: &mut Window, _: &mut App| {
+                    let mut n = clicks.get();
+                    n[at] += 1;
+                    clicks.set(n);
+                }
+            };
+            vec![
+                (
+                    "queue",
+                    Button::new("queue", ButtonKind::Compact)
+                        .label("queue")
+                        .on_click(count(0))
+                        .into_any_element(),
+                ),
+                (
+                    "forget",
+                    Button::icon_only("forget", Icon::Clear, "forget this device")
+                        .on_click(count(1))
+                        .into_any_element(),
+                ),
+                (
+                    "remove",
+                    Button::new("remove", ButtonKind::Compact)
+                        .label("remove")
+                        .disabled(true)
+                        .on_click(count(2))
+                        .into_any_element(),
+                ),
+            ]
+        });
+        cx
+    }
+
+    #[gpui::test]
+    fn a_click_reaches_its_own_button(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new([0; 3]));
+        let cx = buttons(cx, clicks.clone());
+        click(cx, "queue");
+        assert_eq!(clicks.get(), [1, 0, 0]);
+        click(cx, "forget");
+        assert_eq!(clicks.get(), [1, 1, 0]);
+    }
+
+    #[gpui::test]
+    fn enter_and_space_click_the_focused_button(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new([0; 3]));
+        let cx = buttons(cx, clicks.clone());
+        cx.update(|window, cx| window.focus_next(cx));
+        press(cx, "enter");
+        press(cx, "space");
+        assert_eq!(clicks.get(), [2, 0, 0]);
+    }
+
+    #[gpui::test]
+    fn a_disabled_button_refuses_the_pointer_the_keys_and_a_screen_reader(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new([0; 3]));
+        let cx = buttons(cx, clicks.clone());
+        click(cx, "remove");
+        act(cx, "remove", Action::Click);
+        // Tab order skips it: from the last enabled button, focus wraps.
+        cx.update(|window, cx| {
+            window.focus_next(cx);
+            window.focus_next(cx);
+            window.focus_next(cx);
+        });
+        press(cx, "enter");
+        assert_eq!(clicks.get()[2], 0, "a disabled button was clicked");
+        assert_eq!(node(cx, "remove").1["disabled"], true);
+    }
+
+    #[gpui::test]
+    fn buttons_are_named_by_their_label_or_their_tooltip(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new([0; 3]));
+        let cx = buttons(cx, clicks.clone());
+        for name in ["queue", "forget this device", "remove"] {
+            assert_eq!(node(cx, name).1["role"], "Button", "{name}");
+        }
+        assert!(node(cx, "queue").1.get("disabled").is_none());
+        act(cx, "forget this device", Action::Click);
+        assert_eq!(clicks.get(), [0, 1, 0]);
+    }
+}
