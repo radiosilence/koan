@@ -5191,14 +5191,28 @@ impl KoanEngine {
     /// Forget the server and everything this device held for it: its
     /// library, the account's favourites, history and playlists, the queue
     /// and the downloads (`helpers::sign_out`). Local files stay.
+    ///
+    /// Resolves once the device is signed out. The library is forgotten
+    /// after, on a thread of its own, since that waits for a sync to stop and
+    /// takes seconds on a large library; the library's version moves when
+    /// it is done.
     pub fn sign_out_remote(
         self: Arc<Self>,
     ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
-            koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })?;
-            self.bump_library();
+            let forget =
+                koan_core::helpers::sign_out_then().map_err(|e| KoanError::BadArgument {
+                    message: e.to_string(),
+                })?;
+            std::thread::Builder::new()
+                .name("koan-forget-server".into())
+                .spawn(move || {
+                    forget();
+                    self.bump_library();
+                })
+                .map_err(|e| KoanError::BadArgument {
+                    message: e.to_string(),
+                })?;
             Ok(())
         })
     }

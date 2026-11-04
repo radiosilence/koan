@@ -193,13 +193,15 @@ impl Sharing {
         self.push(Op::Refresh, cx);
     }
 
-    /// Makes the account the library is shared under. The error is why not.
+    /// Makes the account the library is shared under. `landed` hears why
+    /// not, if it failed, once this entity is no longer being updated, so it
+    /// may start sharing.
     pub fn create_account(
         &mut self,
         username: String,
         password: String,
         cx: &mut Context<Self>,
-        landed: impl FnOnce(&mut Self, Result<(), String>, &mut Context<Self>) + 'static,
+        landed: impl FnOnce(Result<(), String>, &mut App) + 'static,
     ) {
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
@@ -211,14 +213,15 @@ impl Sharing {
                 Ok(()) => engine.server_admin().await.ok().flatten(),
                 Err(_) => None,
             };
-            this.update(cx, |sharing, cx| {
+            let updated = this.update(cx, |sharing, cx| {
                 if made.is_ok() {
                     sharing.account = account;
                 }
-                landed(sharing, made.map_err(|e| describe(&e)), cx);
                 cx.notify();
-            })
-            .ok();
+            });
+            if updated.is_ok() {
+                cx.update(|cx| landed(made.map_err(|e| describe(&e)), cx));
+            }
         })
         .detach();
     }
