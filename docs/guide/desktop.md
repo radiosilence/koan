@@ -4,7 +4,7 @@ kōan's desktop app runs on macOS and Linux. It is drawn with GPUI and links the
 
 ## Installing
 
-Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is `Koan.dmg`, and installs as `kōan desktop.app`.
+Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is `Koan.dmg`, and installs as `kōan.app`.
 
 ## Beside the other apps
 
