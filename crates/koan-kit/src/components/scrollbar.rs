@@ -156,15 +156,8 @@ impl Bar {
             let mut bar = bar.borrow_mut();
             let now = Animated::now();
             let from = bar.fade.at(0, now);
-            bar.fade.segment(
-                0,
-                from,
-                0.0,
-                now,
-                Motion::LEAVE,
-                Ease::QuickOut,
-                Repeat::Once,
-            );
+            bar.fade
+                .segment(0, from, 0.0, now, Motion::LEAVE, Ease::InOut, Repeat::Once);
             bar.shown = false;
             drop(bar);
             if !SHADED {
