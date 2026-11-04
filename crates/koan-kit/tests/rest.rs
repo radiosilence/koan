@@ -46,10 +46,12 @@ fn controls_at_rest_draw_no_shader(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(shaders(cx), 0, "controls nobody touches drew shader quads");
 
-    // Under the pointer a button lights, which is a shader quad.
-    cx.simulate_mouse_move(point(px(10.), px(50.)), None, Modifiers::default());
+    // Under the pointer a row lights, which is a shader quad. A toolbar
+    // button answers in its glyph's colour alone, so the pointer goes to
+    // the first row, below the buttons' 36-point strip.
+    cx.simulate_mouse_move(point(px(10.), px(90.)), None, Modifiers::default());
     cx.run_until_parked();
-    assert!(shaders(cx) > 0, "the button under the pointer drew no fill");
+    assert!(shaders(cx) > 0, "the row under the pointer drew no fill");
 }
 
 #[gpui::test]
@@ -60,9 +62,9 @@ fn a_fill_fades_out_after_the_pointer_leaves(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Page);
     let cx: &mut VisualTestContext = cx;
     cx.run_until_parked();
-    cx.simulate_mouse_move(point(px(10.), px(50.)), None, Modifiers::default());
+    cx.simulate_mouse_move(point(px(10.), px(90.)), None, Modifiers::default());
     cx.run_until_parked();
-    assert!(shaders(cx) > 0, "the button under the pointer drew no fill");
+    assert!(shaders(cx) > 0, "the row under the pointer drew no fill");
 
     cx.simulate_mouse_move(point(px(500.), px(700.)), None, Modifiers::default());
     assert!(
