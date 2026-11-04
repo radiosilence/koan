@@ -1107,7 +1107,7 @@ mod tests {
     #[test]
     fn a_tick_is_seen_drawing() {
         for on in [true, false] {
-            let track = Track {
+            let track = super::super::track::Track {
                 from: 0.0,
                 to: 1.0,
                 start: 0.0,
