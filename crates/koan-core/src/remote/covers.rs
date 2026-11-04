@@ -395,8 +395,14 @@ static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 pub fn set_constrained(constrained: bool) {
     if CONSTRAINED.swap(constrained, Ordering::Relaxed) != constrained {
         crate::remote::client::wake_cover_waiters();
+        crate::artist_info::wake();
         crate::signal::engine_changed().bump();
     }
+}
+
+/// Whether the app said the device is on a metered network or saving power.
+pub fn constrained() -> bool {
+    CONSTRAINED.load(Ordering::Relaxed)
 }
 
 /// The preload's progress while it runs; `None` otherwise.

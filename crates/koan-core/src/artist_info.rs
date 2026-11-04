@@ -6,22 +6,36 @@
 //! sharing a name, and a biography of the wrong band is worse than none.
 //!
 //! What was found is cached per artist, so a page draws from the database and
-//! never waits on the network, and refreshed after a month. A miss is not
-//! cached: the id may resolve, or the article appear, by the next visit.
-//! Nothing here holds a database connection across a network call.
+//! never waits on the network, and refreshed after a month. A miss is cached
+//! for a week: the id may resolve, or the article appear, by then. Nothing
+//! here holds a database connection across a network call.
+//!
+//! An artist synced from a koan server offering `koanArtistInfo` is asked of
+//! the server, which resolves its whole library ahead of time; the device
+//! resolves it itself only when the server cannot be reached. Everything else
+//! is resolved here, ahead of time too: the walk (`start`) goes through the
+//! library's artists that have a MusicBrainz id, newest first, at a pace
+//! MusicBrainz and Wikimedia allow, and keeps each photograph on disk.
 
+use std::path::PathBuf;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 use crate::db::connection::DbError;
 use crate::db::pool::Pool;
+use crate::remote::client::{SubsonicClient, SubsonicError};
 use crate::remote::musicbrainz::{self, MusicBrainzError};
 use crate::remote::wikimedia::{self, WikimediaError};
 
 const REFRESH_AFTER_SECS: i64 = 30 * 24 * 60 * 60;
+/// How long a lookup that found nothing, or a server's answer, holds before
+/// it is asked again.
+const ASK_AGAIN_AFTER_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// Wide enough for a header at 2×, and one of Commons' standard thumbnail
 /// widths: it refuses others.
@@ -37,6 +51,8 @@ pub enum ArtistInfoError {
     MusicBrainz(#[from] MusicBrainzError),
     #[error("wikimedia: {0}")]
     Wikimedia(#[from] WikimediaError),
+    #[error("server: {0}")]
+    Server(#[from] SubsonicError),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -51,8 +67,18 @@ pub struct ArtistInfo {
 }
 
 impl ArtistInfo {
-    fn is_stale(&self, now: i64) -> bool {
-        now - self.fetched_at > REFRESH_AFTER_SECS
+    /// Whether the lookup found nothing to show.
+    pub fn is_empty(&self) -> bool {
+        self.bio.is_none() && self.image_url.is_none()
+    }
+
+    fn is_stale(&self, now: i64, served: bool) -> bool {
+        let holds = if served || self.is_empty() {
+            ASK_AGAIN_AFTER_SECS
+        } else {
+            REFRESH_AFTER_SECS
+        };
+        now - self.fetched_at > holds
     }
 }
 
@@ -75,7 +101,8 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
     .optional()
 }
 
-/// The cache while it is fresh, otherwise the network, stored for next time.
+/// The cache while it is fresh, otherwise the server or the network, stored
+/// for next time.
 ///
 /// A network failure is not remembered as a miss — it says nothing about the
 /// artist — so a stale answer is served instead, if there is one.
@@ -84,32 +111,75 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
 /// waiting on MusicBrainz's rate limit, and a connection held through them is
 /// one every other reader goes without.
 pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
-    fetch_since(pool, artist_id, false)
+    fetch_since(pool, artist_id, false, Asker::Page)
+}
+
+/// `fetch` for a client of this server (`getArtistInfo2`): by MusicBrainz id
+/// only, never a name search, since the answer goes out as resolved by id.
+pub fn fetch_by_id(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
+    fetch_since(pool, artist_id, false, Asker::Client)
+}
+
+/// Who asks, which decides how far a lookup goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asker {
+    /// A page: a name search as the last resort, and a stale answer rather
+    /// than a failure.
+    Page,
+    /// A client of this server: by id only, and a stale answer rather than
+    /// a failure.
+    Client,
+    /// The walk: by id only, and a failure is said, so the walk can tell the
+    /// network is down.
+    Walk,
 }
 
 /// `fetch`, looking the artist up again even while the cache is fresh when
-/// `again` is set.
+/// `again` is set, as far as `asker` allows.
 fn fetch_since(
     pool: &Pool,
     artist_id: i64,
     again: bool,
+    asker: Asker,
 ) -> Result<Option<ArtistInfo>, ArtistInfoError> {
     let now = crate::clock::unix_secs();
-    let (held, subject) = {
+    let (held, subject, served) = {
         let db = pool.get()?;
-        (cached(&db.conn, artist_id)?, subject(&db.conn, artist_id)?)
+        (
+            cached(&db.conn, artist_id)?,
+            subject(&db.conn, artist_id)?,
+            served(&db.conn, artist_id)?,
+        )
     };
+    // A miss found by id alone (the walk's, a client's) leaves a page its
+    // name search while the artist's id is still unknown.
+    let searchable = asker == Asker::Page
+        && held.as_ref().is_some_and(ArtistInfo::is_empty)
+        && subject.as_ref().is_some_and(|s| s.mbid.is_none());
     if let Some(held) = &held
         && !again
-        && !held.is_stale(now)
+        && !searchable
+        && !held.is_stale(now, served.is_some())
     {
         return Ok(Some(held.clone()));
     }
+
+    if let Some((client, id)) = &served {
+        match from_server(client, id, now) {
+            Ok(info) => {
+                store(&pool.get()?.conn, artist_id, &info)?;
+                return Ok(Some(info));
+            }
+            // Resolved here instead, as a device on its own would.
+            Err(e) => log::info!("artist info for {artist_id} from the server: {e}"),
+        }
+    }
+
     let Some(subject) = subject else {
         return Ok(held);
     };
 
-    let found = look_up(&subject, now);
+    let found = look_up(&subject, now, asker == Asker::Page);
     if let Ok((_, Some(mbid))) = &found
         && subject.mbid.is_none()
     {
@@ -119,8 +189,6 @@ fn fetch_since(
         )?;
     }
     match found {
-        // Found nothing: not stored, so the next visit asks again.
-        Ok((info, _)) if info.bio.is_none() && info.image_url.is_none() => Ok(held.or(Some(info))),
         Ok((info, _)) => {
             store(&pool.get()?.conn, artist_id, &info)?;
             Ok(Some(info))
@@ -128,54 +196,152 @@ fn fetch_since(
         Err(e) => {
             log::warn!("artist info for {artist_id}: {e}");
             match held {
-                Some(held) => Ok(Some(held)),
-                None => Err(e),
+                Some(held) if asker != Asker::Walk => Ok(Some(held)),
+                _ => Err(e),
             }
         }
     }
 }
 
+/// The server's answer for the artist it calls `id`, as this device stores it.
+fn from_server(client: &SubsonicClient, id: &str, now: i64) -> Result<ArtistInfo, ArtistInfoError> {
+    let answer = client.get_artist_info2(id)?;
+    let bio = answer.biography.filter(|b| !b.trim().is_empty());
+    Ok(ArtistInfo {
+        bio_url: answer.koan_bio_url.filter(|_| bio.is_some()),
+        bio,
+        // Where the photograph came from, standing for it: it is fetched
+        // from the server (`image`).
+        image_url: answer
+            .large_image_url
+            .filter(|u| answer.koan_image && !u.is_empty()),
+        image_credit: answer.koan_image_credit.filter(|_| answer.koan_image),
+        fetched_at: now,
+    })
+}
+
+/// The client and the server's id for an artist the signed-in server
+/// resolves itself: one synced from a koan server offering `koanArtistInfo`.
+fn served(
+    conn: &Connection,
+    artist_id: i64,
+) -> rusqlite::Result<Option<(std::sync::Arc<SubsonicClient>, String)>> {
+    let Some(client) = serving_client() else {
+        return Ok(None);
+    };
+    let remote_id: Option<String> = conn
+        .query_row(
+            "SELECT remote_id FROM artists WHERE id = ?1",
+            params![artist_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(remote_id.filter(|id| !id.is_empty()).map(|id| (client, id)))
+}
+
+/// The signed-in server, where it offers `koanArtistInfo`.
+fn serving_client() -> Option<std::sync::Arc<SubsonicClient>> {
+    let cfg = crate::config::Config::cached();
+    if !cfg.remote.enabled {
+        return None;
+    }
+    let client = crate::helpers::subsonic_client(&cfg)?;
+    crate::remote::profile::probed(client.auth())
+        .is_some_and(|p| p.offers(crate::remote::profile::ARTIST_INFO))
+        .then_some(client)
+}
+
 /// How long after a lookup a refused photo address is not looked up again.
 const RELOOK_AFTER_REFUSAL_SECS: i64 = 24 * 60 * 60;
 
-/// The photograph's bytes. Network, every time: the front end caches images,
-/// and the database is no place for them. No connection is held while it
-/// downloads.
+/// The photograph's bytes: from the signed-in server for an artist it
+/// resolves, otherwise as kept on disk, otherwise downloaded and kept. No
+/// connection is held while it downloads.
 ///
 /// A stored address Commons refuses (it serves only its standard thumbnail
 /// widths, and files are renamed) is looked up again, and the new one
 /// downloaded; at most once a day, so an address the lookup still names is
 /// not looked up on every request.
 pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
-    let held = cached(&pool.get()?.conn, artist_id)?;
+    let (held, served, uid) = {
+        let db = pool.get()?;
+        (
+            cached(&db.conn, artist_id)?,
+            served(&db.conn, artist_id)?,
+            uid(&db.conn, artist_id)?,
+        )
+    };
+    let address = held.as_ref().and_then(|info| info.image_url.clone());
+    if let Some((client, id)) = &served {
+        if let (Some(uid), Some(url)) = (&uid, &address)
+            && let Some(kept) = kept(uid, url)
+        {
+            return Ok(Some(kept));
+        }
+        match client.koan_artist_image(id) {
+            Ok(Some(bytes)) => {
+                if let (Some(uid), Some(url)) = (&uid, &address) {
+                    keep(uid, url, &bytes);
+                }
+                return Ok(Some(bytes));
+            }
+            // The server has none after all: the page gives its box back
+            // until the server is next asked.
+            Ok(None) => {
+                pool.get()?.conn.execute(
+                    "UPDATE artist_info SET image_url = NULL, image_credit = NULL
+                      WHERE artist_id = ?1",
+                    params![artist_id],
+                )?;
+                return Ok(None);
+            }
+            Err(e) => log::info!("artist {artist_id}'s photo from the server: {e}"),
+        }
+    }
     let looked_up = held.as_ref().map_or(0, |info| info.fetched_at);
-    let Some(url) = held.and_then(|info| info.image_url) else {
+    let Some(url) = held
+        .and_then(|info| info.image_url)
+        .filter(|u| !u.is_empty())
+    else {
         return Ok(None);
     };
+    if let Some(uid) = &uid
+        && let Some(kept) = kept(uid, &url)
+    {
+        return Ok(Some(kept));
+    }
     let http = wikimedia::client();
     // Looked up again at most once a day: a lookup that found the same
     // refused address, or none newer, is not repeated on every request.
     let recent = crate::clock::unix_secs() - looked_up < RELOOK_AFTER_REFUSAL_SECS;
     // A refused address with nothing to replace it is no photo: the page
     // gives its box back, and nobody asks again this session.
-    match wikimedia::download(&http, &url) {
+    let (url, bytes) = match wikimedia::download(&http, &url) {
         Err(e) if e.refused() && recent => {
             log::debug!("artist {artist_id}'s photo was refused ({e}); looked up within the day");
-            Ok(None)
+            return Ok(None);
         }
         Err(e) if e.refused() => {
             log::info!("artist {artist_id}'s photo was refused ({e}); looking it up again");
-            let fresh = fetch_since(pool, artist_id, true);
+            let fresh = fetch_since(pool, artist_id, true, Asker::Page);
             // Marked as looked up whatever the lookup did (throttled, offline,
             // nothing found, which store nothing), so the daily bound holds.
             touch(pool, artist_id);
             match fresh?.and_then(|info| info.image_url) {
-                Some(fresh) if fresh != url => Ok(Some(wikimedia::download(&http, &fresh)?)),
-                Some(_) | None => Ok(None),
+                Some(fresh) if fresh != url => {
+                    let bytes = wikimedia::download(&http, &fresh)?;
+                    (fresh, bytes)
+                }
+                Some(_) | None => return Ok(None),
             }
         }
-        found => Ok(Some(found?)),
+        found => (url, found?),
+    };
+    if let Some(uid) = &uid {
+        keep(uid, &url, &bytes);
     }
+    Ok(Some(bytes))
 }
 
 /// Moves an artist's info's lookup time to now, where it has a row.
@@ -189,6 +355,317 @@ fn touch(pool: &Pool, artist_id: i64) {
     {
         log::warn!("artist {artist_id}'s info: {e}");
     }
+}
+
+fn uid(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT uid FROM artists WHERE id = ?1",
+        params![artist_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+// --- Photographs on disk ---------------------------------------------------
+
+/// Where photographs are kept: one directory per artist, by uid, holding the
+/// photograph at the address last looked up, named for that address.
+fn photos() -> PathBuf {
+    crate::places::cache().join("artists")
+}
+
+fn photo_path(uid: &str, url: &str) -> PathBuf {
+    photos()
+        .join(uid)
+        .join(format!("{:x}", md5::compute(url.as_bytes())))
+}
+
+/// The photograph kept for the artist at `url`.
+pub fn kept(uid: &str, url: &str) -> Option<Vec<u8>> {
+    std::fs::read(photo_path(uid, url)).ok()
+}
+
+/// Keeps the photograph at `url` as the artist's only one.
+fn keep(uid: &str, url: &str, bytes: &[u8]) {
+    let path = photo_path(uid, url);
+    let Some(dir) = path.parent() else { return };
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let partial = path.with_extension("part");
+    let written = std::fs::create_dir_all(dir)
+        .and_then(|()| std::fs::write(&partial, bytes))
+        .and_then(|()| std::fs::rename(&partial, &path));
+    if let Err(e) = written {
+        log::warn!("keeping {uid}'s photo: {e}");
+    }
+}
+
+/// Removes the photographs of artists no longer in the library.
+fn sweep_photos(conn: &Connection) {
+    let Ok(read) = std::fs::read_dir(photos()) else {
+        return;
+    };
+    let mut gone = conn
+        .prepare_cached("SELECT 1 FROM artists WHERE uid = ?1")
+        .ok();
+    for entry in read.flatten() {
+        let name = entry.file_name();
+        let Some(uid) = name.to_str() else { continue };
+        let known = gone
+            .as_mut()
+            .is_none_or(|q| q.exists(params![uid]).unwrap_or(true));
+        if !known {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+// --- The walk ----------------------------------------------------------------
+
+/// How far the walk has got through the artists it found to look up, while
+/// it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Walk {
+    pub done: u64,
+    pub total: u64,
+}
+
+static PROGRESS: Mutex<Option<Walk>> = Mutex::new(None);
+static STARTED: AtomicBool = AtomicBool::new(false);
+/// Rung when the library changes, so the walk looks for new artists, and when
+/// the network stops being constrained.
+static WAKE: LazyLock<crate::signal::Wake> = LazyLock::new(crate::signal::Wake::new);
+
+/// Between one artist and the next: the lookups themselves keep to
+/// MusicBrainz's one request a second, and this leaves the pace well inside
+/// Wikimedia's guidance for a client that names itself.
+const PACE: Duration = Duration::from_secs(1);
+/// How long the library must rest before a walk starts: a scan writes in
+/// bursts, and each would otherwise start a walk of its own.
+const SETTLE: Duration = Duration::from_secs(10);
+/// How often the walk looks again with nothing rung, for what went stale.
+const INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long a walk that kept failing waits before trying again.
+const AFTER_FAILURE: Duration = Duration::from_secs(60 * 60);
+/// Failures in a row that end a walk: the network is down, or a service is
+/// refusing.
+const FAILURES: u32 = 3;
+
+/// The walk's progress while it runs; `None` otherwise.
+pub fn progress() -> Option<Walk> {
+    *PROGRESS.lock()
+}
+
+/// Something the walk waits on changed: the library's artists, or whether
+/// the network is constrained.
+pub fn wake() {
+    if STARTED.load(Ordering::Relaxed) {
+        WAKE.bump();
+    }
+}
+
+fn set_progress(progress: Option<Walk>) {
+    let mut held = PROGRESS.lock();
+    if *held != progress {
+        *held = progress;
+        drop(held);
+        crate::signal::engine_changed().bump();
+    }
+}
+
+/// Starts the walk's thread, once per process. It sleeps until the library
+/// changes, or a day passes.
+pub fn start() {
+    if STARTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("koan-artist-info".into())
+        .spawn(run)
+        .ok();
+}
+
+/// Why a walk ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Ended {
+    /// Every artist found was looked up, or none needed it.
+    Through,
+    /// The app went quiet, or the network is constrained.
+    NotNow,
+    /// Lookups kept failing.
+    Failed,
+}
+
+fn run() {
+    loop {
+        crate::quiet::wait_until_awake();
+        let generation = WAKE.generation();
+        let ended = walk(crate::db::pool::shared());
+        match ended {
+            // Not woken early by the library: the next walk would only fail
+            // again.
+            Ended::Failed => {
+                std::thread::sleep(AFTER_FAILURE);
+                continue;
+            }
+            // Quiet: back to waiting for the app to wake.
+            Ended::NotNow if !crate::remote::covers::constrained() => continue,
+            Ended::NotNow | Ended::Through => {}
+        }
+        let mut seen = WAKE.wait_until(generation, INTERVAL);
+        // Rung: wait for the library to rest.
+        while seen != generation {
+            let rang = seen;
+            seen = WAKE.wait_until(rang, SETTLE);
+            if seen == rang {
+                break;
+            }
+        }
+    }
+}
+
+fn may_walk() -> bool {
+    crate::quiet::awake() && !crate::remote::covers::constrained()
+}
+
+/// Looks up every artist due a lookup, newest first.
+fn walk(pool: &Pool) -> Ended {
+    if !may_walk() {
+        return Ended::NotNow;
+    }
+    // Signed in to a server: its artists are its to resolve, unless it is
+    // known not to. Until it is known, they wait.
+    let skip_remote = {
+        let cfg = crate::config::Config::cached();
+        cfg.remote.enabled
+            && crate::helpers::subsonic_client(&cfg).is_none_or(|client| {
+                crate::remote::profile::probed(client.auth())
+                    .is_none_or(|p| p.offers(crate::remote::profile::ARTIST_INFO))
+            })
+    };
+    let due = match pool.get() {
+        Ok(db) => match due(&db.conn, crate::clock::unix_secs(), skip_remote) {
+            Ok(due) => due,
+            Err(e) => {
+                log::warn!("artist info: {e}");
+                return Ended::Failed;
+            }
+        },
+        Err(e) => {
+            log::warn!("artist info: {e}");
+            return Ended::Failed;
+        }
+    };
+    if due.is_empty() {
+        if let Ok(db) = pool.get() {
+            sweep_photos(&db.conn);
+        }
+        return Ended::Through;
+    }
+    let total = due.len() as u64;
+    let started = Instant::now();
+    log::info!("artist info: {total} artists to look up");
+    set_progress(Some(Walk { done: 0, total }));
+    let mut failures = 0;
+    let mut ended = Ended::Through;
+    for (done, artist_id) in due.into_iter().enumerate() {
+        if !may_walk() {
+            ended = Ended::NotNow;
+            break;
+        }
+        match look_up_ahead(pool, artist_id) {
+            Ok(()) => failures = 0,
+            Err(e) => {
+                log::info!("artist info for {artist_id}: {e}");
+                failures += 1;
+                if failures >= FAILURES {
+                    ended = Ended::Failed;
+                    break;
+                }
+            }
+        }
+        set_progress(Some(Walk {
+            done: done as u64 + 1,
+            total,
+        }));
+        std::thread::sleep(PACE);
+    }
+    log::info!(
+        "artist info: walked {total} artists in {:.0} s ({ended:?})",
+        started.elapsed().as_secs_f64()
+    );
+    if ended == Ended::Through
+        && let Ok(db) = pool.get()
+    {
+        sweep_photos(&db.conn);
+    }
+    set_progress(None);
+    ended
+}
+
+/// One artist, as the walk looks them up: by id alone, the photograph kept,
+/// and a miss stored even where the artist is not one to look up, so the next
+/// walk passes them by.
+fn look_up_ahead(pool: &Pool, artist_id: i64) -> Result<(), ArtistInfoError> {
+    let info = fetch_since(pool, artist_id, false, Asker::Walk)?;
+    let Some(info) = info else {
+        store(
+            &pool.get()?.conn,
+            artist_id,
+            &ArtistInfo {
+                fetched_at: crate::clock::unix_secs(),
+                ..Default::default()
+            },
+        )?;
+        return Ok(());
+    };
+    let Some(url) = info.image_url.filter(|u| !u.is_empty()) else {
+        return Ok(());
+    };
+    let Some(uid) = uid(&pool.get()?.conn, artist_id)? else {
+        return Ok(());
+    };
+    if kept(&uid, &url).is_none() {
+        match wikimedia::download(&wikimedia::client(), &url) {
+            Ok(bytes) => keep(&uid, &url, &bytes),
+            // Looked up again when a page asks for it (`image`).
+            Err(e) if e.refused() => log::debug!("artist {artist_id}'s photo was refused: {e}"),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+/// The artists due a lookup, the most recently added first: those with a
+/// MusicBrainz id of their own or on one of their records, never looked up,
+/// or looked up long enough ago. `skip_remote` leaves out artists synced from
+/// a server.
+fn due(conn: &Connection, now: i64, skip_remote: bool) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id FROM artists a
+           LEFT JOIN albums al ON al.artist_id = a.id
+           LEFT JOIN artist_info i ON i.artist_id = a.id
+          WHERE (?1 = 0 OR a.remote_id IS NULL)
+            AND (i.artist_id IS NULL
+                 OR i.fetched_at < CASE WHEN i.bio IS NULL AND i.image_url IS NULL
+                                        THEN ?2 ELSE ?3 END)
+          GROUP BY a.id
+         HAVING COALESCE(a.mbid, '') <> '' OR MAX(al.mbid) IS NOT NULL
+          ORDER BY MAX(al.added_at) DESC, a.id DESC",
+    )?;
+    stmt.query_map(
+        params![
+            skip_remote,
+            now - ASK_AGAIN_AFTER_SECS,
+            now - REFRESH_AFTER_SECS
+        ],
+        |row| row.get(0),
+    )?
+    .collect()
 }
 
 /// What a lookup needs from the database, read before it goes to the network.
@@ -235,11 +712,15 @@ fn subject(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Subject
 
 /// The network half: what was found, with every field empty when nothing
 /// was, and the MusicBrainz id it resolved.
-fn look_up(subject: &Subject, now: i64) -> Result<(ArtistInfo, Option<String>), ArtistInfoError> {
+fn look_up(
+    subject: &Subject,
+    now: i64,
+    by_name: bool,
+) -> Result<(ArtistInfo, Option<String>), ArtistInfoError> {
     let mb = musicbrainz::default_client();
     let mbid = match &subject.mbid {
         Some(mbid) => Some(mbid.clone()),
-        None => resolve_mbid(&mb, subject)?,
+        None => resolve_mbid(&mb, subject, by_name)?,
     };
 
     let mut info = ArtistInfo {
@@ -279,11 +760,12 @@ fn look_up(subject: &Subject, now: i64) -> Result<(ArtistInfo, Option<String>), 
 ///
 /// Through one of their releases first: an album synced from a server, or
 /// scanned from tags that carry `MUSICBRAINZ_ALBUMID`, names its artists by id,
-/// so there is nothing to guess. A name search is the last resort, and only an
-/// exact, unique match is taken.
+/// so there is nothing to guess. A name search is the last resort, made only
+/// when `by_name` allows it, and only an exact, unique match is taken.
 fn resolve_mbid(
     mb: &reqwest::blocking::Client,
     subject: &Subject,
+    by_name: bool,
 ) -> Result<Option<String>, ArtistInfoError> {
     let name = &subject.name;
     if let Some(release) = &subject.release {
@@ -292,6 +774,9 @@ fn resolve_mbid(
         if let Some(mbid) = credited(&credits, name) {
             return Ok(Some(mbid));
         }
+    }
+    if !by_name {
+        return Ok(None);
     }
 
     throttle();
@@ -462,13 +947,88 @@ mod tests {
     }
 
     #[test]
-    fn staleness_is_a_month() {
+    fn staleness_is_a_month_for_a_find_and_a_week_otherwise() {
         let info = ArtistInfo {
             fetched_at: 0,
             ..Default::default()
         };
-        assert!(!info.is_stale(REFRESH_AFTER_SECS));
-        assert!(info.is_stale(REFRESH_AFTER_SECS + 1));
+        assert!(info.is_empty());
+        assert!(!info.is_stale(ASK_AGAIN_AFTER_SECS, false));
+        assert!(info.is_stale(ASK_AGAIN_AFTER_SECS + 1, false));
+        let found = ArtistInfo {
+            bio: Some("A band.".into()),
+            ..info
+        };
+        assert!(!found.is_stale(REFRESH_AFTER_SECS, false));
+        assert!(found.is_stale(REFRESH_AFTER_SECS + 1, false));
+        assert!(found.is_stale(ASK_AGAIN_AFTER_SECS + 1, true));
+    }
+
+    #[test]
+    fn the_walk_takes_artists_with_ids_newest_first_and_passes_fresh_ones_by() {
+        let conn = test_db();
+        let artist = |name: &str, mbid: Option<&str>| {
+            let id = get_or_create_artist(&conn, name, None).unwrap();
+            conn.execute(
+                "UPDATE artists SET mbid = ?1 WHERE id = ?2",
+                params![mbid, id],
+            )
+            .unwrap();
+            id
+        };
+        let album = |artist: i64, title: &str, mbid: Option<&str>, added: &str| {
+            conn.execute(
+                "INSERT INTO albums (title, artist_id, mbid, added_at) VALUES (?1, ?2, ?3, ?4)",
+                params![title, artist, mbid, added],
+            )
+            .unwrap();
+        };
+        let old = artist("Glass Candy", Some("mb-old"));
+        album(old, "B/E/A/T/B/O/X", None, "2020-01-01");
+        let new = artist("Chromatics", None);
+        album(new, "Night Drive", Some("rel-new"), "2024-01-01");
+        let nameless = artist("Desire", None);
+        album(nameless, "II", None, "2025-01-01");
+        let empty = artist("Farah", Some(""));
+        album(empty, "Farah", None, "2025-06-01");
+        let fresh = artist("Symmetry", Some("mb-fresh"));
+        album(fresh, "Themes", None, "2023-01-01");
+
+        let now = crate::clock::unix_secs();
+        store(
+            &conn,
+            fresh,
+            &ArtistInfo {
+                bio: Some("A side project.".into()),
+                fetched_at: now,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(due(&conn, now, false).unwrap(), vec![new, old]);
+
+        // A miss holds for a week, a find for a month.
+        store(
+            &conn,
+            new,
+            &ArtistInfo {
+                fetched_at: now - ASK_AGAIN_AFTER_SECS - 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(due(&conn, now, false).unwrap(), vec![new, old]);
+        assert_eq!(
+            due(&conn, now + REFRESH_AFTER_SECS + 1, false).unwrap(),
+            vec![new, fresh, old]
+        );
+
+        conn.execute(
+            "UPDATE artists SET remote_id = 'r' WHERE id = ?1",
+            params![old],
+        )
+        .unwrap();
+        assert_eq!(due(&conn, now, true).unwrap(), vec![new]);
     }
 
     #[test]

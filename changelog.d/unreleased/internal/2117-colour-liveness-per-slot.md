@@ -1,0 +1,1 @@
+- **Colour liveness per slot.** A shader or window keeps presenting only while a colour slot it draws with moves, not while any slot in the app does, such as the accent settling.

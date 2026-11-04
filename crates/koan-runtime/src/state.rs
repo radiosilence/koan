@@ -19,8 +19,8 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::types::{
-    ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, NowPlaying, OutputsInfo, QueueItem,
-    QueueLock, RendererInfo, RendererOutput, SyncProgress, Transfer, TransferFigure,
+    ArtistWalk, ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, NowPlaying, OutputsInfo,
+    QueueItem, QueueLock, RendererInfo, RendererOutput, SyncProgress, Transfer, TransferFigure,
 };
 
 /// One slice of engine state, whole.
@@ -116,6 +116,10 @@ pub enum StateSlice {
     /// How far fetching every record's cover ahead has got
     /// (`remote.preload_covers`). `None` when it is not running.
     Covers { progress: Option<CoverPreload> },
+    /// How far looking up the library's artists' biographies and photographs
+    /// ahead has got (`koan_core::artist_info`). `None` when it is not
+    /// running, as it is not for a library a koan server resolves.
+    Artists { progress: Option<ArtistWalk> },
     /// The other devices koan can play on, and which one this app is
     /// controlling: `None` for this one. While it is another, `Playback`,
     /// `Playhead` and `Queue` describe that device rather than this one, so
@@ -164,12 +168,13 @@ enum Slot {
     Tasks,
     Sync,
     Covers,
+    Artists,
     Connection,
     Renderers,
     Outputs,
 }
 
-pub(crate) const SLOTS: usize = 17;
+pub(crate) const SLOTS: usize = 18;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -187,6 +192,7 @@ impl StateSlice {
             Self::Tasks { .. } => Slot::Tasks,
             Self::Sync { .. } => Slot::Sync,
             Self::Covers { .. } => Slot::Covers,
+            Self::Artists { .. } => Slot::Artists,
             Self::Devices { .. } => Slot::Devices,
             Self::Connection { .. } => Slot::Connection,
             Self::Renderers { .. } => Slot::Renderers,

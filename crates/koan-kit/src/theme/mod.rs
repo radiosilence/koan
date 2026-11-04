@@ -121,7 +121,7 @@ const FACES: [&[u8]; 3] = [
 ];
 
 /// Registers Geist Mono, sets the theme global, reads the system's motion,
-/// contrast, transparency and text size settings and
+/// contrast, transparency and text size settings (outside tests) and
 /// dresses gpui-component's own theme (which the text field draws with) in
 /// the tokens. Call after `gpui::init`.
 pub fn init(cx: &mut App) {
@@ -132,13 +132,16 @@ pub fn init(cx: &mut App) {
     crate::components::install_color_slots();
     let feed = cx.new(|_| AccentFeed::new());
     cx.set_global(AccentHandle(feed));
-    read_system_settings(cx);
-    #[cfg(target_os = "macos")]
-    watch_system_settings(cx);
-    // The portal answers over D-Bus from threads of its own, which the
+    // Tests draw as an unconfigured machine would, whatever the host's
+    // accessibility settings: a runner asking for less motion would land
+    // every transition a test means to catch in flight. On Linux the portal
+    // also answers over D-Bus from threads of its own, which the
     // deterministic test scheduler refuses as activity it cannot order.
-    #[cfg(target_os = "linux")]
     if !cx.is_test() {
+        read_system_settings(cx);
+        #[cfg(target_os = "macos")]
+        watch_system_settings(cx);
+        #[cfg(target_os = "linux")]
         watch_desktop_settings(cx);
     }
     crate::components::field::bind(cx);

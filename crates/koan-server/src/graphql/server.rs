@@ -58,6 +58,9 @@ pub fn cmd_serve(
     koan_core::db::pool::on_outdated(|| OUTDATED.cancel());
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
+    // Resolves the library's artist bios and photos ahead of the clients
+    // asking for them.
+    koan_core::artist_info::start();
 
     // A server has no one to press "scan": index at start and whenever the
     // library folders change, as the macOS app does.

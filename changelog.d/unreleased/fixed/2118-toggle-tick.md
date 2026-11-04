@@ -1,0 +1,1 @@
+- **A toggle's tick is seen drawing in and erasing.** It eases both ways instead of appearing whole within a few frames, and a box turned off keeps its fill until the tick has erased.

@@ -6084,6 +6084,9 @@ impl KoanEngine {
                     out.publish(StateSlice::Covers {
                         progress: koan_core::remote::covers::progress().map(Into::into),
                     });
+                    out.publish(StateSlice::Artists {
+                        progress: koan_core::artist_info::progress().map(Into::into),
+                    });
 
                     // Both of the heavy reads, and both guarded. The queue is
                     // derived and joined against the library; the lock is two
@@ -6891,6 +6894,9 @@ impl KoanEngine {
         // Sleeps on the change signal until a remote library has covers to
         // fetch ahead.
         koan_core::remote::covers::start();
+        // Sleeps until the library changes or a day passes, then looks up
+        // the artists due a biography and photograph.
+        koan_core::artist_info::start();
         Ok(engine)
     }
 
@@ -7577,15 +7583,7 @@ fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
 }
 
 fn sniff_mime(data: &[u8]) -> &'static str {
-    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        "image/png"
-    } else if data.starts_with(&[0xFF, 0xD8]) {
-        "image/jpeg"
-    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-        "image/webp"
-    } else {
-        "application/octet-stream"
-    }
+    koan_core::index::folder_art::image_mime(data).unwrap_or("application/octet-stream")
 }
 
 fn parse_qid(s: &str) -> Result<QueueItemId, KoanError> {
@@ -7965,6 +7963,7 @@ fn read_settings(db: Option<&koan_core::db::connection::Database>) -> Settings {
             config::NearbyControl::Playback => "playback".into(),
         },
         devices_keep_running: cfg.devices.keep_running,
+        updates_auto: cfg.updates.auto,
         share_enabled: cfg.share.enabled,
         share_port: cfg.share.port,
         share_invite_to: cfg.share.invite_to.into(),
@@ -8047,6 +8046,9 @@ fn write_settings(read: Option<&Settings>, s: &Settings) -> Result<(), KoanError
         }
         if edited!(devices_keep_running) {
             cfg.devices.keep_running = s.devices_keep_running;
+        }
+        if edited!(updates_auto) {
+            cfg.updates.auto = s.updates_auto;
         }
         if edited!(share_enabled) {
             cfg.share.enabled = s.share_enabled;

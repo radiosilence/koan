@@ -97,6 +97,7 @@ final class AppState {
                 "Scanning library", uses: .localLibrary, cancellable: true,
                 running: mirror.tasks.scanning)
             activity.showCovers(mirror.covers)
+            activity.showArtists(mirror.artists)
         }
 
         let centre = NowPlayingCentre(player: player, mirror: mirror, art: art)

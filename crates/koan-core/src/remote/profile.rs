@@ -98,6 +98,11 @@ pub const PLAYLIST_ORDER: &str = "koanPlaylistOrder";
 /// the server already holds at a size, and says which it does not. What the
 /// preload asks first (`crate::remote::covers`).
 pub const COVERS: &str = "koanCovers";
+/// Artist biographies and photographs the server resolves for its library
+/// ahead of time, by MusicBrainz id: `getArtistInfo2` with koan's fields, and
+/// `/rest/koanArtistImage` for the photograph it keeps. What
+/// `crate::artist_info` asks before resolving an artist itself.
+pub const ARTIST_INFO: &str = "koanArtistInfo";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
