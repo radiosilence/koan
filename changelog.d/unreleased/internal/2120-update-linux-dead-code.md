@@ -1,0 +1,1 @@
+- **Linux build.** The updater's macOS-only helpers no longer fail Linux's clippy as dead code.

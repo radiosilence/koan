@@ -42,6 +42,23 @@ pub struct Config {
     pub devices: DevicesConfig,
     pub dsp: DspConfig,
     pub appearance: AppearanceConfig,
+    pub updates: UpdatesConfig,
+}
+
+/// Keeping the desktop app up to date where it was installed by hand: the
+/// DMG on macOS, the AppImage on Linux. Installs a package manager keeps (the
+/// Homebrew cask, the `.deb`) are only told of a new version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    /// Fetch each new release and install it when kōan next quits.
+    pub auto: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self { auto: true }
+    }
 }
 
 /// How the apps are drawn: Settings → Appearance.
@@ -1566,6 +1583,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.nearby_control"
         | "devices.refused"
         | "devices.keep_running"
+        // How this machine's copy of the app is kept up to date.
+        | "updates.auto"
         // Whether this machine serves its library, and where.
         | "share.enabled"
         | "share.port"
