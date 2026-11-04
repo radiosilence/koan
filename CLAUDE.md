@@ -2,7 +2,7 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Eight crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: the kōan GUI app (GPUI) on macOS and Linux, the only Mac app released from 0.70; SwiftUI on iOS and tvOS; Compose on Android. Eight crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
@@ -15,7 +15,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
-Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
+Plus **apps/macos** — the SwiftUI sources (SwiftPM, Swift 6, macOS 26+) the iOS and tvOS apps build from. Links koan-ffi. Its macOS app still builds for development but is no longer released; on a configuration the GUI app has taken over it runs as `LinkIdentity::native_app`'s `(legacy)` device.
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
@@ -88,7 +88,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Releasing
 
-`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, the kōan GUI app's DMG, AppImages and .debs, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
+`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the kōan GUI app's DMG as `Koan.dmg`, required, its AppImages and .debs, the Android APK, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
 
 ## Docs and site
 
@@ -387,12 +387,12 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
-| `platform/runtime_files.rs` | The app's runtime files (window and browse state, the desktop device's id and devices, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
+| `platform/runtime_files.rs` | The app's runtime files (window and browse state, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
 
 GPUI comes from koan's fork of Zed, radiosilence/zed, whose default branch `koan` is Zed's main with koan's commits on top: each generic and proposed upstream as a pull request cut from `main` (the idle window that stops waking each refresh, cached views redrawn alone, shader quads, keyframe tracks and the present clock, layer groups, dynamic colours, the accessibility states and test hooks), plus the crates renamed `gpui-koan-*` and the workflows that sync with Zed weekly and publish. The workspace's `gpui` and `gpui_platform` dependencies pin a revision of `koan` (root `Cargo.toml`); moving the pin is how koan takes a GPUI change. A change to GPUI itself is a commit on the fork with its own test, never a patch here.
 
-`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-runtime) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
+`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-runtime) make it the machine's app: the app's files, id and session in the config directory, as the Mac app had. The terminal UI stays a device of its own. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 
 ### apps/macos (`apps/macos/Sources/`)
 

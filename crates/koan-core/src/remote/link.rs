@@ -928,9 +928,8 @@ pub struct LinkIdentity {
     /// server rather than listing the device twice.
     pub device_id: String,
     /// Put before the names of the files this device keeps: its id and the
-    /// devices it knows. Empty for the apps; the terminal UI shares their
-    /// directory and is a device of its own. The desktop app keeps its files
-    /// outside the config directory (`home`).
+    /// devices it knows. Empty for the apps, the desktop app among them; the
+    /// terminal UI shares their directory and is a device of its own.
     pub files: &'static str,
 }
 
@@ -940,18 +939,10 @@ impl LinkIdentity {
     pub const APP_FILES: &'static str = "";
     /// The terminal UI's `files`.
     pub const TERMINAL_FILES: &'static str = "terminal-";
-    /// The desktop app's `files`.
-    pub const DESKTOP_FILES: &'static str = "desktop-";
 
-    /// Where this device's files live: the desktop app's in its state
-    /// directory (`places::state`), which is runtime state rather than
-    /// configuration; everyone else's in the config directory.
+    /// Where this device's files live: the config directory.
     pub fn home(&self) -> std::path::PathBuf {
-        if self.files == Self::DESKTOP_FILES {
-            crate::places::state()
-        } else {
-            config::config_dir()
-        }
+        config::config_dir()
     }
 
     /// This machine, named `name` or else by its hostname.
@@ -1019,19 +1010,11 @@ impl LinkIdentity {
         }
     }
 
-    /// The desktop app on this machine, kept apart from the native app and
-    /// the terminal UI as `terminal` is. An error of kind `WouldBlock` while
-    /// another desktop app on this config directory is that device; any other
-    /// when its lock cannot be made at all.
-    pub fn desktop() -> std::io::Result<Self> {
-        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app(
-            Self::DESKTOP_FILES,
-            "desktop",
-            &HELD,
-            &crate::places::state(),
-            &crate::places::runtime(),
-        )
+    /// The desktop app: this machine's app, with the files and saved session
+    /// every app keeps in the config directory. It runs once per
+    /// configuration (its single-instance lock), so it takes no device lock.
+    pub fn desktop() -> Self {
+        Self::this_device(None)
     }
 
     /// A device of its own on this config directory: its files carry
