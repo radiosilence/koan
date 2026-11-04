@@ -1374,7 +1374,7 @@ jobs:
             brew install --cask radiosilence/koan/koan-app # the desktop app
             ```
 
-            macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac; the SwiftUI Mac app is no longer released. Quit the old kōan app before opening the new one: its first launch takes the old app's place, its history, TV pairings and queue included. An old kōan app still installed shows as "(legacy)" if opened afterwards.
+            macOS: `Koan.dmg` below is the desktop app, now kōan on the Mac; the SwiftUI Mac app is no longer released. It uses the old app's configuration, device id and saved queue, so quit the old kōan app and replace it rather than running both.
 
             Linux: the `.deb` and AppImage below. Android: install `koan-android-arm64.apk` below.
 
