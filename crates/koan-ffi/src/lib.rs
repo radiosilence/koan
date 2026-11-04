@@ -593,6 +593,12 @@ impl KoanEngine {
         self.0.clone().seek(position_ms).await
     }
 
+    /// How many seeks the device in view has answered. A slider let go reads
+    /// it first and stands until a Playhead slice's `seek` is past it.
+    pub fn seeks(&self) -> u64 {
+        self.0.seeks()
+    }
+
     /// Follow the engine's state.
     ///
     /// The one way a client learns anything changed. Each answer is a batch of
@@ -1014,8 +1020,9 @@ impl KoanEngine {
     }
 
     /// The artist's photograph. Hits the network; the caller caches it.
-    /// `None` only when the artist has no photograph: a download that failed
-    /// is an error, worth asking for again.
+    /// `None` when the artist has no photograph, or has not been looked up yet
+    /// (`fetch_artist_info`): a download that failed is an error, worth asking
+    /// for again.
     pub async fn artist_image(
         self: Arc<Self>,
         artist_id: i64,
@@ -3086,6 +3093,7 @@ mod state {
             position_ms: u64,
             seekable_ms: u64,
             playing: bool,
+            seek: u64,
         },
         /// The queue, in order. The whole list: a queue that is one copy refetched
         /// whole has nothing to forget to patch.

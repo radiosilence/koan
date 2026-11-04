@@ -3,7 +3,7 @@
 //! Left, the record and track playing; centre, the controls over the seek
 //! slider; right, the format, the sleep and output menus, and EQ.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use koan_kit::app::*;
 use koan_runtime::{
@@ -1350,11 +1350,9 @@ impl Focusable for Transport {
     }
 }
 
-/// How long the slider stands on a seek's target waiting for the engine.
-pub(crate) const LANDING: Duration = Duration::from_secs(1);
-/// How near the engine's playhead must come to a seek's target to be its
-/// answer.
-pub(crate) const NEAR_MS: u64 = 250;
+/// How near the engine's whole-second reading must come to the anchor's
+/// reckoning to be of the same place.
+const NEAR_MS: u64 = 250;
 
 /// Where the times put the playhead: reckoned from the anchor shown, or at
 /// the engine's whole second its own reading, so the times step as it says
@@ -1381,43 +1379,51 @@ fn shown_position(
     }
 }
 
-/// A seek sent and not yet heard back, however it was made (the slider, the
-/// skip keys, a lyric's line, the media keys): the playhead it sets. Until
-/// the engine reports a playhead there, the seek slider stands on it, so a
-/// seek lands at once with no frame at the old place.
-#[derive(Default)]
-pub(crate) struct Landing(Option<Playhead>);
-
-impl Global for Landing {}
-
-/// The latest seek's target while it is on its way: until the engine reports
-/// a playhead there, or `LANDING` has gone by without it (a seek it did not
-/// take). What places something by the playhead (the slider, the lyrics)
-/// reads this first, so a reading from before the seek is never shown.
-pub fn landing(cx: &App) -> Option<Playhead> {
-    let target = cx.try_global::<Landing>().and_then(|l| l.0)?;
-    let mirror = cx.global::<Mirror>();
-    let current = *mirror.playhead.read(cx);
-    let duration = mirror.playback.read(cx).0.duration_ms;
-    let now = Instant::now();
-    let arrived = current.at >= target.at
-        && current.at(now, duration).abs_diff(target.at(now, duration)) < NEAR_MS;
-    (!arrived && target.at.elapsed() < LANDING).then_some(target)
+/// The thumb while the person has it. Held, it follows the pointer. Let go
+/// on this device, it stands where it was let go until the engine answers
+/// the seek: the first playhead whose `seek` count is past `after`. Let go
+/// while another device is controlled, whose reports answer no seek, it
+/// stands, marked pending, only until the command is sent (`sent`, the
+/// release it belongs to), and the slider then shows what that device
+/// reports. What the slider shows otherwise is the engine's playhead, and
+/// nothing else: no position is predicted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Thumb {
+    Held(f32),
+    LetGo { share: f32, after: u64 },
+    Sending { share: f32, sent: u64 },
 }
 
-/// Called as a seek to `target_ms` is sent.
-pub fn land(target_ms: u64, cx: &mut App) {
-    let current = *cx.global::<Mirror>().playhead.read(cx);
-    cx.set_global(Landing(Some(Playhead {
-        position_ms: target_ms,
-        at: Instant::now(),
-        ..current
-    })));
+impl Thumb {
+    fn share(self) -> f32 {
+        match self {
+            Thumb::Held(share) | Thumb::LetGo { share, .. } | Thumb::Sending { share, .. } => share,
+        }
+    }
+}
+
+/// The thumb once the engine has published `playhead`: a thumb let go is
+/// released by the playhead answering its seek, wherever that put it, and by
+/// no playhead from before.
+fn thumb_after(thumb: Option<Thumb>, playhead: &Playhead) -> Option<Thumb> {
+    match thumb {
+        Some(Thumb::LetGo { after, .. }) if playhead.seek > after => None,
+        thumb => thumb,
+    }
+}
+
+/// The count a seek let go now waits past: the engine's, or, while an
+/// earlier release here is still unanswered (`waiting`, the count that one
+/// waits past), one more than that, so the first seek's answer does not
+/// release the thumb onto the first seek's place.
+fn answer_after(waiting: Option<u64>, count: u64) -> u64 {
+    waiting.map_or(count, |earlier| count.max(earlier + 1))
 }
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. The slider glides:
+/// The position is reckoned from the engine's playhead anchor, the one source
+/// of where the playhead is that the lyrics read too. The slider glides:
 /// the anchor is handed to it (`Glide`) and the GPU reckons the fill per
 /// present, so it moves with no frame drawn, and a new anchor (a seek, a
 /// pause, the next track) corrects it. The times follow the engine's clock
@@ -1435,10 +1441,17 @@ pub struct Seek {
     /// times show at least this while it agrees with the anchor shown, since
     /// the anchor is stamped a little later than the engine took it.
     heard: Option<(u64, Instant)>,
-    /// While the thumb is held: where it is, as a share of the track.
-    dragging: Option<f32>,
-    /// Wakes the slider when a seek's target lapses unanswered.
-    lapse: Option<Task<()>>,
+    /// While the person has the thumb.
+    thumb: Option<Thumb>,
+    /// The count the latest seek let go here waits past, until a playhead
+    /// past it arrives.
+    waiting: Option<u64>,
+    /// Releases made while another device is controlled, so a send that
+    /// finishes late does not take the thumb from a later one.
+    sends: u64,
+    /// The device controlled when the thumb was last let go: a release on
+    /// one device is not held on another.
+    target: Option<String>,
     glide: Glide,
     _subscriptions: Vec<Subscription>,
 }
@@ -1447,9 +1460,26 @@ impl Seek {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
         let mut subscriptions = vec![
-            cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
+            cx.observe(&mirror.playhead, |this, playhead, cx| {
+                let playhead = playhead.read(cx);
+                this.thumb = thumb_after(this.thumb, playhead);
+                this.waiting = this.waiting.filter(|after| playhead.seek <= *after);
+                this.moved(cx);
+            }),
+            // Another device taken control of, or given back: a thumb let go
+            // for the one before is not this one's to hold.
+            cx.observe(&mirror.devices, |this, devices, cx| {
+                let target = devices.read(cx).0.target.clone();
+                if target != this.target {
+                    this.target = target;
+                    this.waiting = None;
+                    if !matches!(this.thumb, Some(Thumb::Held(_))) {
+                        this.thumb = None;
+                    }
+                    this.moved(cx);
+                }
+            }),
             cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
-            cx.observe_global::<Landing>(|this, cx| this.moved(cx)),
             // The fill is the accent.
             theme::observe_accent(cx),
             // Nothing draws the slider while the window is hidden, so
@@ -1471,8 +1501,10 @@ impl Seek {
             playback: mirror.playback,
             clock: None,
             heard: None,
-            dragging: None,
-            lapse: None,
+            thumb: None,
+            waiting: None,
+            sends: 0,
+            target: mirror.devices.read(cx).0.target.clone(),
             glide: Glide::new(),
         };
         seek.schedule(cx);
@@ -1488,52 +1520,10 @@ impl Seek {
         self.playback.read(cx).0.duration_ms
     }
 
-    /// The playhead the slider shows: the latest seek's target until the
-    /// engine reports a playhead there, or a second has gone by without it
-    /// (a seek the engine did not take). An anchor from an earlier seek,
-    /// arriving while a later one is on its way, is passed over.
-    fn shown(&self, cx: &App) -> (Playhead, bool) {
-        let current = *self.playhead.read(cx);
-        if cx.try_global::<Landing>().and_then(|l| l.0).is_none() {
-            return (current, false);
-        }
-        match landing(cx) {
-            Some(target) => (target, false),
-            None => (current, true),
-        }
-    }
-
-    /// `shown`, dropping a target that has landed or lapsed.
-    fn anchor(&mut self, cx: &mut Context<Self>) -> Playhead {
-        let (shown, settled) = self.shown(cx);
-        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
-            return shown;
-        };
-        if settled {
-            cx.set_global(Landing(None));
-            self.lapse = None;
-            return shown;
-        }
-        // Nothing else may draw the slider again when the target lapses
-        // (paused, a seek refused): a wake for that moment.
-        if self.lapse.is_none() {
-            let wait = LANDING.saturating_sub(target.at.elapsed());
-            self.lapse = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(wait).await;
-                this.update(cx, |this, cx| {
-                    this.lapse = None;
-                    this.moved(cx);
-                })
-                .ok();
-            }));
-        }
-        target
-    }
-
     fn schedule(&mut self, cx: &mut Context<Self>) {
-        let anchor = self.anchor(cx);
+        let anchor = *self.playhead.read(cx);
         let duration = self.duration_ms(cx);
-        let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        let moving = self.visible && anchor.playing && duration > 0 && self.thumb.is_none();
         // The times follow the engine's clock, which wakes this at each
         // whole second while it plays; nothing of its own counts.
         if self.visible != self.clock.is_some() {
@@ -1567,22 +1557,45 @@ impl Seek {
     }
 
     fn commit(&mut self, cx: &mut Context<Self>) {
-        let Some(share) = self.dragging.take() else {
+        let Some(Thumb::Held(share)) = self.thumb else {
             return;
         };
         let duration = self.duration_ms(cx);
-        let seekable = self.playhead.read(cx).seekable_ms;
-        // The engine clamps a seek to what has arrived of a download; so does
-        // the slider, so the playhead lands where the thumb was let go.
-        let limit = if seekable > 0 {
-            seekable.min(duration)
+        if duration == 0 {
+            self.thumb = None;
+            cx.notify();
+            return;
+        }
+        // Where the engine puts it (clamped to what has arrived of a
+        // download, or declined) is its to say; the thumb waits for that.
+        let target = (share as f64 * duration as f64) as u64;
+        let engine = engine(cx);
+        if self.target.is_none() {
+            let after = answer_after(self.waiting, engine.seeks());
+            self.waiting = Some(after);
+            self.thumb = Some(Thumb::LetGo { share, after });
+            command(cx, "seek", move |_| engine.seek(target));
         } else {
-            duration
-        };
-        let target = ((share as f64 * duration as f64) as u64).min(limit);
-        if duration > 0 {
-            land(target, cx);
-            command(cx, "seek", move |e| e.seek(target));
+            self.sends += 1;
+            let sent = self.sends;
+            self.thumb = Some(Thumb::Sending { share, sent });
+            let seek = engine.seek(target);
+            cx.spawn(async move |this, cx| {
+                if let Err(e) = seek.await {
+                    log::warn!("seek: {e}");
+                }
+                this.update(cx, |this, cx| {
+                    if this
+                        .thumb
+                        .is_some_and(|t| t == Thumb::Sending { share, sent })
+                    {
+                        this.thumb = None;
+                        this.moved(cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
         }
         self.schedule(cx);
         cx.notify();
@@ -1593,24 +1606,20 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let (anchor, _) = self.shown(cx);
+        let anchor = *self.playhead.read(cx);
         let now = Instant::now();
         let reckoned = anchor.at(now, duration);
         let position = shown_position(reckoned, self.heard, anchor.playing, now, duration);
-        let share = match self.dragging {
-            Some(share) => share,
+        let share = match self.thumb {
+            Some(thumb) => thumb.share(),
             None if duration > 0 => (position as f64 / duration as f64) as f32,
             None => 0.0,
         };
         let shown = self
-            .dragging
-            .map_or(position, |s| (s as f64 * duration as f64) as u64);
+            .thumb
+            .map_or(position, |t| (t.share() as f64 * duration as f64) as u64);
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
-        // The playhead the slider shows comes from the engine, which holds a
-        // seek's target until it lands there (`SharedPlayerState::request_seek`,
-        // and koan-ffi's `remote_seek` for a device being controlled), so a
-        // click never shows the old place again before the new one.
         // How far a track still downloading can be played, moving as its
         // bytes arrive; nothing once the file is all here.
         let reach = self
@@ -1628,14 +1637,16 @@ impl Render for Seek {
             .when(duration > 0, |s| {
                 s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
             })
-            .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .when(self.thumb.is_none(), |slider| slider.glide(&self.glide))
+            .pending(matches!(self.thumb, Some(Thumb::Sending { .. })))
             .prism(crate::theme::KoanTheme::prism(cx))
             .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {
                 change.update(cx, |this, cx| {
-                    let started = this.dragging.replace(*share).is_none();
+                    let started = !matches!(this.thumb, Some(Thumb::Held(_)));
+                    this.thumb = Some(Thumb::Held(*share));
                     if started {
                         this.schedule(cx);
                     }
@@ -1676,7 +1687,71 @@ fn controlled_shown(view: &Devices) -> ControlledShown {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::shown_position;
+    use super::{Thumb, answer_after, shown_position, thumb_after};
+    use crate::mirror::Playhead;
+
+    fn playhead(position_ms: u64, seek: u64) -> Playhead {
+        Playhead {
+            position_ms,
+            seekable_ms: TRACK,
+            playing: true,
+            at: Instant::now(),
+            seek,
+        }
+    }
+
+    /// Let go at a minute, with the engine at its fourth seek: a playhead
+    /// published before the seek was taken, however it reads, leaves the
+    /// thumb where it was let go.
+    #[test]
+    fn a_stale_playhead_after_a_seek_does_not_move_the_thumb_back() {
+        let let_go = Some(Thumb::LetGo {
+            share: 0.25,
+            after: 4,
+        });
+        assert_eq!(thumb_after(let_go, &playhead(12_000, 4)), let_go);
+        assert_eq!(thumb_after(let_go, &playhead(12_000, 3)), let_go);
+    }
+
+    /// The seek answered short of the thumb (clamped to what has arrived of
+    /// a download, or declined): the thumb goes, and the engine's place is
+    /// what shows.
+    #[test]
+    fn a_clamped_seek_settles_where_the_engine_says() {
+        let let_go = Some(Thumb::LetGo {
+            share: 0.9,
+            after: 4,
+        });
+        assert_eq!(thumb_after(let_go, &playhead(30_000, 5)), None);
+    }
+
+    /// Let go twice before the first seek is answered: the second waits past
+    /// the first's answer, so the thumb is not released onto the first
+    /// seek's place.
+    #[test]
+    fn a_second_release_waits_for_its_own_answer() {
+        assert_eq!(answer_after(None, 4), 4);
+        let second = answer_after(Some(4), 4);
+        assert_eq!(second, 5);
+        let let_go = Some(Thumb::LetGo {
+            share: 0.5,
+            after: second,
+        });
+        assert_eq!(thumb_after(let_go, &playhead(12_000, 5)), let_go);
+        assert_eq!(thumb_after(let_go, &playhead(60_000, 6)), None);
+        // The first already answered by the engine, not yet heard here.
+        assert_eq!(answer_after(Some(4), 5), 5);
+    }
+
+    /// With nothing let go, every playhead is followed, a seek made elsewhere
+    /// (the media keys, another device) included; a thumb still held follows
+    /// the pointer.
+    #[test]
+    fn a_seek_from_elsewhere_is_followed() {
+        assert_eq!(thumb_after(None, &playhead(90_000, 7)), None);
+        let held = Some(Thumb::Held(0.5));
+        assert_eq!(thumb_after(held, &playhead(90_000, 7)), held);
+    }
 
     const TRACK: u64 = 240_000;
 

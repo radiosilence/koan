@@ -595,7 +595,7 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         let amount = plain_amount(transition);
         return div()
             .absolute()
-            .size_full()
+            .inset_0()
             .bg(color.opacity(amount))
             .into_any_element();
     }
@@ -604,7 +604,7 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
     AnimatedQuad::new(&TRANSITION, transition)
         .decorative()
         .absolute()
-        .size_full()
+        .inset_0()
         .into_any_element()
 }
 

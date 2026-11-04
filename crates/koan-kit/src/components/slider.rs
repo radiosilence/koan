@@ -27,6 +27,9 @@ pub struct Slider {
     ends_width: Option<usize>,
     step: f32,
     disabled: bool,
+    /// A change sent and not yet answered: the thumb stays shown, muted,
+    /// where it was let go.
+    pending: bool,
     /// The desktop's density: a 20-point rail, as the Mac's seek bar has.
     compact: bool,
     on_change: Option<Handler<f32>>,
@@ -331,6 +334,7 @@ impl Slider {
             name: None,
             step: 0.05,
             disabled: false,
+            pending: false,
             compact: false,
             on_change: None,
             on_commit: None,
@@ -391,6 +395,14 @@ impl Slider {
         self
     }
 
+    /// A change sent and not yet answered (a seek on its way to another
+    /// device): the thumb stays shown where it was let go, in the muted ink,
+    /// which says the slider heard and is waiting.
+    pub fn pending(mut self, pending: bool) -> Self {
+        self.pending = pending;
+        self
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -445,7 +457,13 @@ impl RenderOnce for Slider {
             (p.hovered, p.pressed)
         };
         let focused = handle.is_focused(window);
-        let thumb = !self.disabled && (hovered || pressed || focused);
+        let pending = self.pending && !self.disabled;
+        let thumb = !self.disabled && (hovered || pressed || focused || pending);
+        let thumb_ink = if pending {
+            look.palette.muted.hsla()
+        } else {
+            look.palette.ink.hsla()
+        };
         let value = self.value;
         let glide = self.glide.clone().filter(|_| SHADED);
         let prism = self.prism;
@@ -597,11 +615,11 @@ impl RenderOnce for Slider {
                         .ml(px(-THUMB / 2.0))
                         .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
-                        .bg(look.palette.ink.hsla()),
+                        .bg(thumb_ink),
                 )
             })
             .when_some(glide, |rail, glide| {
-                let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
+                let (fill_color, thumb_color) = (look.accent.hsla(), thumb_ink);
                 let program = if prism.is_some() {
                     &super::prism::PRISM_GLIDE
                 } else {

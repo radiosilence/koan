@@ -979,8 +979,8 @@ fn decode_single(
     // 79MB. The timeline records where playback actually resumed, so the
     // transport shows the position being heard.
     //
-    // Opus lands `OPUS_PREROLL_MS` early and decodes its way to the request,
-    // discarding what it decoded: its decoder carries state from packet to
+    // Opus lands `OPUS_PREROLL_MS` early on purpose and decodes its way to
+    // the request, discarding what it decoded: its decoder carries state from packet to
     // packet, and a fresh one needs that long to converge (RFC 7845 §4.6).
     // Starting cold at the request would play its first frames wrong.
     let mut seek_samples = 0;
@@ -1001,11 +1001,13 @@ fn decode_single(
                 seek_ms.saturating_sub(preroll) * sample_rate as u64 * channels as u64 / 1000,
             );
         let landed_at_start = seek_samples == 0;
-        if preroll > 0 {
-            let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
-            discard = wanted.saturating_sub(seek_samples) as usize;
-            seek_samples += discard as u64;
-        }
+        // Every codec lands on a packet's start, short of the request by up
+        // to a packet; what is decoded before the request is discarded, so
+        // playback resumes, and the playhead reads, exactly where it was
+        // asked to. A seek to a lyric's line starts on that line.
+        let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
+        discard = wanted.saturating_sub(seek_samples) as usize;
+        seek_samples += discard as u64;
         if let Some(ref mut dec) = symphonia_decoder {
             dec.reset();
         }
@@ -2074,9 +2076,10 @@ mod tests {
             total_ms,
             info.duration_ms
         );
-        // Landing is frame-granular, never sample-exact.
+        // What the decoder lands on before the request is discarded, so
+        // playback resumes, and the playhead reads, at the request.
         assert!(
-            reported_start_ms.abs_diff(seek_ms) < 100,
+            reported_start_ms.abs_diff(seek_ms) <= 1,
             "seek to {}ms reported {}ms",
             seek_ms,
             reported_start_ms
