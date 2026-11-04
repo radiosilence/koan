@@ -1,0 +1,1 @@
+- **CI jobs named after their platforms.** The Apple jobs are now macOS, iOS and tvOS; macOS builds and tests the workspace as Linux does.
