@@ -1593,7 +1593,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir payload
-          tar xzf artifacts/koan-macos-arm64/koan-macos-arm64.tar.gz -C payload
+          # download-artifact puts a lone match straight into `path`, several
+          # into a folder each, so the tarball is found wherever it landed.
+          tar xzf "$(find artifacts -name koan-macos-arm64.tar.gz | head -1)" -C payload
           hash=$(cat payload/* | shasum -a 256 | cut -c1-12)
           zip="$RUNNER_TEMP/koan-$VERSION-macos-$hash.zip"
           ditto -c -k --norsrc --noextattr payload "$zip"
