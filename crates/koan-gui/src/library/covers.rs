@@ -420,6 +420,27 @@ impl Queue {
     fn next_decode(&self) -> Option<Key> {
         self.most_urgent(|k| self.decodable(k))
     }
+
+    /// `art` is now known to have a photo: what was concluded without that
+    /// (no art, a failure), and any fetch still running on that footing, is
+    /// set aside. A fetch in flight lands under the old generation and is
+    /// ignored, and the record is fetched again. Returns how many requests
+    /// can start now.
+    fn reconsider(&mut self, art: Art) -> usize {
+        if !self.absent.contains(&art)
+            && !self.failed.contains(&art)
+            && !self.fetching.contains(&art)
+        {
+            return 0;
+        }
+        *self.generation.entry(art).or_default() += 1;
+        self.absent.remove(&art);
+        self.failed.remove(&art);
+        self.wanted
+            .keys()
+            .filter(|k| k.art == art && self.fetchable(k))
+            .count()
+    }
 }
 
 struct Shared {
@@ -629,6 +650,15 @@ impl Covers {
     /// The bytes of the bitmaps held, for the benches.
     pub fn memory_bytes(&self) -> usize {
         self.memory_bytes
+    }
+
+    /// An artist's info has been looked up since their photo was asked for,
+    /// and it names a photo. A photo asked for before the lookup (a search
+    /// result's face) was answered as none, which would otherwise stand for
+    /// the session.
+    pub fn photo_found(&mut self, art: Art) {
+        let fetches = self.shared.queue.lock().reconsider(art);
+        self.shared.wake(fetches, 0);
     }
 
     pub fn is_absent(&self, art: Art) -> bool {
@@ -1936,5 +1966,34 @@ mod tests {
         assert_eq!(q.next_decode(), Some(Key { art: a, px: 64 }));
         q.decoded.insert(Key { art: a, px: 64 });
         assert_eq!(q.next_decode(), None);
+    }
+
+    #[test]
+    fn a_photo_found_after_it_was_answered_as_none_is_fetched_again() {
+        let mut q = Queue {
+            fetches_allowed: true,
+            ..Queue::default()
+        };
+        let art = Art::Artist(7);
+        let key = Key { art, px: 288 };
+        // Asked for before the artist was looked up: answered as none.
+        q.absent.insert(art);
+        q.want(key, Priority::Visible);
+        assert_eq!(q.next_fetch(), None);
+        assert_eq!(q.reconsider(art), 1);
+        assert_eq!(q.next_fetch(), Some(art));
+
+        // Still in flight when the lookup lands: its answer is the old
+        // generation's, so it cannot mark the record as having none.
+        q.fetching.insert(art);
+        let asked_under = q.generation(art);
+        assert_eq!(q.reconsider(art), 0);
+        assert_ne!(q.generation(art), asked_under);
+
+        // Known, with nothing concluded and nothing running: left alone.
+        q.fetching.remove(&art);
+        let settled = q.generation(art);
+        assert_eq!(q.reconsider(art), 0);
+        assert_eq!(q.generation(art), settled);
     }
 }

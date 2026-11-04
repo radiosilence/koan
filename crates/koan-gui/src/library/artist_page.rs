@@ -246,6 +246,10 @@ impl ArtistPage {
                         .map_or((false, false), |i| (i.has_image, i.bio.is_some()));
                     let drawn = this.record.is_some();
                     this.photo_arriving |= fetched.has_image && !had_photo && drawn;
+                    if fetched.has_image && !had_photo {
+                        let art = Art::Artist(this.artist_id);
+                        this.lib.covers.update(cx, |c, _| c.photo_found(art));
+                    }
                     this.bio_arriving |= fetched.bio.is_some() && !had_bio && drawn;
                     if this.photo_arriving || this.bio_arriving {
                         let timer = cx.background_executor().timer(Motion::NORMAL);
