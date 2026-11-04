@@ -111,17 +111,36 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
 /// waiting on MusicBrainz's rate limit, and a connection held through them is
 /// one every other reader goes without.
 pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
-    fetch_since(pool, artist_id, false, true)
+    fetch_since(pool, artist_id, false, Asker::Page)
+}
+
+/// `fetch` for a client of this server (`getArtistInfo2`): by MusicBrainz id
+/// only, never a name search, since the answer goes out as resolved by id.
+pub fn fetch_by_id(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
+    fetch_since(pool, artist_id, false, Asker::Client)
+}
+
+/// Who asks, which decides how far a lookup goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asker {
+    /// A page: a name search as the last resort, and a stale answer rather
+    /// than a failure.
+    Page,
+    /// A client of this server: by id only, and a stale answer rather than
+    /// a failure.
+    Client,
+    /// The walk: by id only, and a failure is said, so the walk can tell the
+    /// network is down.
+    Walk,
 }
 
 /// `fetch`, looking the artist up again even while the cache is fresh when
-/// `again` is set, and finding an artist's id by searching for their name
-/// only when `by_name` is.
+/// `again` is set, as far as `asker` allows.
 fn fetch_since(
     pool: &Pool,
     artist_id: i64,
     again: bool,
-    by_name: bool,
+    asker: Asker,
 ) -> Result<Option<ArtistInfo>, ArtistInfoError> {
     let now = crate::clock::unix_secs();
     let (held, subject, served) = {
@@ -132,8 +151,14 @@ fn fetch_since(
             served(&db.conn, artist_id)?,
         )
     };
+    // A miss found by id alone (the walk's, a client's) leaves a page its
+    // name search while the artist's id is still unknown.
+    let searchable = asker == Asker::Page
+        && held.as_ref().is_some_and(ArtistInfo::is_empty)
+        && subject.as_ref().is_some_and(|s| s.mbid.is_none());
     if let Some(held) = &held
         && !again
+        && !searchable
         && !held.is_stale(now, served.is_some())
     {
         return Ok(Some(held.clone()));
@@ -154,7 +179,7 @@ fn fetch_since(
         return Ok(held);
     };
 
-    let found = look_up(&subject, now, by_name);
+    let found = look_up(&subject, now, asker == Asker::Page);
     if let Ok((_, Some(mbid))) = &found
         && subject.mbid.is_none()
     {
@@ -171,8 +196,8 @@ fn fetch_since(
         Err(e) => {
             log::warn!("artist info for {artist_id}: {e}");
             match held {
-                Some(held) => Ok(Some(held)),
-                None => Err(e),
+                Some(held) if asker != Asker::Walk => Ok(Some(held)),
+                _ => Err(e),
             }
         }
     }
@@ -188,8 +213,8 @@ fn from_server(client: &SubsonicClient, id: &str, now: i64) -> Result<ArtistInfo
         // Where the photograph came from, standing for it: it is fetched
         // from the server (`image`).
         image_url: answer
-            .koan_image
-            .then(|| answer.large_image_url.unwrap_or_default()),
+            .large_image_url
+            .filter(|u| answer.koan_image && !u.is_empty()),
         image_credit: answer.koan_image_credit.filter(|_| answer.koan_image),
         fetched_at: now,
     })
@@ -247,9 +272,30 @@ pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoE
             uid(&db.conn, artist_id)?,
         )
     };
+    let address = held.as_ref().and_then(|info| info.image_url.clone());
     if let Some((client, id)) = &served {
+        if let (Some(uid), Some(url)) = (&uid, &address)
+            && let Some(kept) = kept(uid, url)
+        {
+            return Ok(Some(kept));
+        }
         match client.koan_artist_image(id) {
-            Ok(found) => return Ok(found),
+            Ok(Some(bytes)) => {
+                if let (Some(uid), Some(url)) = (&uid, &address) {
+                    keep(uid, url, &bytes);
+                }
+                return Ok(Some(bytes));
+            }
+            // The server has none after all: the page gives its box back
+            // until the server is next asked.
+            Ok(None) => {
+                pool.get()?.conn.execute(
+                    "UPDATE artist_info SET image_url = NULL, image_credit = NULL
+                      WHERE artist_id = ?1",
+                    params![artist_id],
+                )?;
+                return Ok(None);
+            }
             Err(e) => log::info!("artist {artist_id}'s photo from the server: {e}"),
         }
     }
@@ -278,7 +324,7 @@ pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoE
         }
         Err(e) if e.refused() => {
             log::info!("artist {artist_id}'s photo was refused ({e}); looking it up again");
-            let fresh = fetch_since(pool, artist_id, true, true);
+            let fresh = fetch_since(pool, artist_id, true, Asker::Page);
             // Marked as looked up whatever the lookup did (throttled, offline,
             // nothing found, which store nothing), so the daily bound holds.
             touch(pool, artist_id);
@@ -390,7 +436,8 @@ pub struct Walk {
 
 static PROGRESS: Mutex<Option<Walk>> = Mutex::new(None);
 static STARTED: AtomicBool = AtomicBool::new(false);
-/// Rung when the library changes, so the walk looks for new artists.
+/// Rung when the library changes, so the walk looks for new artists, and when
+/// the network stops being constrained.
 static WAKE: LazyLock<crate::signal::Wake> = LazyLock::new(crate::signal::Wake::new);
 
 /// Between one artist and the next: the lookups themselves keep to
@@ -413,8 +460,9 @@ pub fn progress() -> Option<Walk> {
     *PROGRESS.lock()
 }
 
-/// The library's artists may have changed: look for ones not yet looked up.
-pub fn library_changed() {
+/// Something the walk waits on changed: the library's artists, or whether
+/// the network is constrained.
+pub fn wake() {
     if STARTED.load(Ordering::Relaxed) {
         WAKE.bump();
     }
@@ -457,11 +505,18 @@ fn run() {
         crate::quiet::wait_until_awake();
         let generation = WAKE.generation();
         let ended = walk(crate::db::pool::shared());
-        let wait = match ended {
-            Ended::Failed => AFTER_FAILURE,
-            Ended::Through | Ended::NotNow => INTERVAL,
-        };
-        let mut seen = WAKE.wait_until(generation, wait);
+        match ended {
+            // Not woken early by the library: the next walk would only fail
+            // again.
+            Ended::Failed => {
+                std::thread::sleep(AFTER_FAILURE);
+                continue;
+            }
+            // Quiet: back to waiting for the app to wake.
+            Ended::NotNow if !crate::remote::covers::constrained() => continue,
+            Ended::NotNow | Ended::Through => {}
+        }
+        let mut seen = WAKE.wait_until(generation, INTERVAL);
         // Rung: wait for the library to rest.
         while seen != generation {
             let rang = seen;
@@ -556,7 +611,7 @@ fn walk(pool: &Pool) -> Ended {
 /// and a miss stored even where the artist is not one to look up, so the next
 /// walk passes them by.
 fn look_up_ahead(pool: &Pool, artist_id: i64) -> Result<(), ArtistInfoError> {
-    let info = fetch_since(pool, artist_id, false, false)?;
+    let info = fetch_since(pool, artist_id, false, Asker::Walk)?;
     let Some(info) = info else {
         store(
             &pool.get()?.conn,
@@ -923,24 +978,9 @@ mod tests {
         };
         let album = |artist: i64, title: &str, mbid: Option<&str>, added: &str| {
             conn.execute(
-                "INSERT INTO albums (title, artist_id, mbid, added_at, uid)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    artist,
-                    artist,
-                    mbid,
-                    added,
-                    uuid::Uuid::now_v7().to_string()
-                ],
+                "INSERT INTO albums (title, artist_id, mbid, added_at) VALUES (?1, ?2, ?3, ?4)",
+                params![title, artist, mbid, added],
             )
-            .map(|_| ())
-            .or_else(|_| {
-                conn.execute(
-                    "INSERT INTO albums (title, artist_id, mbid, added_at) VALUES (?1, ?2, ?3, ?4)",
-                    params![title, artist, mbid, added],
-                )
-                .map(|_| ())
-            })
             .unwrap();
         };
         let old = artist("Glass Candy", Some("mb-old"));

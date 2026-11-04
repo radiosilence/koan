@@ -47,7 +47,7 @@ impl Drop for Turn {
     fn drop(&mut self) {
         *RUNNING.lock() = None;
         // The scan may have brought in artists to look up.
-        crate::artist_info::library_changed();
+        crate::artist_info::wake();
     }
 }
 

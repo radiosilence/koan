@@ -7583,15 +7583,7 @@ fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
 }
 
 fn sniff_mime(data: &[u8]) -> &'static str {
-    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        "image/png"
-    } else if data.starts_with(&[0xFF, 0xD8]) {
-        "image/jpeg"
-    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-        "image/webp"
-    } else {
-        "application/octet-stream"
-    }
+    koan_core::index::folder_art::image_mime(data).unwrap_or("application/octet-stream")
 }
 
 fn parse_qid(s: &str) -> Result<QueueItemId, KoanError> {

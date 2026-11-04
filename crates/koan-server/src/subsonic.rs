@@ -2377,7 +2377,7 @@ async fn get_artist_info2(
                 (artist_id, mbid.filter(|m| !m.is_empty()))
             };
             // No connection is held while MusicBrainz and Wikimedia answer.
-            let info = koan_core::artist_info::fetch(&state.pool, artist_id)
+            let info = koan_core::artist_info::fetch_by_id(&state.pool, artist_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .unwrap_or_default();
             Ok(b.child(artist_info_node(&info, mbid.as_deref())))
@@ -2435,7 +2435,10 @@ async fn koan_artist_image(
             Ok(bytes) => (
                 StatusCode::OK,
                 [
-                    (header::CONTENT_TYPE, image_mime(&bytes)),
+                    (
+                        header::CONTENT_TYPE,
+                        koan_core::index::folder_art::image_mime(&bytes).unwrap_or("image/jpeg"),
+                    ),
                     (header::CACHE_CONTROL, "max-age=86400"),
                 ],
                 bytes,
@@ -2445,30 +2448,6 @@ async fn koan_artist_image(
         }
     })
     .await
-}
-
-/// An image's type, from its first bytes.
-fn image_mime(bytes: &[u8]) -> &'static str {
-    match bytes {
-        [0x89, b'P', b'N', b'G', ..] => "image/png",
-        [b'G', b'I', b'F', ..] => "image/gif",
-        [
-            b'R',
-            b'I',
-            b'F',
-            b'F',
-            _,
-            _,
-            _,
-            _,
-            b'W',
-            b'E',
-            b'B',
-            b'P',
-            ..,
-        ] => "image/webp",
-        _ => "image/jpeg",
-    }
 }
 
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {

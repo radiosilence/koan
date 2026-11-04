@@ -623,15 +623,8 @@ impl QueryRoot {
 
             match koan_core::index::folder_art::cover_art(std::path::Path::new(&path)) {
                 Some(data) => {
-                    let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-                        "image/png"
-                    } else if data.starts_with(&[0xFF, 0xD8]) {
-                        "image/jpeg"
-                    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-                        "image/webp"
-                    } else {
-                        "application/octet-stream"
-                    };
+                    let mime = koan_core::index::folder_art::image_mime(&data)
+                        .unwrap_or("application/octet-stream");
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
                     Ok(Some(GqlCoverArt {
                         data_base64: encoded,
