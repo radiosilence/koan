@@ -128,7 +128,7 @@ pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
                         .is_none_or(|last| last.elapsed().map_or(true, |since| since >= EVERY))
             });
             if due {
-                cx.update(|cx| check(cx));
+                cx.update(check);
             }
             cx.background_executor().timer(TICK).await;
         }
