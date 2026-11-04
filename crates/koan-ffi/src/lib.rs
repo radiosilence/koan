@@ -4667,6 +4667,8 @@ mod types {
         pub devices_nearby_control: String,
         /// The Mac app stays in the menu bar with its window closed.
         pub devices_keep_running: bool,
+        /// The desktop app fetches each new release and installs it on quit.
+        pub updates_auto: bool,
 
         /// This device serves its library whenever the app is open.
         pub share_enabled: bool,
