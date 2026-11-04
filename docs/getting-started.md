@@ -11,7 +11,7 @@ kōan plays a music folder on this machine, a server's library, or both merged i
 On a Mac, download [`Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) or install with Homebrew:
 
 ```bash
-brew install --cask radiosilence/koan/koan-app
+brew install --cask radiosilence/tap/koan-app
 ```
 
 On Linux, each release carries an AppImage and a `.deb`. See [The desktop app](guide/desktop.md).
@@ -78,7 +78,7 @@ On iOS and Android, when the server cannot be reached for a few seconds while th
 ## The terminal UI
 
 ```bash
-mise use -g github:radiosilence/koan@latest   # or: brew install radiosilence/koan/koan
+mise use -g github:radiosilence/koan@latest   # or: brew install radiosilence/tap/koan
                                               # or: cargo install koan-cli
 ```
 
