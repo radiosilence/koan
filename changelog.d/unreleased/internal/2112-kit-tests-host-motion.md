@@ -1,0 +1,1 @@
+- **Kit tests ignore the host's accessibility settings.** A machine asking for less motion no longer lands the transitions the rest tests catch in flight.
