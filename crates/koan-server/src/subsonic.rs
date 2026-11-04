@@ -9592,6 +9592,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn artist_info_is_answered_from_what_the_server_holds() {
+        let (state, _dir) = test_state();
+        let (found, missed) = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let artist = |name: &str| {
+                let id = queries::get_or_create_artist(&db.conn, name, None).unwrap();
+                db.conn
+                    .execute(
+                        "UPDATE artists SET mbid = 'mb-' || id WHERE id = ?1",
+                        rusqlite::params![id],
+                    )
+                    .unwrap();
+                id
+            };
+            let (found, missed) = (artist("Glass Candy"), artist("Desire"));
+            let now = koan_core::clock::unix_secs();
+            db.conn
+                .execute(
+                    "INSERT INTO artist_info (artist_id, bio, bio_url, image_url, image_credit, fetched_at)
+                     VALUES (?1, 'An American duo.', 'https://en.wikipedia.org/wiki/Glass_Candy',
+                             'https://upload.wikimedia.org/glass.jpg', 'A. Photographer, CC BY-SA 4.0', ?3),
+                            (?2, NULL, NULL, NULL, NULL, ?3)",
+                    rusqlite::params![found, missed, now],
+                )
+                .unwrap();
+            (found, missed)
+        };
+        let (found_uid, missed_uid) = (
+            uid_of(&state, queries::UidKind::Artist, found),
+            uid_of(&state, queries::UidKind::Artist, missed),
+        );
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+
+        let v = get(format!("getArtistInfo2?id={found_uid}")).await;
+        let info = &v["artistInfo2"];
+        assert_eq!(info["biography"], "An American duo.", "{v}");
+        assert_eq!(info["musicBrainzId"], format!("mb-{found}"));
+        assert_eq!(
+            info["largeImageUrl"],
+            "https://upload.wikimedia.org/glass.jpg"
+        );
+        assert_eq!(
+            info["koanBioUrl"],
+            "https://en.wikipedia.org/wiki/Glass_Candy"
+        );
+        assert_eq!(info["koanImageCredit"], "A. Photographer, CC BY-SA 4.0");
+        assert_eq!(info["koanImage"], true);
+
+        let v = get(format!("getArtistInfo2?id={missed_uid}")).await;
+        let info = &v["artistInfo2"];
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(info["biography"].is_null(), "{v}");
+        assert_eq!(info["koanImage"], false);
+
+        let v = get(format!("koanArtistImage?id={missed_uid}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+    }
+
+    #[tokio::test]
     async fn favourites_carry_starred_in_json_and_xml() {
         let (state, _dir) = test_state();
         let [alpha, _, _] = seed_shelves(&state)[..] else {
