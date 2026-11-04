@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.70.3
+
+### Changed
+
+- **The SwiftUI sources are the iOS and Apple TV app's alone.** The Mac app they also built, unreleased since 0.70, is removed with its shell, its AppKit views, its build recipes and its CI job; the sources move to `apps/ios`, beside the Xcode project that builds them.
+
+### Fixed
+
+- **iOS playing bars move again.** The analyser parked when the play head stalled for over a second, as it does while a streamed track starts or a seek waits for bytes, and nothing woke it once the music resumed; decoded audio arriving while a subscriber waits now wakes it.
+- **The server banner shows only when a server set up on this device cannot be used.** It said "Signed out of your server" on a device that was signed out on purpose, never had a server, or was sharing its own library; every app now shows it only for a refused or missing sign-in, or a server out of reach.
+- **Every address Settings → Server shows copies on click.** Only the address on your network did; the Tailscale name and the address invites carry, the tailnet's or Funnel's, now copy the same way.
+- **A sign-out cut short by quitting is finished at the next launch, and what you do meanwhile is kept.** Signing out records that the server's library is still to be forgotten, and the next launch finishes the forgetting if the app quit, crashed or was suspended first. Hearts, plays, new playlists and session saves made while the forgetting runs now land after it, rather than being deleted with the server's.
+- **The invite QR code follows the invite address.** Switching **Invite phones to** in the desktop app could leave the code and link showing the previous address; a new address now makes a new invite.
+- **Sharing follows Tailscale coming up and Funnel moving without being restarted, and says when Tailscale cannot carry invites.** The shared library learned its Tailscale name and Funnel address only when sharing started, so one started while Tailscale was stopped refused every request through it. It now asks again when a request names a host it does not know. Settings → Server says, beside **Invite phones to**, when Tailscale is stopped or the tailnet does not allow Funnel.
+- **Share links work while the desktop app shares its own library, and are disabled where none can be made.** The link was built on `server.url`, which sharing never set, so every share failed. Funnel's or a custom address now lives in `server.url`, the one public address that invites and share links both read; a `share.url` from an earlier version is moved there once at launch. Signed out of every server and not sharing, the share actions are disabled with the reason, which the engine reports as `share_links_unavailable`.
+- **Turning sharing off stays on the sharing settings.** Unticking it in the desktop app's Settings → Server sent the pane to the sign-in form for another server.
+- **A sign-in that never reached the server says so.** It said the server did not accept the credentials; it now says it could not reach the address tried, keeping the credentials message for a server that answered and refused.
+
+### Internal
+
+- **CI jobs named after their platforms.** The Apple jobs are now macOS, iOS and tvOS; macOS builds and tests the workspace as Linux does.
+
 ## 0.70.2
 
 ### Changed
