@@ -25,9 +25,12 @@ pub struct ShareForm {
     creating: bool,
     /// The invite shown, made for this account and this address: a new
     /// address makes a new invite, so its code never shows the last one.
-    link: Option<((String, Option<String>), Entity<LinkDevice>)>,
+    link: Option<(MadeFor, Entity<LinkDevice>)>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// The account an invite is made for, and the address it carries.
+type MadeFor = (String, Option<String>);
 
 impl ShareForm {
     pub fn new(ctx: &Ctx, window: &mut Window, cx: &mut Context<ServerPane>) -> Self {
