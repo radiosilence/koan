@@ -219,6 +219,51 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     assert!(!uniforms.is_live(Instant::now()), "the window parks");
 }
 
+/// Liveness is per slot: a block drawing with a slot at rest parks while
+/// another slot, such as the accent, is still turning, and a block drawing
+/// with the turning slot keeps presenting.
+#[test]
+fn a_block_parks_while_a_slot_it_does_not_name_moves() {
+    let _clock = CLOCK.lock();
+    let rest = ColorSlot::claim(Rgba::default()).expect("a free slot");
+    let turning = ColorSlot::claim(Rgba::default()).expect("a free slot");
+    turning.to(
+        Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        Track {
+            from: 0.0,
+            to: 1.0,
+            start: 0.0,
+            length: 600.0,
+            curve: TrackCurve::Linear,
+            repeat: TrackRepeat::Once,
+        },
+    );
+    let quiet = ShaderUniforms::new();
+    let busy = ShaderUniforms::new();
+    for (uniforms, slot) in [(&quiet, &rest), (&busy, &turning)] {
+        uniforms.set_origin(Instant::now());
+        uniforms.set_color(0, slot.hsla(1.0));
+    }
+    for _ in 0..3 {
+        let now = Instant::now();
+        gpui::refresh_dynamic_colors(now);
+        quiet.take_present(now);
+        busy.take_present(now);
+    }
+    let now = Instant::now();
+    gpui::refresh_dynamic_colors(now);
+    assert!(
+        !quiet.is_live(now),
+        "a block at rest presents for another slot"
+    );
+    assert!(busy.is_live(now), "a block with a turning slot parked");
+}
+
 #[test]
 fn a_storm_of_retargets_stays_finite_and_comes_to_rest() {
     let _clock = CLOCK.lock();

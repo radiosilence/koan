@@ -1,0 +1,1 @@
+- **The desktop app no longer crashes within seconds of launch on macOS 27.** A window's display link now lets go of its layer before the window draws to it again.

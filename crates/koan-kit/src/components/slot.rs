@@ -10,7 +10,7 @@
 //! made for, which a retarget samples a moving value at.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{ColorHandle, DYNAMIC_COLORS, Hsla, Rgba};
 use parking_lot::Mutex;
@@ -61,7 +61,7 @@ fn epoch() -> Instant {
 /// When a frame made now reaches the screen, as the last present said:
 /// what a retarget samples a moving value at. Never before now.
 pub fn present_now() -> Instant {
-    let presented = epoch() + std::time::Duration::from_nanos(PRESENTED.load(Ordering::Relaxed));
+    let presented = epoch() + Duration::from_nanos(PRESENTED.load(Ordering::Relaxed));
     presented.max(Instant::now())
 }
 
@@ -78,11 +78,18 @@ pub fn install() {
                     continue;
                 };
                 colors[index] = shown(entry, now);
-                until[index] = moving_until(entry, now)
-                    .map(|end| table.origin + std::time::Duration::from_secs_f32(end.max(0.0)));
+                until[index] = moving_until(entry, now).map(|end| table.origin + deadline(end));
             }
         })
     });
+}
+
+/// An end in table seconds as a time from the table's origin, a millisecond
+/// late: table seconds are `f32`, which near the hour's rebase resolves to
+/// half a millisecond, and a present just inside the end would compute a
+/// colour just short of it and then park there.
+fn deadline(end: f32) -> Duration {
+    Duration::from_secs_f64(f64::from(end.max(0.0))) + Duration::from_millis(1)
 }
 
 /// Until when an entry moves, in table seconds, if it moves at `now`; a
