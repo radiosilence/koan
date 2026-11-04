@@ -438,14 +438,15 @@ fn away_from_home(
         choice,
         serving,
     );
+    let tailscale_row = Row::new("Tailscale");
     let mut rows = vec![
-        Row::new("Tailscale")
-            .value(match (&tailscale, checked) {
-                (Some(t), _) => format!("Detected · {}", t.name),
-                (None, true) => "Not detected".to_owned(),
-                (None, false) => "Looking…".to_owned(),
-            })
-            .into_any_element(),
+        match (&tailscale, checked) {
+            (Some(t), _) => tailscale_row
+                .control(CopyText::new("copy-tailnet-name", t.name.clone()).help("Copy the name")),
+            (None, true) => tailscale_row.value("Not detected"),
+            (None, false) => tailscale_row.value("Looking…"),
+        }
+        .into_any_element(),
     ];
     let values: Vec<InviteTo> = options.iter().map(|(_, v)| *v).collect();
     let picker_ctx = ctx.clone();
@@ -499,10 +500,10 @@ fn away_from_home(
                     .control(div().w_full().child(TextField::new(address)))
                     .into_any_element(),
             );
-        } else {
+        } else if let Some(current) = addresses.current.clone() {
             rows.push(
                 Row::new("Address")
-                    .value(addresses.current.clone().unwrap_or_default())
+                    .control(CopyText::new("copy-invite-address", current).help("Copy the address"))
                     .into_any_element(),
             );
         }
