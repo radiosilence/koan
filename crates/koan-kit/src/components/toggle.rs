@@ -320,7 +320,7 @@ mod tests {
     use gpui::{IntoElement, TestAppContext};
 
     use super::*;
-    use crate::components::testing::{act, click, node, redraw, stage};
+    use crate::components::testing::{act, click, node, press, redraw, stage};
 
     /// A toggle holding its value in `on`, as an owner would, and a
     /// disabled one that must never be told anything.
@@ -375,7 +375,7 @@ mod tests {
         let on = Rc::new(Cell::new(false));
         let cx = toggles(cx, on.clone(), Rc::default());
         cx.update(|window, cx| window.focus_next(cx));
-        cx.simulate_keystrokes("space");
+        press(cx, "space");
         assert!(on.get(), "space did not reach the toggle");
     }
 

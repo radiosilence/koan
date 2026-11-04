@@ -14,7 +14,16 @@ fn colours(shot: &image::RgbaImage) -> usize {
     shot.pixels().map(|p| p.0).collect::<HashSet<_>>().len()
 }
 
-#[test]
+// Its own main rather than libtest's harness: the macOS platform must be
+// made on the main thread.
+fn main() {
+    match gpui_platform::current_headless_renderer() {
+        Ok(Some(_)) => every_page_draws_in_both_appearances(),
+        Ok(None) => println!("storybook: skipped, no headless renderer on this platform"),
+        Err(e) => println!("storybook: skipped, no headless renderer: {e}"),
+    }
+}
+
 fn every_page_draws_in_both_appearances() {
     let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
@@ -23,7 +32,6 @@ fn every_page_draws_in_both_appearances() {
         gpui_platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui::init(cx);
         theme::init(cx);
     });
 
@@ -34,7 +42,7 @@ fn every_page_draws_in_both_appearances() {
             .open_window(size(px(1280.0), px(1100.0)), |window, cx| {
                 let view = cx.new(|cx| Storybook::new(window, cx));
                 book = Some(view.clone());
-                cx.new(|cx| gpui::base::Root::new(view, window, cx))
+                koan_kit::components::host(view, window, cx)
             })
             .expect("the window");
         let book = book.expect("the storybook");

@@ -29,6 +29,10 @@ smallvec = "1"
 # A text field's word and character boundaries.
 unicode-segmentation = "1.13"
 
+[[test]]
+name = "storybook"
+harness = false
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 # The headless renderer the storybook and frame-timing examples draw with.

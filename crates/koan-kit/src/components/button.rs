@@ -429,7 +429,7 @@ mod tests {
     use gpui::{IntoElement, TestAppContext, VisualTestContext};
 
     use super::*;
-    use crate::components::testing::{act, click, node, stage};
+    use crate::components::testing::{act, click, node, press, stage};
 
     /// A labelled button, a glyph named by its tooltip, and a disabled one,
     /// each counting the clicks it is given.
@@ -485,8 +485,8 @@ mod tests {
         let clicks = Rc::new(Cell::new([0; 3]));
         let cx = buttons(cx, clicks.clone());
         cx.update(|window, cx| window.focus_next(cx));
-        cx.simulate_keystrokes("enter");
-        cx.simulate_keystrokes("space");
+        press(cx, "enter");
+        press(cx, "space");
         assert_eq!(clicks.get(), [2, 0, 0]);
     }
 
@@ -502,7 +502,7 @@ mod tests {
             window.focus_next(cx);
             window.focus_next(cx);
         });
-        cx.simulate_keystrokes("enter");
+        press(cx, "enter");
         assert_eq!(clicks.get()[2], 0, "a disabled button was clicked");
         assert_eq!(node(cx, "remove").1["disabled"], true);
     }

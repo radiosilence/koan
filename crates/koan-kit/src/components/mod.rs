@@ -721,9 +721,11 @@ mod fallback_tests {
 #[cfg(test)]
 pub(crate) mod testing {
     use gpui::accesskit::{Action, ActionRequest, NodeId, TreeId};
+    use gpui::prelude::*;
     use gpui::{
-        AnyElement, Bounds, Context, Entity, IntoElement, Modifiers, ParentElement, Pixels, Point,
-        Render, Styled, TestAppContext, VisualTestContext, Window, div, px,
+        AnyElement, Bounds, Context, Entity, IntoElement, KeyUpEvent, Keystroke, Modifiers,
+        ParentElement, Pixels, Point, Render, Styled, TestAppContext, VisualTestContext, Window,
+        div, px,
     };
     use serde_json::Value;
 
@@ -752,7 +754,6 @@ pub(crate) mod testing {
         build: impl Fn(&mut Window, &mut Context<Stage>) -> Vec<(&'static str, AnyElement)> + 'static,
     ) -> (Entity<Stage>, &mut VisualTestContext) {
         cx.update(|cx| {
-            gpui::init(cx);
             crate::theme::init(cx);
         });
         let (stage, cx) = cx.add_window_view(|_, _| Stage {
@@ -773,6 +774,18 @@ pub(crate) mod testing {
     pub fn bounds(cx: &mut VisualTestContext, name: &'static str) -> Bounds<Pixels> {
         cx.debug_bounds(name)
             .unwrap_or_else(|| panic!("{name} is not drawn"))
+    }
+
+    /// `key` pressed and released on what has the keyboard, drawn first so
+    /// the focused control has registered its keys: a control's Enter and
+    /// Space click on the release.
+    pub fn press(cx: &mut VisualTestContext, key: &'static str) {
+        redraw(cx);
+        cx.simulate_keystrokes(key);
+        cx.simulate_event(KeyUpEvent {
+            keystroke: Keystroke::parse(key).expect("a key"),
+        });
+        cx.run_until_parked();
     }
 
     /// A click at `at`.
