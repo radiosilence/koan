@@ -24,6 +24,12 @@ const TRACK_JOINS: &str = "FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id";
 
+/// `TRACK_JOINS` without the names, for a count or an existence check whose
+/// filter reads none of them: SQLite keeps a LEFT JOIN in an aggregate even
+/// when nothing reads it, and over every track of a broad search the three
+/// lookups cost more than the rest of the count.
+const TRACK_ONLY: &str = "FROM tracks t";
+
 /// A list bound as one parameter, the JSON array `json_list` makes.
 const IN_LIST: &str = "(SELECT value FROM json_each(?))";
 
@@ -480,7 +486,20 @@ pub fn filter_tracks(
     if let Some(fallback) = fuzzy_fallback(conn, filter)? {
         return filter_tracks(conn, &fallback, order, descending, limit, offset);
     }
-    let Some((body, mut binds)) = track_body(conn, filter, order == TrackOrder::Relevance)? else {
+    filter_tracks_resolved(conn, filter, order, descending, limit, offset)
+}
+
+/// `filter_tracks` for a filter whose fuzzy fallback is already resolved.
+fn filter_tracks_resolved(
+    conn: &Connection,
+    filter: &TrackFilter,
+    order: TrackOrder,
+    descending: bool,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TrackRow>, DbError> {
+    let Some((body, mut binds)) = track_body(conn, filter, order == TrackOrder::Relevance, true)?
+    else {
         return Ok(Vec::new());
     };
     let order = match order {
@@ -535,7 +554,29 @@ pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbEr
     if let Some(fallback) = fuzzy_fallback(conn, filter)? {
         return count_tracks(conn, &fallback);
     }
-    let Some((body, binds)) = track_body(conn, filter, false)? else {
+    count_tracks_resolved(conn, filter)
+}
+
+/// A page of `filter_tracks` and the `count_tracks` total, with the fuzzy
+/// fallback decided once for both.
+pub fn filter_tracks_counted(
+    conn: &Connection,
+    filter: &TrackFilter,
+    order: TrackOrder,
+    descending: bool,
+    limit: u32,
+    offset: u32,
+) -> Result<(Vec<TrackRow>, u64), DbError> {
+    let fallback = fuzzy_fallback(conn, filter)?;
+    let filter = fallback.as_ref().unwrap_or(filter);
+    Ok((
+        filter_tracks_resolved(conn, filter, order, descending, limit, offset)?,
+        count_tracks_resolved(conn, filter)?,
+    ))
+}
+
+fn count_tracks_resolved(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbError> {
+    let Some((body, binds)) = track_body(conn, filter, false, false)? else {
         return Ok(0);
     };
     let n: i64 = conn.query_row(
@@ -553,7 +594,7 @@ fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<Trac
     let Some(query) = &filter.search else {
         return Ok(None);
     };
-    let Some((body, binds)) = track_body(conn, filter, false)? else {
+    let Some((body, binds)) = track_body(conn, filter, false, false)? else {
         return Ok(None);
     };
     let found: bool = conn.query_row(
@@ -577,16 +618,28 @@ fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<Trac
 
 /// The FROM and WHERE that `filter_tracks` and `count_tracks` share, and their
 /// parameters in order. `None` when nothing can match: an empty id list.
-/// `ranked` joins the ids as `r`, for `TrackOrder::Relevance` to order by.
+/// `ranked` joins the ids as `r`, for `TrackOrder::Relevance` to order by;
+/// `named` joins the artist and album names, which the columns and the
+/// orders read, and which the body joins anyway when the filter reads them.
 #[allow(clippy::type_complexity)]
 fn track_body(
     conn: &Connection,
     filter: &TrackFilter,
     ranked: bool,
+    named: bool,
 ) -> Result<Option<(String, Vec<Box<dyn ToSql>>)>, DbError> {
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
-    let mut joins = String::from(TRACK_JOINS);
+    let names = named
+        || filter.artist_name.is_some()
+        || filter.album_title.is_some()
+        || filter.year_start.is_some()
+        || filter.year_end.is_some()
+        || filter
+            .search
+            .as_ref()
+            .is_some_and(|q| !q.chars().any(char::is_alphanumeric));
+    let mut joins = String::from(if names { TRACK_JOINS } else { TRACK_ONLY });
     if let Some(played) = filter.played {
         // In the FROM, so bound before anything the WHERE binds.
         binds.push(Box::new(super::auth::resolve_user(conn, played.user)?));
@@ -614,9 +667,11 @@ fn track_body(
 
     if let Some(query) = &filter.search {
         if query.chars().any(char::is_alphanumeric) {
-            clauses.push(
-                "t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string(),
-            );
+            // Joined rather than `t.id IN (…)`, so the index drives the
+            // read: an existence check stops at the first match instead of
+            // listing every one.
+            joins.push_str(" JOIN tracks_fts ON tracks_fts.rowid = t.id");
+            clauses.push("tracks_fts MATCH ?".to_string());
             binds.push(Box::new(super::search::sanitize_fts_query(query)));
         } else {
             // The index tokenizes words and drops punctuation, so a query of

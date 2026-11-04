@@ -1077,6 +1077,7 @@ impl StoryContent {
                                 .items_center()
                                 .child(ToolbarTitle::new("queue")),
                         )
+                        .trailing(ToolbarButton::new("tb-queue", Icon::Queue, "queue"))
                         .trailing(
                             ToolbarButton::new("tb-lyrics", Icon::Lyrics, "lyrics").selected(true),
                         )

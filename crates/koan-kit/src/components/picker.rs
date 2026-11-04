@@ -116,13 +116,20 @@ impl RenderOnce for Picker {
         .items_center()
         .gap(look.space(Space::Xs))
         // The theme's bordered button, as a form's dropdown is.
-        .py(look.spaced(6.))
-        .px(look.spaced(12.))
-        .border(look.hairline)
-        .border_color(look.palette.muted.hsla())
+        .py(look.spaced(6.) + look.hairline)
+        .px(look.spaced(12.) + look.hairline)
         .text_role(TypeRole::Control, &look)
         .text_color(color)
+        // The fill and the outline are siblings sized alike, so they are one
+        // box whatever the content measures.
         .when(!self.disabled, |d| d.child(lit))
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .border(look.hairline)
+                .border_color(look.palette.muted.hsla()),
+        )
         .child(div().whitespace_nowrap().child(shown))
         .child(
             KoanIcon::new(Icon::Choose)

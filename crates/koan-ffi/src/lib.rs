@@ -1020,8 +1020,9 @@ impl KoanEngine {
     }
 
     /// The artist's photograph. Hits the network; the caller caches it.
-    /// `None` only when the artist has no photograph: a download that failed
-    /// is an error, worth asking for again.
+    /// `None` when the artist has no photograph, or has not been looked up yet
+    /// (`fetch_artist_info`): a download that failed is an error, worth asking
+    /// for again.
     pub async fn artist_image(
         self: Arc<Self>,
         artist_id: i64,

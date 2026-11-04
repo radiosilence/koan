@@ -9,7 +9,6 @@
 
 use std::collections::HashSet;
 use std::ops::Range;
-use std::time::Duration;
 
 use koan_kit::app::*;
 use koan_runtime::{BrowseFilter, Track, TrackBrowseSort};
@@ -26,7 +25,6 @@ use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::navigator::{Listing, Shelf};
 
 const PAGE: u32 = 1000;
-const TYPING: Duration = Duration::from_millis(80);
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -260,24 +258,11 @@ impl TrackBrowser {
             return;
         }
         self.stale = false;
-        let typed = self
-            .loading
-            .as_ref()
-            .or(self.loaded.as_ref())
-            .is_some_and(|(q, v)| {
-                *v == version
-                    && q.search != wanted.0.search
-                    && q.filter == wanted.0.filter
-                    && q.sort == wanted.0.sort
-            });
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
-            if typed {
-                cx.background_executor().timer(TYPING).await;
-            }
             let q = wanted.0.clone();
             // Read until the listing covers the rows on screen, then swapped
             // in whole; after that each page is appended as it lands.
