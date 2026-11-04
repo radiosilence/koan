@@ -173,7 +173,7 @@ impl ShareForm {
         let ctx2 = ctx.clone();
         let pane = cx.entity();
         ctx.sharing.update(cx, |sharing, cx| {
-            sharing.create_account(name, secret, cx, move |_, result, cx| {
+            sharing.create_account(name, secret, cx, move |result, cx| {
                 let made = result.is_ok();
                 pane.update(cx, |pane, cx| {
                     pane.share.creating = false;
