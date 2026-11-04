@@ -99,7 +99,7 @@ Toolbar::new()
     .trailing(ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics").selected(open))
 ```
 
-`ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell, `surface` under the pointer, `hover` pressed, the focus ring, 40 % disabled; the word in the cell with icons off.
+`ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell with no ground, `strong` under the pointer and the accent pressed; on (`selected`) it rests at `strong` and the pointer takes it to the accent; the focus ring, 40 % disabled; the word in the cell with icons off.
 
 `ToolbarSelection::new("3 selected").action(id, label, run)`: what a toolbar says while things are picked, the Mac's selection bar: the count in `muted`, then text buttons in the accent, the toolbar's group spacing between each.
 
@@ -136,7 +136,7 @@ TableRow::new(id, RowKind::Art)
 
 ### CommandBar (Arc's and Dia's command bars)
 
-`CommandBar::new(id, &input).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top, results in headed groups of `SuggestionRow`s with the lit one kept in view, and along its foot what each key does. The owner holds the query and decides what is found and what each key does.
+`CommandBar::new(id, field).results(CommandResults::new(id).section(title, rows).lit(ix).key("⌘↩", "play next").empty(…)).on_dismiss(…)`: a search over everything, centred over the dimmed window, the query in `title_small` across its top (`CommandBar::field(&input)`), results in headed groups of `SuggestionRow`s with the lit one kept in view, scrolling between the query and the keys when the panel is short, and along its foot what each key does. The owner holds the query and decides what is found and what each key does. The field and the results are passed apart so the owner can draw each in a cached view of its own: a keystroke then draws the field alone, and the results only when an answer lands, however many rows and sleeves they hold.
 
 ### Collection, CollectionSection, Pill (Mac: `MixedCollection`, `ArtistPill`)
 

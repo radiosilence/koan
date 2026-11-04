@@ -213,9 +213,10 @@ impl RowMetrics {
         px((132.0 * look.scale.size).round())
     }
 
-    /// An artist's photo in their page's header, the Mac's.
+    /// An artist's photo in their page's header: the size of a record's sleeve
+    /// in its header, so the two pages line up.
     pub fn artist_photo(look: &Look) -> Pixels {
-        px((112.0 * look.scale.size).round())
+        Self::header_art(look)
     }
 
     /// A record heading's sleeve, square.

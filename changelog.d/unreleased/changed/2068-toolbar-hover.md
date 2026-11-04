@@ -1,0 +1,1 @@
+- **Toolbar buttons answer in colour alone.** `ToolbarButton` no longer draws a square ground under the pointer or when on: the glyph goes from `ink` to `strong` on hover and to the accent when pressed, and a toggle that is on rests at `strong`.

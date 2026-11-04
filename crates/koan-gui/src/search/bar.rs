@@ -15,9 +15,14 @@
 //! | Escape | clear the ticks, then empty the query, then close |
 //!
 //! Ticked rows are listed first, whatever the query, so a pick built over
-//! several queries stays in view. The answers go deeper while the box is
-//! open (`Search::set_deep`), and rows are shown only once they answer the
-//! query as typed, so a fast Return never acts on the last query's answer.
+//! several queries stays in view. The keys act on rows only once they
+//! answer the query as typed, so a fast Return never acts on the last
+//! query's answer.
+//!
+//! The field and the results are views of their own (`QueryField`,
+//! `Found`), drawn cached, as a library page's filter field is: a keystroke
+//! draws the field alone, whatever the results hold, and the results are
+//! drawn when an answer lands, a sleeve arrives or the light moves.
 
 use std::rc::Rc;
 
@@ -26,7 +31,7 @@ use koan_kit::app::*;
 use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
-use crate::components::{CommandBar, Cover, CoverArt, SuggestionRow};
+use crate::components::{CommandBar, CommandResults, Cover, CoverArt, SuggestionRow};
 use crate::library::Lib;
 use crate::library::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::Playable;
@@ -153,16 +158,9 @@ impl Verb {
 }
 
 pub struct SearchBar {
-    lib: Lib,
-    search: Entity<Search>,
     input: Entity<InputState>,
-    /// The answer the found rows were made from, and the rows.
-    shown: Option<(Rc<Results>, Rc<Vec<Item>>)>,
-    lit: Option<usize>,
-    /// Ticked, in the order ticked.
-    ticked: Vec<Item>,
-    /// The sleeves last asked for.
-    aimed: Option<Rc<Vec<Item>>>,
+    field: Entity<QueryField>,
+    found: Entity<Found>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -176,57 +174,138 @@ impl Focusable for SearchBar {
 
 impl SearchBar {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = lib.search.clone();
-        let owner = cx.entity_id();
-        let query = search.read(cx).query().to_string();
+        let query = lib.search.read(cx).query().to_string();
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx).placeholder("search everything");
             state.set_value(query, window, cx);
             state
         });
         input.update(cx, |input, cx| input.focus(window, cx));
+        let field = cx.new(|cx| QueryField {
+            input: input.clone(),
+            // Cached, the field draws again only when its own view hears
+            // the input change, not the input alone.
+            _redraw: cx.observe(&input, |_, _, cx| cx.notify()),
+        });
+        let found = cx.new(|cx| Found::new(lib, input.clone(), cx));
         let subscriptions = vec![
             cx.subscribe_in(
                 &input,
                 window,
                 |this, input, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
-                        this.lit = None;
                         let text = input.read(cx).value().to_string();
-                        this.search.update(cx, |s, cx| s.set_query(&text, cx));
+                        this.found.update(cx, |f, cx| f.typed(&text, cx));
                     }
                     InputEvent::PressEnter { secondary, shift } => {
-                        this.act(Verb::of(*secondary, false, *shift), window, cx);
+                        let verb = Verb::of(*secondary, false, *shift);
+                        this.found.update(cx, |f, cx| f.act(verb, window, cx));
                     }
                     _ => {}
                 },
             ),
+            cx.subscribe(&found, |_, _, _: &Dismissed, cx| cx.emit(Dismissed)),
+        ];
+        Self {
+            input,
+            field,
+            found,
+            _subscriptions: subscriptions,
+        }
+    }
+}
+
+/// The query's field, a view of its own so a keystroke draws nothing else.
+pub struct QueryField {
+    input: Entity<InputState>,
+    _redraw: Subscription,
+}
+
+impl Render for QueryField {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Laid out on its own, as wide as the room it was given.
+        div().size_full().child(CommandBar::field(&self.input))
+    }
+}
+
+/// What the query found, as rows, and what the keys do to them: drawn when
+/// an answer lands, a sleeve arrives, the light moves or a row is ticked.
+pub struct Found {
+    lib: Lib,
+    search: Entity<Search>,
+    input: Entity<InputState>,
+    /// The answer the found rows were made from, and the rows.
+    shown: Option<(Rc<Results>, Rc<Vec<Item>>)>,
+    /// What is drawn: the rows of the last answer to land, kept while the
+    /// next is read, so typing never empties the list.
+    drawn: Rc<Vec<Item>>,
+    /// Whether the last answer was to the query as typed, and whether
+    /// anything is typed: together, an empty answer is "nothing found".
+    answered: bool,
+    typed: bool,
+    lit: Option<usize>,
+    /// Ticked, in the order ticked.
+    ticked: Vec<Item>,
+    /// The sleeves last asked for.
+    aimed: Option<Rc<Vec<Item>>>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<Dismissed> for Found {}
+
+impl Found {
+    fn new(lib: Lib, input: Entity<InputState>, cx: &mut Context<Self>) -> Self {
+        let search = lib.search.clone();
+        let owner = cx.entity_id();
+        let subscriptions = vec![
             // A new answer, to this query or another, keeps the lit row on
             // the thing it lit where that is still listed.
             cx.observe(&search, |this, _, cx| {
                 let was = this.lit_item();
-                let rows = this.rows(cx);
+                this.landed(cx);
+                let rows = listed(&this.ticked, &this.drawn);
                 this.lit = relit(was.as_ref(), &rows);
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
-            // Closed: the search goes back to the sidebar's depth, and the
-            // sleeves asked for are let go.
+            // Closed: the sleeves asked for are let go.
             cx.on_release(move |this, cx| {
-                this.search.update(cx, |s, cx| s.set_deep(false, cx));
                 this.lib.covers.update(cx, |c, cx| c.release(owner, cx));
             }),
         ];
-        search.update(cx, |s, cx| s.set_deep(true, cx));
-        Self {
+        let mut found = Self {
             lib,
             search,
             input,
             shown: None,
+            drawn: Rc::new(Vec::new()),
+            answered: false,
+            typed: false,
             lit: None,
             ticked: Vec::new(),
             aimed: None,
             _subscriptions: subscriptions,
+        };
+        found.landed(cx);
+        found
+    }
+
+    /// The query as typed: asked of the search, which answers off the main
+    /// thread; the light goes out, and nothing is drawn until the answer.
+    fn typed(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.lit.take().is_some() {
+            cx.notify();
+        }
+        self.search.update(cx, |s, cx| s.set_query(text, cx));
+    }
+
+    /// The search answered, or was cleared: what is drawn follows.
+    fn landed(&mut self, cx: &App) {
+        let query_empty = self.search.read(cx).query().is_empty();
+        self.typed = !query_empty;
+        self.answered = self.answered(cx);
+        if self.answered || query_empty {
+            self.drawn = self.found(cx);
         }
     }
 
@@ -255,11 +334,10 @@ impl SearchBar {
         listed(&self.ticked, &found)
     }
 
-    /// The thing lit, from the rows as last made.
+    /// The thing lit, from the rows as drawn.
     fn lit_item(&self) -> Option<Item> {
-        let found = self.shown.as_ref().map_or(&[][..], |(_, rows)| &rows[..]);
         self.lit
-            .and_then(|i| listed(&self.ticked, found).get(i).cloned())
+            .and_then(|i| listed(&self.ticked, &self.drawn).get(i).cloned())
     }
 
     /// Whether the search has answered the query as typed: until it has,
@@ -444,11 +522,11 @@ impl SearchBar {
     }
 }
 
-impl Render for SearchBar {
+impl Render for Found {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         let side = SuggestionRow::sleeve(&p.look, true);
-        let found = self.found(cx);
+        let found = self.drawn.clone();
         self.aim(&found, side, window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
@@ -493,12 +571,16 @@ impl Render for SearchBar {
             }
             let row = row
                 .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    if *hovered && this.lit != Some(ix) {
+                    // A row left over from the last answer is not the query's.
+                    if *hovered && this.lit != Some(ix) && ix < this.rows(cx).len() {
                         this.lit = Some(ix);
                         cx.notify();
                     }
                 }))
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                    if ix >= this.rows(cx).len() {
+                        return;
+                    }
                     this.lit = Some(ix);
                     let m = e.modifiers();
                     if m.secondary(cx) && !m.shift {
@@ -513,7 +595,7 @@ impl Render for SearchBar {
                 _ => sections.push((group, vec![row])),
             }
         }
-        let mut bar = CommandBar::new("search-bar", &self.input).lit(self.lit);
+        let mut bar = CommandResults::new("search-bar-results").lit(self.lit);
         for (kind, list) in sections {
             bar = bar.section(kind.map_or("ticked", Kind::heading), list);
         }
@@ -534,7 +616,7 @@ impl Render for SearchBar {
                     this.act(Verb::All, window, cx);
                 })),
         );
-        if !self.input.read(cx).value().trim().is_empty() && self.answered(cx) {
+        if self.typed && self.answered {
             bar = bar.empty("nothing found");
         }
         // What the keys do: with nothing lit or ticked, Return is the query
@@ -558,25 +640,53 @@ impl Render for SearchBar {
                 .key("tab", "tick")
                 .key("⇧↩", "all results")
         };
-        let bar = bar
-            .key(
-                "esc",
-                if picking {
-                    format!("clear {ticks} ticked")
-                } else {
-                    "close".to_owned()
-                },
-            )
-            .on_dismiss(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
+        bar.key(
+            "esc",
+            if picking {
+                format!("clear {ticks} ticked")
+            } else {
+                "close".to_owned()
+            },
+        )
+    }
+}
+
+impl Render for SearchBar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A cached view is as big as its style says, whatever it draws: the
+        // field one line of its type, the results the room under the query.
+        let line = CommandBar::field_height(window, cx);
+        let bar = CommandBar::new(
+            "search-bar",
+            self.field
+                .clone()
+                .cached(StyleRefinement::default().w_full().h(line)),
+        )
+        .results(
+            self.found
+                .clone()
+                .cached(StyleRefinement::default().w_full().flex_1().min_h_0()),
+        )
+        .on_dismiss(cx.listener(|_, _, _, cx| cx.emit(Dismissed)));
         div()
             .absolute()
             .inset_0()
             .key_context("SearchBar")
-            .capture_action(cx.listener(|this, _: &MoveDown, _, cx| this.arrow(true, cx)))
-            .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.arrow(false, cx)))
-            .capture_action(cx.listener(|this, _: &Escape, window, cx| this.escape(window, cx)))
-            .capture_action(cx.listener(|this, _: &FocusNext, _, cx| this.tick(cx)))
-            .capture_action(cx.listener(|this, _: &FocusPrevious, _, cx| this.tick(cx)))
+            .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
+                this.found.update(cx, |f, cx| f.arrow(true, cx))
+            }))
+            .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
+                this.found.update(cx, |f, cx| f.arrow(false, cx))
+            }))
+            .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                this.found.update(cx, |f, cx| f.escape(window, cx))
+            }))
+            .capture_action(
+                cx.listener(|this, _: &FocusNext, _, cx| this.found.update(cx, |f, cx| f.tick(cx))),
+            )
+            .capture_action(cx.listener(|this, _: &FocusPrevious, _, cx| {
+                this.found.update(cx, |f, cx| f.tick(cx))
+            }))
             // The box holds the keyboard while it is up: F6 does not take
             // it to the page behind.
             .capture_action(cx.listener(|_, _: &NextRegion, _, _| {}))
@@ -589,7 +699,7 @@ impl Render for SearchBar {
                 if k.key == "enter" && (m.alt || (m.secondary(cx) && m.shift)) {
                     cx.stop_propagation();
                     let verb = Verb::of(m.secondary(cx), m.alt, m.shift);
-                    this.act(verb, window, cx);
+                    this.found.update(cx, |f, cx| f.act(verb, window, cx));
                 }
             }))
             .child(bar)

@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 use std::ops::Range;
-use std::time::Duration;
 
 use koan_kit::app::*;
 use koan_runtime::{Artist, BrowseFilter};
@@ -18,8 +17,6 @@ use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::navigator::{Listing, Shelf};
 use crate::theme::Icon;
-
-const TYPING: Duration = Duration::from_millis(80);
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -228,19 +225,11 @@ impl ArtistBrowser {
         if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
             return;
         }
-        let typed = self
-            .loading
-            .as_ref()
-            .or(self.loaded.as_ref())
-            .is_some_and(|(q, v)| *v == version && q.filter == wanted.0.filter);
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
-            if typed {
-                cx.background_executor().timer(TYPING).await;
-            }
             let q = wanted.0.clone();
             let artists = engine.artists(q.search, q.filter).await;
             this.update(cx, |this, cx| {
