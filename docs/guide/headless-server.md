@@ -30,7 +30,7 @@ MCP is served at `/mcp` on the same port, with its own OAuth sign-in on `server.
 
 The TUI serves no API unless one of the flags above or `[graphql] enabled = true` asks it to. When it does, the [setup page](#the-first-account) stays closed, so the first admin comes from `koan auth setup`.
 
-A headless server indexes the library folders when it starts and again whenever they change, as the macOS app does.
+A headless server indexes the library folders when it starts and again whenever they change, as the desktop app does.
 
 ## Configuration
 

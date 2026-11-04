@@ -4,13 +4,15 @@ kōan's desktop app runs on macOS and Linux. It is drawn with GPUI and links the
 
 ## Installing
 
-Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is called kōan, as the native app is, and installs beside it rather than over it, as `kōan desktop.app`.
+Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is `Koan.dmg`, and installs as `kōan desktop.app`.
 
 ## Beside the other apps
 
-On one machine the desktop app, the macOS app and the terminal UI can all run at once on the same library. Each is a device of its own to the server and the network, named for what it is (`studio (desktop)`, `studio (terminal)`), so one can control another and none takes another's place. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.
+The desktop app is this computer to the server and the network: named after it (`studio`), with the computer's device id, saved session and the devices it knows. The terminal UI on the same library is a device of its own, `studio (terminal)`, with a session of its own, so one can control the other. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.
 
-The desktop app keeps its own saved session, the queue and where it had got to, apart from the macOS app's and the terminal UI's on the same configuration directory. It picks it up at launch and saves it as it goes and as it quits, so the apps can run side by side without one replacing the other's queue.
+## Replacing the Mac app
+
+From 0.70 the desktop app is kōan on the Mac, and the SwiftUI Mac app is no longer released. The desktop app uses the same configuration directory, device id and saved queue, so the phones, the TV and the server go on seeing one Mac. Quit the old app and replace it rather than running both: the two would be the same device.
 
 ## Files from outside
 
@@ -28,21 +30,21 @@ The app shows what is playing in the system's controls, cover included, and take
 
 ## The Dock
 
-On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a spindle at the circle's centre, so it is told apart from the Mac app in the Dock and the app switcher.
+On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here.
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The same shortcuts on both, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the ⋯ button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
-If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
+If the library cannot be opened (a database a newer kōan has upgraded, another desktop app already running on the same configuration, or, on a Mac, the Mac app running as this device), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
 Settings → Devices → In the background keeps kōan running with its window closed, so your other devices can still see and control this computer: on macOS it moves from the Dock to the menu bar, whose item shows what is playing and opens the window again; on Linux, opening kōan again brings the window back. Open at login asks the system to start kōan when you log in (Login Items on macOS, which may ask for approval in System Settings; an autostart entry on Linux). A computer cannot be woken from another device, so a kōan that has quit is out of reach until it is opened again.
 
-What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts, the desktop device's id and the devices it knows go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. `KOAN_PLACES_DIR` puts all of them in one directory instead (`state/`, `runtime/` and `cache/` inside it), which `just gui-run` and the examples point inside their throwaway configuration, so deleting it deletes them. Files an earlier version left in the configuration directory are moved there on the first launch.
+What the app writes as it runs stays out of the configuration directory, which may be kept in a dotfiles repository: the window's place, the browsers' sorts go to the platform's state directory (`~/Library/Application Support/koan/` on macOS, `$XDG_STATE_HOME/koan/` on Linux), its locks to `$XDG_RUNTIME_DIR/koan/` on Linux, and the artwork and Now Playing's covers to the platform's cache. Each sits under a folder named for the configuration directory (`default` for your own), so a throwaway `KOAN_CONFIG_DIR` keeps them apart. `KOAN_PLACES_DIR` puts all of them in one directory instead (`state/`, `runtime/` and `cache/` inside it), which `just gui-run` and the examples point inside their throwaway configuration, so deleting it deletes them. Files an earlier version left in the configuration directory are moved there on the first launch.
 
 ## Running a build from source
 
@@ -120,7 +122,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 ## Settings
 
-⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. Its tabs are Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 

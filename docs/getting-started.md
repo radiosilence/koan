@@ -2,19 +2,23 @@
 
 kōan plays a music folder on this machine, a server's library, or both merged into one. Which piece to install depends on where the music is:
 
-- **On the computer you listen at:** the macOS app, or the terminal UI on macOS (Apple silicon) and Linux.
+- **On the computer you listen at:** the desktop app on macOS and Linux, or the terminal UI.
 - **On another machine:** run the [server](guide/headless-server.md) there, and sign in from the apps, the browser or any Subsonic client.
 - **On a Navidrome or Subsonic server you already run:** the apps and terminal UI play from it directly. See [Remote servers](guide/remote-servers.md), or [Migrating from Navidrome](guide/migrating-from-navidrome.md) to replace it.
 
-## The macOS app
+## The desktop app
 
-Download [`Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) or install with Homebrew:
+On a Mac, download [`Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) or install with Homebrew:
 
 ```bash
 brew install --cask radiosilence/koan/koan-app
 ```
 
-Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the Mac's own library](guide/sharing-your-mac.md) with your phone. It needs macOS 26 or later, and shares its config and library with the terminal UI.
+On Linux, each release carries an AppImage and a `.deb`. See [The desktop app](guide/desktop.md).
+
+Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the computer's own library](guide/sharing-your-mac.md) with your phone. On a Mac it needs macOS 26 or later. It shares its config and library with the terminal UI.
+
+The SwiftUI Mac app is no longer released. The desktop app replaces it on the same configuration, as described in [The desktop app](guide/desktop.md#replacing-the-mac-app).
 
 An output device can take a while to open: a DAC waking from sleep, or the Mac's audio system busy. kōan goes on taking commands meanwhile, so a seek, pause or skip applies once the device is ready, and after two seconds a line across the top of the window says which device it is waiting for. **Retry** asks the device again. **Cancel** plays on the system's default output until another device is chosen, or stops if the default is the one that will not open. The desktop app and the iOS app do the same.
 

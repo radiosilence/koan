@@ -1,0 +1,1 @@
+- **The desktop app is kōan on the Mac.** It uses the Mac app's configuration, device id and saved queue, and the release ships it as the only Mac app; the SwiftUI Mac app is no longer released.
