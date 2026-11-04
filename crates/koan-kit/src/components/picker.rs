@@ -126,7 +126,7 @@ impl RenderOnce for Picker {
         .child(
             div()
                 .absolute()
-                .size_full()
+                .inset_0()
                 .border(look.hairline)
                 .border_color(look.palette.muted.hsla()),
         )
