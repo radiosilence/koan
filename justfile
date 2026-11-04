@@ -176,10 +176,10 @@ macos-icon:
     iconutil -c icns "$set" -o {{app_dir}}/Resources/AppIcon.icns
     echo "built {{app_dir}}/Resources/AppIcon.icns"
 
-# Regenerate the desktop app's AppIcon.icns from its AppIcon.svg (kōan's
-# icon with a spindle at the circle's centre, so it is told apart from the Mac
-# app), and AppIcon-launch.png, the same icon on the macOS icon grid, which a
-# build outside a bundle sets at launch.
+# Regenerate the desktop app's AppIcon.icns from its AppIcon.svg, AppIcon-launch.png,
+# the same icon on the macOS icon grid, which a build outside a bundle sets at
+# launch, and AppIcon-dev.svg and .icns, the icon with a spindle at the circle's
+# centre, which the dev bundle wears so it is told apart from the installed app.
 gui-icon *args:
     python3 scripts/gui-icon.py {{args}}
 
@@ -1980,7 +1980,7 @@ gui-run *ARGS:
     # and LaunchServices may open links with it.
     rm -rf "$PWD/target/gui-dev/kōan dev.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
+    cp crates/koan-gui/packaging/AppIcon-dev.icns "$app/Contents/Resources/AppIcon.icns"
     # A new file, never the signed one rewritten in place: macOS keeps a
     # binary's signature by its file and kills a launch that no longer
     # matches it.

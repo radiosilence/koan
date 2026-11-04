@@ -264,7 +264,7 @@ With the mouse: click selects, a second click opens, the wheel scrolls, and the 
 
 `koan` in the terminal is a device of its own, as the apps are. It links to the server it is signed in to and, unless Settings turns it off, listens and announces itself on the local network, so the apps list it under Control as "*hostname* (terminal)" and can play, pause, skip and change its queue. Quitting it hangs up on the server and the network at once.
 
-It keeps an id of its own (`terminal-device-id` in the config directory), so it is a separate device from the Mac app sharing that directory, and both can run at once. It keeps its own saved queue too: quitting one never replaces the queue the other restores. Only one terminal on a machine is that device: a second `koan` started beside it plays here only, neither listed nor able to control another, and starts with an empty queue it does not save, so it never replaces the first one's.
+It keeps an id of its own (`terminal-device-id` in the config directory), so it is a separate device from the desktop app sharing that directory, and both can run at once. It keeps its own saved queue too: quitting one never replaces the queue the other restores. Only one terminal on a machine is that device: a second `koan` started beside it plays here only, neither listed nor able to control another, and starts with an empty queue it does not save, so it never replaces the first one's.
 
 `C` opens **Play on**: this terminal, then every kōan device it can reach, each with what it is doing.
 

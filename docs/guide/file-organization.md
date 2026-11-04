@@ -1,14 +1,14 @@
 # File organization
 
-Organize moves and renames files into a library folder by a foobar2000-style [format string](../format-strings.md), from the TUI or the macOS app. Every move is previewed before anything is touched.
+Organize moves and renames files into a library folder by a foobar2000-style [format string](../format-strings.md), from the TUI or the desktop app. Every move is previewed before anything is touched.
 
-## In the macOS app
+## In the desktop app
 
 1. Select tracks in the queue, or an album or artist in the library
-2. **Organize Files…** from the context menu
-3. Pick a pattern, and a library folder if you have more than one
+2. **Organise…** from the context menu
+3. Pick or type a pattern, and a library folder if you have more than one
 4. Read the preview
-5. **Move Files**
+5. **Organise**, then confirm the counts
 
 Dropping a folder from Finder onto the queue indexes the files where they are and queues them, without moving anything. Organize them into the library once you have listened.
 
@@ -38,7 +38,7 @@ A blocked file is listed with the destination it collided with.
 
 ## Destination
 
-Files are organized into a **configured library folder** (from `[library] folders` in your config). The TUI uses the first one; the macOS app lets you pick when there is more than one. The format pattern generates the relative path within that folder.
+Files are organized into a **configured library folder** (from `[library] folders` in your config). The TUI uses the first one; the desktop app lets you pick when there is more than one. The format pattern generates the relative path within that folder.
 
 For example, with `folders = ["/Volumes/Music/library"]` and the `standard` pattern, a track becomes:
 
@@ -50,7 +50,7 @@ With no library folder configured, organize refuses to plan.
 
 ## Configuring patterns
 
-In the macOS app, **Edit** next to the pattern picker turns the pattern into a field; the preview follows what you type, and **Save** writes it to `config.toml`. An unsaved edit still previews and runs. Patterns can also be written in the config:
+In the desktop app the pattern is a field: the preview follows what you type, and **Save** writes it to `config.toml` under a name. An unsaved pattern still previews and runs. Patterns can also be written in the config:
 
 ```toml
 [organize]

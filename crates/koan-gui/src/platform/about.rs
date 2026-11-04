@@ -12,10 +12,9 @@ pub const BUILD: &str = env!("KOAN_BUILD");
 const SITE: &str = "https://koan.rocks";
 const SOURCE: &str = "https://github.com/radiosilence/koan";
 
-/// The desktop app's icon as a build outside a bundle sets it: kōan's, with a
-/// spindle at the circle's centre so it is told apart from the Mac app. AppKit
-/// draws a set image as it is, so this one sits on the macOS icon grid, where
-/// a bundle's `.icns` is fitted to it by the system.
+/// The desktop app's icon as a build outside a bundle sets it, with the dev
+/// spindle. AppKit draws a set image as it is, so this one sits on the macOS icon grid, where a
+/// bundle's `.icns` is fitted to it by the system.
 #[cfg(target_os = "macos")]
 const ICON: &[u8] = include_bytes!("../../packaging/AppIcon-launch.png");
 

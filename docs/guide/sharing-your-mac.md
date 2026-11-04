@@ -1,6 +1,6 @@
 # Sharing your Mac
 
-The macOS app can be a kōan server: phones and other devices sign in to it and play the Mac's library, as they would a server running on another machine. Nothing else needs installing.
+The desktop app on a Mac can be a kōan server: phones and other devices sign in to it and play the Mac's library, as they would a server running on another machine. Nothing else needs installing.
 
 ## Turning it on
 

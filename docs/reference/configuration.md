@@ -41,13 +41,15 @@ polluted by an older kōan cleans itself up as you use the app.
 
 ## What is not in the config files
 
-The macOS app's own view state -- whether the lyrics panel is open, whether the
-queue is grouped, how much the app draws -- lives in macOS defaults
-(`defaults read cc.blit.koan`), not in `config.toml`. None of it means anything
+The desktop app's own view state -- the window's bounds, whether the sidebar
+shows, whether the queue is grouped -- lives in `desktop-window` in its state
+directory, and the SwiftUI apps' -- whether the lyrics panel is open, how much
+the app draws -- in their defaults (`defaults read cc.blit.koan` for the Mac
+app released before 0.70), not in `config.toml`. None of it means anything
 to the CLI or the TUI, and a setting that travels between machines in a
 committed dotfile should be one that makes sense on all of them.
 
-The graphics level is the one worth knowing about. Settings -> Appearance, or:
+The SwiftUI apps' graphics level is the one worth knowing about. Settings -> Appearance, or:
 
 ```bash
 defaults write cc.blit.koan graphics -int 0   # 3 bare, 0 plain, 1 reduced, 2 full
@@ -496,7 +498,7 @@ port = 4000
 invite_to = "tailnet"
 ```
 
-The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `url`. Each falls back to the tailnet name, then the local address, while it has nothing.
+The desktop app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `url`. Each falls back to the tailnet name, then the local address, while it has nothing.
 
 `url` is the shared library's address from outside, Funnel's or a tunnel's, which share links and invites are built on. A path in it is served as `server.url`.s is ([Under a path](../guide/headless-server.md#under-a-path)). It is the app's own: `server.url` stays a headless server's on the same machine. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
 
@@ -579,7 +581,7 @@ port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
 nearby_control = "full"             # "full" or "playback": what devices on the network may do here
 refused = ["192.168.1.40"]          # addresses whose connections are hung up at once; Settings → Devices → Refuse
-keep_running = false                # the Mac app stays in the menu bar with its window closed
+keep_running = false                # the desktop app keeps running with its window closed
 ```
 
 A discoverable device can be seen and controlled by any koan app on the
