@@ -7707,6 +7707,30 @@ mod tests {
         player.process_command(PlayerCommand::Stop);
     }
 
+    /// A next and then a seek, taken in that order: the seek lands on the
+    /// track skipped to, which starts there, not at its top.
+    #[test]
+    fn a_seek_after_next_lands_on_the_new_track() {
+        let backend = GatedBackend::new(&["Built-in"]);
+        let (mut player, ids, _dir) = opening_player(&backend, 2);
+        let state = player.shared_state.clone();
+        open_gate(&backend.gate);
+        player.process_command(PlayerCommand::Play(ids[0]));
+        take_opened(&mut player);
+        await_queued(&player);
+
+        player.process_command(PlayerCommand::NextTrack);
+        player.process_command(PlayerCommand::Seek(3_000));
+        assert_eq!(state.track_info().map(|t| t.id), Some(ids[1]));
+        assert_eq!(state.position_ms(), 3_000);
+        take_opened_until(&mut player, |p| {
+            p.session().is_some_and(|s| s.track.id == ids[1])
+        });
+        await_queued(&player);
+        assert_eq!(state.position_ms(), 3_000, "the new track, from the seek");
+        player.process_command(PlayerCommand::Stop);
+    }
+
     #[test]
     fn stopping_while_the_output_opens_keeps_it_for_the_next_play() {
         let backend = GatedBackend::new(&["Built-in"]);

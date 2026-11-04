@@ -240,6 +240,24 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// What an engine command is: an `async fn` handing its work to the lane.
+    async fn command(seen: Arc<parking_lot::Mutex<Vec<&'static str>>>, what: &'static str) {
+        sequenced(move || seen.lock().push(what)).await
+    }
+
+    /// Commands reach the lane in the order they are first polled, whatever
+    /// order their futures were made in: a next and the seek after it, as
+    /// the GUI polls them, reach the player next first, so the seek lands on
+    /// the new track.
+    #[test]
+    fn commands_join_the_lane_in_the_order_they_are_polled() {
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let seek = command(seen.clone(), "seek");
+        let next = command(seen.clone(), "next");
+        futures_lite::future::block_on(futures_lite::future::zip(next, seek));
+        assert_eq!(*seen.lock(), ["next", "seek"]);
+    }
+
     #[test]
     fn commands_from_another_device_return_at_once_and_run_in_order() {
         let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
