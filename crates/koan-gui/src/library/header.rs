@@ -20,6 +20,7 @@ pub fn playable_header(
 ) -> PageHeader {
     let title: SharedString = title.into();
     let favourite = lib.feed.read(cx).is_favourite(item);
+    let share_unavailable = actions::share_links_unavailable(cx);
     let verb = |id: &'static str, icon: Icon, label: &'static str| {
         Button::new(id, ButtonKind::Compact).icon(icon).label(label)
     };
@@ -53,7 +54,12 @@ pub fn playable_header(
         )
         .action(
             verb("header-share", Icon::Share, "copy share link")
-                .help("create a public link on your server and copy it")
+                .help(
+                    share_unavailable.clone().unwrap_or_else(|| {
+                        "create a public link on your server and copy it".into()
+                    }),
+                )
+                .disabled(share_unavailable.is_some())
                 .on_click(move |_, _, cx| {
                     actions::copy_share_link(
                         share.engine.clone(),

@@ -50,7 +50,7 @@ impl ShareForm {
         let port = field("4000", false, window, cx);
         let address = field("", false, window, cx);
         if let Some(settings) = ctx.model.read(cx).settings() {
-            let (p, a) = (settings.share_port.to_string(), settings.share_url.clone());
+            let (p, a) = (settings.share_port.to_string(), settings.server_url.clone());
             port.update(cx, |s, cx| s.set_value(p, window, cx));
             address.update(cx, |s, cx| s.set_value(a, window, cx));
         }
@@ -155,7 +155,7 @@ impl ShareForm {
         let Some(settings) = ctx.model.read(cx).settings() else {
             return;
         };
-        if typed == settings.share_url {
+        if typed == settings.server_url {
             return;
         }
         let port = settings.share_port;

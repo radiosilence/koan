@@ -207,11 +207,23 @@ pub fn create_native_share(
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
     let base = cfg.server_url().ok_or(ShareError::NoServerUrl)?;
+    create_native_share_at(db, user, &base, target, description)
+}
+
+/// `create_native_share` at `base`, the address the link is given out on:
+/// for an app sharing its own library, the one its invites carry.
+pub fn create_native_share_at(
+    db: &Database,
+    user: i64,
+    base: &str,
+    target: &ShareTarget,
+    description: Option<&str>,
+) -> Result<ShareOutcome, ShareError> {
     let (slice, ids) = resolve_share(&db.conn, target)?;
     let now = crate::clock::unix_secs();
     let share = queries::shares::create_share(&db.conn, user, slice, &ids, description, now, None)?;
     Ok(ShareOutcome {
-        url: share_url(&base, &share.id),
+        url: share_url(base, &share.id),
         id: share.id,
         shared: ids.len(),
         // Only loose tracks are named one by one, so only they can be missing.

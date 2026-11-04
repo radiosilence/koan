@@ -1,6 +1,6 @@
 //! Serving under a path: `https://host/koan` rather than a host of its own.
 //!
-//! The path is `server.url`'s (`share.url`'s for an app's server). Routes and
+//! The path is `server.url`'s (read as asked for an app's server). Routes and
 //! handlers never see it: [`edge`] takes it off each request before routing and
 //! puts it back on what a response names by path, its `Location` and its
 //! cookies' `Path`. A proxy may forward the path or strip it; both arrive at
@@ -89,7 +89,7 @@ pub(crate) fn problem(url: &str) -> Option<String> {
 }
 
 /// The base path the edge works with: read once from an address fixed at
-/// start, or as asked from an app's `share.url`, which it changes as it runs.
+/// start, or as asked for an app's server, which changes it as it runs.
 #[derive(Clone)]
 pub(crate) enum Base {
     Fixed(std::sync::Arc<str>),

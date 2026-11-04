@@ -5,10 +5,10 @@
 //! server's host key, through the same Subsonic calls a remote server gets.
 //!
 //! Where invites send phones is `share.invite_to`, and the engine is the only
-//! writer of it, of `share.url` (Funnel's address, or a custom one) and of
-//! `share.funnel` (the Funnel it published), so Settings never saves an older
-//! copy over a change made here. `server.url` is left to a headless server on
-//! the same machine.
+//! writer of it, of `server.url` (Funnel's address, or a custom one: this
+//! device's one public address, which invites and share links are both
+//! built on) and of `share.funnel` (the Funnel it published), so Settings
+//! never saves an older copy over a change made here.
 
 use std::sync::Arc;
 
@@ -183,7 +183,7 @@ fn status(port: Option<u16>) -> ShareStatus {
         Target::Network => None,
         Target::Tailnet => tailnet,
         Target::Funnel => funnel.clone().or_else(|| fallback.clone()),
-        Target::Custom => cfg.share_url().or_else(|| fallback.clone()),
+        Target::Custom => cfg.server_url().or_else(|| fallback.clone()),
     }
     .or_else(|| sharing(port).lan_url);
     ShareStatus {
@@ -202,6 +202,11 @@ impl From<koan_core::tailscale::Tailscale> for TailscaleStatus {
             funnel_allowed: t.funnel_allowed,
         }
     }
+}
+
+/// Whether this device is serving its library.
+pub(crate) fn serving() -> bool {
+    SERVING.read().is_some()
 }
 
 /// The address invites send phones to while sharing.
@@ -223,7 +228,7 @@ fn host_of(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_owned())
 }
 
-/// Publish on Funnel for `port`, recorded as kōan's, and keep `share.url` on
+/// Publish on Funnel for `port`, recorded as kōan's, and keep `server.url` on
 /// its address, which share links and the server's own idea of where it is
 /// reached are built on. The address moves with the machine's tailnet name
 /// and Funnel's port.
@@ -233,9 +238,9 @@ fn publish(port: u16) -> Result<(), KoanError> {
         .map(|[funnel_port, _]| funnel_port);
     let (url, funnel_port) = koan_core::tailscale::funnel(port, ours).map_err(funnel_error)?;
     let cfg = Config::cached();
-    if cfg.share.url.as_deref() != Some(&url) || cfg.share.funnel != Some([funnel_port, port]) {
+    if cfg.server.url.as_deref() != Some(&url) || cfg.share.funnel != Some([funnel_port, port]) {
         Config::persist(move |cfg| {
-            cfg.share.url = Some(url);
+            cfg.server.url = Some(url);
             cfg.share.funnel = Some([funnel_port, port]);
         })
         .map_err(persist_error)?;
@@ -323,7 +328,7 @@ fn moving_names() -> Vec<String> {
         .map(|t| t.name)
         .into_iter()
         .collect();
-    names.extend(Config::cached().share_url().as_deref().and_then(host_of));
+    names.extend(Config::cached().server_url().as_deref().and_then(host_of));
     names
 }
 
@@ -355,14 +360,6 @@ impl KoanEngine {
             // another process; put back below once this server holds it. One
             // left by a crash, or a choice made since, goes with it.
             take_down_quietly();
-            // 0.69.0 kept a custom address in `server.url`.
-            let cfg = Config::cached();
-            if cfg.share.invite_to == Target::Custom
-                && cfg.share_url().is_none()
-                && let Some(url) = cfg.server_url()
-            {
-                Config::persist(|c| c.share.url = Some(url)).map_err(persist_error)?;
-            }
             let started = ApiServer::start(ApiServerOpts {
                 state: self.state.clone(),
                 cmd_tx: self.tx.clone(),
@@ -454,7 +451,7 @@ impl KoanEngine {
     /// Where invites send phones (`share.invite_to`). `Funnel` publishes the
     /// library on the internet through Tailscale Funnel, now and whenever it
     /// is served; any other choice stops publishing. `Custom` sends them to
-    /// `address` (`share.url`), kept as it was when `None`; any other choice
+    /// `address` (`server.url`), kept as it was when `None`; any other choice
     /// clears it, since the server tells phones it is the address it is known
     /// by.
     pub async fn set_invite_to(
@@ -489,12 +486,12 @@ impl KoanEngine {
             Config::persist(move |cfg| {
                 cfg.share.invite_to = to.into();
                 match (to, address) {
-                    (InviteTo::Custom, Some(a)) => cfg.share.url = (!a.is_empty()).then_some(a),
+                    (InviteTo::Custom, Some(a)) => cfg.server.url = (!a.is_empty()).then_some(a),
                     // Funnel's address is not a custom one to keep.
-                    (InviteTo::Custom, None) if was_funnel => cfg.share.url = None,
+                    (InviteTo::Custom, None) if was_funnel => cfg.server.url = None,
                     // Funnel's was written by `publish`; a custom one kept.
                     (InviteTo::Custom | InviteTo::Funnel, None) => {}
-                    _ => cfg.share.url = None,
+                    _ => cfg.server.url = None,
                 }
             })
             .map_err(persist_error)

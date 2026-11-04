@@ -1047,6 +1047,7 @@ fn row_menu(
     }
     if !tracks.is_empty() {
         let sets = vec![koan_runtime::TrackSet::Tracks { ids: tracks }];
+        let unavailable = actions::share_links_unavailable(cx);
         menu = menu.item(
             MenuEntry::new(if record.is_some() {
                 "copy album share link"
@@ -1054,10 +1055,14 @@ fn row_menu(
                 "copy share link"
             })
             .icon(Icon::Share)
+            .disabled(unavailable.is_some())
             .on_click(move |_, _, cx| {
                 actions::copy_share_link(engine(cx), sets.clone(), share_name.clone(), cx)
             }),
         );
+        if let Some(why) = unavailable {
+            menu = menu.note(why);
+        }
     }
     menu.separator()
         .item(

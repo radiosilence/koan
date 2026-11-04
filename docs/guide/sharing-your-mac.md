@@ -32,6 +32,8 @@ With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from
 - **Your tailnet** (the default with Tailscale): `http://<mac>.<tailnet>.ts.net:4000`. A phone with Tailscale reaches the Mac from anywhere, encrypted by Tailscale, with nothing published to the internet. This is the simplest way to listen away from home: install Tailscale on the phone too.
 - **Tailscale Funnel**: publishes the Mac on the internet at `https://<mac>.<tailnet>.ts.net`, with a certificate Tailscale provides, for phones without Tailscale. kōan asks first, publishes it again whenever the Mac starts sharing, and takes it down when sharing stops or another choice is made.
 - **This network**: the Mac's address on the local network.
+
+Share links made from a context menu while the Mac shares use the same address as invites. With nothing to give a link out on (signed out of any server and not sharing), the share actions are disabled and say why.
 - **Custom address**: a tunnel's HTTPS address (below).
 
 Funnel publishes at the Mac's own name on the tailnet; to change the address, rename the Mac in Tailscale. It uses port 443 unless something else on the Mac is already published there, then 8443 or 10000, and leaves what else Tailscale serves alone. Funnel has to be turned on for the tailnet first, in its access controls; until it is, **Tailscale Funnel** is not offered. Quitting kōan takes its Funnel down, and starting to share again puts it back; a Funnel set up by hand is never touched.
