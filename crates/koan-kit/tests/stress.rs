@@ -225,6 +225,7 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
 #[test]
 fn a_block_parks_while_a_slot_it_does_not_name_moves() {
     let _clock = CLOCK.lock();
+    koan_kit::components::install_color_slots();
     let rest = ColorSlot::claim(Rgba::default()).expect("a free slot");
     let turning = ColorSlot::claim(Rgba::default()).expect("a free slot");
     turning.to(
