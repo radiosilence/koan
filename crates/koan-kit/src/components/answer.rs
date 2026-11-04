@@ -296,7 +296,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 };
 
 /// The glyph answers as one program, drawing the icons' strokes on their
-/// 24-point grid (`apps/macos/Resources/Icons`). Uniforms: 0 the answer, 1
+/// 24-point grid (`apps/ios/Resources/Icons`). Uniforms: 0 the answer, 1
 /// which way a nudge goes, 2 the spill, 4..8 the glyph's colour, 8..12 the
 /// accent (a heart's fill, its particles), 12 the glyph's side, all in
 /// device pixels; each colour is a whole block of four; track 0 the answer's time from 0 to 1, track 1 the same on

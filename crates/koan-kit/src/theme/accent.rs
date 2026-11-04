@@ -3,7 +3,7 @@
 //! bright version of its hue and light mode never goes pastel. Mint when
 //! there is no record or no usable hue.
 //!
-//! `Color.dominant` (apps/macos/Sources/Koan/Support/Palette.swift) and
+//! `Color.dominant` (apps/ios/Sources/Koan/Support/Palette.swift) and
 //! `KoanAccent` (Support/KoanTheme.swift), value for value, as the Android
 //! app ports them, so a record gives the same accent on every device.
 
