@@ -102,6 +102,31 @@ fn is_disc_folder(name: &std::ffi::OsStr) -> bool {
     rest.is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// An image's type, from its first bytes; `None` for one this does not know.
+pub fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [0xFF, 0xD8, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', ..] => Some("image/gif"),
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => Some("image/webp"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,30 +210,5 @@ mod tests {
         assert!(!is_cover_file(Path::new("/m/a/back.jpg")));
         assert!(!is_cover_file(Path::new("/m/a/cover.txt")));
         assert!(!is_cover_file(Path::new("/m/a/cover")));
-    }
-}
-
-/// An image's type, from its first bytes; `None` for one this does not know.
-pub fn image_mime(bytes: &[u8]) -> Option<&'static str> {
-    match bytes {
-        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
-        [0xFF, 0xD8, ..] => Some("image/jpeg"),
-        [b'G', b'I', b'F', ..] => Some("image/gif"),
-        [
-            b'R',
-            b'I',
-            b'F',
-            b'F',
-            _,
-            _,
-            _,
-            _,
-            b'W',
-            b'E',
-            b'B',
-            b'P',
-            ..,
-        ] => Some("image/webp"),
-        _ => None,
     }
 }
