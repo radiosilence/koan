@@ -22,6 +22,8 @@ koan-core = { workspace = true }
 # Sharing this device's library: see `serve.rs`.
 koan-server = { workspace = true }
 crossbeam-channel = "0.5"
+# Commands whose branches end on different lanes, boxed to one future.
+futures-lite = "2"
 getrandom = "0.4"
 # Local cover art scaled to the size a client asks for (`fit_cover`). Already
 # linked through koan-server.
@@ -41,6 +43,5 @@ qrcode = { version = "0.14.1", default-features = false }
 
 
 [dev-dependencies]
-futures-lite = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tempfile = "3"

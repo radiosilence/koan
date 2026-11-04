@@ -17,11 +17,13 @@
 //! opening one runs the schema DDL and a WAL checkpoint.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
+use futures_lite::FutureExt as _;
 use koan_core::audio::viz::VizSnapshot;
 
 /// Analyser frames a second for clients that interpolate between them
@@ -1173,8 +1175,11 @@ impl KoanEngine {
     // --- Transport ---------------------------------------------------------
 
     /// Move the cursor to `queue_item_id` and start playing it.
-    pub async fn play(self: Arc<Self>, queue_item_id: String) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Play(parse_qid(&queue_item_id)?))).await
+    pub fn play(
+        self: Arc<Self>,
+        queue_item_id: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::Play(parse_qid(&queue_item_id)?)))
     }
 
     /// The app is in front again, perhaps after iOS suspended it: link now,
@@ -1257,32 +1262,38 @@ impl KoanEngine {
         koan_core::remote::relay::set_attester(Arc::new(AttesterBridge(attester)));
     }
 
-    pub async fn pause(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Pause)).await
+    pub fn pause(self: Arc<Self>) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::Pause))
     }
 
-    pub async fn resume(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Resume)).await
+    pub fn resume(self: Arc<Self>) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::Resume))
     }
 
-    pub async fn stop(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Stop)).await
+    pub fn stop(self: Arc<Self>) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::Stop))
     }
 
     /// Ask this device's output again while it is still opening
     /// (`NowPlaying::output_wait`).
-    pub async fn retry_output_open(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send_local(PlayerCommand::RetryOutput)).await
+    pub fn retry_output_open(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send_local(PlayerCommand::RetryOutput))
     }
 
     /// Stop waiting for this device's output: the system's default in place
     /// of a device that would not open, or stopped.
-    pub async fn cancel_output_open(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send_local(PlayerCommand::CancelOutput)).await
+    pub fn cancel_output_open(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send_local(PlayerCommand::CancelOutput))
     }
 
     /// Space-bar behaviour: pause when playing, resume otherwise.
-    pub async fn toggle_play_pause(self: Arc<Self>) -> Result<(), KoanError> {
+    pub fn toggle_play_pause(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let playing = match koan_core::remote::devices::target_device() {
                 Some(d) => d.state.is_some_and(|s| s.playing),
@@ -1294,48 +1305,62 @@ impl KoanEngine {
                 self.send(PlayerCommand::Resume)
             }
         })
-        .await
     }
 
-    pub async fn next(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::NextTrack)).await
+    pub fn next(self: Arc<Self>) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::NextTrack))
     }
 
-    pub async fn previous(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::PrevTrack)).await
+    pub fn previous(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::PrevTrack))
     }
 
     /// Shuffle on or off, here or on the device being controlled. On, the
     /// tracks yet to play this pass play in a random order; the queue itself
     /// never moves.
-    pub async fn set_shuffle(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::SetShuffle(on))).await
+    pub fn set_shuffle(
+        self: Arc<Self>,
+        on: bool,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::SetShuffle(on)))
     }
 
     /// What follows a track at its end, here or on the device being
     /// controlled.
-    pub async fn set_repeat(self: Arc<Self>, mode: RepeatMode) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::SetRepeat(mode.into()))).await
+    pub fn set_repeat(
+        self: Arc<Self>,
+        mode: RepeatMode,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::SetRepeat(mode.into())))
     }
 
     /// Stop playback after a while or at the end of the track or record,
     /// fading out and pausing, here or on the device being controlled.
-    pub async fn set_sleep_timer(self: Arc<Self>, timer: SleepTimer) -> Result<(), KoanError> {
+    pub fn set_sleep_timer(
+        self: Arc<Self>,
+        timer: SleepTimer,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(Some(timer.into()))))
-            .await
     }
 
-    pub async fn cancel_sleep_timer(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(None))).await
+    pub fn cancel_sleep_timer(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(None)))
     }
 
     /// Sent on the ordered lane; nothing is shown until the player, or the
     /// device being controlled, says where it is. The future resolves once
     /// the command is sent: for another device, the most a client can know
     /// of it until that device reports. Like every command, it takes its
-    /// place on the lane when first polled, so commands keep the order they
-    /// were polled in.
-    pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
+    /// place on the lane as it is called, so commands keep the order they
+    /// were made in.
+    pub fn seek(
+        self: Arc<Self>,
+        position_ms: u64,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let remote = koan_core::remote::devices::target().is_some();
             let sent = self.send(PlayerCommand::Seek(position_ms));
@@ -1346,7 +1371,6 @@ impl KoanEngine {
             }
             sent
         })
-        .await
     }
 
     /// How many seeks this device's player has answered: a Playhead slice
@@ -1449,11 +1473,11 @@ impl KoanEngine {
     /// than once its tracks have been read. Sources that come to nothing
     /// playable (a playlist with nothing downloaded while offline, a record a
     /// rescan removed) leave the queue as it was and fail with `NotFound`.
-    pub async fn queue(
+    pub fn queue(
         self: Arc<Self>,
         sources: Vec<TrackSet>,
         placement: Placement,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let db = self.db()?;
             let track_ids = self.resolve_sources(&db, &sources)?;
@@ -1465,20 +1489,18 @@ impl KoanEngine {
             }
             Ok(queued)
         })
-        .await
     }
 
     /// Append tracks. Starts playback if the player was stopped, and kicks off
     /// downloads for anything remote. Returns the new queue item IDs.
-    pub async fn add_to_queue(
+    pub fn add_to_queue(
         self: Arc<Self>,
         track_ids: Vec<i64>,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.db()
                 .and_then(|db| self.place(&db, &track_ids, Placement::Append))
         })
-        .await
     }
 
     /// Replace the queue, starting at `start_at` (default: the first track),
@@ -1490,12 +1512,12 @@ impl KoanEngine {
     /// two commands means the first track audibly starts before the jump lands:
     /// clicking track nine of an album flashed track one as playing first.
     /// An index past the end starts at the beginning.
-    pub async fn replace_queue(
+    pub fn replace_queue(
         self: Arc<Self>,
         track_ids: Vec<i64>,
         start_at: Option<u32>,
         shuffled: bool,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             // Asked for by name: replacing the queue with nothing clears it.
             if track_ids.is_empty() {
@@ -1505,15 +1527,14 @@ impl KoanEngine {
             let db = self.db()?;
             self.place(&db, &track_ids, Placement::Replace { start_at, shuffled })
         })
-        .await
     }
 
     /// Insert after an existing item — what a drop between two rows means.
-    pub async fn insert_after(
+    pub fn insert_after(
         self: Arc<Self>,
         track_ids: Vec<i64>,
         after_queue_item_id: String,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let db = self.db()?;
             self.place(
@@ -1524,61 +1545,68 @@ impl KoanEngine {
                 },
             )
         })
-        .await
     }
 
     /// Removed as one undo step, however many IDs are passed.
-    pub async fn remove_from_queue(
+    pub fn remove_from_queue(
         self: Arc<Self>,
         queue_item_ids: Vec<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let ids = parse_qids(&queue_item_ids)?;
             self.send(PlayerCommand::RemoveFromPlaylistBatch(ids))
         })
-        .await
     }
 
     /// Reorder. `after` puts the items below the target rather than above.
-    pub async fn move_in_queue(
+    pub fn move_in_queue(
         self: Arc<Self>,
         queue_item_ids: Vec<String>,
         target_queue_item_id: String,
         after: bool,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let ids = parse_qids(&queue_item_ids)?;
             let target = parse_qid(&target_queue_item_id)?;
             self.send(PlayerCommand::MoveItemsInPlaylist { ids, target, after })
         })
-        .await
     }
 
     /// Shuffle what follows the cursor, or the whole queue when there is
     /// none, as one undo step. Distinct from shuffle play mode, which
     /// leaves the queue's order alone.
-    pub async fn shuffle_queue(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::ShuffleUpcoming)).await
+    pub fn shuffle_queue(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::ShuffleUpcoming))
     }
 
-    pub async fn clear_queue(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::ClearPlaylist)).await
+    pub fn clear_queue(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send(PlayerCommand::ClearPlaylist))
     }
 
     /// Take back the last edit to a playlist, or to the queue when none is
     /// named.
-    pub async fn undo(self: Arc<Self>, playlist_id: Option<i64>) -> Result<(), KoanError> {
+    pub fn undo(
+        self: Arc<Self>,
+        playlist_id: Option<i64>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         match playlist_id {
-            Some(id) => self.step_playlist(id, true).await,
-            None => offload::sequenced(move || self.send(PlayerCommand::Undo)).await,
+            Some(id) => self.step_playlist(id, true).boxed(),
+            None => offload::sequenced(move || self.send(PlayerCommand::Undo)).boxed(),
         }
     }
 
     /// Put back the last edit taken back, to a playlist or the queue.
-    pub async fn redo(self: Arc<Self>, playlist_id: Option<i64>) -> Result<(), KoanError> {
+    pub fn redo(
+        self: Arc<Self>,
+        playlist_id: Option<i64>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         match playlist_id {
-            Some(id) => self.step_playlist(id, false).await,
-            None => offload::sequenced(move || self.send(PlayerCommand::Redo)).await,
+            Some(id) => self.step_playlist(id, false).boxed(),
+            None => offload::sequenced(move || self.send(PlayerCommand::Redo)).boxed(),
         }
     }
 
@@ -2571,18 +2599,17 @@ impl KoanEngine {
 
     /// Append the tracks `sources` name, resolved on the command lane. Returns
     /// how many landed.
-    pub async fn add_to_playlist(
+    pub fn add_to_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         sources: Vec<TrackSet>,
-    ) -> Result<u32, KoanError> {
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 let track_ids = self.resolve_sources(db, &sources)?;
                 Ok(queries::add_tracks(&db.conn, playlist_id, &track_ids)?.len() as u32)
             })
         })
-        .await
     }
 
     /// Add the tracks `sources` name at a position rather than at the end —
@@ -2591,12 +2618,12 @@ impl KoanEngine {
     /// Both halves happen here, in one transaction, rather than as an add
     /// followed by a reorder from the caller: the caller would be reordering
     /// against the list as it was before its own insert landed.
-    pub async fn insert_into_playlist(
+    pub fn insert_into_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         sources: Vec<TrackSet>,
         at: u32,
-    ) -> Result<u32, KoanError> {
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 let track_ids = self.resolve_sources(db, &sources)?;
@@ -2614,23 +2641,21 @@ impl KoanEngine {
                 Ok(added.len() as u32)
             })
         })
-        .await
     }
 
     /// Put the entries in this order. Ids survive, so anything holding one —
     /// a queue item, say — still knows which row it means. Entries not named
     /// keep their order after the named ones.
-    pub async fn reorder_playlist(
+    pub fn reorder_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         entry_ids: Vec<i64>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 Ok(queries::reorder_entries(&db.conn, playlist_id, &entry_ids)?)
             })
         })
-        .await
     }
 
     /// Move the entries named to just before the entry `before` (the end
@@ -2638,12 +2663,12 @@ impl KoanEngine {
     /// not list included: offline, where only the entries with a file here
     /// are shown, a move among them leaves the rest where they are. The moved
     /// entries keep the order they had.
-    pub async fn move_playlist_entries(
+    pub fn move_playlist_entries(
         self: Arc<Self>,
         playlist_id: i64,
         entry_ids: Vec<i64>,
         before: Option<i64>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 Ok(queries::move_entries(
@@ -2654,18 +2679,17 @@ impl KoanEngine {
                 )?)
             })
         })
-        .await
     }
 
     /// Add the tracks `sources` name just before the entry `before` (the end
     /// when `None`), among all of the playlist's entries, as
     /// `move_playlist_entries` places them. Returns how many landed.
-    pub async fn insert_into_playlist_before(
+    pub fn insert_into_playlist_before(
         self: Arc<Self>,
         playlist_id: i64,
         sources: Vec<TrackSet>,
         before: Option<i64>,
-    ) -> Result<u32, KoanError> {
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 let track_ids = self.resolve_sources(db, &sources)?;
@@ -2676,26 +2700,27 @@ impl KoanEngine {
                 Ok(added.len() as u32)
             })
         })
-        .await
     }
 
     /// Take entries out. Returns how many went.
-    pub async fn remove_from_playlist(
+    pub fn remove_from_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         entry_ids: Vec<i64>,
-    ) -> Result<u32, KoanError> {
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
                 Ok(queries::remove_entries(&db.conn, playlist_id, &entry_ids)? as u32)
             })
         })
-        .await
     }
 
     /// Shuffle the playlist itself, in place. Distinct from shuffling it into
     /// the queue, which leaves the playlist alone.
-    pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
+    pub fn shuffle_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             self.edit_playlist_as(playlist_id, true, |db| {
                 let mut entries = queries::playlist_entries(&db.conn, playlist_id)?;
@@ -2704,7 +2729,6 @@ impl KoanEngine {
                 Ok(queries::reorder_entries(&db.conn, playlist_id, &order)?)
             })
         })
-        .await
     }
 
     /// How many shuffles undo would take back from the playlist before
@@ -2719,14 +2743,16 @@ impl KoanEngine {
     /// a server that keeps the account's order (`koanPlaylistOrder`). On the
     /// command lane with the edits, so two drags land in the order they were
     /// made.
-    pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
+    pub fn reorder_playlists(
+        self: Arc<Self>,
+        ids: Vec<i64>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let db = self.db()?;
             koan_core::playlists::reorder(&db, &ids).map_err(db_err)?;
             self.bump_library();
             Ok(())
         })
-        .await
     }
 
     /// Remember whether this playlist is looked at grouped by album. `None`
@@ -2757,12 +2783,12 @@ impl KoanEngine {
     /// The queue is the playlist's order, or with `shuffled` a random one,
     /// played from its top; shuffle play and repeat go off, as any play from
     /// a play button does.
-    pub async fn play_playlist(
+    pub fn play_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         start_entry: Option<i64>,
         shuffled: bool,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let db = self.db()?;
             let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
@@ -2814,7 +2840,6 @@ impl KoanEngine {
 
             Ok(ids)
         })
-        .await
     }
 
     /// Write the playlist out as an extended M3U8.
@@ -2973,7 +2998,9 @@ impl KoanEngine {
     /// making noise at whoever opened it.
     ///
     /// Returns the number of items restored.
-    pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
+    pub fn restore_session(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         // Once this device's own queue is back, the server's may take its
         // place: see `server_queue`.
         let engine = Arc::downgrade(&self);
@@ -2983,9 +3010,12 @@ impl KoanEngine {
             let outcome = self.restore_blocking();
             self.settle_session(outcome.is_ok());
             outcome
-        })
-        .await;
-        if Config::cached().remote.play_queue {
+        });
+        async move {
+            let restored = restored.await;
+            if !Config::cached().remote.play_queue {
+                return restored;
+            }
             // Once the player has applied the restore, cue and all, so the
             // server's queue is weighed against the restored one.
             offload::offload(move || {
@@ -2998,8 +3028,6 @@ impl KoanEngine {
                 restored
             })
             .await
-        } else {
-            restored
         }
     }
 
@@ -3075,10 +3103,13 @@ impl KoanEngine {
         .await
     }
 
-    pub async fn set_device(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    pub fn set_device(
+        self: Arc<Self>,
+        name: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         // A renderer still opening for an earlier pick is not used.
         koan_core::upnp::choose();
-        offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name))).await
+        offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name)))
     }
 
     /// Forgets the copy of `album_id`'s server cover kept on this device, so
@@ -3136,13 +3167,17 @@ impl KoanEngine {
     /// Rebuild the audio output where playback is, keeping it paused if it
     /// was: after iOS stops the output for an interruption, the old unit will
     /// not start again.
-    pub async fn restart_output(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send_local(PlayerCommand::RestartOutput)).await
+    pub fn restart_output(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send_local(PlayerCommand::RestartOutput))
     }
 
-    pub async fn clear_device(self: Arc<Self>) -> Result<(), KoanError> {
+    pub fn clear_device(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         koan_core::upnp::choose();
-        offload::sequenced(move || self.send_local(PlayerCommand::ClearOutputDevice)).await
+        offload::sequenced(move || self.send_local(PlayerCommand::ClearOutputDevice))
     }
 
     /// The device name persisted in config, or `None` for the system default.
@@ -3219,12 +3254,14 @@ impl KoanEngine {
     /// picking where music plays: this one pauses, and the transport, the
     /// queue and what is playing all show that device until another is
     /// picked. Nothing moves; see `move_music`.
-    pub async fn control_device(self: Arc<Self>, id: Option<String>) -> Result<(), KoanError> {
+    pub fn control_device(
+        self: Arc<Self>,
+        id: Option<String>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::remote::control::control(id, &self.tx, &self.state)
                 .map_err(|message| KoanError::Remote { message })
         })
-        .await
     }
 
     /// Move the music of the device being controlled to `to` (this device
@@ -3341,37 +3378,34 @@ impl KoanEngine {
     ///
     /// Not on the ordered lane: opening a renderer session is a few round
     /// trips, and app commands queued behind it would wait them out.
-    pub async fn select_output(self: Arc<Self>, output: OutputChoice) -> Result<(), KoanError> {
+    pub fn select_output(
+        self: Arc<Self>,
+        output: OutputChoice,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         // Taken now, in the order the person picked: see `upnp::choose`.
         let choice = koan_core::upnp::choose();
         match (koan_core::remote::devices::target(), output) {
             // In order with every other command for that device; it takes
             // its own choice when it switches.
-            (Some(to), output) => {
-                offload::sequenced(move || {
-                    self.command_target(
-                        &to,
-                        koan_core::remote::link::LinkCommand::SetOutput {
-                            output: output.into(),
-                        },
-                    )
-                })
-                .await
-            }
-            (None, OutputChoice::Renderer { udn }) => {
-                offload::offload(move || {
-                    koan_core::upnp::connect(&udn, choice, &self.tx)
-                        .map_err(|message| KoanError::Audio { message })
-                })
-                .await
-            }
-            (None, output) => {
-                offload::sequenced(move || {
-                    koan_core::remote::outputs::set(output.into(), choice, &self.tx)
-                        .map_err(|message| KoanError::Audio { message })
-                })
-                .await
-            }
+            (Some(to), output) => offload::sequenced(move || {
+                self.command_target(
+                    &to,
+                    koan_core::remote::link::LinkCommand::SetOutput {
+                        output: output.into(),
+                    },
+                )
+            })
+            .boxed(),
+            (None, OutputChoice::Renderer { udn }) => offload::offload(move || {
+                koan_core::upnp::connect(&udn, choice, &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            })
+            .boxed(),
+            (None, output) => offload::sequenced(move || {
+                koan_core::remote::outputs::set(output.into(), choice, &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            })
+            .boxed(),
         }
     }
 
@@ -3396,7 +3430,10 @@ impl KoanEngine {
     }
 
     /// The volume of the renderer the device in view plays to, 0–100.
-    pub async fn set_output_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
+    pub fn set_output_volume(
+        self: Arc<Self>,
+        volume: u8,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || match koan_core::remote::devices::target() {
             Some(to) => self.command_target(
                 &to,
@@ -3404,16 +3441,15 @@ impl KoanEngine {
             ),
             None => self.send_local(PlayerCommand::SetRendererVolume(volume)),
         })
-        .await
     }
 
     /// Play the output `device` of the device in view through `profile`, or
     /// untouched with `None`. A renderer is named by its UDN.
-    pub async fn set_output_preset(
+    pub fn set_output_preset(
         self: Arc<Self>,
         device: String,
         profile: Option<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || match koan_core::remote::devices::target() {
             Some(to) => self.command_target(
                 &to,
@@ -3421,7 +3457,6 @@ impl KoanEngine {
             ),
             None => self.assign_dsp(profile, &device),
         })
-        .await
     }
 
     /// Where the server should push updates to this app's Live Activity
@@ -3466,19 +3501,18 @@ impl KoanEngine {
     /// replaces the one taken from the files; `rate` is for coefficients with
     /// none of their own, asked for after a `NeedsSampleRate`. Returns the
     /// profile's name.
-    pub async fn dsp_import(
+    pub fn dsp_import(
         self: Arc<Self>,
         paths: Vec<String>,
         name: Option<String>,
         rate: Option<u32>,
-    ) -> Result<String, KoanError> {
+    ) -> impl Future<Output = Result<String, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let imported =
                 koan_core::audio::dsp::import::import(&paths, rate).map_err(dsp_error)?;
             self.save_dsp(imported, name)
         })
-        .await
     }
 
     /// What importing `paths` will do: a group of presets, or one profile
@@ -3500,12 +3534,12 @@ impl KoanEngine {
     /// a group of them called `name`, the first playing; parts of one
     /// profile combine into one called `name`. A file refused does not stop
     /// the others; each refusal is reported, and logged.
-    pub async fn dsp_import_files(
+    pub fn dsp_import_files(
         self: Arc<Self>,
         paths: Vec<String>,
         name: Option<String>,
         rate: Option<u32>,
-    ) -> Result<DspImportSummary, KoanError> {
+    ) -> impl Future<Output = Result<DspImportSummary, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let summary =
@@ -3525,50 +3559,46 @@ impl KoanEngine {
                 group: summary.group,
             })
         })
-        .await
     }
 
     /// Play `member` of the group `group`, and none of the others.
-    pub async fn dsp_select(
+    pub fn dsp_select(
         self: Arc<Self>,
         group: String,
         member: String,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::select(&group, &member)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Make `name` a group, one layer playing, or a stack of layers.
-    pub async fn dsp_set_group(
+    pub fn dsp_set_group(
         self: Arc<Self>,
         name: String,
         group: bool,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_group(&name, group)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Import text: shared from another app, or pasted.
-    pub async fn dsp_import_text(
+    pub fn dsp_import_text(
         self: Arc<Self>,
         text: String,
         name: Option<String>,
         rate: Option<u32>,
-    ) -> Result<String, KoanError> {
+    ) -> impl Future<Output = Result<String, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let imported =
                 koan_core::audio::dsp::import::import_text(&text, rate).map_err(dsp_error)?;
             self.save_dsp(imported, name)
         })
-        .await
     }
 
     /// AutoEQ's results whose names match `query`, best first. The first
@@ -3678,7 +3708,9 @@ impl KoanEngine {
     }
 
     /// Stop suggesting an AutoEQ profile for the output in use.
-    pub async fn autoeq_dismiss(self: Arc<Self>) -> Result<(), KoanError> {
+    pub fn autoeq_dismiss(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let device = self.dsp_device().ok_or(KoanError::Audio {
                 message: "no output device".into(),
@@ -3686,7 +3718,6 @@ impl KoanEngine {
             koan_core::audio::dsp::autoeq::dismiss(&device)
                 .map_err(|message| KoanError::BadArgument { message })
         })
-        .await
     }
 
     /// The targets `name`'s correction can be moved to, for one installed
@@ -3710,32 +3741,30 @@ impl KoanEngine {
 
     /// Say what `name` is for. A second correction in a chain is refused,
     /// naming the first.
-    pub async fn dsp_set_role(
+    pub fn dsp_set_role(
         self: Arc<Self>,
         name: String,
         role: crate::types::DspRole,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_role(&name, role.into())
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// The target a ready-made EQ was made for, by id, or `None` when it is
     /// not known, which leaves target switching off.
-    pub async fn dsp_set_made_for(
+    pub fn dsp_set_made_for(
         self: Arc<Self>,
         name: String,
         target: Option<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_made_for(&name, target.as_deref())
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// The targets for a kind of headphone, in-ear or over-ear, or for a
@@ -3836,14 +3865,14 @@ impl KoanEngine {
 
     /// Save the headphone or speaker `name`, measured as `text`, corrected
     /// to `target`, crediting `source` where the measurement came from one.
-    pub async fn dsp_save_measured(
+    pub fn dsp_save_measured(
         self: Arc<Self>,
         name: String,
         text: String,
         ear: DspEarKind,
         target: String,
         source: Option<String>,
-    ) -> Result<String, KoanError> {
+    ) -> impl Future<Output = Result<String, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let name = koan_core::audio::dsp::profiles::save_measured_from(
                 &name,
@@ -3856,7 +3885,6 @@ impl KoanEngine {
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(name)
         })
-        .await
     }
 
     /// What splitting the baked EQ `name` would give, with the headphones'
@@ -3879,13 +3907,13 @@ impl KoanEngine {
     /// Split the baked EQ `name` into a correction from the headphones'
     /// measurement and a tuning made against `target`; the outputs that
     /// played it play the two. The new profiles' names, correction first.
-    pub async fn dsp_split_baked(
+    pub fn dsp_split_baked(
         self: Arc<Self>,
         name: String,
         text: String,
         in_ear: bool,
         target: String,
-    ) -> Result<Vec<String>, KoanError> {
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             use koan_core::config::DspEar;
             let ear = if in_ear { DspEar::In } else { DspEar::Over };
@@ -3895,7 +3923,6 @@ impl KoanEngine {
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(vec![correction, tuning])
         })
-        .await
     }
 
     /// The account's EQs deleted in the last thirty days, newest first.
@@ -3936,17 +3963,16 @@ impl KoanEngine {
 
     /// Move `name`'s correction to the target `id`, or with `None` back to the
     /// one it was made for.
-    pub async fn dsp_choose_target(
+    pub fn dsp_choose_target(
         self: Arc<Self>,
         name: String,
         id: Option<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::choose_target(&name, id.as_deref())
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Add a target from a CSV of frequency and level, or a squig.link
@@ -3970,11 +3996,11 @@ impl KoanEngine {
 
     /// Make `name` a stack of `layers`, in order, creating it if there is
     /// none. Refused where it could not play.
-    pub async fn dsp_set_layers(
+    pub fn dsp_set_layers(
         self: Arc<Self>,
         name: String,
         layers: Vec<DspLayerInfo>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let layers = layers
                 .into_iter()
@@ -3987,12 +4013,11 @@ impl KoanEngine {
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
     /// `gain_db` and `q`, held within the ranges a band may have.
-    pub async fn dsp_set_band(
+    pub fn dsp_set_band(
         self: Arc<Self>,
         name: String,
         index: u32,
@@ -4000,7 +4025,7 @@ impl KoanEngine {
         freq: f64,
         gain_db: f64,
         q: f64,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_band(
                 &name,
@@ -4013,7 +4038,6 @@ impl KoanEngine {
             .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// `dsp_set_band`, unless filter `index` is no longer `expected`, the
@@ -4021,7 +4045,7 @@ impl KoanEngine {
     /// and a filter added or removed elsewhere would put another there. Says
     /// what it stored, which an edit following this one names.
     #[allow(clippy::too_many_arguments)]
-    pub async fn dsp_edit_band(
+    pub fn dsp_edit_band(
         self: Arc<Self>,
         name: String,
         index: u32,
@@ -4030,7 +4054,7 @@ impl KoanEngine {
         freq: f64,
         gain_db: f64,
         q: f64,
-    ) -> Result<DspEdited, KoanError> {
+    ) -> impl Future<Output = Result<DspEdited, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
                 message: format!("{name} band {} is not a band", index + 1),
@@ -4053,18 +4077,17 @@ impl KoanEngine {
             }
             Ok(stored.into())
         })
-        .await
     }
 
     /// `dsp_set_curve`, unless filter `index` is no longer `expected`, as
     /// `dsp_edit_band` is.
-    pub async fn dsp_edit_curve(
+    pub fn dsp_edit_curve(
         self: Arc<Self>,
         name: String,
         index: u32,
         expected: DspBand,
         points: Vec<DspPoint>,
-    ) -> Result<DspEdited, KoanError> {
+    ) -> impl Future<Output = Result<DspEdited, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
                 message: format!("{name} filter {} is not a curve", index + 1),
@@ -4085,108 +4108,101 @@ impl KoanEngine {
             }
             Ok(stored.into())
         })
-        .await
     }
 
     /// Set the points of `name`'s graphic curve `index`, held within a
     /// band's ranges and put in order of frequency.
-    pub async fn dsp_set_curve(
+    pub fn dsp_set_curve(
         self: Arc<Self>,
         name: String,
         index: u32,
         points: Vec<DspPoint>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
             koan_core::audio::dsp::profiles::set_curve(&name, index as usize, &points)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Add a flat band at 1 kHz to `name`, on `channel` alone or on both;
     /// its index among the filters.
-    pub async fn dsp_add_band(
+    pub fn dsp_add_band(
         self: Arc<Self>,
         name: String,
         channel: Option<u16>,
-    ) -> Result<u32, KoanError> {
+    ) -> impl Future<Output = Result<u32, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let index = koan_core::audio::dsp::profiles::add_band(&name, channel)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(index as u32)
         })
-        .await
     }
 
     /// Make the EQ `name`, eight bands from `starter`.
-    pub async fn dsp_create_eq(
+    pub fn dsp_create_eq(
         self: Arc<Self>,
         name: String,
         starter: DspStarter,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::create_eq(&name, starter.into())
                 .map_err(|message| KoanError::BadArgument { message })
         })
-        .await
     }
 
     /// Give `name` a list of bands for each channel, or one for both from
     /// channel `keep`.
-    pub async fn dsp_set_stereo(
+    pub fn dsp_set_stereo(
         self: Arc<Self>,
         name: String,
         stereo: bool,
         keep: u16,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_stereo(&name, stereo, keep)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Have `device` play filters alone, its correction taken off, or
     /// correct for a headphone again.
-    pub async fn dsp_set_filters_only(
+    pub fn dsp_set_filters_only(
         self: Arc<Self>,
         device: String,
         only: bool,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_filters_only(&device, only)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Take filter `index` out of `name`.
-    pub async fn dsp_remove_filter(
+    pub fn dsp_remove_filter(
         self: Arc<Self>,
         name: String,
         index: u32,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::remove_filter(&name, index as usize)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// `dsp_remove_filter`, unless filter `index` is no longer `expected`,
     /// the filter as the caller last read it, as `dsp_edit_band` is.
-    pub async fn dsp_remove_edited(
+    pub fn dsp_remove_edited(
         self: Arc<Self>,
         name: String,
         index: u32,
         expected: DspBand,
-    ) -> Result<DspEdited, KoanError> {
+    ) -> impl Future<Output = Result<DspEdited, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let is = |f: &koan_core::config::DspFilter| DspBand::from(f.clone()) == expected;
             let removed =
@@ -4200,7 +4216,6 @@ impl KoanEngine {
             }
             Ok(removed.into())
         })
-        .await
     }
 
     /// What the output in use plays: its correction, and the tuning on top
@@ -4225,69 +4240,67 @@ impl KoanEngine {
 
     /// Make `device`'s tuning `tuning`: EQs in the order they play, each on
     /// or off.
-    pub async fn dsp_set_tunings(
+    pub fn dsp_set_tunings(
         self: Arc<Self>,
         device: String,
         tuning: Vec<DspTuningEntry>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let list: Vec<(String, bool)> = tuning.into_iter().map(|t| (t.name, t.on)).collect();
             koan_core::audio::dsp::profiles::set_tunings(&device, &list)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Save `device`'s correction and tuning as the preset `name`.
-    pub async fn dsp_save_preset(
+    pub fn dsp_save_preset(
         self: Arc<Self>,
         device: String,
         name: String,
-    ) -> Result<String, KoanError> {
+    ) -> impl Future<Output = Result<String, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::save_preset(&device, &name)
                 .map_err(|message| KoanError::BadArgument { message })
         })
-        .await
     }
 
     /// Set `device` from the preset `name`, or flat with `None`.
-    pub async fn dsp_apply_preset(
+    pub fn dsp_apply_preset(
         self: Arc<Self>,
         device: String,
         name: Option<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::apply_preset(&device, name.as_deref())
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Put `name` back as it was imported.
-    pub async fn dsp_revert(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    pub fn dsp_revert(
+        self: Arc<Self>,
+        name: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::revert(&name)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// A copy of `name` as it is now, under `new` or "<name> copy". The
     /// copy's name.
-    pub async fn dsp_duplicate(
+    pub fn dsp_duplicate(
         self: Arc<Self>,
         name: String,
         new: Option<String>,
-    ) -> Result<String, KoanError> {
+    ) -> impl Future<Output = Result<String, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::duplicate(&name, new.as_deref())
                 .map_err(|message| KoanError::BadArgument { message })
         })
-        .await
     }
 
     /// `name`'s filters and headroom as they are, for `dsp_save_as_copy` to
@@ -4300,13 +4313,13 @@ impl KoanEngine {
     /// put `name` back to `before` (a `dsp_snapshot`), or to its file. On
     /// `device`, the copy takes its place in the tuning where the tuning names
     /// it.
-    pub async fn dsp_save_as_copy(
+    pub fn dsp_save_as_copy(
         self: Arc<Self>,
         name: String,
         new: Option<String>,
         before: Option<String>,
         device: Option<String>,
-    ) -> Result<DspSavedCopy, KoanError> {
+    ) -> impl Future<Output = Result<DspSavedCopy, KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let copy = koan_core::audio::dsp::profiles::save_as_copy(
                 &name,
@@ -4321,22 +4334,20 @@ impl KoanEngine {
                 placed: copy.placed,
             })
         })
-        .await
     }
 
     /// The target the tuning `name` was made against, or `None` when that is
     /// not known, which plays it as it is on any correction.
-    pub async fn dsp_set_tuned_for(
+    pub fn dsp_set_tuned_for(
         self: Arc<Self>,
         name: String,
         target: Option<String>,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::set_tuned_for(&name, target.as_deref())
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// What the tuning `name` looks made against on `device` (the output in
@@ -4443,11 +4454,11 @@ impl KoanEngine {
     }
 
     /// Keep `name` on every device of the account, or on this one alone.
-    pub async fn dsp_set_scope(
+    pub fn dsp_set_scope(
         self: Arc<Self>,
         name: String,
         everywhere: bool,
-    ) -> Result<(), KoanError> {
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             use koan_core::config::DspScope;
             let to = if everywhere {
@@ -4458,48 +4469,54 @@ impl KoanEngine {
             koan_core::audio::dsp::profiles::set_scope(&name, to)
                 .map_err(|message| KoanError::BadArgument { message })
         })
-        .await
     }
 
-    pub async fn dsp_rename(self: Arc<Self>, old: String, new: String) -> Result<(), KoanError> {
+    pub fn dsp_rename(
+        self: Arc<Self>,
+        old: String,
+        new: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::rename(&old, &new)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Play the current output through `profile`, or untouched with `None`.
-    pub async fn dsp_assign(self: Arc<Self>, profile: Option<String>) -> Result<(), KoanError> {
+    pub fn dsp_assign(
+        self: Arc<Self>,
+        profile: Option<String>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let device = self.dsp_device().ok_or(KoanError::Audio {
                 message: "no output device".into(),
             })?;
             self.assign_dsp(profile, &device)
         })
-        .await
     }
 
     /// Play `device` through `profile`, or untouched with `None`, whether or
     /// not it is the output in use. A renderer is named by its UDN.
-    pub async fn dsp_assign_device(
+    pub fn dsp_assign_device(
         self: Arc<Self>,
         device: String,
         profile: Option<String>,
-    ) -> Result<(), KoanError> {
-        offload::sequenced(move || self.assign_dsp(profile, &device)).await
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.assign_dsp(profile, &device))
     }
 
     /// Delete the profile `name` and its files. Taking an EQ out of a chain
     /// or a stack is `dsp_set_tunings` or `dsp_set_layers`, never this.
-    pub async fn dsp_delete(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    pub fn dsp_delete(
+        self: Arc<Self>,
+        name: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::audio::dsp::profiles::delete(&name)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
-        .await
     }
 
     /// Hand the engine the app's audio session, before anything can play.
@@ -4568,24 +4585,26 @@ impl KoanEngine {
     /// rate again. On Android, the media route's name, which is what the
     /// phone's output is called; its output is restarted by the app. Does
     /// nothing elsewhere.
-    pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    pub fn set_audio_route(
+        self: Arc<Self>,
+        name: String,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
                 self.send_local(PlayerCommand::RouteChanged)
             })
-            .await
         }
         #[cfg(target_os = "android")]
         {
             koan_core::audio::android_backend::set_route(name);
-            Ok(())
+            std::future::ready(Ok(()))
         }
         #[cfg(not(any(target_os = "ios", target_os = "tvos", target_os = "android")))]
         {
             let _ = name;
-            Ok(())
+            std::future::ready(Ok(()))
         }
     }
 
@@ -5172,7 +5191,9 @@ impl KoanEngine {
     /// Forget the server and everything this device held for it: its
     /// library, the account's favourites, history and playlists, the queue
     /// and the downloads (`helpers::sign_out`). Local files stay.
-    pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
+    pub fn sign_out_remote(
+        self: Arc<Self>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
@@ -5180,7 +5201,6 @@ impl KoanEngine {
             self.bump_library();
             Ok(())
         })
-        .await
     }
 
     /// Forget every track that came from a folder.
@@ -5280,16 +5300,22 @@ impl KoanEngine {
     /// Stop fetching these tracks. Queue entries waiting on them fail as
     /// cancelled and are skipped until retried; a transfer running stops and
     /// leaves its row failed as cancelled, which is how it is retried.
-    pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+    pub fn cancel_downloads(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         // On the command lane, so a cancel and a retry land in the order made.
-        offload::sequenced(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
+        offload::sequenced(move || self.send_local(PlayerCommand::CancelDownloads(track_ids)))
     }
 
     /// Fetch these tracks again after a failure or a cancel: queue entries
     /// that failed for them wait again, and a track asked into the cache
     /// that no entry wants is fetched into it again.
-    pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
+    pub fn retry_downloads(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
+        offload::sequenced(move || self.send_local(PlayerCommand::RetryDownloads(track_ids)))
     }
 
     /// Rescans every configured library folder, saying how far it has got.
@@ -7191,7 +7217,11 @@ impl KoanEngine {
 
     /// Undo or redo a playlist edit: put it back, follow it from the queue if
     /// the queue is following, and tell everyone as any edit would.
-    async fn step_playlist(self: Arc<Self>, playlist_id: i64, back: bool) -> Result<(), KoanError> {
+    fn step_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        back: bool,
+    ) -> impl Future<Output = Result<(), KoanError>> + Send + 'static {
         offload::sequenced(move || {
             let db = self.db()?;
             let locked = self.locked_to(&db, playlist_id);
@@ -7209,7 +7239,6 @@ impl KoanEngine {
             }
             Ok(())
         })
-        .await
     }
 
     /// Evaluate smart playlists that are due (one, or every one), and have

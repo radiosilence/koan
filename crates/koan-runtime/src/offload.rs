@@ -97,7 +97,9 @@ where
 /// so this is one thread and a queue.
 ///
 /// Handed to the lane as this is called, as [`offload`] starts its work, so
-/// its place in the order is the call's.
+/// its place in the order is the call's. Engine commands call it before
+/// returning their future, never from inside an `async` body, which would put
+/// off joining the lane until the future is first polled.
 ///
 /// A panic in `f` is caught on the lane and re-raised here, as [`offload`]
 /// does: the call that panicked fails, and the lane goes on running every
@@ -240,22 +242,34 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// What an engine command is: an `async fn` handing its work to the lane.
-    async fn command(seen: Arc<parking_lot::Mutex<Vec<&'static str>>>, what: &'static str) {
-        sequenced(move || seen.lock().push(what)).await
+    /// What an engine command is: a call handing its work to the lane, and a
+    /// future for the answer.
+    fn command(
+        seen: &Arc<parking_lot::Mutex<Vec<&'static str>>>,
+        what: &'static str,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let seen = seen.clone();
+        sequenced(move || seen.lock().push(what))
     }
 
-    /// Commands reach the lane in the order they are first polled, whatever
-    /// order their futures were made in: a next and the seek after it, as
-    /// the GUI polls them, reach the player next first, so the seek lands on
-    /// the new track.
+    /// Commands reach the lane in the order they are made, however late and
+    /// in whatever order their futures are polled: a next and the seek after
+    /// it reach the player next first, so the seek lands on the new track,
+    /// and an edit and its undo land in that order.
     #[test]
-    fn commands_join_the_lane_in_the_order_they_are_polled() {
+    fn commands_join_the_lane_in_the_order_they_are_made() {
         let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let seek = command(seen.clone(), "seek");
-        let next = command(seen.clone(), "next");
-        futures_lite::future::block_on(futures_lite::future::zip(next, seek));
-        assert_eq!(*seen.lock(), ["next", "seek"]);
+        let made = ["pause", "next", "seek", "remove", "undo", "resume"];
+        let mut futures: Vec<_> = made.iter().map(|what| command(&seen, what)).collect();
+        // Polled last first, as nothing obliges a caller's executor to poll
+        // them in the order they were made.
+        futures.reverse();
+        futures_lite::future::block_on(async {
+            for future in futures {
+                future.await;
+            }
+        });
+        assert_eq!(*seen.lock(), made);
     }
 
     #[test]

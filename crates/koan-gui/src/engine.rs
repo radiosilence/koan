@@ -17,10 +17,11 @@ pub fn engine(cx: &App) -> Arc<KoanEngine> {
 /// Runs a command. Its result comes back through the state stream like every
 /// other change, so a caller only hears of failures, which are logged.
 ///
-/// Polled first on the main thread, in the order commands are made: an
-/// engine command takes its place on the engine's ordered lane when it is
-/// first polled, so a remove and the undo after it reach the player in that
-/// order. The work itself runs on the engine's own threads.
+/// An engine command takes its place on the engine's ordered lane as `f`
+/// calls it, so a remove and the undo after it reach the player in the order
+/// they were made, without waiting for the main thread's next turn. The work
+/// itself runs on the engine's own threads; the future here only hears the
+/// answer.
 pub fn command<F, Fut, T>(cx: &App, what: &'static str, f: F)
 where
     F: FnOnce(Arc<KoanEngine>) -> Fut,
