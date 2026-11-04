@@ -26,27 +26,12 @@ use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::navigator::{Listing, Shelf};
 
-/// How long typing in the filter field waits for the next keystroke before
-/// asking again: each answer is the whole listing, and asking per keystroke
-/// queues listings nobody will see.
-const TYPING: Duration = Duration::from_millis(80);
-
 #[derive(Clone, PartialEq)]
 struct Query {
     search: Option<String>,
     filter: BrowseFilter,
     sort: AlbumSort,
     seed: i64,
-}
-
-impl Query {
-    /// Only the search differs: a keystroke.
-    fn typed(&self, other: &Query) -> bool {
-        self.search != other.search
-            && self.filter == other.filter
-            && self.sort == other.sort
-            && self.seed == other.seed
-    }
 }
 
 /// What the cover ranking depends on, coarsely, within one listing: the rows
@@ -309,7 +294,8 @@ impl AlbumGrid {
     /// Ask for the listing again when what it answers to has moved: the
     /// query, or the library under it. What is on screen stays until the new
     /// listing lands, so the scroll and the pick are not lost meanwhile. A
-    /// keystroke waits a moment for the next one.
+    /// keystroke asks at once; the answer to one typed over is dropped by
+    /// `request` when it lands.
     fn reload(&mut self, cx: &mut Context<Self>) {
         // The engine's first report comes within a frame or two; loading
         // before it would load twice.
@@ -320,20 +306,12 @@ impl AlbumGrid {
         if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
             return;
         }
-        let typed = self
-            .loading
-            .as_ref()
-            .or(self.loaded.as_ref())
-            .is_some_and(|(q, v)| *v == version && wanted.0.typed(q));
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         let q = wanted.0.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
-            if typed {
-                cx.background_executor().timer(TYPING).await;
-            }
             let albums = engine
                 .albums(None, q.sort, q.seed, q.search, q.filter)
                 .await;

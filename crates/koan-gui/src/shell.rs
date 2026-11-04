@@ -236,6 +236,12 @@ impl Shell {
         &self.queue
     }
 
+    /// The library's pages, once made, for tools that drive the window
+    /// headlessly.
+    pub fn library(&self) -> Option<&Entity<LibraryStage>> {
+        self.library.as_ref()
+    }
+
     /// Goes to `route`, as a link or a menu would.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {

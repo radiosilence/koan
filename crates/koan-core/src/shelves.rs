@@ -184,6 +184,24 @@ impl Tracks {
     pub fn count(&self, conn: &rusqlite::Connection) -> Result<u64, DbError> {
         queries::count_tracks(conn, &self.filter)
     }
+
+    /// `page` and `count` together, the search's fuzzy fallback decided once
+    /// for both.
+    pub fn page_counted(
+        &self,
+        conn: &rusqlite::Connection,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<TrackRow>, u64), DbError> {
+        queries::filter_tracks_counted(
+            conn,
+            &self.filter,
+            self.order,
+            self.descending,
+            limit,
+            offset,
+        )
+    }
 }
 
 /// The first few of one kind on a shelf, and how many there are in all.
@@ -244,39 +262,71 @@ pub fn summary_of(
     on_device: bool,
     sizes: Sizes,
 ) -> Result<Summary, DbError> {
-    let mut artists = shelf.artists(user, now);
-    let mut albums = shelf.albums(user, now);
-    let mut tracks = shelf.tracks(user, now);
-    artists.filter.on_device |= on_device;
-    albums.filter.on_device |= on_device;
-    tracks.filter.on_device |= on_device;
     Ok(Summary {
-        artists: Section {
-            preview: queries::list_artists(
-                conn,
-                &ArtistQuery {
-                    limit: Some(sizes.artists),
-                    without_track_counts: true,
-                    ..artists
-                },
-            )?,
-            total: queries::count_artists(conn, &artists)?,
-        },
-        albums: Section {
-            preview: queries::list_albums(
-                conn,
-                &AlbumQuery {
-                    limit: Some(sizes.albums),
-                    ..albums
-                },
-            )?,
-            total: queries::count_albums(conn, &albums)?,
-        },
-        tracks: Section {
-            preview: tracks.page(conn, sizes.tracks, 0)?,
-            total: tracks.count(conn)?,
-        },
+        artists: artists_of(conn, shelf, user, now, on_device, sizes.artists)?,
+        albums: albums_of(conn, shelf, user, now, on_device, sizes.albums)?,
+        tracks: tracks_of(conn, shelf, user, now, on_device, sizes.tracks)?,
     })
+}
+
+/// The first `limit` of the shelf's artists and their total: one kind of a
+/// summary, so a caller with a connection per kind can read the three at
+/// once.
+pub fn artists_of(
+    conn: &rusqlite::Connection,
+    shelf: Shelf,
+    user: i64,
+    now: i64,
+    on_device: bool,
+    limit: u32,
+) -> Result<Section<ArtistRow>, DbError> {
+    let mut artists = shelf.artists(user, now);
+    artists.filter.on_device |= on_device;
+    let (preview, total) = queries::list_artists_counted(
+        conn,
+        &ArtistQuery {
+            limit: Some(limit),
+            without_track_counts: true,
+            ..artists
+        },
+    )?;
+    Ok(Section { preview, total })
+}
+
+/// The first `limit` of the shelf's records and their total.
+pub fn albums_of(
+    conn: &rusqlite::Connection,
+    shelf: Shelf,
+    user: i64,
+    now: i64,
+    on_device: bool,
+    limit: u32,
+) -> Result<Section<AlbumRow>, DbError> {
+    let mut albums = shelf.albums(user, now);
+    albums.filter.on_device |= on_device;
+    let (preview, total) = queries::list_albums_counted(
+        conn,
+        &AlbumQuery {
+            limit: Some(limit),
+            ..albums
+        },
+    )?;
+    Ok(Section { preview, total })
+}
+
+/// The first `limit` of the shelf's tracks and their total.
+pub fn tracks_of(
+    conn: &rusqlite::Connection,
+    shelf: Shelf,
+    user: i64,
+    now: i64,
+    on_device: bool,
+    limit: u32,
+) -> Result<Section<TrackRow>, DbError> {
+    let mut tracks = shelf.tracks(user, now);
+    tracks.filter.on_device |= on_device;
+    let (preview, total) = tracks.page_counted(conn, limit, 0)?;
+    Ok(Section { preview, total })
 }
 
 #[cfg(test)]
