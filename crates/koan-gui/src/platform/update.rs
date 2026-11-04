@@ -12,7 +12,9 @@
 //! source never checks.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use koan_core::updates::{self, Release};
 use koan_kit::app::*;
@@ -22,6 +24,9 @@ use crate::theme::Tone;
 
 /// How often a running kōan looks again, after the check at launch.
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often it asks whether `EVERY` has passed: by the wall clock, which
+/// moves while the computer sleeps, as a timer's monotonic clock does not.
+const TICK: Duration = Duration::from_secs(60 * 60);
 
 /// How this copy can be updated.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,10 +35,14 @@ pub enum Install {
     Unknown,
     /// Run from source, or signed by no one: no checks.
     Source,
-    /// The app bundle at this path, signed by this team, which kōan can
-    /// write over.
+    /// The app bundle at this path, with this signing identifier and team,
+    /// which kōan can write over.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    Bundle { app: PathBuf, team: String },
+    Bundle {
+        app: PathBuf,
+        id: String,
+        team: String,
+    },
     /// The AppImage at this path.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     AppImage(PathBuf),
@@ -66,6 +75,12 @@ pub struct Updates {
     /// Open kōan again once the update is in.
     relaunch: bool,
     auto: bool,
+    /// When GitHub was last asked.
+    last: Option<SystemTime>,
+    /// The version last announced to an install that cannot take it.
+    told: Option<String>,
+    /// Cleared to drop the fetch running: what it fetched is not installed.
+    wanted: Option<Arc<AtomicBool>>,
     check: Option<Task<()>>,
     _schedule: Option<Task<()>>,
 }
@@ -81,25 +96,40 @@ pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
         staged: None,
         relaunch: false,
         auto: false,
+        last: None,
+        told: None,
+        wanted: None,
         check: None,
         _schedule: None,
     });
     let engine = engine.clone();
     let schedule = cx.spawn(async move |cx| {
-        let install = cx.background_executor().spawn(async { install() }).await;
+        let Some(install) = off_thread(install).await else {
+            return;
+        };
         let auto = engine.settings().await.updates_auto;
         log::info!("updates: {install:?}, automatic {auto}");
+        let source = install == Install::Source;
         cx.update(|cx| {
             let updates = cx.global_mut::<Updates>();
             updates.install = install;
             updates.auto = auto;
             cx.refresh_windows();
         });
+        if source {
+            return;
+        }
         loop {
-            if cx.update(|cx| cx.global::<Updates>().auto) {
+            let due = cx.update(|cx| {
+                let u = cx.global::<Updates>();
+                u.auto
+                    && u.last
+                        .is_none_or(|last| last.elapsed().is_ok_and(|since| since >= EVERY))
+            });
+            if due {
                 cx.update(|cx| check(cx));
             }
-            cx.background_executor().timer(EVERY).await;
+            cx.background_executor().timer(TICK).await;
         }
     });
     cx.global_mut::<Updates>()._schedule = Some(schedule);
@@ -110,7 +140,9 @@ pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
     .detach();
 }
 
-/// `updates.auto` as Settings wrote it: turned on, a check now.
+/// `updates.auto` as the file says now, written by Settings or by hand:
+/// turned on, a check now; turned off, a fetch running is dropped and a
+/// bundle waiting for quit is not installed.
 pub fn follow(auto: bool, cx: &mut App) {
     if !cx.has_global::<Updates>() {
         return;
@@ -119,6 +151,15 @@ pub fn follow(auto: bool, cx: &mut App) {
     let was = std::mem::replace(&mut updates.auto, auto);
     if auto && !was {
         check(cx);
+    } else if was && !auto {
+        if let Some(wanted) = updates.wanted.take() {
+            wanted.store(false, Ordering::Relaxed);
+        }
+        updates.check = None;
+        let dropped = updates.staged.take().is_some();
+        if dropped || matches!(updates.state, State::Checking | State::Fetching(_)) {
+            set_state(State::Idle, cx);
+        }
     }
 }
 
@@ -147,12 +188,15 @@ pub fn check(cx: &mut App) {
     {
         return;
     }
+    let wanted = Arc::new(AtomicBool::new(true));
+    let updates = cx.global_mut::<Updates>();
+    updates.last = Some(SystemTime::now());
+    updates.wanted = Some(wanted.clone());
     set_state(State::Checking, cx);
     let task = cx.spawn(async move |cx| {
-        let found = cx
-            .background_executor()
-            .spawn(async { updates::newer_than(VERSION) })
-            .await;
+        let Some(found) = off_thread(|| updates::newer_than(VERSION)).await else {
+            return;
+        };
         let release = match found {
             Ok(Some(release)) => release,
             Ok(None) => {
@@ -168,7 +212,11 @@ pub fn check(cx: &mut App) {
         let version = release.version.clone();
         if let Install::Told(_) = install {
             cx.update(|cx| {
-                crate::notice::show(format!("kōan {version} is out"), Tone::Muted, cx);
+                let told = &mut cx.global_mut::<Updates>().told;
+                if told.as_ref() != Some(&version) {
+                    *told = Some(version.clone());
+                    crate::notice::show(format!("kōan {version} is out"), Tone::Muted, cx);
+                }
                 set_state(
                     State::Available {
                         version,
@@ -180,10 +228,13 @@ pub fn check(cx: &mut App) {
             return;
         }
         cx.update(|cx| set_state(State::Fetching(version.clone()), cx));
-        let staged = cx
-            .background_executor()
-            .spawn(async move { stage(&install, &release) })
-            .await;
+        let going = wanted.clone();
+        let Some(staged) = off_thread(move || stage(&install, &release, &going)).await else {
+            return;
+        };
+        if !wanted.load(Ordering::Relaxed) {
+            return;
+        }
         cx.update(|cx| match staged {
             Ok(staged) => {
                 log::info!("updates: kōan {version} is ready");
@@ -280,11 +331,34 @@ while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
 exec "$path"
 "#;
 
+/// Runs blocking work on a thread of its own: a release's download takes
+/// minutes on a slow link, which GPUI's background executor is not for.
+/// `None` if the thread could not start or panicked.
+fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> impl Future<Output = Option<T>> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let spawned = std::thread::Builder::new()
+        .name("koan-update".into())
+        .spawn(move || {
+            let _ = tx.send(work());
+        });
+    if let Err(e) = &spawned {
+        log::warn!("updates: could not start a thread: {e}");
+    }
+    async move { rx.await.ok() }
+}
+
 /// Fetches and checks the release's file for `install`. The AppImage is put
-/// in place at once; a bundle is staged and its path returned.
-fn stage(install: &Install, release: &Release) -> Result<Option<PathBuf>, String> {
+/// in place at once, unless `wanted` was cleared meanwhile; a bundle is
+/// staged and its path returned.
+fn stage(
+    install: &Install,
+    release: &Release,
+    wanted: &AtomicBool,
+) -> Result<Option<PathBuf>, String> {
     match install {
-        Install::Bundle { team, .. } => stage_bundle(team, release).map(Some),
+        Install::Bundle { id, team, .. } => stage_bundle(id, team, release).map(Some),
         Install::AppImage(path) => {
             let asset = release
                 .asset(&format!("koan-gui-{}.AppImage", std::env::consts::ARCH))
@@ -292,6 +366,10 @@ fn stage(install: &Install, release: &Release) -> Result<Option<PathBuf>, String
             let new = path.with_extension("AppImage.new");
             updates::fetch(asset, &new).map_err(|e| e.to_string())?;
             use std::os::unix::fs::PermissionsExt as _;
+            if !wanted.load(Ordering::Relaxed) {
+                let _ = std::fs::remove_file(&new);
+                return Ok(None);
+            }
             std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755))
                 .and_then(|()| std::fs::rename(&new, path))
                 .map_err(|e| {
@@ -305,15 +383,22 @@ fn stage(install: &Install, release: &Release) -> Result<Option<PathBuf>, String
 }
 
 /// The DMG fetched, its app copied out and checked: signed by `team`, with
-/// this app's identifier.
-fn stage_bundle(team: &str, release: &Release) -> Result<PathBuf, String> {
+/// this app's identifier `id`.
+fn stage_bundle(id: &str, team: &str, release: &Release) -> Result<PathBuf, String> {
     let dir = koan_core::places::cache().join("update");
+    let mount = dir.join("mount");
+    // An image left attached by a run that was killed while staging.
+    if mount.exists() {
+        let _ = run(
+            "hdiutil",
+            &["detach".as_ref(), "-force".as_ref(), mount.as_os_str()],
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let dmg = dir.join("Koan.dmg");
     let asset = release.asset("Koan.dmg").map_err(|e| e.to_string())?;
     updates::fetch(asset, &dmg).map_err(|e| e.to_string())?;
-    let mount = dir.join("mount");
     run(
         "hdiutil",
         &[
