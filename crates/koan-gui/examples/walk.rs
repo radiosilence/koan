@@ -5,13 +5,10 @@
 //! window is shown and nothing on the screen is read: GPUI's headless
 //! renderer draws it, as `window_shot` does.
 //!
-//! The PNGs are named as the Mac app's evidence renderer names its framed
-//! windows (`window-albums-dark.png`, `window-album-<id>-dark.png`), at the
-//! same size, so `just gui-compare` can set the two apps side by side. The
-//! record, artist and playlist it walks are written to `<out>/ids.env` as
-//! the renderer's `KOAN_RENDER_ALBUM`, `KOAN_RENDER_ARTIST` and
-//! `KOAN_RENDER_PLAYLIST`, so the Mac draws the same ones. PNGs left from an
-//! earlier walk are removed first, so none is compared out of date.
+//! The PNGs are named by page and appearance (`window-albums-dark.png`,
+//! `window-album-<id>-dark.png`). The record, artist and playlist it walks are
+//! written to `<out>/ids.env`. PNGs left from an earlier walk are removed
+//! first, so none is read out of date.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
 //! `KOAN_CONFIG_DIR`, whose library folders it scans first. The frame times

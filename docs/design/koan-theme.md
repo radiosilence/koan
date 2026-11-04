@@ -189,7 +189,7 @@ With icons (`appearance.theme_icons = true`), each transport control and action 
 
 Navigation within a page follows "Show icons" like everything else: the Mac's and the iPad's sidebars, the Mac's Settings tabs, and the lists of Library sections and Settings panes on the phone each carry the place's glyph. The bars that stay on screen are words alone, with icons or without: the phone's tab bar and the television's tabs, whose `KoanTabItem`s pass no icon, and the television's Library and Settings lists, which set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
 
-The theme draws its own set, in `apps/macos/Resources/Icons`: one SVG per glyph, naming in `data-sf` the SF Symbols it stands in for. The platform's look keeps those SF Symbols.
+The theme draws its own set, in `apps/ios/Resources/Icons`: one SVG per glyph, naming in `data-sf` the SF Symbols it stands in for. The platform's look keeps those SF Symbols.
 
 - **Grid.** 24 units square, with a 2-unit margin the strokes stay inside, caps included. The glyph's square is 1.2 times the point size of the type beside it, centred on that type's capitals, so a glyph sits where an SF Symbol of the same size would.
 - **Stroke.** One line, monochrome, in the colour of the text beside it. Its width is set by size, not scaled with the drawing: 1.2 points beside 15-point type, 1.4 beside 20, never under a point (0.6 + 0.04 × the point size). Square caps and mitred joins. Curves where the thing is round (a heart, a cloud, a lens); square corners everywhere else, including frames that are circles in SF Symbols.

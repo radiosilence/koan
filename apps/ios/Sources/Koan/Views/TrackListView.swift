@@ -1,0 +1,528 @@
+import KoanFFI
+import SwiftUI
+
+/// A header and a list of tracks — the shape every detail screen takes,
+/// whether it came from an album, an artist, or the favourites list.
+struct TrackListView: View {
+    let title: String
+    var subtitle = ""
+    let tracks: [Track]
+    var artwork: AlbumArtwork.Source?
+    /// Makes the header's subtitle navigate to the artists it credits.
+    var artistCredit: [CreditPart]?
+    /// What the header's play button acts on.
+    var playable: Playable?
+    /// Set when the tracks come from all over rather than from one record.
+    /// Those rows carry their own cover and name the album they came from —
+    /// a single record's tracklist has both in the header above it.
+    var mixedAlbums = false
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+    @Environment(\.horizontalSizeClass) private var width
+    @State private var selection: Set<Int64> = []
+    @State private var headerShown = true
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
+
+    /// A record's tracks as the discs they carry, or `nil` when the record
+    /// does not number by disc (`numbersByDisc`). Each run is a disc in the order the tracks come, `disc` nil for tracks
+    /// that name none; `id` is the run's own, for its heading. On a run of
+    /// several discs each row shows its own number rather than its place.
+    private var discRuns: [DiscRun]? {
+        guard !mixedAlbums, numbersByDisc(tracks.map(\.disc)) else { return nil }
+        var runs: [DiscRun] = []
+        for (index, track) in tracks.enumerated() {
+            let disc = track.disc.flatMap { $0 > 0 ? $0 : nil }
+            if runs.last?.disc != disc || runs.isEmpty {
+                runs.append(DiscRun(id: -Int64(runs.count) - 1, disc: disc, tracks: []))
+            }
+            runs[runs.count - 1].tracks.append((index, track))
+        }
+        return runs
+    }
+
+    private func trackRow(_ track: Track, at index: Int, number: Int?, allTrackIds: [Int64]) -> some View {
+        TrackRow(
+            track: track,
+            position: index + 1,
+            number: number,
+            showsAlbum: mixedAlbums,
+            allTrackIds: allTrackIds
+        )
+        .rowBehaviour(playable: .track(track))
+        .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
+    }
+
+    struct DiscRun: Identifiable {
+        let id: Int64
+        let disc: Int32?
+        var tracks: [(index: Int, track: Track)]
+        var title: String { disc.map { "Disc \($0)" } ?? "Other tracks" }
+    }
+
+    /// A row's number on a record that spans discs: its own, or its place in
+    /// its disc's run where the file has none.
+    private static func number(_ track: Track, inRun place: Int) -> Int {
+        guard let number = track.trackNumber, number > 0 else { return place + 1 }
+        return Int(number)
+    }
+
+    /// Whether the header scrolls with the tracks, as on a phone, where a
+    /// fixed one would take a third of the screen from the list.
+    private var headerScrolls: Bool {
+        #if os(iOS)
+        width == .compact && !tracks.isEmpty
+        #else
+        false
+        #endif
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !headerScrolls {
+                header
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 16)
+            }
+
+            if tracks.isEmpty {
+                EmptyState(icon: Icon.playlist, title: emptyTitle)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                list
+            }
+        }
+    }
+
+    private var list: some View {
+                // A real List rather than a LazyVStack of tap gestures. Stacking
+                // single- and double-tap recognisers on a plain view makes
+                // clicks resolve against each other and drop; List gives native
+                // selection, shift/⌘ range select and keyboard navigation.
+                ScrollViewReader { proxy in
+                    // Built once per pass rather than once per row. Every row
+                    // carries the list it belongs to so playing it keeps the
+                    // rest behind it, and mapping inside the `ForEach` body
+                    // would allocate a fresh copy of the whole thing for each one.
+                    let allTrackIds = tracks.map(\.id)
+                    List(selection: $selection) {
+                        if headerScrolls {
+                            header
+                                .padding(.vertical, KoanTheme.Space.s)
+                                // Each button its own tap target: a row of automatic-style
+                                // buttons is one target that fires them all.
+                                .buttonStyle(.borderless)
+                                .rowSeparator(.hidden)
+                                .selectionDisabled()
+                                .washedRow()
+                                .listRowInsets(RowMetrics.compactInsets)
+                                .onAppear { headerShown = true }
+                                .onDisappear { headerShown = false }
+                        }
+                        if let runs = discRuns {
+                            ForEach(runs) { run in
+                                Section {
+                                    ForEach(Array(run.tracks.enumerated()), id: \.element.track.id) { place, entry in
+                                        trackRow(entry.track, at: entry.index, number: Self.number(entry.track, inRun: place), allTrackIds: allTrackIds)
+                                    }
+                                } header: {
+                                    KoanSectionHeader(run.title)
+                                }
+                            }
+                        } else {
+                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                                trackRow(track, at: index, number: nil, allTrackIds: allTrackIds)
+                            }
+                        }
+                    }
+                    .insetList()
+                    .washedGround()
+                    #if os(iOS)
+                    .listSelectMode($editMode, selection: $selection) { ids in
+                        Self.selectionActions(ids)
+                    }
+                    // The title moves into the bar once the header has
+                    // scrolled away.
+                    .toolbar {
+                        if headerScrolls && !headerShown {
+                            ToolbarItem(placement: .principal) {
+                                Text(Format.title(title))
+                                    .font(.role(.control, system: .headline))
+                                    .lineLimit(1)
+                            }
+                            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+                        }
+                    }
+                    #endif
+
+                    // The List's own double-click hook. Wired into selection
+                    // rather than the gesture system, so it doesn't steal the
+                    // first click.
+                    .selectionMenu(for: Int64.self) { ids in
+                        menu(for: ids)
+                    } primaryAction: { ids in
+                        play(ids)
+                    }
+                    .onKeyPress(.return) {
+                        play(selection)
+                        return .handled
+                    }
+                    // Arriving from search: single out the matched track rather
+                    // than dropping the user at the top of a 20-track record.
+                    .task(id: HighlightKey(target: nav.highlightedTrackId, count: tracks.count)) {
+                        guard let target = nav.highlightedTrackId,
+                              tracks.contains(where: { $0.id == target })
+                        else { return }
+                        selection = [target]
+                        withAnimation { proxy.scrollTo(target, anchor: .center) }
+                        nav.highlightedTrackId = nil
+                    }
+                }
+    }
+
+    #if os(iOS)
+    /// A pick of tracks: every verb, on the tracks themselves.
+    static func selectionActions(_ ids: [Int64]) -> SelectionBar.Actions {
+        SelectionBar.Actions(
+            favourites: ids.map { Playable.Key(kind: .track, id: $0) },
+            sources: [.tracks(ids: ids)]
+        )
+    }
+    #endif
+
+    /// Only a gathered list is narrowed by the filter; a record's tracklist
+    /// with nothing in it is a record with nothing in it.
+    private var emptyTitle: String {
+        mixedAlbums && !library.filter.isEmpty ? "No matches" : "No tracks"
+    }
+
+    /// Plays the list from the first of `ids`, keeping the rest behind it.
+    private func play(_ ids: Set<Int64>) {
+        guard let index = tracks.firstIndex(where: { ids.contains($0.id) }) else { return }
+        player.playNow(trackIds: tracks.map(\.id), startingAt: index)
+    }
+
+    /// Menu for the rows under the pointer — the List hands us the selection
+    /// they belong to, so a menu on a multi-selection acts on all of it.
+    @ViewBuilder
+    private func menu(for ids: Set<Int64>) -> some View {
+        let chosen = tracks.filter { ids.contains($0.id) }
+        if chosen.count == 1, let track = chosen.first {
+            PlayableMenu(playable: .track(track))
+        } else if !chosen.isEmpty {
+            QueueActions(trackIds: chosen.map(\.id))
+        }
+    }
+
+    /// The subtitle is "Artist · 2007 · FLAC · 59:10"; past the artist, which
+    /// `artistCredit` draws as links, are the details.
+    private var subtitleDetails: String {
+        subtitle.components(separatedBy: " · ").dropFirst().joined(separator: " · ")
+    }
+
+    private var subtitleRest: String {
+        subtitleDetails.isEmpty ? "" : "· " + subtitleDetails
+    }
+
+    /// Side by side where there is room, stacked where there is not.
+    ///
+    /// The sleeve is 132pt and the title is set at 26pt; on a phone that leaves
+    /// the text column about 230pt, which is not enough for a title and four
+    /// labelled buttons.
+    @ViewBuilder private var header: some View {
+        if width == .compact {
+            VStack(alignment: .leading, spacing: 14) {
+                sleeve
+                compactTitleBlock
+            }
+            // Without this the stack is only as wide as its widest child and
+            // the parent centres the lot, which is not koan's alignment
+            // anywhere else in either app.
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            PageHeader(Format.title(title)) {
+                sleeve
+            } lead: {
+                #if os(iOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+            } detail: {
+                if let artistCredit {
+                    HStack(spacing: 5) {
+                        CreditLinks(parts: artistCredit)
+                        if !subtitleRest.isEmpty {
+                            Text(subtitleRest)
+                        }
+                    }
+                } else if !subtitle.isEmpty {
+                    Text(subtitle)
+                }
+            } actions: {
+                HeaderActions(playable: playable)
+            }
+        }
+    }
+
+    /// Smaller on a phone, where it sits above the title rather than beside.
+    private var sleeveSize: CGFloat {
+        width == .compact ? Columns.compactSleeve : Columns.sleeve
+    }
+
+    @ViewBuilder private var sleeve: some View {
+        if let artwork {
+            AlbumArtwork(source: artwork, size: .hero, cornerRadius: KoanTheme.radius(8))
+                .frame(width: sleeveSize, height: sleeveSize)
+                .koanShadow(0.3, radius: 10, y: 4)
+                .showsArtworkFullSize(
+                    source: artwork,
+                    title: title,
+                    subtitle: subtitle.isEmpty ? nil : subtitle
+                )
+        }
+    }
+
+    /// A phone's header: the title, the artist and the details each on a line
+    /// of their own, then play with the lesser actions beside it. Beside the
+    /// play button a title has half the screen and wraps at every word.
+    private var compactTitleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Format.title(title))
+                .font(.role(.titleSmall, system: .system(size: 22, weight: .semibold)))
+                .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            if let artistCredit {
+                CreditLinks(parts: artistCredit)
+                if !subtitleDetails.isEmpty {
+                    Text(subtitleDetails)
+                        .font(.role(.fine, system: .footnote))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                }
+            } else if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.role(.fine, system: .footnote))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
+            HStack(spacing: 12) {
+                #if os(iOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+                HeaderActions(playable: playable)
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    /// The same record can be opened again highlighting a different track.
+    private struct HighlightKey: Equatable {
+        let target: Int64?
+        let count: Int
+    }
+}
+
+struct TrackRow: View {
+    let track: Track
+    /// Where in the list it is, from 1: where playing it starts the list.
+    let position: Int
+    /// What its number column says: `TrackListView.number(_:at:)`.
+    var number: Int?
+    /// Draws the cover and names the album — see `TrackListView.mixedAlbums`.
+    let showsAlbum: Bool
+    /// The whole list, so playing this row keeps the rest queued behind it.
+    let allTrackIds: [Int64]
+
+    @Environment(PlayerModel.self) private var player
+    /// Whether the List has this row selected — see `QueueRow.prominence`.
+    @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.horizontalSizeClass) private var width
+    @State private var hovering = false
+
+    var body: some View {
+        // Read here, in the row, rather than handed down by the list: what is
+        // playing moves on every pause and every queue edit, and a list that
+        // read it would re-diff every row for each. Only the rows on screen exist,
+        // so this is thirty small bodies rather than one large one.
+        let isCurrent = player.currentTrackId == track.id
+        let isSelected = prominence == .increased
+        let compact = width == .compact
+        // On a record's page the header names its artist; a row names its own
+        // only where they differ from it.
+        let credited = showsAlbum || track.creditDiffers
+
+        HStack(spacing: compact ? 8 : 12) {
+            // The row number becomes bars for whatever is playing. The longest
+            // number in the list, in whichever face and size it is drawn,
+            // holds the column, so what shows over it never moves the title.
+            Text(Numbering.zeros(String(allTrackIds.count).count))
+                .lineLimit(1)
+                .fixedSize()
+                .hidden()
+                .frame(minWidth: compact ? 16 : 22, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    if hovering {
+                        RowPlayButton(
+                            playable: .track(track),
+                            visible: true,
+                            inContext: (trackIds: allTrackIds, startAt: position - 1)
+                        )
+                    } else if isCurrent {
+                        PlayingIndicator(isPlaying: player.isPlaying)
+                    } else {
+                        Text("\(number ?? position)")
+                            .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+
+            if showsAlbum {
+                // The cover is what you recognise a record by, and a list
+                // gathered from the whole library is exactly that job.
+                TrackSleeve(albumId: track.albumId)
+                    .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Format.title(track.title))
+                    .lineLimit(Format.titleLines)
+                    // Tinted to mark the playing track — but not when the row
+                    // is selected, where accent-on-accent is unreadable.
+                    .foregroundStyle(
+                        isCurrent && !isSelected
+                            ? AnyShapeStyle(.tint)
+                            : KoanTheme.style(.ink, system: .primary)
+                    )
+                if credited {
+                    ArtistAlbumLine(
+                        artist: track.artistCredit,
+                        album: showsAlbum ? track.albumTitle : nil,
+                        albumId: track.albumId
+                    )
+                }
+            }
+
+            Spacer(minLength: compact ? 4 : 8)
+
+            TrackAvailability(track: track, width: compact ? 18 : 30)
+
+            // There is no hover on a phone, so a heart that appears on it is a
+            // heart that never appears.
+            TrackHeart(trackId: track.id, showing: hovering || width == .compact)
+
+            // 92pt of codec and sample rate is worth having on a window and
+            // not worth a truncated title on a phone. The format is on the
+            // record's header and in the transport either way.
+            if width != .compact, let quality = Format.quality(track) {
+                Text(quality)
+                    .font(.role(.fine, system: .caption2.monospaced()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                    .frame(width: Columns.quality, alignment: .trailing)
+            }
+
+            Text(Format.duration(track.durationMs))
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                .fixedSize()
+                .frame(minWidth: compact ? Columns.compactDuration : Columns.duration, alignment: .trailing)
+        }
+        .frame(minHeight: showsAlbum ? RowMetrics.art : RowMetrics.text)
+        // The row is only clickable where a view sits; the Spacer would
+        // otherwise be a dead zone.
+        .contentShape(Rectangle())
+        .pointerHover { hovering = $0 }
+    }
+}
+
+/// A track's sleeve at row size, or a note where the library knows no record.
+struct TrackSleeve: View {
+    let albumId: Int64?
+
+    var body: some View {
+        if let albumId {
+            AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: KoanTheme.radius(3))
+        } else {
+            KoanIcon(Icon.track)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+        }
+    }
+}
+
+/// Whether this track can play right now, and what the queue is doing about it
+/// if not.
+///
+/// Two different facts share one slot. The library knows whether a file exists
+/// on disk; only the queue knows a download is in flight. A row shows the live
+/// queue state when there is one and falls back to the library's answer.
+private struct TrackAvailability: View {
+    let track: Track
+    var width: CGFloat = 30
+
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        Group {
+            // Only the states the badge cannot say itself. Downloading is one
+            // it can — the ring belongs in the same slot as the cloud it is
+            // filling, not in a column of its own.
+            if let queued = mirror.queuedByTrack[track.id], isBlocking(queued.status) {
+                queueState(queued)
+            } else {
+                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
+            }
+        }
+        .font(.role(.fine, system: .caption))
+        .frame(width: width, height: 16, alignment: .trailing)
+    }
+
+    /// Only these say something neither the library row nor the badge can.
+    private func isBlocking(_ status: EntryStatus) -> Bool {
+        status == .priorityPending || status == .failed
+    }
+
+    @ViewBuilder
+    private func queueState(_ item: QueueItem) -> some View {
+        switch item.status {
+        case .priorityPending:
+            KoanIcon(Icon.downloads)
+                .foregroundStyle(.tint)
+                .help("Queued for download")
+        case .failed:
+            KoanIcon(Icon.warningFilled)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                .help(item.failureReason ?? "Couldn't be fetched")
+        default:
+            EmptyView()
+        }
+    }
+}
+
+/// The widths of a track row's fixed columns, and the header's sizes. A
+/// television sets type at twice a Mac's size, is read from across a room, and
+/// grows a focused button into its neighbours.
+private enum Columns {
+    #if os(tvOS)
+    static let quality = 190.0
+    static let duration = 96.0
+    static let compactDuration = 96.0
+    static let sleeve = 260.0
+    static let compactSleeve = 260.0
+    #else
+    static let quality = 92.0
+    static let duration = 48.0
+    static let compactDuration = 36.0
+    static let sleeve = 132.0
+    static let compactSleeve = 200.0
+    #endif
+}

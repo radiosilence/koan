@@ -24,13 +24,13 @@ just fmt
 just hooks
 ```
 
-### Measuring the macOS app
+### Measuring the iOS app
 
 The app emits signposts on the Points of Interest timeline, so a recording lines
 its own regions up against what the CPU profiler and the SwiftUI instrument saw:
 
 ```bash
-xcrun xctrace record --template 'SwiftUI' --attach koan-app --output t.trace
+xcrun xctrace record --template 'SwiftUI' --device <device> --attach koan --output t.trace
 ```
 
 Opening a record also reports itself in plain text, because the interesting part
@@ -135,7 +135,7 @@ CD runs in the same workflow after `Checks` passes on main, and ships what CI
 built: the Linux binaries are built once, on the runners, and both the
 container image and the release are made from them. Every push uploads the
 apps to TestFlight and Google Play's internal track when it changes them, and
-a push that changes the version releases. The Mac app's release build starts
+a push that changes the version releases. The macOS release build of the CLI starts
 alongside the checks, since it is the longest part of a release and publishes
 nothing on its own.
 

@@ -1,0 +1,643 @@
+import KoanFFI
+import SwiftUI
+
+/// A playlist, laid out the way the queue is.
+///
+/// Almost everything the queue does applies here — album headings over
+/// contiguous runs, multi-select, drag to reorder, ⌫ to remove, drop to add —
+/// because a playlist and a queue are the same shape of thing. The differences
+/// are the two that matter: this list outlives the session, and playback state
+/// is *mirrored* onto it rather than owned by it. A row is lit because that
+/// track is what is playing, the same way it is on an album page.
+///
+/// Ungrouped by default, unlike the queue: a playlist is a sequence someone
+/// chose, not a shelf of records. The choice is remembered per playlist.
+struct PlaylistView: View {
+    let playlistId: Int64
+
+    @Environment(\.horizontalSizeClass) private var width
+    @Environment(PlayerModel.self) private var player
+    @Environment(PlaylistsModel.self) private var playlists
+    @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
+    @Environment(UIState.self) private var ui
+
+    /// Selection is local `@State` for the same reason the queue's is, and
+    /// unread here for the same reason too — see `QueueView.selection`.
+    @State private var selection: Set<String> = []
+    @State private var headerShown = true
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
+
+    /// Whether the header scrolls with the rows, as on a phone, where a fixed
+    /// one would take a third of the screen from the list.
+    private var headerScrolls: Bool {
+        #if os(iOS)
+        width == .compact && !entries.isEmpty
+        #else
+        false
+        #endif
+    }
+    @State private var renaming = false
+    @State private var renameTo = ""
+
+    private var playlist: Playlist? { playlists.playlist(id: playlistId) }
+    /// Guarded on the id because history can move faster than a read.
+    private var entries: [PlaylistEntry] {
+        playlists.openId == playlistId ? playlists.entries : []
+    }
+
+    /// A playlist can hold the same track twice, so a row's identity is its
+    /// position, not its track id. Selecting one copy must not light the other.
+    private var rows: [Row] {
+        grouped
+            ? Row.build(from: entries)
+            : entries.enumerated().map { Row.entry($1, position: $0) }
+    }
+
+    var body: some View {
+        // Once per pass, for the header and the rows both.
+        let rows = self.rows
+
+        VStack(spacing: 0) {
+            if !headerScrolls {
+                header(rows)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 16)
+            }
+
+            if entries.isEmpty {
+                EmptyState(
+                    icon: Icon.playlist,
+                    title: playlists.isLoading ? "Loading…" : "Nothing in here yet",
+                    detail: playlist?.smart == true
+                        ? "Nothing in the library matches its rules yet."
+                        : playlist?.readonly == true
+                        ? "None of its tracks are in the library."
+                        : "Drag records, artists or tracks onto it — or onto its row in the sidebar."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $selection) {
+                    if headerScrolls {
+                        header(rows)
+                            .padding(.vertical, KoanTheme.Space.s)
+                            // Each button its own tap target: a row of automatic-style
+                            // buttons is one target that fires them all.
+                            .buttonStyle(.borderless)
+                            .rowSeparator(.hidden)
+                            .selectionDisabled()
+                            .washedRow()
+                            .onAppear { headerShown = true }
+                            .onDisappear { headerShown = false }
+                    }
+                    ForEach(rows) { row in
+                        rowView(row)
+                    }
+                    .onMove(perform: mover)
+                }
+                .insetList()
+                .washedGround()
+                #if os(iOS)
+                .listSelectMode($editMode, selection: $selection) { selectionActions($0, rows: rows) }
+                // The name moves into the bar once the header has scrolled away.
+                .toolbar {
+                    if headerScrolls && !headerShown {
+                        ToolbarItem(placement: .principal) {
+                            Text(playlist?.name ?? "")
+                                .font(.role(.control, system: .headline))
+                                .lineLimit(1)
+                        }
+                        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+                    }
+                }
+                #endif
+                .selectionMenu(for: String.self) { ids in
+                    menu(forRows: ids)
+                } primaryAction: { ids in
+                    play(rowIds: ids)
+                }
+                .onKeyPress(.return) {
+                    play(rowIds: selection)
+                    return .handled
+                }
+                .clearsSelection($selection)
+                .onChange(of: ui.selectAllToken) { _, _ in
+                    selection = Set(rows.map(\.id))
+                }
+            }
+        }
+        // On the whole page, not the List: an empty playlist is exactly when
+        // you want to drop something on it, and it has no rows to land on.
+        .dropTarget(for: PlayableTransfer.self) { dropped, _ in
+            playlists.add(dropped: dropped, to: playlistId)
+            return true
+        }
+        // Only for a library change — the rows arrived before the page did.
+        .reloading(on: playlistId) {
+            await playlists.prepare(id: playlistId)
+        }
+        .onChange(of: playlistId) { selection = [] }
+        .alert("Rename Playlist", isPresented: $renaming) {
+            TextField("Name", text: $renameTo)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") { playlists.rename(id: playlistId, to: renameTo) }
+        }
+    }
+
+    // MARK: - Header
+
+    /// A playlist is playable like a record is, so it gets the record's header:
+    /// the big round play button beside the title, Play Next and Queue under
+    /// it.
+    private var playable: Playable? {
+        playlist.map { .playlist(id: $0.id, name: $0.name) }
+    }
+
+    /// Side by side where there is room, stacked where there is not, as a
+    /// record's page is: on a phone the side-by-side header is wider than the
+    /// screen, which wraps the title and Shuffle a letter at a time and lays
+    /// every row below out at the header's width, clipped.
+    @ViewBuilder private func header(_ rows: [Row]) -> some View {
+        if width == .compact {
+            VStack(alignment: .leading, spacing: 14) {
+                artwork
+                titleBlock
+                HStack(spacing: 10) {
+                    QueueButtons(playable: playable)
+                    shuffleButton.labelStyle(.iconOnly)
+                    Spacer(minLength: 0)
+                    layoutControls
+                }
+                // A phone's pick has the select bar at the foot of the page.
+                #if os(tvOS)
+                PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+                #endif
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            PageHeader(playlist?.name ?? "Playlist") {
+                artwork
+            } lead: {
+                #if os(iOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+            } detail: {
+                Text(summary)
+            } actions: {
+                VStack(alignment: .leading, spacing: 6) {
+                    #if os(tvOS)
+                    if let playable {
+                        HStack {
+                            PlayableHeaderButton(playable: playable)
+                            ShuffleHeaderButton(playable: playable)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    #endif
+                    HStack(spacing: 10) {
+                        QueueButtons(playable: playable)
+                        shuffleButton
+                    }
+                }
+            } trailing: {
+                VStack(alignment: .trailing, spacing: 10) {
+                    #if os(tvOS)
+                    PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+                    #endif
+                    layoutControls
+                }
+            }
+        }
+    }
+
+    private var artwork: some View {
+        PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: KoanTheme.radius(8))
+            .frame(width: width == .compact ? 96 : 132, height: width == .compact ? 96 : 132)
+            .koanShadow(0.3, radius: 10, y: 4)
+    }
+
+    /// The compact header's title, which only a phone draws: a television is
+    /// never compact.
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                Text(playlist?.name ?? "Playlist")
+                    .font(.role(.title, system: .system(size: pageTitleSize, weight: .semibold)))
+                    .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(summary)
+                .font(.role(.control, system: .callout))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+        }
+    }
+
+    private var shuffleButton: some View {
+        let refusal: String? = !playlists.fillable(playlistId) ? "This playlist can't be edited here"
+            : entries.count < 2 ? "Nothing to shuffle" : nil
+        return HStack {
+            #if os(iOS)
+            ShuffleUndoButton(shuffles: playlists.openId == playlistId ? playlists.undoShuffles : 0) {
+                player.undo(playlist: playlistId)
+            }
+            #endif
+            Button { playlists.shuffle(id: playlistId) } label: {
+                Label("Shuffle Order", koan: Icon.reshuffle)
+            }
+            .disabled(refusal != nil)
+        }
+        .help(refusal ?? "Shuffle the playlist's order, for good")
+        .koanButton(.compact)
+    }
+
+    private var layoutControls: some View {
+        HStack(spacing: 10) {
+            KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: groupedBinding)
+
+            Menu {
+                Button("Rename…") {
+                    renameTo = playlist?.name ?? ""
+                    renaming = true
+                }
+                .disabled(playlist?.fromFile == true)
+                Divider()
+                Button("Delete Playlist", role: .destructive) {
+                    playlists.delete(id: playlistId)
+                    nav.forget(.playlist(playlistId))
+                    nav.show(.queue)
+                }
+            } label: {
+                KoanIcon(Icon.moreCircled)
+                    .touchTarget()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            #if os(tvOS)
+            .frame(width: 22)
+            #endif
+        }
+    }
+
+    /// The remembered choice, defaulting to ungrouped.
+    private var groupedBinding: Binding<Bool> {
+        Binding(
+            get: { grouped },
+            set: { playlists.setGrouped($0, for: playlistId) }
+        )
+    }
+
+    private var summary: String {
+        var parts = [Format.count(Int64(entries.count), "track")]
+        let total = entries.compactMap(\.track.durationMs).reduce(0, +)
+        if total > 0 { parts.append(Format.duration(total)) }
+        // Worth saying: it means edits made here show up on the server, and
+        // edits made there show up here.
+        if playlist?.remoteId != nil { parts.append("synced") }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Rows
+
+    @ViewBuilder
+    private func rowView(_ row: Row) -> some View {
+        switch row {
+        case .album(_, let group):
+            PlaylistAlbumHeader(group: group).rowBehaviour()
+        case .entry(let entry, let position):
+            PlaylistEntryRow(entry: entry, position: position, count: entries.count, grouped: grouped)
+                .rowBehaviour()
+                .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
+        }
+    }
+
+    private var grouped: Bool { playlist?.grouped ?? false }
+
+    /// Smart and read-only playlists keep their order.
+    private var mover: ((IndexSet, Int) -> Void)? {
+        playlists.fillable(playlistId) ? { move(from: $0, to: $1) } : nil
+    }
+
+    // MARK: - Actions
+
+    /// Play from an entry, keeping the rest of the playlist behind it — the
+    /// same thing clicking track nine of an album does. An entry rather than a
+    /// position: see `PlayerModel.play(playlist:from:)`.
+    ///
+    /// Stays put afterwards: the playing row is lit on this page, so there is
+    /// nothing the queue would show that this does not.
+    private func start(at entry: Int64) {
+        player.play(playlist: playlistId, from: entry)
+    }
+
+    private func play(rowIds: Set<String>) {
+        guard let first = positions(in: rowIds).min(), let entry = entries[safe: first] else {
+            return
+        }
+        start(at: entry.entryId)
+    }
+
+    /// Expand a set of row ids to the playlist positions they stand for. An
+    /// album heading stands for its whole run.
+    private func positions(in rowIds: Set<String>) -> [Int] {
+        Row.positions(in: rowIds, of: rows)
+    }
+
+    private func entryIds(in rowIds: Set<String>) -> [Int64] {
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.entryId }
+    }
+
+    private func trackIds(in rowIds: Set<String>) -> [Int64] {
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.track.id }
+    }
+
+    #if os(iOS)
+    /// What the select bar does with the rows ticked: each heading's run, then
+    /// each entry, in the order ticked.
+    private func selectionActions(_ ids: [String], rows: [Row]) -> SelectionBar.Actions {
+        var seen = Set<Int>()
+        let positions = ids.flatMap { Row.positions(in: [$0], of: rows) }
+            .filter { seen.insert($0).inserted }
+        let picked = positions.compactMap { entries[safe: $0] }
+        let tracks = picked.map(\.track.id)
+        var remove: SelectionBar.Removal?
+        if playlists.fillable(playlistId) {
+            let playlists = playlists, playlistId = playlistId
+            remove = .init(title: "Remove", noun: "track", count: picked.count) {
+                playlists.remove(entryIds: picked.map(\.entryId), from: playlistId)
+            }
+        }
+        return SelectionBar.Actions(
+            favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
+            sources: [.tracks(ids: tracks)],
+            remove: remove
+        )
+    }
+    #endif
+
+    private func removeSelected() {
+        playlists.remove(entryIds: entryIds(in: selection), from: playlistId)
+        selection = []
+    }
+
+    @ViewBuilder
+    private func menu(forRows ids: Set<String>) -> some View {
+        Button { play(rowIds: ids) } label: {
+            Label("Play", koan: Icon.play)
+        }
+        Button { player.playNext(trackIds: trackIds(in: ids)) } label: {
+            Label("Play Next", koan: Icon.playNext)
+        }
+        Button { player.enqueue(trackIds: trackIds(in: ids)) } label: {
+            Label("Add to Queue", koan: Icon.queue)
+        }
+        Divider()
+        AddToPlaylistMenu { [.tracks(ids: trackIds(in: ids))] }
+        Divider()
+        Button(role: .destructive) {
+            playlists.remove(entryIds: entryIds(in: ids), from: playlistId)
+            selection = []
+        } label: {
+            Label("Remove from Playlist", koan: Icon.remove)
+        }
+        if ids.count == 1, let position = positions(in: ids).first,
+           let entry = entries[safe: position] {
+            Divider()
+            Button {
+                library.toggleFavourite(track: entry.track.id)
+            } label: {
+                Label(
+                    library.isFavourite(track: entry.track.id)
+                        ? "Remove Favourite" : "Favourite Track",
+                    koan: library.isFavourite(track: entry.track.id)
+                        ? Icon.favourited : Icon.favourite
+                )
+            }
+            if let albumId = entry.track.albumId {
+                Button {
+                    nav.open(album: albumId, highlighting: entry.track.id)
+                } label: {
+                    Label("Go to Album", koan: Icon.album)
+                }
+            }
+            TrackInfoButton(trackId: entry.track.id)
+        }
+    }
+
+    // MARK: - Reordering
+
+    /// Rows moved to before the row at `destination`. A heading moves its
+    /// whole run, and the entries keep their relative order.
+    ///
+    /// `ForEach.onMove` on a phone and the table's own move on the Mac: a
+    /// drag within the list belongs to the list, and a drop target on each
+    /// row never sees it there.
+    private func move(from source: IndexSet, to destination: Int) {
+        let rows = self.rows
+        var seen = Set<Int>()
+        // Indices from the rows as drawn, which a reload can have shortened.
+        let moving = source.sorted().filter(rows.indices.contains)
+            .flatMap { rows[$0].positions }.filter { seen.insert($0).inserted }
+        guard !moving.isEmpty else { return }
+        // The first entry at or after the drop that stays put, by identity:
+        // its index shifts once the moved entries are lifted out. None is the end.
+        let anchor = rows[min(destination, rows.count)...]
+            .lazy.flatMap(\.positions).first { !seen.contains($0) }
+            .flatMap { entries[safe: $0]?.entryId }
+        var order = entries.enumerated().filter { !seen.contains($0.offset) }.map(\.element.entryId)
+        let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
+        let moved = moving.compactMap { entries[safe: $0]?.entryId }
+        order.insert(contentsOf: moved, at: at)
+        // By entry: offline the rows shown are only some of the playlist's.
+        playlists.move(entryIds: moved, before: anchor, shown: order, in: playlistId)
+    }
+}
+
+// MARK: - Rows
+
+extension PlaylistView {
+    /// A playlist row: an album heading, or one entry.
+    ///
+    /// An entry carries its position rather than finding itself by id in the
+    /// entries each time it is asked — a walk of the list per row per
+    /// evaluation, on every click and every pause. The rows are rebuilt
+    /// whenever the entries move, so the position cannot go stale.
+    enum Row: Identifiable {
+        case album(id: String, group: PlaylistGroup)
+        case entry(PlaylistEntry, position: Int)
+
+        /// The entry's own id. Two copies of one track are two entries and so
+        /// two rows — selecting one must not light the other.
+        var id: String {
+            switch self {
+            case .album(let id, _): id
+            case .entry(let entry, _): "entry:\(entry.entryId)"
+            }
+        }
+
+        /// Where this row sits. An album heading stands for its whole run.
+        var positions: [Int] {
+            switch self {
+            case .album(_, let group): group.positions
+            case .entry(_, let position): [position]
+            }
+        }
+
+        /// Expand a set of row ids to the playlist positions they stand for.
+        static func positions(in rowIds: Set<String>, of rows: [Row]) -> [Int] {
+            rows.filter { rowIds.contains($0.id) }.flatMap(\.positions)
+        }
+
+        /// Contiguous runs of the same record, mirroring the queue's grouping.
+        /// Playlist order is the user's, so two separate visits to a record are
+        /// two headings rather than one.
+        static func build(from entries: [PlaylistEntry]) -> [Row] {
+            var rows: [Row] = []
+            var index = 0
+            while index < entries.count {
+                let first = entries[index]
+                guard first.run == .opens else {
+                    rows.append(.entry(first, position: index))
+                    index += 1
+                    continue
+                }
+                let run = [first] + entries[(index + 1)...].prefix { $0.run == .continues }
+                rows.append(.album(
+                    id: "album:\(first.entryId)",
+                    group: PlaylistGroup(
+                        album: first.track.albumTitle,
+                        positions: Array(index..<(index + run.count)),
+                        entries: run
+                    )
+                ))
+                rows.append(contentsOf: run.enumerated().map { Row.entry($1, position: index + $0) })
+                index += run.count
+            }
+            return rows
+        }
+    }
+}
+
+/// A contiguous run of one record inside a playlist.
+struct PlaylistGroup {
+    let album: String
+    let positions: [Int]
+    let entries: [PlaylistEntry]
+
+    /// The record's artist as its heading links it.
+    var artistCredit: [CreditPart] { entries.first?.track.albumArtistCredit ?? [] }
+}
+
+extension PlaylistEntry {
+    /// A row the playlist's grouping leaves without a heading above it: on no
+    /// record, or a single.
+    var standsAlone: Bool { run == .alone || run == .single }
+
+    /// Under headings, a row in a record's run leaves the record and its
+    /// artist to the heading, and names its own artists only where they differ.
+    func showsArtist(grouped: Bool) -> Bool { !grouped || standsAlone || track.creditDiffers }
+    func showsArtwork(grouped: Bool) -> Bool { !grouped || standsAlone }
+}
+
+/// One entry, wearing whatever the queue currently thinks of it.
+///
+/// Its own view so that what is playing and what is queued are read per row:
+/// read by the list, every pause and every queue edit would re-run all of it.
+private struct PlaylistEntryRow: View {
+    let entry: PlaylistEntry
+    let position: Int
+    let count: Int
+    let grouped: Bool
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let isCurrent = player.currentPlaylistEntryId == entry.entryId
+        QueueRow(
+            item: QueueRowContent(
+                entry: entry,
+                position: position + 1,
+                of: count,
+                // Found by entry, not by track: two copies of one song are
+                // two rows, and each wears its own queue item's state.
+                queued: mirror.queuedByPlaylistEntry[entry.entryId],
+                isCurrent: isCurrent
+            ),
+            isCurrent: isCurrent,
+            showArtist: entry.showsArtist(grouped: grouped),
+            artwork: entry.showsArtwork(grouped: grouped)
+        )
+    }
+}
+
+/// What the selection is, and what to do with it. The one reader of the
+/// selection outside the List, so a click re-runs this and not the page.
+private struct PlaylistSelectionHeader: View {
+    @Binding var selection: Set<String>
+    let rows: [PlaylistView.Row]
+    let remove: () -> Void
+
+    var body: some View {
+        if !selection.isEmpty {
+            HStack(spacing: 8) {
+                Text("\(PlaylistView.Row.positions(in: selection, of: rows).count) selected")
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                Button("Remove", role: .destructive, action: remove)
+                Button("Clear") { selection = [] }
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+}
+
+private struct PlaylistAlbumHeader: View {
+    let group: PlaylistGroup
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // By record where the library knows it: art is stored per record,
+            // and asking by track fetches the same sleeve once per run.
+            if let track = group.entries.first?.track {
+                AlbumArtwork(
+                    source: track.albumId.map { .album($0) } ?? .track(track.id), cornerRadius: KoanTheme.radius(5)
+                )
+                    .frame(width: 44, height: 44)
+                    .koanShadow(0.28, radius: 4, y: 2)
+            }
+            let albumId = group.entries.first?.track.albumId
+            VStack(alignment: .leading, spacing: 2) {
+                LinkText(
+                    text: group.album,
+                    target: albumId.map { .album($0) },
+                    font: .role(.body, system: .system(size: 14, weight: .semibold)),
+                    prominent: true
+                )
+                CreditLinks(parts: group.artistCredit, font: .role(.fine, system: .caption))
+            }
+            Spacer()
+        }
+        .textCase(nil)
+        .padding(.vertical, 5)
+    }
+}
+
+extension Array {
+    /// Index that answers `nil` rather than trapping. Positions here come from
+    /// a row list built off a track list that may have been reloaded since.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+

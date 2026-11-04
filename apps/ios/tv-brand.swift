@@ -5,7 +5,7 @@ import AppKit
 // launch screen's ensō.
 //
 //     swiftc -O apps/ios/tv-brand.swift -o target/tv-brand
-//     target/tv-brand apps/macos/Resources/Assets.xcassets/LaunchEnso.imageset/LaunchEnso.svg OUT
+//     target/tv-brand apps/ios/Resources/Assets.xcassets/LaunchEnso.imageset/LaunchEnso.svg OUT
 //
 // then copy OUT's images over those in `App Icon & Top Shelf Image.brandassets`.
 let args = CommandLine.arguments
