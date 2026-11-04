@@ -402,19 +402,14 @@ impl KoanTheme {
             if feed.target == accent {
                 return;
             }
-            let claimed = feed.claim();
-            if claimed {
-                feed.aim(feed.contrast.get(), false);
-            }
             feed.target = accent;
             feed.aim(contrast, ease);
             // Everything drawn in the accent names its slots (fills, text,
             // paths, a caret, shader uniforms) and a fade reads a slot as it
             // starts, so a turn redraws no view: the rainbow's every step
             // included. Only without slots does a view draw the colour
-            // itself, and need drawing again, as views drawn before the
-            // slots were claimed do once.
-            if feed.slots.is_none() || claimed {
+            // itself, and need drawing again.
+            if feed.slots.is_none() {
                 cx.notify();
             }
         });
@@ -542,12 +537,9 @@ pub struct AccentFeed {
     /// The accent as drawn: per appearance, a colour slot for fills and one
     /// for text, mixed by the GPU in OKLab as a new record's accent settles,
     /// so the hue turns rather than passing through grey and no frame is
-    /// drawn for it. Claimed with the first record's accent, since nothing
-    /// turns before one; `None` until then and when every slot was taken,
-    /// when the accent lands with each record.
+    /// drawn for it. `None` when every slot was taken; the accent then lands
+    /// with each record.
     slots: Option<[[crate::components::ColorSlot; 2]; 2]>,
-    /// Whether the slots have been asked for, so a full table is asked once.
-    asked: bool,
     /// The contrast the slots were last aimed for, and the target as held
     /// for it, dark then light: what every `Look` reads, worked out once per
     /// aim rather than looked up per call.
@@ -558,26 +550,16 @@ pub struct AccentFeed {
 impl AccentFeed {
     fn new() -> Self {
         let target = Accent::MINT;
+        let claim = || crate::components::ColorSlot::claim(target.dark.rgba());
+        let slots = (|| Some([[claim()?, claim()?], [claim()?, claim()?]]))();
         let feed = Self {
             target,
-            slots: None,
-            asked: false,
+            slots,
             contrast: std::cell::Cell::new(false),
             held: std::cell::Cell::new([target.shade(true), target.shade(false)]),
         };
         feed.aim(false, false);
         feed
-    }
-
-    /// Claims the slots the first time it is asked. Whether they were
-    /// claimed now; the caller holds them at the accent before turning it.
-    fn claim(&mut self) -> bool {
-        if std::mem::replace(&mut self.asked, true) {
-            return false;
-        }
-        let claim = || crate::components::ColorSlot::claim(self.target.dark.rgba());
-        self.slots = (|| Some([[claim()?, claim()?], [claim()?, claim()?]]))();
-        self.slots.is_some()
     }
 
     /// Whether the accent is still turning to its target.
