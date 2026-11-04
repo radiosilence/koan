@@ -882,12 +882,15 @@ impl BrowserPolicy {
 impl BrowserPolicy {
     /// Whether a host refused now may be allowed once the moving names are
     /// asked again.
+    /// Never waits: while another request is asking (the Tailscale CLI can
+    /// take seconds), this one is refused rather than holding an async
+    /// worker. `learn` itself runs on the blocking pool.
     fn may_relearn(&self) -> bool {
         self.relearn.get().is_some()
             && self
                 .learned_at
-                .lock()
-                .is_none_or(|at| at.elapsed() >= RELEARN)
+                .try_lock()
+                .is_some_and(|at| at.is_none_or(|at| at.elapsed() >= RELEARN))
     }
 
     /// Ask the moving names again, unless they were asked within `RELEARN`.
