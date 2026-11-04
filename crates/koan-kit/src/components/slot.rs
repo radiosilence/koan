@@ -3,7 +3,8 @@
 //! two ends and a track, mixed in sRGB or OKLab, so a colour fading or the
 //! accent turning moves with no frame drawn. The kit's colour source
 //! (`install`) evaluates every claimed slot at the present's time and says
-//! until when they move.
+//! until when each moves, so a shader or window stays presenting only while
+//! a slot it draws with moves.
 //!
 //! It also keeps the kit's present clock: the latest time a present was
 //! made for, which a retarget samples a moving value at.
@@ -67,22 +68,19 @@ pub fn present_now() -> Instant {
 /// Installs the kit's colour source: every claimed slot evaluated at the
 /// present's time. Called once, by `theme::init`.
 pub fn install() {
-    gpui::set_color_source(|at, colors| {
+    gpui::set_color_source(|at, colors, until| {
         let nanos = at.saturating_duration_since(epoch()).as_nanos() as u64;
         PRESENTED.fetch_max(nanos, Ordering::Relaxed);
         with_table(|table| {
             let now = seconds(table, at);
-            let mut until: Option<f32> = None;
             for (index, entry) in table.entries.iter().enumerate() {
                 let Some(entry) = entry else {
                     continue;
                 };
                 colors[index] = shown(entry, now);
-                if let Some(end) = moving_until(entry, now) {
-                    until = Some(until.map_or(end, |u| u.max(end)));
-                }
+                until[index] = moving_until(entry, now)
+                    .map(|end| table.origin + std::time::Duration::from_secs_f32(end.max(0.0)));
             }
-            until.map(|end| table.origin + std::time::Duration::from_secs_f32(end.max(0.0)))
         })
     });
 }
