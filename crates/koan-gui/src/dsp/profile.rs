@@ -528,7 +528,7 @@ impl ProfileBody {
             let from2 = from.clone();
             d.act_then(
                 cx,
-                move |e| async move { e.dsp_save_as_copy(from2, (!new.is_empty()).then_some(new), kept, on).await },
+                move |e| e.dsp_save_as_copy(from2, (!new.is_empty()).then_some(new), kept, on),
                 move |copy, cx| {
                     let Some(copy) = copy else { return };
                     this.update(cx, |p, cx| {
@@ -1553,13 +1553,14 @@ impl ProfileBody {
                             run: Rc::new(move |_, cx| {
                                 let (n, band) = (n.clone(), band.clone());
                                 dsp.update(cx, |d, cx| {
-                                    d.act(cx, move |e| async move {
-                                        match e.dsp_remove_edited(n, i as u32, band).await? {
+                                    d.act(cx, move |e| {
+                                        let removed = e.dsp_remove_edited(n, i as u32, band);
+                                        async move { match removed.await? {
                                             koan_runtime::DspEdited::Changed => Err(koan_runtime::KoanError::Refused {
                                                 message: "The filters changed since they were shown, so nothing was removed. They are shown again as they are now.".into(),
                                             }),
                                             koan_runtime::DspEdited::Stored { .. } => Ok(()),
-                                        }
+                                        } }
                                     })
                                 });
                             }),
@@ -1590,8 +1591,9 @@ impl ProfileBody {
                         .on_click(move |_, _, cx| {
                             let name = name.clone();
                             dsp.update(cx, |d, cx| {
-                                d.act(cx, move |e| async move {
-                                    e.dsp_add_band(name, channel).await.map(|_| ())
+                                d.act(cx, move |e| {
+                                    let added = e.dsp_add_band(name, channel);
+                                    async move { added.await.map(|_| ()) }
                                 })
                             });
                         })

@@ -33,12 +33,15 @@ const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 /// Restore the queue, cursor and position the desktop app last saved. The
 /// session is the desktop app's own: the Mac app and the terminal UI on the
 /// same configuration directory keep theirs.
-async fn restore_session(engine: &Arc<KoanEngine>) -> Option<u32> {
-    match engine.clone().restore_session().await {
-        Ok(count) => Some(count),
-        Err(e) => {
-            log::warn!("could not restore the session: {e}");
-            None
+fn restore_session(engine: &Arc<KoanEngine>) -> impl Future<Output = Option<u32>> + use<> {
+    let restoring = engine.clone().restore_session();
+    async move {
+        match restoring.await {
+            Ok(count) => Some(count),
+            Err(e) => {
+                log::warn!("could not restore the session: {e}");
+                None
+            }
         }
     }
 }
@@ -114,8 +117,9 @@ pub fn init(
     .detach();
     let engine = engine.clone();
     let (restored, restoring) = futures_channel::oneshot::channel();
+    let restoring = restore_session(&engine);
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let outcome = restore_session(&engine).await;
+        let outcome = restoring.await;
         let _ = restored.send(outcome);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
