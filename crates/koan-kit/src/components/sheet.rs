@@ -263,15 +263,17 @@ pub fn hold(held: bool, cx: &mut App) {
 /// Takes the sheet away. The keyboard goes back to what had it before, on
 /// the window's next draw.
 pub fn close(cx: &mut App) {
-    asking(cx).update(cx, |a, cx| {
+    let fading = asking(cx).update(cx, |a, cx| {
         a.held = false;
-        if let Some(view) = a.sheet.take() {
-            a.restore = a.sheet_focus.take();
-            a.leaving_sheet = Fading::start(cx).map(|f| (view, f));
-            cx.notify();
-        }
+        let view = a.sheet.take()?;
+        a.restore = a.sheet_focus.take();
+        a.leaving_sheet = Fading::start(cx).map(|f| (view, f));
+        cx.notify();
+        a.leaving_sheet.is_some().then_some(())
     });
-    let_go(cx);
+    if fading.is_some() {
+        let_go(cx);
+    }
 }
 
 /// Where an overlay stands among the window's layers, lowest first. Every
@@ -322,9 +324,12 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     if let Some((sheet, before)) = asking.update(cx, |a, _| a.restore.take())
         // Unless something in the sheet's last moments took it elsewhere.
         && (sheet.contains_focused(window, cx) || window.focused(cx).is_none())
-        && let Some(before) = before
     {
-        window.focus(&before, cx);
+        // Nothing had it before: the sheet fading out does not keep it.
+        match before {
+            Some(before) => window.focus(&before, cx),
+            None => window.blur(cx),
+        }
     }
     // Put away, it is drawn where it stood as it fades, holding nothing.
     let (view, focus, fading) = {
@@ -480,18 +485,25 @@ fn show(ask: Ask, cx: &mut App) {
 }
 
 fn dismiss(window: &mut Window, cx: &mut App) {
-    let before = asking(cx).update(cx, |a, cx| {
+    let Some((before, fading)) = asking(cx).update(cx, |a, cx| {
         cx.notify();
         let mut ask = a.ask.take()?;
         ask._enter = None;
         let before = ask.before.take();
         a.leaving_ask = Fading::start(cx).map(|f| (ask, f));
-        before
-    });
-    if let Some(before) = before {
-        window.focus(&before, cx);
+        Some((before, a.leaving_ask.is_some()))
+    }) else {
+        return;
+    };
+    match before {
+        Some(before) => window.focus(&before, cx),
+        // Nothing had the keyboard before: the field fading out does not
+        // keep it.
+        None => window.blur(cx),
     }
-    let_go(cx);
+    if fading {
+        let_go(cx);
+    }
 }
 
 /// The question being asked, over the window, for the shell to draw.
