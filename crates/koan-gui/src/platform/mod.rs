@@ -117,9 +117,9 @@ pub fn init(
     .detach();
     let engine = engine.clone();
     let (restored, restoring) = futures_channel::oneshot::channel();
-    let restoring = restore_session(&engine);
+    let session = restore_session(&engine);
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let outcome = restoring.await;
+        let outcome = session.await;
         let _ = restored.send(outcome);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
