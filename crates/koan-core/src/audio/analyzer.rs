@@ -588,6 +588,7 @@ impl VizAnalyzer {
         // The configured rate is the starting one. A client drawing on a
         // display can set its own — see `VizSnapshot::set_fps`.
         snapshot.set_fps(cfg.fps);
+        viz_buffer.feeds(&snapshot);
 
         let running_clone = Arc::clone(&running);
         let snapshot_clone = Arc::clone(&snapshot);
