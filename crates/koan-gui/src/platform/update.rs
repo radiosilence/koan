@@ -124,7 +124,8 @@ pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
                 let u = cx.global::<Updates>();
                 u.auto
                     && u.last
-                        .is_none_or(|last| last.elapsed().is_ok_and(|since| since >= EVERY))
+                        // A clock set back since counts as due.
+                        .is_none_or(|last| last.elapsed().map_or(true, |since| since >= EVERY))
             });
             if due {
                 cx.update(|cx| check(cx));
@@ -190,13 +191,16 @@ pub fn check(cx: &mut App) {
     }
     let wanted = Arc::new(AtomicBool::new(true));
     let updates = cx.global_mut::<Updates>();
-    updates.last = Some(SystemTime::now());
     updates.wanted = Some(wanted.clone());
     set_state(State::Checking, cx);
     let task = cx.spawn(async move |cx| {
         let Some(found) = off_thread(|| updates::newer_than(VERSION)).await else {
             return;
         };
+        if found.is_ok() {
+            // A failed check is tried again at the next tick, not tomorrow.
+            cx.update(|cx| cx.global_mut::<Updates>().last = Some(SystemTime::now()));
+        }
         let release = match found {
             Ok(Some(release)) => release,
             Ok(None) => {
@@ -428,14 +432,8 @@ fn stage_bundle(id: &str, team: &str, release: &Release) -> Result<PathBuf, Stri
     );
     let _ = std::fs::remove_file(&dmg);
     let staged = copied?;
-    let ours = std::env::current_exe()
-        .ok()
-        .and_then(|exe| bundle_of(&exe))
-        .and_then(|app| signature(&app))
-        .ok_or("this app's signature could not be read")?;
     let requirement = format!(
-        "=anchor apple generic and identifier \"{}\" and certificate leaf[subject.OU] = \"{team}\"",
-        ours.0
+        "=anchor apple generic and identifier \"{id}\" and certificate leaf[subject.OU] = \"{team}\""
     );
     run(
         "codesign",
@@ -508,13 +506,14 @@ fn install() -> Install {
     let Some(app) = std::env::current_exe().ok().and_then(|e| bundle_of(&e)) else {
         return Install::Source;
     };
-    let Some((_, team)) = signature(&app) else {
+    let Some((id, team)) = signature(&app) else {
         return Install::Source;
     };
     let cask = ["/opt/homebrew", "/usr/local"]
         .iter()
         .any(|prefix| Path::new(prefix).join("Caskroom/koan-app").exists());
-    if cask {
+    // The cask installs into /Applications; a copy elsewhere is the DMG's.
+    if cask && app.starts_with("/Applications") {
         return Install::Told("Homebrew keeps this copy up to date: brew upgrade --cask koan-app.");
     }
     if !app.parent().is_some_and(writable) {
@@ -522,12 +521,22 @@ fn install() -> Install {
             "kōan cannot write to the folder it is in, so it cannot replace itself.",
         );
     }
-    Install::Bundle { app, team }
+    Install::Bundle { app, id, team }
 }
 
 #[cfg(not(target_os = "macos"))]
 fn install() -> Install {
-    if let Some(path) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+    // An AppImage's runtime sets both for everything started under it, so a
+    // kōan started from another AppImage's terminal inherits them: only a
+    // kōan running from inside the image is the AppImage.
+    let exe = std::env::current_exe().ok();
+    let inside = std::env::var_os("APPDIR")
+        .filter(|dir| !dir.is_empty())
+        .is_some_and(|dir| exe.as_ref().is_some_and(|exe| exe.starts_with(&dir)));
+    if let Some(path) = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|_| inside)
+    {
         if path.parent().is_some_and(writable) {
             return Install::AppImage(path);
         }
@@ -535,9 +544,7 @@ fn install() -> Install {
             "kōan cannot write to the folder its AppImage is in, so it cannot replace itself.",
         );
     }
-    let packaged = std::env::current_exe()
-        .ok()
-        .is_some_and(|exe| exe.starts_with("/usr"));
+    let packaged = exe.is_some_and(|exe| exe.starts_with("/usr"));
     if packaged {
         return Install::Told(
             "The package manager installs new versions: download the release's .deb.",

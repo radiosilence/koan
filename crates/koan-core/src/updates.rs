@@ -106,8 +106,22 @@ pub fn fetch(asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
         dest.extension()
             .map_or("part".into(), |e| format!("{}.part", e.to_string_lossy())),
     );
-    let mut response = client()?.get(&asset.url).send()?.error_for_status()?;
-    let mut file = std::fs::File::create(&part)?;
+    let written = download(&asset.url, &part).and_then(|got| {
+        if got != expected {
+            return Err(UpdateError::Digest);
+        }
+        Ok(std::fs::rename(&part, dest)?)
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written
+}
+
+/// Streams `url` into `to`, and returns its SHA-256 in hex.
+fn download(url: &str, to: &Path) -> Result<String, UpdateError> {
+    let mut response = client()?.get(url).send()?.error_for_status()?;
+    let mut file = std::fs::File::create(to)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0; 1 << 16];
     loop {
@@ -119,18 +133,11 @@ pub fn fetch(asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
         file.write_all(&buf[..n])?;
     }
     file.sync_all()?;
-    drop(file);
-    let got: String = hasher
+    Ok(hasher
         .finalize()
         .iter()
         .map(|b| format!("{b:02x}"))
-        .collect();
-    if got != expected {
-        let _ = std::fs::remove_file(&part);
-        return Err(UpdateError::Digest);
-    }
-    std::fs::rename(&part, dest)?;
-    Ok(())
+        .collect())
 }
 
 fn client() -> Result<reqwest::blocking::Client, reqwest::Error> {

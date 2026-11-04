@@ -293,6 +293,7 @@ impl SettingsModel {
                 // the terminal UI or by hand.
                 if let Some(shown) = model.draft.as_ref().map(Draft::drawn) {
                     crate::platform::residency::follow_file(shown.devices_keep_running, cx);
+                    crate::platform::update::follow(shown.updates_auto, cx);
                 }
                 model.redraw(cx);
             })
