@@ -12,7 +12,8 @@ use koan_runtime::DspRole;
 
 use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
 use super::sheet::{body, choice_row, head, note, panel, section};
-use crate::components::{Button, ButtonKind, SectionHeader, TextField};
+use crate::components::sheet::scrim;
+use crate::components::{Button, ButtonKind, Rise, SectionHeader, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -27,18 +28,9 @@ pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<An
         role(dsp, ask, &look, cx)
     };
     Some(
-        div()
-            .id("dsp-prompt")
-            .absolute()
-            .inset_0()
-            .flex()
-            .justify_center()
-            .items_start()
-            .pt(look.space(Space::Xxl))
-            .bg(look.veil(0.6))
-            .occlude()
+        scrim("dsp-prompt", &look)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(panel("eq", &look).child(shown))
+            .child(Rise::new(panel("eq", &look).child(shown)))
             .into_any_element(),
     )
 }

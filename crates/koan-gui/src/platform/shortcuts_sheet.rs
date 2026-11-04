@@ -11,7 +11,7 @@
 use koan_kit::app::platform::OperatingSystem;
 use koan_kit::app::*;
 
-use crate::components::{Badge, Button, ButtonKind, sheet};
+use crate::components::{Badge, Button, ButtonKind, Rise, sheet};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 use super::actions::{APPLICATION, Group, HOTKEYS, LISTS, MENU, Shortcut, caption};
@@ -168,7 +168,7 @@ impl Render for ShortcutsSheet {
                         &look,
                     )),
             );
-        sheet::scrim("shortcuts-scrim", &look).child(panel)
+        sheet::scrim("shortcuts-scrim", &look).child(Rise::new(panel))
     }
 }
 

@@ -9,7 +9,9 @@
 use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
-use crate::components::{RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
+use crate::components::{
+    Fading, RowMetrics, Slide, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS,
+};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, AddMusic, Back, Bigger, FocusNext, FocusPrevious, Forward, NextRegion,
@@ -73,6 +75,9 @@ pub struct Shell {
     /// What had the keyboard when the search box opened, which has it back
     /// when the box closes.
     before_search: Option<(FocusHandle, Route)>,
+    /// The search box or the shortcuts just put away, fading out where they
+    /// stood.
+    leaving: Option<(AnyView, Fading)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
@@ -177,6 +182,7 @@ impl Shell {
             shortcuts: None,
             search_bar: None,
             before_search: None,
+            leaving: None,
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
@@ -266,13 +272,34 @@ impl Shell {
         }
         let sheet = cx.new(ShortcutsSheet::new);
         let dismissed = cx.subscribe_in(&sheet, window, |this, _, _: &Dismissed, window, cx| {
-            this.shortcuts = None;
+            if let Some((sheet, _)) = this.shortcuts.take() {
+                this.put_away(sheet.into(), cx);
+            }
             this.arrived_at = this.nav.read(cx).current();
             this.refocus(window, cx);
         });
         window.focus(&sheet.focus_handle(cx), cx);
         self.shortcuts = Some((sheet, dismissed));
+        self.leaving = None;
         cx.notify();
+    }
+
+    /// An overlay put away: drawn fading out where it stood, then let go.
+    fn put_away(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        let Some(fading) = Fading::start(cx) else {
+            return;
+        };
+        self.leaving = Some((view, fading));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Fading::LENGTH).await;
+            this.update(cx, |this, cx| {
+                if this.leaving.take_if(|(_, f)| f.gone()).is_some() {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
@@ -309,7 +336,9 @@ impl Shell {
             &bar,
             window,
             |this, _, _: &crate::search::bar::Dismissed, window, cx| {
-                this.search_bar = None;
+                if let Some((bar, _)) = this.search_bar.take() {
+                    this.put_away(bar.into(), cx);
+                }
                 let route = this.nav.read(cx).current();
                 this.arrived_at = route;
                 // Back where the keyboard was, unless the box opened a page:
@@ -324,6 +353,7 @@ impl Shell {
             },
         );
         self.search_bar = Some((bar, dismissed));
+        self.leaving = None;
         cx.notify();
     }
 
@@ -822,6 +852,13 @@ impl Render for Shell {
                 self.search_bar
                     .as_ref()
                     .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
+            )
+            // Under the same ids as when it showed, so it does not come up
+            // again as it goes.
+            .children(
+                self.leaving
+                    .as_ref()
+                    .map(|(view, fading)| ask::layered(Layer::Sheet, fading.draw(view.clone()))),
             )
     }
 }
