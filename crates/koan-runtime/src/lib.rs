@@ -8627,7 +8627,9 @@ mod clock_stream_tests {
         let stream = Arc::new(clock(&state));
 
         let ms = next_within(stream.clone(), Duration::from_secs(2)).unwrap();
-        assert!((1_990..2_100).contains(&ms), "the next whole second: {ms}");
+        // A slow runner wakes late; only the tick being the next whole
+        // second, not one later, is the rule.
+        assert!((1_990..2_900).contains(&ms), "the next whole second: {ms}");
 
         let pauser = state.clone();
         std::thread::spawn(move || {

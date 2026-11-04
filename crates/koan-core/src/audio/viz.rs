@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 use tokio::sync::watch;
@@ -403,6 +403,14 @@ struct VizSamples {
 /// callback would sidestep the delay, but that thread may never lock.
 pub struct VizBuffer {
     samples: Mutex<VizSamples>,
+    /// The analyser this feeds, woken when samples arrive while it is parked
+    /// and a subscriber waits. A subscriber blocked on the next frame reads
+    /// nothing, so when the play head stalls for longer than the analyser's
+    /// idle timeout (a track still downloading, a seek waiting for bytes) the
+    /// analyser parks, and nothing on the play head's side can wake it: the
+    /// render callback may not take a lock. Decoded audio arriving is the
+    /// sign the play head is about to move again.
+    analyser: OnceLock<Weak<VizSnapshot>>,
 }
 
 impl VizBuffer {
@@ -416,7 +424,14 @@ impl VizBuffer {
                 channels: 2,
                 sample_rate: 44100,
             }),
+            analyser: OnceLock::new(),
         })
+    }
+
+    /// Wake `snapshot`'s parked analyser when samples arrive for a waiting
+    /// subscriber. See `analyser`.
+    pub fn feeds(&self, snapshot: &Arc<VizSnapshot>) {
+        let _ = self.analyser.set(Arc::downgrade(snapshot));
     }
 
     /// Push interleaved samples into the delay line.
@@ -448,6 +463,13 @@ impl VizBuffer {
                 inner.buf[..remaining].copy_from_slice(&samples[first..]);
                 inner.write_pos = remaining;
             }
+        }
+        drop(inner);
+        if let Some(snapshot) = self.analyser.get().and_then(Weak::upgrade)
+            && snapshot.parked.load(Ordering::Relaxed)
+            && snapshot.published.has_subscribers()
+        {
+            snapshot.wake();
         }
     }
 
@@ -515,6 +537,23 @@ impl VizBuffer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn samples_arriving_wake_a_parked_analyser_with_a_subscriber() {
+        use super::{VizBuffer, VizSnapshot};
+        use std::sync::atomic::Ordering;
+        let snapshot = VizSnapshot::new();
+        let buffer = VizBuffer::new();
+        buffer.feeds(&snapshot);
+        let _waiting = snapshot.subscribe();
+        let parker = std::sync::Arc::clone(&snapshot);
+        let parked = std::thread::spawn(move || parker.park_while_idle(|| true));
+        while !snapshot.parked.load(Ordering::Relaxed) {
+            std::thread::yield_now();
+        }
+        buffer.push_samples(&[0.0; 64], 2, 44100);
+        parked.join().unwrap();
+    }
+
     #[test]
     fn each_bar_stands_against_its_own_recent_loudest() {
         let mut bars = BarHeights::new();
