@@ -128,12 +128,26 @@ fn cover_answer(
     Ok(())
 }
 
-/// Without the URL: every request is signed with the account's credentials in
-/// its query, and the error's message would carry them to wherever it is shown
-/// or logged.
+/// With the URL cut to its origin: every request is signed with the
+/// account's credentials in its query, and the error's message would carry
+/// them to wherever it is shown or logged. The origin stays, so a server
+/// out of reach can be named.
 impl From<reqwest::Error> for SubsonicError {
     fn from(e: reqwest::Error) -> Self {
-        Self::Http(e.without_url())
+        let origin = e.url().and_then(|u| {
+            let mut origin = u.clone();
+            origin.set_query(None);
+            origin.set_fragment(None);
+            origin.set_path("");
+            origin.set_username("").ok()?;
+            origin.set_password(None).ok()?;
+            Some(origin)
+        });
+        let e = e.without_url();
+        Self::Http(match origin {
+            Some(origin) => e.with_url(origin),
+            None => e,
+        })
     }
 }
 

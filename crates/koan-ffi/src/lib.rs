@@ -2988,7 +2988,7 @@ mod serve {
         /// Where invites send phones (`share.invite_to`). `Funnel` publishes the
         /// library on the internet through Tailscale Funnel, now and whenever it
         /// is served; any other choice stops publishing. `Custom` sends them to
-        /// `address` (`share.url`), kept as it was when `None`; any other choice
+        /// `address` (`server.url`), kept as it was when `None`; any other choice
         /// clears it, since the server tells phones it is the address it is known
         /// by.
         pub async fn set_invite_to(
@@ -4671,12 +4671,13 @@ mod types {
         /// This device serves its library whenever the app is open.
         pub share_enabled: bool,
         pub share_port: u16,
-        /// Where invites send phones. Read only here, as `share_url` is:
+        /// Where invites send phones. Read only here, as `server_url` is:
         /// `set_invite_to` changes both, and Funnel with them.
         pub share_invite_to: koan_runtime::InviteTo,
-        /// `share.url`: Funnel's address or the custom one. Empty when there is
-        /// none.
-        pub share_url: String,
+        /// `server.url`, this device's public address, which invites and share
+        /// links are built on: Funnel's or a custom one while sharing. Empty
+        /// when there is none.
+        pub server_url: String,
     }
 
     /// A scanned folder, and what it contributed.
@@ -5101,6 +5102,10 @@ mod types {
         /// Whether this device can use its server, for the banner the apps show
         /// on every page while it cannot.
         pub standing: ServerStanding,
+        /// Why this device cannot make a share link, for the share actions'
+        /// tooltip; `None` when it can. Signed out with a purely local library
+        /// and not sharing it, there is no server to give a link out on.
+        pub share_links_unavailable: Option<String>,
         /// The servers devices on this network are signed in to, announced over
         /// Bonjour: what a device not signed in yet offers to sign in to.
         pub nearby_servers: Vec<NearbyServer>,

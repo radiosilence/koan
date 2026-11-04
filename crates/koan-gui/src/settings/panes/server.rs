@@ -17,7 +17,7 @@ use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Connect,
     Share,
@@ -36,6 +36,9 @@ pub struct ServerPane {
     /// The side the person chose to look at, while it differs from what
     /// this device is doing; otherwise the pane follows that.
     chosen: Option<Mode>,
+    /// The side drawn last, so turning sharing off from the sharing side
+    /// stays on it (`stay`).
+    shown: Option<Mode>,
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
@@ -137,6 +140,7 @@ impl ServerPane {
         Self {
             ctx,
             chosen: None,
+            shown: None,
             url,
             username,
             secret,
@@ -773,7 +777,9 @@ impl Render for ServerPane {
         } else {
             Mode::Connect
         };
+        self.chosen = stay(self.shown, self.chosen, doing);
         let mode = self.chosen.unwrap_or(doing);
+        self.shown = Some(mode);
         let mut sections = vec![section(
             None,
             vec![
@@ -823,6 +829,16 @@ impl Render for ServerPane {
             Mode::Connect => sections.extend(self.connect_sections(&settings, &connection, &look, cx)),
         }
         page("server", &look, sections)
+    }
+}
+
+/// The side chosen, given the side drawn last and what the device does now.
+/// Sharing turned off while its side shows leaves that side showing, with
+/// sharing off, rather than sending the pane to the sign-in form.
+fn stay(shown: Option<Mode>, chosen: Option<Mode>, doing: Mode) -> Option<Mode> {
+    match (shown, chosen, doing) {
+        (Some(Mode::Share), None, Mode::Connect) => Some(Mode::Share),
+        _ => chosen,
     }
 }
 
@@ -885,7 +901,21 @@ pub fn mode_label(
 
 #[cfg(test)]
 mod tests {
-    use super::host;
+    use super::{Mode, host, stay};
+
+    #[test]
+    fn turning_sharing_off_stays_on_the_sharing_side() {
+        // Sharing, then turned off: the sharing side stays, sharing off.
+        assert_eq!(
+            stay(Some(Mode::Share), None, Mode::Connect),
+            Some(Mode::Share)
+        );
+        // Opened while not sharing: the sign-in side, as before.
+        assert_eq!(stay(None, None, Mode::Connect), None);
+        assert_eq!(stay(Some(Mode::Connect), None, Mode::Connect), None);
+        // Sharing: the pane follows it.
+        assert_eq!(stay(Some(Mode::Share), None, Mode::Share), None);
+    }
 
     #[test]
     fn reads_a_host() {

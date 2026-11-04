@@ -459,7 +459,7 @@ impl SettingsWindow {
                                 status.and_then(|st| st.current.as_deref()),
                                 status.and_then(|st| st.fallback.as_deref()),
                                 status.and_then(|st| st.funnel.as_deref()),
-                                Some(s.share_url.as_str()),
+                                Some(s.server_url.as_str()),
                             ];
                             known
                                 .into_iter()

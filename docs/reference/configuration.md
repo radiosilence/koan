@@ -478,7 +478,7 @@ The server runs at most one transcode per CPU core and three per account; beyond
 url = "https://music.example.com"
 ```
 
-The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
+The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). On the desktop app sharing its own library, Settings → Server writes it from **Invite phones to** (below). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
 
 An address with a path (`https://host.example/koan`) serves kōan under that path, behind a proxy that forwards it or strips it; see [Under a path](../guide/headless-server.md#under-a-path).
 
@@ -498,9 +498,9 @@ port = 4000
 invite_to = "tailnet"
 ```
 
-The desktop app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `url`. Each falls back to the tailnet name, then the local address, while it has nothing.
+The desktop app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, a tunnel's address. Each falls back to the tailnet name, then the local address, while it has nothing.
 
-`url` is the shared library's address from outside, Funnel's or a tunnel's, which share links and invites are built on. A path in it is served as `server.url`.s is ([Under a path](../guide/headless-server.md#under-a-path)). It is the app's own: `server.url` stays a headless server's on the same machine. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
+Funnel's address and a custom one are kept in `server.url`, this machine's one public address, which invites and share links are both built on, so the two always agree; a path in it is served as for a headless server ([Under a path](../guide/headless-server.md#under-a-path)). Versions before 0.71 kept it in `share.url`, which the app moves into `server.url` once, at launch, unless `server.url` is already set. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
 
 ---
 

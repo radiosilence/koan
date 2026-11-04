@@ -130,9 +130,9 @@ pub struct ShareConfig {
     pub port: u16,
     /// Where invites send phones.
     pub invite_to: InviteTo,
-    /// The address the shared library is reached at from outside: Funnel's,
-    /// or a tunnel's. The app's own, apart from `server.url`, which a
-    /// headless server on the same machine needs for itself.
+    /// Where versions before 0.71 kept the shared library's address from
+    /// outside. Read only to move it into `server.url`, the one public
+    /// address (`Config::adopt_share_url`), and never written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// The Funnel kōan published, as Funnel's port and the local port it
@@ -378,6 +378,12 @@ pub struct RemoteConfig {
     /// Kept in the download cache and counted against its limit. Off removes
     /// nothing already fetched. Per device.
     pub preload_covers: bool,
+    /// A sign-out kept, whose forgetting of the server's library has not yet
+    /// finished. Written with the sign-out and cleared once the library is
+    /// forgotten, so a forget cut short by a quit or a crash is finished at
+    /// the next launch (`helpers::resume_forget`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forget_owed: bool,
 }
 
 impl Default for PlaybackConfig {
@@ -474,6 +480,7 @@ impl Default for RemoteConfig {
             auto_sync_interval_mins: 60,
             play_queue: false,
             preload_covers: true,
+            forget_owed: false,
         }
     }
 }
@@ -1527,6 +1534,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.url"
         | "remote.username"
         | "remote.server_url"
+        | "remote.forget_owed"
         // Where this machine is reached as a server.
         | "server.url"
         | "remote.cache_dir"
@@ -1562,6 +1570,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "share.enabled"
         | "share.port"
         | "share.invite_to"
+        // Only ever removed, by `Config::adopt_share_url`.
         | "share.url"
         | "share.funnel"
         // Which koan server this machine signs in to.
@@ -1617,13 +1626,20 @@ fn stamp_of(base: &Path, local: &Path) -> (Option<SystemTime>, Option<SystemTime
 impl Config {
     /// `server.url`, trimmed and without a trailing slash; `sharing.public_url`
     /// while it is unset, with a warning. `None` when neither is set.
-    /// `share.url`, cleaned as `server_url` is.
-    pub fn share_url(&self) -> Option<String> {
-        self.share
-            .url
-            .as_deref()
-            .map(|u| u.trim().trim_end_matches('/').to_owned())
-            .filter(|u| !u.is_empty())
+    /// Move a `share.url` an earlier version wrote into `server.url`, where
+    /// invites and share links read this device's public address, unless
+    /// `server.url` is already set, and drop the old key. Once: nothing
+    /// writes `share.url` any more.
+    pub fn adopt_share_url() -> Result<(), ConfigError> {
+        if Self::load()?.share.url.is_none() {
+            return Ok(());
+        }
+        Self::persist(|c| {
+            let old = c.share.url.take().filter(|u| !u.trim().is_empty());
+            if c.server.url.as_deref().is_none_or(|u| u.trim().is_empty()) {
+                c.server.url = old;
+            }
+        })
     }
 
     pub fn server_url(&self) -> Option<String> {

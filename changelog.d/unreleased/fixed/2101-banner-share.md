@@ -1,0 +1,1 @@
+- **The server banner shows only when a server set up on this device cannot be used.** It said "Signed out of your server" on a device that was signed out on purpose, never had a server, or was sharing its own library; every app now shows it only for a refused or missing sign-in, or a server out of reach.

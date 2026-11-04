@@ -95,7 +95,7 @@ impl Sharing {
 
     /// Where invites send phones. `Funnel` publishes through Tailscale
     /// Funnel; `Custom` takes `address`, or keeps the one set. The engine
-    /// writes `share.invite_to` and `share.url` itself; `landed` hears
+    /// writes `share.invite_to` and `server.url` itself; `landed` hears
     /// whether it failed.
     pub fn set_invite_to(
         &mut self,

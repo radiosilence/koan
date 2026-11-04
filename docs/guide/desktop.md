@@ -59,7 +59,7 @@ A build from `main` can move the library database to a newer schema than the rel
 
 ## The window
 
-While this device cannot use its server (signed out, its sign-in refused, or the server out of reach), a line across the top of every page says so, with sign in where signing in would help. Offline by choice shows nothing.
+While this device is set up for a server and cannot use it (its sign-in refused or missing, or the server out of reach), a line across the top of every page says so, with sign in where signing in would help. Offline by choice, signed out on purpose, no server at all, and sharing this device's own library show nothing.
 
 The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the devices, sleep timer and output menus, and EQ, in the accent while one is in force. The output menu lists this computer's audio devices and the UPnP renderers on the network, which it searches for each time it opens, so a renderer switched on since appears within a couple of seconds; the renderer in use shows its volume. Each browser narrows its listing from the filter field in the toolbar. The window opens where it was left.
 

@@ -1314,4 +1314,70 @@ mod tests {
         assert!(html.contains("property=\"og:title\""));
         assert!(!html.contains("og:image") && !html.contains("og:url"));
     }
+
+    /// The server an app starts to share its library serves share links:
+    /// the page, its audio, the player and the stylesheet, with the rest of
+    /// the web UI left out.
+    #[test]
+    fn an_apps_own_server_serves_share_pages_and_their_audio() {
+        use crate::graphql::{ApiServer, ApiServerOpts, Profile};
+        use koan_core::player::commands::CommandChannel;
+        use koan_core::player::state::SharedPlayerState;
+
+        let _own = koan_core::config::SWITCHING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        koan_core::config::set_config_dir(dir.path());
+        let db_path = dir.path().join("koan.db");
+        let db = Database::open(&db_path).unwrap();
+        let path = dir.path().join("a.flac");
+        std::fs::write(&path, b"audio").unwrap();
+        let track = queries::upsert_track(&db.conn, &meta(&path, "Wet Moss", 1)).unwrap();
+        let (slice, ids) = resolve_share(&db.conn, &ShareTarget::Tracks(vec![track])).unwrap();
+        let id = queries::shares::create_share(
+            &db.conn,
+            queries::LOCAL_USER,
+            slice,
+            &ids,
+            None,
+            0,
+            None,
+        )
+        .unwrap()
+        .id;
+
+        let server = ApiServer::start(ApiServerOpts {
+            state: SharedPlayerState::new(),
+            cmd_tx: CommandChannel::new().tx,
+            pool: Arc::new(Pool::new(db_path)),
+            port: Some(0),
+            bind: Some(std::net::Ipv4Addr::LOCALHOST.into()),
+            subsonic_port: None,
+            playground: false,
+            viz: None,
+            profile: Profile::Embedded,
+            hosts: Vec::new(),
+            session: None,
+        })
+        .unwrap();
+        let addr = server.addr();
+        let get = |path: &str| {
+            let answer = reqwest::blocking::get(format!("http://{addr}{path}")).unwrap();
+            let status = answer.status();
+            (status, answer.bytes().unwrap().to_vec())
+        };
+
+        let (status, page) = get(&format!("/share/{id}"));
+        assert_eq!(status, StatusCode::OK);
+        assert!(String::from_utf8(page).unwrap().contains("Wet Moss"));
+        let (status, audio) = get(&format!("/share/{id}/0"));
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(audio, b"audio");
+        assert_eq!(get("/share/assets/player.js").0, StatusCode::OK);
+        assert_eq!(get("/share/assets/share.css").0, StatusCode::OK);
+        assert_eq!(get("/share/assets/share.js").0, StatusCode::OK);
+        assert_ne!(get("/").0, StatusCode::OK, "the web UI stays off");
+        server.stop();
+    }
 }

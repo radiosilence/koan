@@ -801,7 +801,7 @@ mod tests {
             share_enabled: false,
             share_port: port,
             share_invite_to: koan_runtime::InviteTo::Network,
-            share_url: String::new(),
+            server_url: String::new(),
         }
     }
 

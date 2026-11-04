@@ -1,0 +1,1 @@
+- **Every address Settings → Server shows copies on click.** Only the address on your network did; the Tailscale name and the address invites carry, the tailnet's or Funnel's, now copy the same way.

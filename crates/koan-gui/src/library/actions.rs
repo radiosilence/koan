@@ -300,6 +300,17 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
         })
 }
 
+/// Why this device cannot make a share link, as the engine reports it, for
+/// the share actions to be disabled with; `None` when it can.
+pub fn share_links_unavailable(cx: &App) -> Option<String> {
+    cx.global::<crate::mirror::Mirror>()
+        .connection
+        .read(cx)
+        .0
+        .as_ref()
+        .and_then(|c| c.share_links_unavailable.clone())
+}
+
 /// The context menu for `items`: one thing, or a whole pick. `album` is the
 /// record a single track belongs to, for "go to album".
 pub fn menu(
@@ -363,11 +374,16 @@ pub fn menu(
         favourite,
     ));
     let (engine, sets) = (lib.engine.clone(), sources(&items));
+    let unavailable = share_links_unavailable(cx);
     menu = menu.item(
         MenuEntry::new("copy share link")
             .icon(Icon::Share)
+            .disabled(unavailable.is_some())
             .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
     );
+    if let Some(why) = unavailable {
+        menu = menu.note(why);
+    }
     // Moving the pick's files where a pattern puts them, previewed first.
     let (organise_lib, organise_items, organise_after) =
         (lib.clone(), items.clone(), after.clone());
