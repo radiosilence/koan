@@ -2042,7 +2042,7 @@ _gui-macos:
     set -euo pipefail
     version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
     out={{gui_out}}
-    app="$out/kōan desktop.app"
+    app="$out/kōan.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "${CARGO_TARGET_DIR:-target}/release/koan-gui" "$app/Contents/MacOS/koan-gui"
@@ -2084,7 +2084,7 @@ _gui-macos:
     "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
         -D app="$app" -D background="$bg/background.tiff" \
         -D volume_icon=crates/koan-gui/packaging/AppIcon.icns \
-        "kōan desktop" "$out/koan-gui.dmg"
+        "kōan" "$out/koan-gui.dmg"
     case "$id" in
         "Developer ID Application"*) codesign --force --timestamp --sign "$id" "$out/koan-gui.dmg" ;;
     esac
