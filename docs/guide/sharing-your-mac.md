@@ -25,7 +25,7 @@ The connection is plain HTTP: sign-ins and music cross your network unencrypted,
 
 ### With Tailscale
 
-With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from home** in Settings shows it as detected, with the Mac's name on your tailnet.
+With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from home** in Settings shows it as detected, with the Mac's name on your tailnet. Tailscale can start or stop while the Mac shares: the shared library answers to its tailnet name and Funnel address as soon as they exist, without sharing being turned off and on. While the chosen address depends on Tailscale and Tailscale is stopped, or Funnel is chosen and the tailnet does not allow it, Settings says so beside **Invite phones to**, since phones given that invite would find nothing there.
 
 **Invite phones to** decides the address invites and QR codes carry:
 

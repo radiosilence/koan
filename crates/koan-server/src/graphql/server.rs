@@ -210,6 +210,7 @@ pub struct ApiServer {
     host_key: Option<String>,
     stop: tokio_util::sync::CancellationToken,
     thread: Option<std::thread::JoinHandle<()>>,
+    browser_policy: Arc<BrowserPolicy>,
 }
 
 impl ApiServer {
@@ -491,6 +492,7 @@ impl ApiServer {
         let browser_policy = Arc::new(BrowserPolicy {
             origins: cfg.graphql.cors_origins.clone(),
             hosts: allowed_hosts,
+            ..Default::default()
         });
 
         if cfg.graphql.cors_origins.is_empty() {
@@ -734,7 +736,19 @@ impl ApiServer {
             host_key,
             stop,
             thread: Some(thread),
+            browser_policy,
         })
+    }
+
+    /// Names this server answers to that move while it runs, such as the
+    /// device's Tailscale name, which exists only while Tailscale is up, and
+    /// a Funnel's address. `names` is asked again when a request names a host
+    /// not otherwise allowed, off the async threads and at most once every
+    /// `RELEARN` however many such requests arrive, and its answer replaces
+    /// the last.
+    pub fn follow_hosts(&self, names: impl Fn() -> Vec<String> + Send + Sync + 'static) {
+        let _ = self.browser_policy.relearn.set(Box::new(names));
+        self.browser_policy.learn();
     }
 
     /// See `host_key` on the struct. `None` but for an embedded server.
@@ -816,18 +830,34 @@ pub fn start_api_background(
 ///
 /// Two separate questions: which `Host` values name this server (DNS rebinding),
 /// and which `Origin` values may talk to it (CSRF, cross-site WebSockets).
+#[derive(Default)]
 pub(crate) struct BrowserPolicy {
     origins: Vec<String>,
     hosts: Vec<String>,
+    /// The names `relearn` last gave, beside `hosts`.
+    learned: parking_lot::RwLock<Vec<String>>,
+    /// See `ApiServer::follow_hosts`.
+    relearn: std::sync::OnceLock<Relearn>,
+    /// When `relearn` was last asked; held while it is, so requests arriving
+    /// together ask once.
+    learned_at: parking_lot::Mutex<Option<std::time::Instant>>,
 }
+
+type Relearn = Box<dyn Fn() -> Vec<String> + Send + Sync>;
+
+/// The least time between two askings of a server's moving names.
+const RELEARN: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl BrowserPolicy {
     fn host_allowed(&self, host: &str) -> bool {
-        if self.hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
-            return true;
-        }
         let bare = strip_port(host);
-        if self.hosts.iter().any(|h| h.eq_ignore_ascii_case(bare)) {
+        let learned = self.learned.read();
+        if self
+            .hosts
+            .iter()
+            .chain(learned.iter())
+            .any(|h| h.eq_ignore_ascii_case(host) || h.eq_ignore_ascii_case(bare))
+        {
             return true;
         }
         // A rebinding attack needs a name it controls; literals and localhost
@@ -845,6 +875,32 @@ impl BrowserPolicy {
             (Some((_, authority)), Some(host)) => authority.eq_ignore_ascii_case(host),
             _ => false,
         }
+    }
+}
+
+impl BrowserPolicy {
+    /// Whether a host refused now may be allowed once the moving names are
+    /// asked again.
+    fn may_relearn(&self) -> bool {
+        self.relearn.get().is_some()
+            && self
+                .learned_at
+                .lock()
+                .is_none_or(|at| at.elapsed() >= RELEARN)
+    }
+
+    /// Ask the moving names again, unless they were asked within `RELEARN`.
+    /// Blocking.
+    fn learn(&self) {
+        let Some(relearn) = self.relearn.get() else {
+            return;
+        };
+        let mut at = self.learned_at.lock();
+        if at.is_some_and(|at| at.elapsed() < RELEARN) {
+            return;
+        }
+        *self.learned.write() = relearn();
+        *at = Some(std::time::Instant::now());
     }
 }
 
@@ -879,6 +935,11 @@ async fn host_guard(
 
     if let Some(ref host) = host
         && !policy.host_allowed(host)
+        && !(policy.may_relearn() && {
+            let asked = policy.clone();
+            let _ = tokio::task::spawn_blocking(move || asked.learn()).await;
+            policy.host_allowed(host)
+        })
     {
         log::warn!("rejected request for unrecognised Host: {}", host);
         return (axum::http::StatusCode::FORBIDDEN, "host not allowed").into_response();
@@ -1157,6 +1218,7 @@ mod tests {
         Arc::new(BrowserPolicy {
             origins: vec!["https://music.example.com".into()],
             hosts: vec!["koan.local".into()],
+            ..Default::default()
         })
     }
 
@@ -1192,6 +1254,61 @@ mod tests {
     }
 
     // -- Host allowlist (DNS rebinding) --
+
+    /// A name that comes up while the server runs, as the Tailscale name
+    /// does when Tailscale starts, is allowed once the names are asked
+    /// again, which a request naming it does; another name stays refused.
+    #[tokio::test]
+    async fn moving_names_are_learned_from_the_request_that_names_them() {
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let policy = Arc::new(BrowserPolicy {
+            hosts: vec!["koan.local".into()],
+            ..Default::default()
+        });
+        let tailscale = up.clone();
+        let _ = policy.relearn.set(Box::new(move || {
+            match tailscale.load(std::sync::atomic::Ordering::Relaxed) {
+                true => vec!["mac.tailnet.ts.net".into()],
+                false => Vec::new(),
+            }
+        }));
+        let app = routes()
+            .layer(axum::middleware::from_fn_with_state(
+                policy.clone(),
+                host_guard,
+            ))
+            .with_state(policy.clone());
+        let ask = |host: &str| {
+            HttpRequest::get("/graphql")
+                .header(axum::http::header::HOST, host)
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let status = app
+            .clone()
+            .oneshot(ask("mac.tailnet.ts.net"))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::FORBIDDEN, "Tailscale is stopped");
+        up.store(true, std::sync::atomic::Ordering::Relaxed);
+        *policy.learned_at.lock() = None;
+        let status = app
+            .clone()
+            .oneshot(ask("mac.tailnet.ts.net"))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK, "learned once Tailscale is up");
+        let status = app
+            .clone()
+            .oneshot(ask("evil.example"))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
 
     #[test]
     fn host_policy_accepts_loopback_literals_and_configured_names() {

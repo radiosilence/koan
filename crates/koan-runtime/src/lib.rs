@@ -2533,6 +2533,7 @@ impl KoanEngine {
         track_ids: Vec<i64>,
     ) -> Result<Playlist, KoanError> {
         offload::offload(move || {
+            koan_core::helpers::wait_for_forget();
             let db = self.db()?;
             let id = queries::atomically(&db.conn, || {
                 let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, &name, None)?;
@@ -2881,6 +2882,7 @@ impl KoanEngine {
             if !self.may_save_session() {
                 return Ok(());
             }
+            koan_core::helpers::wait_for_forget();
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
@@ -3033,6 +3035,11 @@ impl KoanEngine {
 
     /// `restore_session`'s reading and sending, on the command lane.
     pub fn restore_blocking(&self) -> Result<u32, KoanError> {
+        // The saved queue is the server's signed out of, about to be
+        // forgotten with its library.
+        if koan_core::helpers::forget_pending() {
+            return Ok(0);
+        }
         let db = self.db()?;
         // Before the queue and whether there is one: the mode is the
         // player's, and a shuffled queue's play order is drawn as it
@@ -6765,6 +6772,21 @@ impl KoanEngine {
         }));
         engine.spawn_watcher();
         engine.spawn_figures();
+        // A sign-out whose forgetting the last run did not finish.
+        if let Some(forget) = koan_core::helpers::resume_forget() {
+            let resumed = Arc::downgrade(&engine);
+            let spawned = std::thread::Builder::new()
+                .name("koan-forget-server".into())
+                .spawn(move || {
+                    forget();
+                    if let Some(engine) = resumed.upgrade() {
+                        engine.bump_library();
+                    }
+                });
+            if let Err(e) = spawned {
+                log::warn!("could not finish forgetting the server signed out of: {e}");
+            }
+        }
         // This device's own queue and transfers go with the server it leaves,
         // before its library is forgotten.
         let leaving = Arc::downgrade(&engine);

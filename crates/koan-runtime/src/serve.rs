@@ -314,6 +314,19 @@ pub(crate) fn is_shared_admin(conn: &rusqlite::Connection, username: &str) -> bo
     SERVING.read().is_some() && admin(conn).ok().flatten().as_deref() == Some(username)
 }
 
+/// The names a shared library answers to that move while it is served:
+/// this device's Tailscale name while Tailscale runs, and the host of the
+/// address invites send phones to (Funnel's or a tunnel's). Blocking: it asks
+/// the Tailscale CLI.
+fn moving_names() -> Vec<String> {
+    let mut names: Vec<String> = koan_core::tailscale::status()
+        .map(|t| t.name)
+        .into_iter()
+        .collect();
+    names.extend(Config::cached().share_url().as_deref().and_then(host_of));
+    names
+}
+
 impl KoanEngine {
     /// Serve the library on every interface, on `port` (0 for any free one).
     /// `names` are what else the server answers to as a host, such as this
@@ -350,11 +363,6 @@ impl KoanEngine {
             {
                 Config::persist(|c| c.share.url = Some(url)).map_err(persist_error)?;
             }
-            // Phones on the tailnet reach this device by its name there, and
-            // a tunnel's by the custom address.
-            let mut names = names;
-            names.extend(koan_core::tailscale::status().map(|t| t.name));
-            names.extend(Config::cached().share_url().as_deref().and_then(host_of));
             let started = ApiServer::start(ApiServerOpts {
                 state: self.state.clone(),
                 cmd_tx: self.tx.clone(),
@@ -369,6 +377,12 @@ impl KoanEngine {
                 session: Some(self.session),
             })
             .map_err(|message| KoanError::Refused { message })?;
+            // Phones on the tailnet reach this device by its name there, and
+            // a tunnel's or Funnel's by its address. Both move while the
+            // server runs: Tailscale comes up or goes down, Funnel is
+            // published on another port. Asked again when a request names a
+            // host the server does not know.
+            started.follow_hosts(moving_names);
             let port = started.addr().port();
             let key = started
                 .host_key()

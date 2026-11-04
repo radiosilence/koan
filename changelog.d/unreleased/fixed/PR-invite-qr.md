@@ -1,0 +1,1 @@
+- **The invite QR code follows the invite address.** Switching **Invite phones to** in the desktop app could leave the code and link showing the previous address; a new address now makes a new invite.

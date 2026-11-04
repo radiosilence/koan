@@ -19,7 +19,12 @@ pub fn remote_credential(cfg: &Config) -> Option<Credential> {
 #[derive(Debug, thiserror::Error)]
 pub enum SignInError {
     #[error("the server did not accept those credentials: {0}")]
-    Rejected(#[from] crate::remote::client::SubsonicError),
+    Rejected(crate::remote::client::SubsonicError),
+    /// Nothing answered at the address: the request never reached a server,
+    /// so it says nothing of the credentials. `address` is the server's
+    /// origin, without the query that carries them.
+    #[error("could not reach {address}: {cause}")]
+    Unreachable { address: String, cause: String },
     /// Subsonic's error 41: the server cannot check the token a client signs
     /// with over plain HTTP against the account's password, and wants an app
     /// password or an API key instead.
@@ -59,10 +64,10 @@ pub fn sign_out_then() -> Result<impl FnOnce() + Send + 'static, crate::config::
         cfg.remote.password = String::new();
         cfg.remote.api_key = String::new();
         cfg.remote.device_key = String::new();
+        cfg.remote.forget_owed = true;
     })
     .inspect_err(|_| crate::remote::sync::restore_left(left))?;
-    *FORGETTING.lock() += 1;
-    let forgetting = Forgetting;
+    let forgetting = Forgetting::start();
     crate::playlists::forget_unsent_order();
     let hook = ON_LEAVE.read().clone();
     if let Some(hook) = hook {
@@ -74,16 +79,39 @@ pub fn sign_out_then() -> Result<impl FnOnce() + Send + 'static, crate::config::
     crate::remote::nearby::readvertise();
     // The apps' banner reads the credentials, which no link event announces.
     crate::remote::devices::touch();
-    Ok(move || {
-        let _forgetting = forgetting;
-        let _syncs = crate::helpers::hold_syncs();
-        let forgotten = crate::db::pool::shared()
-            .get()
-            .and_then(|db| crate::helpers::forget_server(&db, &cfg));
-        if let Err(e) = forgotten {
-            log::warn!("could not forget the server's library: {e}");
+    Ok(move || forget_owed(forgetting, &cfg))
+}
+
+/// A forget a sign-out owes and did not finish, as the last run left it:
+/// the closure that finishes it, for the front end to run off its main
+/// thread, or `None` when nothing is owed. Until it has run, a sign-in and
+/// the writes `wait_for_forget` guards wait for it.
+pub fn resume_forget() -> Option<impl FnOnce() + Send + 'static> {
+    let cfg = Config::load().ok()?;
+    if !cfg.remote.forget_owed {
+        return None;
+    }
+    let forgetting = Forgetting::start();
+    log::info!("finishing the forgetting of a server signed out of");
+    Some(move || forget_owed(forgetting, &cfg))
+}
+
+/// Forget the library of the server signed out of, then clear the marker
+/// that says it is owed; a forget that fails stays owed for the next launch.
+fn forget_owed(forgetting: Forgetting, cfg: &Config) {
+    let _syncs = crate::helpers::hold_syncs();
+    let forgotten = crate::db::pool::shared()
+        .get()
+        .and_then(|db| crate::helpers::forget_server(&db, cfg));
+    match forgotten {
+        Ok(_) => {
+            if let Err(e) = Config::persist(|c| c.remote.forget_owed = false) {
+                log::warn!("could not record the server's library as forgotten: {e}");
+            }
         }
-    })
+        Err(e) => log::warn!("could not forget the server's library: {e}"),
+    }
+    drop(forgetting);
 }
 
 /// Libraries signed out of and not yet forgotten.
@@ -94,11 +122,33 @@ static FORGOTTEN: parking_lot::Condvar = parking_lot::Condvar::new();
 /// closure is dropped unrun.
 struct Forgetting;
 
+impl Forgetting {
+    fn start() -> Self {
+        *FORGETTING.lock() += 1;
+        Self
+    }
+}
+
 impl Drop for Forgetting {
     fn drop(&mut self) {
         *FORGETTING.lock() -= 1;
         FORGOTTEN.notify_all();
     }
+}
+
+/// Wait until no library signed out of is still being forgotten. The
+/// forgetting deletes the account's hearts, plays, playlists and saved
+/// queue wholesale, so a person's write of those made in the seconds it
+/// takes calls this first and lands after it, rather than being wiped by
+/// it. Never call it from a sync: the forgetting waits for syncs to stop.
+pub fn wait_for_forget() {
+    wait_for_forgetting();
+}
+
+/// Whether a library signed out of is still being forgotten, for a reader
+/// of what the forgetting deletes that should not wait for it.
+pub fn forget_pending() -> bool {
+    *FORGETTING.lock() > 0
 }
 
 fn wait_for_forgetting() {
@@ -244,7 +294,34 @@ pub fn change_own_password(current: &str, password: &str) -> Result<(), SignInEr
 fn rejected(e: SubsonicError) -> SignInError {
     match e {
         SubsonicError::Api { code: 41, .. } => SignInError::NeedsKey,
-        e => SignInError::Rejected(e),
+        e => e.into(),
+    }
+}
+
+impl From<SubsonicError> for SignInError {
+    /// A request that got no answer (refused, timed out, no route, a name
+    /// that does not resolve) is the server out of reach; anything the
+    /// server answered is its refusal.
+    fn from(e: SubsonicError) -> Self {
+        match e {
+            SubsonicError::Http(ref http) if http.status().is_none() && !http.is_decode() => {
+                let address = http
+                    .url()
+                    .map(|u| u.origin().ascii_serialization())
+                    .unwrap_or_else(|| "the server".into());
+                let mut cause: &dyn std::error::Error = http;
+                while let Some(inner) = cause.source() {
+                    cause = inner;
+                }
+                let cause = if http.is_timeout() {
+                    "it did not answer in time".to_owned()
+                } else {
+                    cause.to_string()
+                };
+                SignInError::Unreachable { address, cause }
+            }
+            e => SignInError::Rejected(e),
+        }
     }
 }
 
@@ -301,9 +378,12 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 /// from the new server's library alone. Signing in again as the same
 /// account keeps what is there.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
+    // A library still being forgotten would be forgotten under the sign-in.
+    wait_for_forgetting();
     let before = Config::load()?;
     let keep = |cfg: &mut Config| {
         cfg.remote.enabled = true;
+        cfg.remote.forget_owed = false;
         cfg.remote.server_url = String::new();
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
@@ -318,9 +398,9 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     };
-    // A library still being forgotten would be forgotten under the sign-in.
-    wait_for_forgetting();
-    if same_account(&before.remote, url, username) {
+    // A forget owed and not resumed in this run (a front end that never
+    // calls `resume_forget`) is finished by the sign-in, whichever account.
+    if same_account(&before.remote, url, username) && !before.remote.forget_owed {
         // Signed out of earlier: its syncs may run again, from before the
         // write that wakes the automatic one, unless the write fails.
         let left = crate::remote::sync::left_now();
@@ -467,13 +547,15 @@ pub fn sign_in_refused(cfg: &Config) -> bool {
 }
 
 /// Where this device stands with its server, for the banner every app shows
-/// while it cannot use it.
+/// while it is set up for one and cannot use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerStanding {
-    /// Signed in and reachable, never signed in to a server, or offline
+    /// Signed in and reachable, no server set up (never signed in, or signed
+    /// out of on purpose), this device serving its own library, or offline
     /// because the person asked to be.
     Fine,
-    /// A server is remembered but no credential for it is held.
+    /// Set up for a server, yet no credential for it is held: lost, not
+    /// signed out of.
     SignedOut,
     /// The server refused the credential held for it.
     Refused,
@@ -483,7 +565,11 @@ pub enum ServerStanding {
 }
 
 pub fn server_standing(cfg: &Config) -> ServerStanding {
-    if crate::remote::offline::manual() || cfg.remote.url.is_empty() {
+    if crate::remote::offline::manual()
+        || cfg.share.enabled
+        || !cfg.remote.enabled
+        || cfg.remote.url.is_empty()
+    {
         ServerStanding::Fine
     } else if remote_credential(cfg).is_none() {
         ServerStanding::SignedOut
@@ -794,6 +880,68 @@ mod refusal_tests {
         assert_eq!(*FORGETTING.lock(), 0);
     }
 
+    /// A forget cut short by a quit is owed in the config and finished by
+    /// the next launch, and owed no longer once it is done.
+    #[test]
+    fn a_forget_cut_short_is_finished_at_the_next_launch() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        })
+        .unwrap();
+        assert!(resume_forget().is_none(), "nothing owed while signed in");
+
+        // The app quits before the forgetting runs.
+        drop(sign_out_then().unwrap());
+        assert!(Config::load().unwrap().remote.forget_owed);
+        assert!(!forget_pending());
+
+        let forget = resume_forget().expect("the next launch finds it owed");
+        assert!(forget_pending(), "sign-ins and guarded writes wait for it");
+        forget();
+        assert!(!forget_pending());
+        assert!(!Config::load().unwrap().remote.forget_owed);
+        assert!(resume_forget().is_none());
+    }
+
+    /// A heart, play, playlist or session save made while the forgetting
+    /// runs lands after its blanket deletes, so they do not wipe it.
+    #[test]
+    fn writes_made_during_the_forgetting_land_after_it() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        })
+        .unwrap();
+
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let forget = sign_out_then().unwrap();
+        let wrote = order.clone();
+        let writer = std::thread::spawn(move || {
+            wait_for_forget();
+            wrote.lock().unwrap().push("write");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        order.lock().unwrap().push("forget");
+        forget();
+        writer.join().unwrap();
+        assert_eq!(*order.lock().unwrap(), ["forget", "write"]);
+    }
+
     /// The front end hears that the server is left once the config says so,
     /// and not at all when that write fails.
     #[test]
@@ -956,6 +1104,32 @@ mod refusal_tests {
 mod standing_tests {
     use super::*;
 
+    /// The banner is for a device set up for a server that it cannot use:
+    /// never one with no server, one signed out of on purpose, or one that
+    /// is the server.
+    #[test]
+    fn only_a_server_set_up_and_unusable_stands_badly() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut cfg = Config::default();
+        cfg.remote.url = "https://standing.invalid".into();
+        cfg.remote.username = "koan".into();
+        assert_eq!(
+            server_standing(&cfg),
+            ServerStanding::Fine,
+            "signed out of: the server is remembered, not set up"
+        );
+        cfg.remote.enabled = true;
+        assert_eq!(server_standing(&cfg), ServerStanding::SignedOut);
+        cfg.share.enabled = true;
+        assert_eq!(
+            server_standing(&cfg),
+            ServerStanding::Fine,
+            "this device is the server"
+        );
+    }
+
     #[test]
     fn a_remembered_server_without_a_credential_is_signed_out() {
         // Offline mode is process-wide, and another test turns it on under
@@ -969,8 +1143,44 @@ mod standing_tests {
             ServerStanding::Fine,
             "never signed in"
         );
+        cfg.remote.enabled = true;
         cfg.remote.url = "https://standing.invalid".into();
         cfg.remote.username = "koan".into();
         assert_eq!(server_standing(&cfg), ServerStanding::SignedOut);
+    }
+}
+
+#[cfg(test)]
+mod unreachable_tests {
+    use super::*;
+
+    /// A sign-in nothing answered says the server could not be reached, and
+    /// where, rather than blaming the credentials.
+    #[test]
+    fn a_server_that_never_answered_is_unreachable_not_refusing() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        // A port nothing listens on.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let url = format!("http://127.0.0.1:{port}");
+        let err = set_remote_credentials(&url, "mate", "secret").unwrap_err();
+        match &err {
+            SignInError::Unreachable { address, .. } => assert_eq!(address, &url),
+            other => panic!("expected unreachable, got {other:?}"),
+        }
+        let said = err.to_string();
+        assert!(
+            said.starts_with(&format!("could not reach {url}")),
+            "{said}"
+        );
+        assert!(!said.contains("credentials"), "{said}");
+        assert!(!said.contains("secret"), "{said}");
     }
 }

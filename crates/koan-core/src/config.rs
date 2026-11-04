@@ -378,6 +378,12 @@ pub struct RemoteConfig {
     /// Kept in the download cache and counted against its limit. Off removes
     /// nothing already fetched. Per device.
     pub preload_covers: bool,
+    /// A sign-out kept, whose forgetting of the server's library has not yet
+    /// finished. Written with the sign-out and cleared once the library is
+    /// forgotten, so a forget cut short by a quit or a crash is finished at
+    /// the next launch (`helpers::resume_forget`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forget_owed: bool,
 }
 
 impl Default for PlaybackConfig {
@@ -474,6 +480,7 @@ impl Default for RemoteConfig {
             auto_sync_interval_mins: 60,
             play_queue: false,
             preload_covers: true,
+            forget_owed: false,
         }
     }
 }
@@ -1527,6 +1534,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.url"
         | "remote.username"
         | "remote.server_url"
+        | "remote.forget_owed"
         // Where this machine is reached as a server.
         | "server.url"
         | "remote.cache_dir"

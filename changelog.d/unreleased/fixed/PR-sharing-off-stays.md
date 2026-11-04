@@ -1,0 +1,1 @@
+- **Turning sharing off stays on the sharing settings.** Unticking it in the desktop app's Settings → Server sent the pane to the sign-in form for another server.
