@@ -410,6 +410,54 @@ impl Queue {
         held
     }
 
+    /// A fetch of `art`, started under `generation`, answered after `took`.
+    /// An answer for a generation since moved past (an eviction, or a photo
+    /// found after the record was asked for) concludes nothing, and the
+    /// record is fetched again if it is still wanted.
+    fn settle(
+        &mut self,
+        art: Art,
+        ticket: u64,
+        generation: u64,
+        took: Duration,
+        started: Instant,
+        answer: Answer,
+    ) -> Settled {
+        let held = self.finish(art, ticket);
+        let grew = held && self.observe(took, started, !matches!(answer, Answer::Failed));
+        let current = self.generation(art) == generation;
+        let mut absent = false;
+        if current {
+            match answer {
+                Answer::Kept => {
+                    self.on_disk.insert(art);
+                }
+                Answer::None => {
+                    self.absent.insert(art);
+                    absent = true;
+                }
+                Answer::Unwritten | Answer::Failed => {
+                    self.failed.insert(art);
+                }
+            }
+        }
+        let decodes = self
+            .wanted
+            .keys()
+            .filter(|k| k.art == art && self.decodable(k))
+            .count();
+        let refetch = !current
+            && self
+                .wanted
+                .keys()
+                .any(|k| k.art == art && self.fetchable(k));
+        Settled {
+            fetches: usize::from(refetch) + usize::from(grew),
+            decodes,
+            absent,
+        }
+    }
+
     fn next_fetch(&self) -> Option<Art> {
         if self.fetching.len() >= self.allowed() {
             return None;
@@ -441,6 +489,27 @@ impl Queue {
             .filter(|k| k.art == art && self.fetchable(k))
             .count()
     }
+}
+
+/// What a fetch came back with.
+enum Answer {
+    /// The cover, written to disk.
+    Kept,
+    /// The cover, which could not be written: as good as a failed fetch,
+    /// though the server answered.
+    Unwritten,
+    /// The record has no art.
+    None,
+    /// The engine failed, or the cover could not be written.
+    Failed,
+}
+
+/// What a settled fetch lets start.
+struct Settled {
+    fetches: usize,
+    decodes: usize,
+    /// The record was found to have no art.
+    absent: bool,
 }
 
 struct Shared {
@@ -1498,42 +1567,19 @@ fn fetch_lane(
             renamed
         });
         let mut queue = shared.queue.lock();
-        let held = queue.finish(art, ticket);
-        let grew = held && queue.observe(took, started, fetched.is_ok());
-        let current = queue.generation(art) == generation;
-        let mut absent = false;
-        match fetched {
-            Ok(Some(_)) if current && renamed => {
-                queue.on_disk.insert(art);
-            }
-            // Could not be written: as good as a failed fetch.
-            Ok(Some(_)) if current => {
-                queue.failed.insert(art);
-            }
-            Ok(None) if current => {
-                queue.absent.insert(art);
-                absent = true;
-            }
-            Err(e) if current => {
-                log::debug!("art for {art:?}: {e}");
-                queue.failed.insert(art);
-            }
-            _ => {}
+        if let Err(e) = &fetched {
+            log::debug!("art for {art:?}: {e}");
         }
-        let decodes = queue
-            .wanted
-            .keys()
-            .filter(|k| k.art == art && queue.decodable(k))
-            .count();
-        // Overtaken by an eviction: the record now holding the id is fetched.
-        let refetch = !current
-            && queue
-                .wanted
-                .keys()
-                .any(|k| k.art == art && queue.fetchable(k));
+        let answer = match fetched {
+            Ok(Some(_)) if renamed => Answer::Kept,
+            Ok(Some(_)) => Answer::Unwritten,
+            Ok(None) => Answer::None,
+            Err(_) => Answer::Failed,
+        };
+        let settled = queue.settle(art, ticket, generation, took, started, answer);
         drop(queue);
-        shared.wake(usize::from(refetch) + usize::from(grew), decodes);
-        if absent && tx.unbounded_send(Done::Absent).is_err() {
+        shared.wake(settled.fetches, settled.decodes);
+        if settled.absent && tx.unbounded_send(Done::Absent).is_err() {
             return;
         }
     }
@@ -1984,14 +2030,30 @@ mod tests {
         assert_eq!(q.next_fetch(), Some(art));
 
         // Still in flight when the lookup lands: its answer is the old
-        // generation's, so it cannot mark the record as having none.
+        // generation's, so it cannot mark the record as having none, and the
+        // record is fetched again once it settles.
+        let ticket = 1;
+        let (cancel, _called_off) = futures_channel::oneshot::channel();
         q.fetching.insert(art);
+        q.cancels.insert(art, (ticket, cancel));
         let asked_under = q.generation(art);
         assert_eq!(q.reconsider(art), 0);
         assert_ne!(q.generation(art), asked_under);
+        assert_eq!(q.next_fetch(), None);
+        let settled = q.settle(
+            art,
+            ticket,
+            asked_under,
+            Duration::from_millis(10),
+            Instant::now(),
+            Answer::None,
+        );
+        assert!(!settled.absent);
+        assert!(settled.fetches >= 1);
+        assert!(!q.absent.contains(&art));
+        assert_eq!(q.next_fetch(), Some(art));
 
         // Known, with nothing concluded and nothing running: left alone.
-        q.fetching.remove(&art);
         let settled = q.generation(art);
         assert_eq!(q.reconsider(art), 0);
         assert_eq!(q.generation(art), settled);
