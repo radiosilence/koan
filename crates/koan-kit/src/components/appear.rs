@@ -1,8 +1,10 @@
 //! Sheets, questions and the command bar coming and going. As one comes up,
 //! the window's veil fades in under it (`Veil`) and its panel rises a step
-//! as it fades in (`Rise`), over `Motion::NORMAL` on the quick-out curve.
-//! One put away fades out where it stood over `Motion::FAST` (`Fading`): its
-//! owner keeps it for that long and draws it as it stood, taking no input.
+//! as it fades in (`Rise`), over `Motion::ARRIVE`. One put away fades out
+//! where it stood over `Motion::LEAVE` (`Fading`): its owner keeps it for
+//! that long and draws it as it stood, taking no input. Both take the
+//! ease-in-out curve: on the quick-out a fade this short is mostly gone by
+//! its first frame and reads as a cut.
 //!
 //! Each is a layer the GPU composes (`AnimatedLayer`), so no frame is drawn
 //! while it moves. Under Reduce Motion or Low Power Mode, and where the
@@ -41,8 +43,8 @@ fn entrance(id: &'static str, rise: f32, window: &mut Window, cx: &mut App) -> A
                     from,
                     if k == 0 { 1.0 } else { 0.0 },
                     now,
-                    Motion::NORMAL,
-                    Ease::QuickOut,
+                    Motion::ARRIVE,
+                    Ease::InOut,
                     Repeat::Once,
                 )
             };
@@ -119,7 +121,7 @@ pub struct Fading {
 }
 
 impl Fading {
-    pub const LENGTH: Duration = Motion::FAST;
+    pub const LENGTH: Duration = Motion::LEAVE;
 
     /// A fade starting now, or none where things go at once.
     pub fn start(cx: &App) -> Option<Self> {
@@ -129,7 +131,7 @@ impl Fading {
         let animated = Animated::new();
         standing(&animated);
         let now = Animated::now();
-        animated.segment(0, 1.0, 0.0, now, Self::LENGTH, Ease::QuickOut, Repeat::Once);
+        animated.segment(0, 1.0, 0.0, now, Self::LENGTH, Ease::InOut, Repeat::Once);
         Some(Self {
             animated,
             started: Instant::now(),
