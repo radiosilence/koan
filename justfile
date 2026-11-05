@@ -34,6 +34,34 @@ gui-smoke out="target/gui-smoke" secs="30":
     printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
     KOAN_SMOKE_SECS={{secs}} KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example smoke
 
+# Settings driven through its own controls against the real engine, headless:
+# the sharing account made, sharing started and stopped, its port and where
+# invites go changed, then signing in to a throwaway koan server, out and in
+# again. Fails on any panic or a step that does not land.
+gui-settings-smoke out="target/gui-settings-smoke":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf "{{out}}" && mkdir -p "{{out}}/config"
+    url=$(just _demo-server "" "{{out}}")
+    trap "just _demo-server-stop '{{out}}'" EXIT
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    printf '[library]\nfolders = []\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n[share]\nport = %s\n' "$port" > "{{out}}/config/config.toml"
+    KOAN_SMOKE_SERVER="$url" KOAN_SMOKE_USER=owner KOAN_SMOKE_PASSWORD="$(cat "{{out}}/server.password")" \
+        KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example settings_smoke
+
+# The kōan GUI app on screen, presenting while its windows are resized,
+# change key, are minimised, closed and reopened; fails on any panic or
+# exception. Opens real windows and takes focus: for CI's macOS runner, or a
+# machine nobody is using.
+gui-present out="target/gui-present":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -f "$lib/music/.koan-generated" ] || { rm -rf "$lib"; just gui-library "$lib" 300 10; }
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example present
+
 # Walk every page of the kōan GUI app headlessly: a PNG of each, dark and
 # light, and its frame times while scrolled, failing over the 144 Hz budget.
 # Against a generated library, copied fresh for each run.

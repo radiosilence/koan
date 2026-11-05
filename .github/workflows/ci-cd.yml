@@ -465,9 +465,10 @@ jobs:
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets
 
-  # The app run as it is used, headless: playing, seeking and hovering every
-  # page against a muted generated library (`just gui-smoke`). Catches the
-  # crashes no compile or unit test reaches.
+  # The app run as it is used: playing, seeking and hovering every page
+  # headless against a muted generated library (`just gui-smoke`), Settings'
+  # flows (`just gui-settings-smoke`) and real windows presenting
+  # (`just gui-present`). Catches the crashes no compile or unit test reaches.
   gui-smoke:
     name: GUI smoke (macOS)
     runs-on: macos-latest
@@ -492,6 +493,13 @@ jobs:
       # just runs the recipe; ffmpeg makes the generated library's silent seed.
       - run: brew install just ffmpeg
       - run: just gui-smoke
+      # Settings' flows against the real engine and a throwaway koan server.
+      - if: ${{ !cancelled() }}
+        run: just gui-settings-smoke
+      # Real windows presenting while resized, minimised, closed and given
+      # and taken key: the runner has a display nobody is using.
+      - if: ${{ !cancelled() }}
+        run: just gui-present
 
   audit:
     name: Security Audit
