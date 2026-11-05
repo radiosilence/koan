@@ -701,6 +701,73 @@ mod tests {
         assert_eq!(runs.get(), 1, "a fading question ran its action again");
     }
 
+    /// A question fading out is drawn inert: a click on the window beneath
+    /// lands at once, and Tab never reaches its buttons.
+    #[gpui::test]
+    fn a_fading_question_leaves_the_window_its_input(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, bounds, click_at, redraw, stage, tree};
+
+        let clicks = Rc::new(Cell::new(0));
+        let page_focus = cx.update(|cx| cx.focus_handle().tab_stop(true));
+        let (_, cx) = stage(cx, {
+            let (clicks, page_focus) = (clicks.clone(), page_focus.clone());
+            move |window, cx| {
+                let clicks = clicks.clone();
+                let page = div()
+                    .id("page")
+                    .size(px(200.))
+                    .track_focus(&page_focus)
+                    .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                    .into_any_element();
+                // The question over the page, as a window draws it.
+                let window_like = div()
+                    .relative()
+                    .size(px(400.))
+                    .child(page)
+                    .children(overlay(window, cx))
+                    .into_any_element();
+                vec![("window", window_like)]
+            }
+        });
+        cx.update(|window, cx| {
+            confirm(
+                Confirm {
+                    title: "replace the queue".into(),
+                    verb: "replace".into(),
+                    destructive: true,
+                    lines: vec!["3 tracks come off the queue.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                |_| {},
+            );
+        });
+        redraw(cx);
+        act(cx, "cancel", Action::Click);
+        redraw(cx);
+        let fading = tree(cx)["nodes"]
+            .as_object()
+            .is_some_and(|nodes| nodes.values().any(|n| n["aria"]["label"] == "replace"));
+        assert!(fading, "the question fades out where it stood");
+        let at = bounds(cx, "window").origin + point(px(100.), px(100.));
+        click_at(cx, at);
+        assert_eq!(clicks.get(), 1, "the fading question took the click");
+        // The page is the window's one stop while the question fades.
+        for _ in 0..4 {
+            cx.update(|window, cx| window.focus_next(cx));
+            cx.run_until_parked();
+            assert!(
+                cx.update(|window, _| page_focus.is_focused(window)),
+                "tab entered the fading question"
+            );
+        }
+    }
+
     struct Presenter {
         focus: FocusHandle,
     }
