@@ -179,7 +179,7 @@ impl RowMetrics {
             RowKind::Art => 40.0,
             RowKind::Heading => HEADING_SLEEVE + 12.0,
         };
-        px((points * look.scale.size).round()) + Self::padding(look) * 2.0
+        (px((points * look.scale.size).round()) + Self::padding(look) * 2.0).max(look.target())
     }
 
     /// A sidebar row's height, the Mac's sidebar measured at 2x: a place
@@ -187,7 +187,7 @@ impl RowMetrics {
     /// line), the content centred in it.
     pub fn nav_height(detail: bool, look: &Look) -> Pixels {
         let points = if detail { 39.0 } else { 34.0 };
-        px((points * look.scale.size).round())
+        px((points * look.scale.size).round()).max(look.target())
     }
 
     /// A navigation row's face, square: a playlist's sleeve in the sidebar.

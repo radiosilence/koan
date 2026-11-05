@@ -15,33 +15,47 @@ pub trait KoanLongPress: ParentElement + Sized {
         self,
         pressed: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.child(long_press(Rc::new(pressed)))
+        self.child(long_press(Rc::new(pressed), None))
     }
 }
 
 impl<E: ParentElement> KoanLongPress for E {}
 
 type Pressed = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
+type Lifted = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A layer over its parent that takes nothing from the pointer (its hitbox
 /// leaves the elements under it hovered) and claims a long press that starts
-/// over it and over nothing that blocks the pointer above it.
-pub(crate) fn long_press(pressed: Pressed) -> impl IntoElement {
+/// over it and over nothing that blocks the pointer above it. `lifted` runs
+/// while a held touch carries a drag, as moving a held row lifts one: what
+/// the press opened makes way for it.
+pub(crate) fn long_press(pressed: Pressed, lifted: Option<Lifted>) -> impl IntoElement {
     canvas(
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
             let pressed = pressed.clone();
+            let lifted = lifted.clone();
             window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble
-                    || event.phase != TouchPhase::Started
-                    || window.default_prevented()
-                    || !hitbox.is_hovered(window)
-                {
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
-                window.prevent_default();
-                cx.stop_propagation();
-                pressed(event.start_position, window, cx);
+                match event.phase {
+                    TouchPhase::Started => {
+                        if window.default_prevented() || !hitbox.is_hovered(window) {
+                            return;
+                        }
+                        // Claimed, but left to bubble: a draggable element under
+                        // this one lifts its drag if the press then moves.
+                        window.prevent_default();
+                        pressed(event.start_position, window, cx);
+                    }
+                    TouchPhase::Moved if cx.has_active_drag() => {
+                        if let Some(lifted) = &lifted {
+                            lifted(window, cx);
+                        }
+                    }
+                    TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {}
+                }
             });
         },
     )

@@ -67,6 +67,7 @@ impl RenderOnce for Segmented {
             .relative()
             .flex()
             .items_center()
+            .min_h(look.target())
             .gap(px(18.0));
         for (index, option) in self.options.into_iter().enumerate() {
             let key =

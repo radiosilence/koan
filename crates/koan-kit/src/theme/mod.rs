@@ -67,6 +67,10 @@ pub struct KoanTheme {
     /// "Wash the whole window": the wash runs under the sidebar and the
     /// toolbar as well as the page, and they draw no ground of their own.
     pub wash_window: bool,
+    /// Touch, not a pointer, is how the app is used: every control and row
+    /// is at least `HIT` tall, a finger's target. On by default on phones and
+    /// tablets; the storybook switches it to preview the look on a desktop.
+    pub touch: bool,
     /// Low Power Mode, as the system last said.
     low_power: bool,
     /// Increase Contrast (macOS) or high contrast (GNOME), as the system
@@ -104,6 +108,7 @@ impl Default for KoanTheme {
             wash_drift: 100,
             wash_turn: 3,
             wash_window: true,
+            touch: cfg!(any(target_os = "ios", target_os = "android")),
             low_power: false,
             contrast: false,
             opaque: false,
@@ -796,6 +801,8 @@ pub struct Look {
     pub hairline: Pixels,
     /// Less transparency asked for: veils over the page are near opaque.
     pub opaque: bool,
+    /// Used by touch (`KoanTheme::touch`).
+    pub touch: bool,
 }
 
 impl Look {
@@ -818,7 +825,14 @@ impl Look {
             icons: theme.icons,
             hairline: if contrast { HAIRLINE * 2.0 } else { HAIRLINE },
             opaque: theme.opaque,
+            touch: theme.touch,
         }
+    }
+
+    /// The least height of anything pressed: `HIT` under touch, nothing
+    /// asked of a pointer.
+    pub fn target(&self) -> Pixels {
+        if self.touch { HIT } else { px(0.0) }
     }
 
     pub fn color(&self, tone: Tone) -> Hsla {

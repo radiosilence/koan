@@ -391,6 +391,12 @@ impl StoryContent {
                 Toggle::new("show-icons", "show icons", look.icons)
                     .on_change(|on, _, cx| KoanTheme::set_icons(*on, cx)),
             )
+            .child(
+                Toggle::new("touch", "touch", look.touch).on_change(|on, _, cx| {
+                    cx.global_mut::<KoanTheme>().touch = *on;
+                    cx.refresh_windows();
+                }),
+            )
     }
 
     fn page(
