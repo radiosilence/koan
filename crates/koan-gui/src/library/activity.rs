@@ -397,6 +397,14 @@ fn grouped(n: u64) -> String {
     out
 }
 
+impl Activity {
+    /// Whether anything is under way or a task's failure stands: a phone
+    /// floats the rows as a card only then.
+    pub fn shows(&self, cx: &App) -> bool {
+        self.problem.is_some() || !self.rows(cx).is_empty()
+    }
+}
+
 impl Render for Activity {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.rows(cx);

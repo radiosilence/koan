@@ -32,8 +32,10 @@ pub enum Route {
     /// A shelf's "see all": the album, artist or track browser with the
     /// shelf as its own filter, leaving the library browser's as it was.
     Shelved(Shelf, Listing),
-    /// The phone's Library tab: the library's sections and the playlists.
+    /// The phone's Library tab: the library's sections.
     Library,
+    /// The phone's list of playlists, a section of its Library tab.
+    Playlists,
     /// The phone's Settings tab: its sections.
     Settings,
     /// A section of Settings, as a phone's screen.

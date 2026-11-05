@@ -4,17 +4,19 @@
 //! bar, the notch and the home indicator; the wash runs under them.
 //!
 //! The pages are the desktop's: the queue, the library's pages, downloads
-//! and Settings' panes. The Library tab's first page is the sidebar's list.
+//! and Settings' panes. The Library tab's first page lists the library's
+//! sections, as the iOS app's does, and Settings' lists its panes.
 
 use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
-use crate::components::{Clear, KoanInsets, TabStrip, Toolbar, ToolbarButton, ToolbarTitle};
+use crate::components::{
+    Clear, KoanInsets, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
+};
 use crate::library::{self, stage::LibraryStage};
 use crate::navigator::{Chosen, Navigator, Route};
 use crate::paint::Paint;
 use crate::queue::QueueView;
-use crate::sidebar::Sidebar;
 use crate::theme::{Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 
@@ -34,13 +36,19 @@ const TABS: [(Route, &str, Icon); 3] = [
 pub struct PhoneShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
-    sidebar: Entity<Sidebar>,
     transport: Entity<Transport>,
     library: Option<Entity<LibraryStage>>,
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
     /// Settings' panes, made on first showing and kept, as the desktop keeps
     /// its Settings window's.
     settings: Option<Entity<crate::settings::SettingsWindow>>,
+    /// What is wrong with the server, and the output still opening, under
+    /// the bar on every page.
+    banner: Entity<crate::server_banner::ServerBanner>,
+    output_wait: Entity<crate::output_wait::OutputWaitBanner>,
+    /// Now Playing over everything, while it is open: a transport of its own
+    /// in its full form, made on opening and let go on closing.
+    now_playing: Option<(Entity<Transport>, Subscription)>,
     /// The search sheet over the tab showing, while it is open.
     search: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     _subscriptions: Vec<Subscription>,
@@ -50,8 +58,11 @@ impl PhoneShell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
-        let sidebar = cx.new(|cx| Sidebar::new(&nav, cx));
-        let transport = cx.new(|cx| Transport::new(&nav, window, cx));
+        let transport = cx.new(|cx| {
+            let mut transport = Transport::new(&nav, window, cx);
+            transport.set_form(transport::Form::Mini, cx);
+            transport
+        });
         window.focus(&queue.focus_handle(cx), cx);
         let navigator = nav.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -67,32 +78,141 @@ impl PhoneShell {
                 let feed = lib.feed.clone();
                 this.transport
                     .update(cx, |transport, cx| transport.set_feed(feed, cx));
-                let (covers, search) = (lib.covers.clone(), lib.search.clone());
-                this.sidebar.update(cx, |sidebar, cx| {
-                    sidebar.set_covers(covers, cx);
-                    sidebar.set_search(search, cx);
-                });
+                // The playlists page follows the library's playlists.
+                let feed = lib.feed.clone();
+                this._subscriptions
+                    .push(cx.observe(&feed, |_, _, cx| cx.notify()));
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })
             .ok();
         })
         .detach();
-        let subscriptions = vec![cx.observe(&nav, |_, _, cx| cx.notify()), {
-            let asking = ask::asking(cx);
-            cx.observe(&asking, |_, _, cx| cx.notify())
-        }];
+        let subscriptions = vec![
+            // A link followed from Now Playing goes to its page, which Now
+            // Playing would cover.
+            cx.observe(&nav, |this, _, cx| {
+                this.now_playing = None;
+                cx.notify();
+            }),
+            cx.subscribe_in(
+                &transport,
+                window,
+                |this, _, _: &transport::Expand, window, cx| this.open_now_playing(window, cx),
+            ),
+            {
+                let asking = ask::asking(cx);
+                cx.observe(&asking, |_, _, cx| cx.notify())
+            },
+            // The activity card comes and goes with what is under way.
+            {
+                let activity = cx
+                    .global::<crate::library::activity::ActivityHandle>()
+                    .0
+                    .clone();
+                cx.observe(&activity, |_, _, cx| cx.notify())
+            },
+        ];
         Self {
             nav,
             queue,
-            sidebar,
             transport,
             library: None,
             downloads: None,
             settings: None,
             search: None,
+            now_playing: None,
+            banner: cx.new(crate::server_banner::ServerBanner::new),
+            output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// A row that opens `route` on the tab showing.
+    fn opens(&self, id: &'static str, label: &'static str, icon: Icon, route: Route) -> NavRow {
+        let nav = self.nav.clone();
+        NavRow::new(id, label).icon(icon).on_click(move |_, _, cx| {
+            nav.update(cx, |nav, cx| {
+                if nav.go(route) {
+                    cx.notify();
+                }
+            })
+        })
+    }
+
+    /// The Library tab's first page: the library's sections, as the iOS app
+    /// lists them. The tracks have no section here: a phone finds a track
+    /// through its record or search.
+    fn sections(&self, _: &mut Context<Self>) -> AnyElement {
+        ScrollArea::new(
+            "library-sections",
+            div()
+                .flex()
+                .flex_col()
+                .child(self.opens("lib-albums", "albums", Icon::Album, Route::Albums))
+                .child(self.opens("lib-artists", "artists", Icon::Artist, Route::Artists))
+                .child(self.opens(
+                    "lib-favourites",
+                    "favourites",
+                    Icon::Favourite,
+                    Route::Favourites,
+                ))
+                .child(self.opens(
+                    "lib-playlists",
+                    "playlists",
+                    Icon::Playlist,
+                    Route::Playlists,
+                ))
+                .child(self.opens(
+                    "lib-recent",
+                    "recently played",
+                    Icon::RecentlyPlayed,
+                    Route::RecentlyPlayed,
+                ))
+                .child(self.opens(
+                    "lib-downloaded",
+                    "downloaded",
+                    Icon::OnDevice,
+                    Route::OnDevice,
+                ))
+                .child(self.opens("lib-history", "history", Icon::History, Route::History))
+                .child(self.opens(
+                    "lib-downloads",
+                    "downloads",
+                    Icon::Downloads,
+                    Route::Downloads,
+                )),
+        )
+        .into_any_element()
+    }
+
+    /// The playlists, each opening its page.
+    fn playlists(&self, cx: &mut Context<Self>) -> AnyElement {
+        let playlists = self
+            .library
+            .as_ref()
+            .map(|library| library.read(cx).lib().feed.read(cx).playlists.clone())
+            .unwrap_or_default();
+        let nav = self.nav.clone();
+        ScrollArea::new(
+            "playlists",
+            div()
+                .flex()
+                .flex_col()
+                .children(playlists.into_iter().map(|(id, name)| {
+                    let nav = nav.clone();
+                    NavRow::data(("playlist", id as u64), name)
+                        .icon(Icon::Playlist)
+                        .on_click(move |_, _, cx| {
+                            nav.update(cx, |nav, cx| {
+                                if nav.go(Route::Playlist(id)) {
+                                    cx.notify();
+                                }
+                            })
+                        })
+                })),
+        )
+        .into_any_element()
     }
 
     /// Settings' model and panes, made on first showing and kept, as the
@@ -132,7 +252,8 @@ impl PhoneShell {
         }
         match route {
             Route::Queue => self.queue.clone().cached(full()).into_any_element(),
-            Route::Library => self.sidebar.clone().cached(full()).into_any_element(),
+            Route::Library => self.sections(cx),
+            Route::Playlists => self.playlists(cx),
             Route::Downloads => {
                 let nav = self.nav.clone();
                 self.downloads
@@ -192,6 +313,7 @@ impl PhoneShell {
         let title = match route {
             Route::Queue => Some("queue"),
             Route::Library => Some("library"),
+            Route::Playlists => Some("playlists"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
             Route::History => Some("history"),
@@ -212,6 +334,40 @@ impl PhoneShell {
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
             )
+    }
+
+    /// Goes to `route` on the tab showing, as a link would; for tools that
+    /// walk the pages headlessly.
+    pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
+        self.now_playing = None;
+        self.nav.update(cx, |nav, cx| {
+            if nav.go(route) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// Opens Now Playing, as tapping the mini player does.
+    pub fn open_now_playing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.now_playing.is_some() {
+            return;
+        }
+        let nav = self.nav.clone();
+        let full = cx.new(|cx| {
+            let mut full = Transport::new(&nav, window, cx);
+            full.set_form(transport::Form::Full, cx);
+            full
+        });
+        if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
+            let feed = lib.feed.clone();
+            full.update(cx, |full, cx| full.set_feed(feed, cx));
+        }
+        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
+            this.now_playing = None;
+            cx.notify();
+        });
+        self.now_playing = Some((full, closed));
+        cx.notify();
     }
 
     /// The search sheet over the tab showing, holding the keyboard. Search
@@ -265,6 +421,10 @@ impl Render for PhoneShell {
         let p = Paint::of(window, cx);
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
+        let activity = cx
+            .global::<crate::library::activity::ActivityHandle>()
+            .0
+            .clone();
         div()
             .key_context(crate::platform::actions::CONTEXT)
             .on_back_gesture(cx.listener(|this, _, _, cx| this.back(cx)))
@@ -275,19 +435,37 @@ impl Render for PhoneShell {
             .text_color(p.ink)
             .clear_of_system(Clear::System, window)
             .child(self.bar(route, cx))
+            .child(self.banner.clone())
+            .child(self.output_wait.clone())
             .child(
                 div()
                     .id("stage")
                     .role(a11y::Role::Main)
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(stage),
+                    .child(stage)
+                    // What the library is busy with, floating over the foot of
+                    // every page while anything runs, as the iOS app has it:
+                    // the sidebar foot that holds it on the desktop is gone.
+                    .children(activity.read(cx).shows(cx).then(|| {
+                        div()
+                            .absolute()
+                            .left(p.space(crate::theme::Space::M))
+                            .right(p.space(crate::theme::Space::M))
+                            .bottom(p.space(crate::theme::Space::M))
+                            .p(p.space(crate::theme::Space::S))
+                            .bg(p.look.palette.surface.hsla())
+                            .border(p.look.hairline)
+                            .border_color(p.rule)
+                            .child(activity.clone())
+                    })),
             )
             .child(
                 self.transport.clone().cached(
                     StyleRefinement::default()
                         .w_full()
-                        .h(transport::HEIGHT)
+                        .h(p.look.spaced(transport::MINI_HEIGHT))
                         .flex_shrink_0(),
                 ),
             )
@@ -300,6 +478,17 @@ impl Render for PhoneShell {
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
+            .children(self.now_playing.as_ref().map(|(full, _)| {
+                ask::layered(
+                    Layer::Sheet,
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .child(full.clone().cached(StyleRefinement::default().size_full())),
+                )
+            }))
             .children(
                 self.search
                     .as_ref()

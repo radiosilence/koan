@@ -73,6 +73,17 @@ gui-walk out="target/gui-walk" albums="300" tracks="10":
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
     KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example walk -- "{{out}}"
 
+# The phone shell walked headlessly at an iPhone's size, under touch: a PNG of
+# each page, Now Playing and a Settings section, dark and light, against the
+# same generated library as `gui-walk`.
+gui-phone-walk out="target/phone-walk":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -d "$lib/config" ] || just gui-library "$lib" 300 10
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run -p koan-gui --features runtime-shaders --example phone_walk -- "{{out}}"
+
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the
