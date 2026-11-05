@@ -1,5 +1,6 @@
 //! The storybook's pages for containers and moving parts: collections,
-//! tables and lists, panels and sheets, motion and drag.
+//! tables and lists, panels and sheets, motion and drag, and a guided
+//! flow's parts.
 
 use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
@@ -7,14 +8,14 @@ use gpui::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
-    Align, BarLevels, Burst, Collection, CollectionSection, CollectionWidth, Column, CommandBar,
-    CommandResults, CopyButton, CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip,
-    DropTarget, EmptyState, FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector,
-    KoanContextMenu, MenuEntry, Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton,
-    PlayingBars, Prism, QrCode, Reveal, RowKind, RowList, RowListState, SectionHeader,
-    SectionHeading, Sheen, ShuffleButton, Slider, SplitView, SuggestionHeading, SuggestionPanel,
-    SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid, TileSleeve, Viewer, link_action,
-    link_text, name_line, plain_text, table_list,
+    Align, BarLevels, Burst, Check, CheckItem, ChoiceCards, Collection, CollectionSection,
+    CollectionWidth, Column, CommandBar, CommandResults, CopyButton, CopyText, CoverArt, DenseRow,
+    DenseTable, DetailGroup, DragChip, DropTarget, EmptyState, FadeIn, FilterField, Form, FormRow,
+    FormSection, Glide, Inspector, KoanContextMenu, MenuEntry, Mosaic, NavHeading, NavNote, NavRow,
+    PageHeader, Pill, PlayButton, PlayingBars, Prism, QrCode, Reveal, RowKind, RowList,
+    RowListState, SectionHeader, SectionHeading, Sheen, ShuffleButton, Slider, SplitView, Steps,
+    SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid,
+    TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
 };
 use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
@@ -37,6 +38,7 @@ pub struct State {
     sweep: Burst,
     sticker: Burst,
     glide: Glide,
+    choice: Option<usize>,
 }
 
 impl State {
@@ -67,6 +69,7 @@ impl State {
                 glide.set(0.62, 0.0, std::time::Instant::now());
                 glide
             },
+            choice: None,
         }
     }
 }
@@ -628,6 +631,55 @@ impl StoryContent {
                                     .on_click(|_, _, _| {}),
                             )
                         })
+                        .into_any_element(),
+                ]
+            }
+            Story::Guide => {
+                let chosen = self.more.choice;
+                vec![
+                    SectionHeader::new("Steps").into_any_element(),
+                    Steps::new(
+                        "story-steps",
+                        ["welcome", "your music", "sharing", "playback", "keys"],
+                        2,
+                    )
+                    .into_any_element(),
+                    SectionHeader::new("Choice cards").into_any_element(),
+                    ChoiceCards::new("story-cards", chosen)
+                        .named("where is your music")
+                        .card(
+                            Icon::Laptop,
+                            "On this computer",
+                            Some("Folders of music files on this computer, or on a drive it reaches."),
+                        )
+                        .card(
+                            Icon::Server,
+                            "On a server",
+                            Some("A kōan, Navidrome or Subsonic server, played from here."),
+                        )
+                        .on_change({
+                            let entity = entity.clone();
+                            move |index, _, cx| {
+                                let index = *index;
+                                entity.update(cx, |story, cx| {
+                                    story.more.choice = Some(index);
+                                    cx.notify();
+                                })
+                            }
+                        })
+                        .into_any_element(),
+                    SectionHeader::new("Checklist").into_any_element(),
+                    CheckItem::new("story-done", Check::Done, "Tailscale is installed")
+                        .detail("Found at /Applications/Tailscale.app.")
+                        .into_any_element(),
+                    CheckItem::new("story-todo", Check::ToDo, "Tailscale is running")
+                        .detail("Open Tailscale and sign in.")
+                        .action(
+                            crate::components::Button::new("story-open", crate::components::ButtonKind::Bordered)
+                                .label("Open Tailscale"),
+                        )
+                        .into_any_element(),
+                    CheckItem::new("story-looking", Check::Looking, "Funnel is allowed")
                         .into_any_element(),
                 ]
             }

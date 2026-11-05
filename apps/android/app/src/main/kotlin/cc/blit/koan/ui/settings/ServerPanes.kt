@@ -277,7 +277,7 @@ fun DownloadsPane(model: SettingsModel) {
                     (2..10).map { "$it tracks" to it } +
                     // A number past the choices, set by hand, shows as itself.
                     listOfNotNull(ahead.takeIf { it > 10 }?.let { "$it tracks" to it }) +
-                    ("Whole queue" to -1),
+                    ("Whole queue, up to 250" to -1),
             ) { n -> model.edit { it.copy(downloadAhead = n.takeIf { it >= 0 }?.toUInt()) } }
         }
         item {

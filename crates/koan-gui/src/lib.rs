@@ -28,6 +28,7 @@ pub mod search;
 pub mod server_banner;
 pub mod session;
 pub mod settings;
+pub mod setup;
 pub mod shell;
 pub mod sidebar;
 pub mod sidebar_status;

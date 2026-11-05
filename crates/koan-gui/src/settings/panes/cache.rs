@@ -87,7 +87,7 @@ pub fn ahead_options(set: Option<u32>) -> Vec<(String, Option<u32>)> {
     if let Some(n) = set.filter(|n| *n > 10) {
         options.push((format!("{n} tracks"), Some(n)));
     }
-    options.push(("Whole queue".to_owned(), None));
+    options.push(("Whole queue, up to 250".to_owned(), None));
     options
 }
 

@@ -38,6 +38,7 @@ pub mod field;
 mod filter_field;
 pub mod focus_trap;
 mod form;
+mod guide;
 mod heart;
 mod insets;
 mod inspector;
@@ -131,6 +132,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,
 };
+pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use insets::{Clear, KoanInsets, system_insets};
 pub use inspector::{Inspector, plain_text};

@@ -18,7 +18,7 @@ use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Mode {
+pub enum Mode {
     Connect,
     Share,
 }
@@ -33,12 +33,10 @@ const SYNC_EVERY: [(&str, u64); 5] = [
 
 pub struct ServerPane {
     pub(super) ctx: Ctx,
-    /// The side the person chose to look at, while it differs from what
-    /// this device is doing; otherwise the pane follows that.
-    chosen: Option<Mode>,
-    /// The side drawn last, so turning sharing off from the sharing side
-    /// stays on it (`stay`).
-    shown: Option<Mode>,
+    side: Side,
+    /// One side only, without the choice between them or what is kept of
+    /// a server's library: the setup's sign-in and sharing steps.
+    pinned: Option<Mode>,
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
@@ -139,8 +137,8 @@ impl ServerPane {
         ];
         Self {
             ctx,
-            chosen: None,
-            shown: None,
+            side: Side::default(),
+            pinned: None,
             url,
             username,
             secret,
@@ -152,6 +150,12 @@ impl ServerPane {
             share,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Shows `mode`'s side alone, its essentials only.
+    pub fn pinned(mut self, mode: Mode) -> Self {
+        self.pinned = Some(mode);
+        self
     }
 
     fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -187,9 +191,14 @@ impl ServerPane {
         self.url.update(cx, |s, cx| s.set_value("", window, cx));
         let host = host(&invite.server);
         if self.ctx.sharing.read(cx).serving.is_some() {
+            let way = if self.pinned.is_some() {
+                "Stop sharing"
+            } else {
+                "Turn sharing off under Shares its library"
+            };
             model.update(cx, |m, cx| {
                 m.report(
-                    format!("This device is sharing its library. Turn sharing off under Shares its library to sign in to {host}."),
+                    format!("This device is sharing its library. {way} to sign in to {host}."),
                     cx,
                 )
             });
@@ -439,6 +448,9 @@ impl ServerPane {
                 look,
             ));
             sections.push(section(Some("Signed in"), rows, None, look));
+            if self.pinned.is_some() {
+                return sections;
+            }
             sections.push(offers(connection, look));
         } else {
             let signing_in = model
@@ -510,6 +522,9 @@ impl ServerPane {
                 Some("Paste an invite here, or into Server URL, and kōan fills in the rest. The account is checked against the server, then saved to config.local.toml, readable only by you.".into()),
                 look,
             ));
+        }
+        if self.pinned.is_some() {
+            return sections;
         }
 
         let mut sync_rows = vec![{
@@ -772,15 +787,73 @@ impl Render for ServerPane {
         let entity = cx.entity();
         let sharing = self.ctx.sharing.read(cx);
         let status = mode_label(sharing, &connection);
-        let doing = if settings.share_enabled || sharing.serving.is_some() {
-            Mode::Share
-        } else {
-            Mode::Connect
-        };
-        self.chosen = stay(self.shown, self.chosen, doing);
-        let mode = self.chosen.unwrap_or(doing);
-        self.shown = Some(mode);
-        let mut sections = vec![section(
+        let doing = doing_now(&self.ctx, cx);
+        let mode = self.pinned.unwrap_or_else(|| self.side.draw(doing));
+        let mut sections = Vec::new();
+        // Pinned to sharing, it says only what goes wrong or that it runs.
+        if self.pinned == Some(Mode::Share) {
+            if matches!(status, ModeLabel::Sharing(_) | ModeLabel::NotSharing(_)) {
+                sections.push(section(None, vec![status.render(&look)], None, &look));
+            }
+        } else if self.pinned.is_none() {
+            sections.push(self.mode_section(mode, &status, &look, entity.clone()));
+        }
+        match mode {
+            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
+            Mode::Connect if settings.share_enabled => {
+                let mut rows = vec![text(
+                    if self.pinned.is_some() {
+                        "This device is sharing its library. It signs in to a server once it stops sharing."
+                    } else {
+                        "This device is sharing its library. Turn sharing off under Shares its library to sign in to a server instead."
+                    },
+                    TypeRole::Body,
+                    Tone::Muted,
+                    &look,
+                )
+                .into_any_element()];
+                if self.pinned.is_some() {
+                    let ctx = self.ctx.clone();
+                    let busy = self.ctx.sharing.read(cx).busy();
+                    rows.push(buttons(
+                        vec![
+                            Button::new("stop-sharing", ButtonKind::Bordered)
+                                .label("Stop Sharing…")
+                                .disabled(busy)
+                                .on_click(move |_, window, cx| {
+                                    super::share::ShareForm::ask_stop_sharing(
+                                        &ctx,
+                                        window,
+                                        cx,
+                                        |_, _| {},
+                                    )
+                                })
+                                .into_any_element(),
+                        ],
+                        &look,
+                    ));
+                }
+                sections.push(section(None, rows, None, &look));
+            }
+            Mode::Connect => {
+                sections.extend(self.connect_sections(&settings, &connection, &look, cx))
+            }
+        }
+        page("server", &look, sections)
+    }
+}
+
+impl ServerPane {
+    /// The choice between signing in and sharing, with what this device
+    /// does now under it.
+    fn mode_section(
+        &self,
+        mode: Mode,
+        status: &ModeLabel,
+        look: &Look,
+        entity: Entity<Self>,
+    ) -> AnyElement {
+        section(
             None,
             vec![
                 Row::new("This device")
@@ -794,13 +867,14 @@ impl Render for ServerPane {
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {
-                                pane.chosen = (mode != doing).then_some(mode);
+                                let doing = doing_now(&pane.ctx, cx);
+                                pane.side.choose(mode, doing);
                                 cx.notify();
                             })
                         }),
                     )
                     .into_any_element(),
-                status.render(&look),
+                status.render(look),
             ],
             Some(
                 if mode == Mode::Share {
@@ -810,35 +884,53 @@ impl Render for ServerPane {
                 }
                 .into(),
             ),
-            &look,
-        )];
-        match mode {
-            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
-            Mode::Connect if settings.share_enabled => sections.push(section(
-                None,
-                vec![text(
-                    "This device is sharing its library. Turn sharing off under Shares its library to sign in to a server instead.",
-                    TypeRole::Body,
-                    Tone::Muted,
-                    &look,
-                )
-                .into_any_element()],
-                None,
-                &look,
-            )),
-            Mode::Connect => sections.extend(self.connect_sections(&settings, &connection, &look, cx)),
-        }
-        page("server", &look, sections)
+            look,
+        )
     }
 }
 
-/// The side chosen, given the side drawn last and what the device does now.
-/// Sharing turned off while its side shows leaves that side showing, with
-/// sharing off, rather than sending the pane to the sign-in form.
-fn stay(shown: Option<Mode>, chosen: Option<Mode>, doing: Mode) -> Option<Mode> {
-    match (shown, chosen, doing) {
-        (Some(Mode::Share), None, Mode::Connect) => Some(Mode::Share),
-        _ => chosen,
+/// What this device is doing: sharing, or about to, or not.
+fn doing_now(ctx: &Ctx, cx: &App) -> Mode {
+    let sharing = ctx.sharing.read(cx).serving.is_some();
+    let enabled = ctx
+        .model
+        .read(cx)
+        .settings()
+        .is_some_and(|s| s.share_enabled);
+    if enabled || sharing {
+        Mode::Share
+    } else {
+        Mode::Connect
+    }
+}
+
+/// Which side of the pane shows.
+#[derive(Default)]
+struct Side {
+    /// The side the person chose to look at, while it differs from what
+    /// this device is doing; otherwise the pane follows that.
+    chosen: Option<Mode>,
+    /// What the device was doing at the last draw, so turning sharing off
+    /// from the sharing side stays on it.
+    was_doing: Option<Mode>,
+}
+
+impl Side {
+    /// The side to draw, given what the device does now. Sharing turned off
+    /// while its side shows leaves that side showing, with sharing off,
+    /// rather than sending the pane to the sign-in form; only the change
+    /// does that, so choosing the sign-in side afterwards shows it.
+    fn draw(&mut self, doing: Mode) -> Mode {
+        if self.was_doing == Some(Mode::Share) && doing == Mode::Connect && self.chosen.is_none() {
+            self.chosen = Some(Mode::Share);
+        }
+        self.was_doing = Some(doing);
+        self.chosen = self.chosen.filter(|chosen| *chosen != doing);
+        self.chosen.unwrap_or(doing)
+    }
+
+    fn choose(&mut self, mode: Mode, doing: Mode) {
+        self.chosen = (mode != doing).then_some(mode);
     }
 }
 
@@ -901,20 +993,39 @@ pub fn mode_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, host, stay};
+    use super::{Mode, Side, host};
 
     #[test]
     fn turning_sharing_off_stays_on_the_sharing_side() {
-        // Sharing, then turned off: the sharing side stays, sharing off.
-        assert_eq!(
-            stay(Some(Mode::Share), None, Mode::Connect),
-            Some(Mode::Share)
-        );
-        // Opened while not sharing: the sign-in side, as before.
-        assert_eq!(stay(None, None, Mode::Connect), None);
-        assert_eq!(stay(Some(Mode::Connect), None, Mode::Connect), None);
-        // Sharing: the pane follows it.
-        assert_eq!(stay(Some(Mode::Share), None, Mode::Share), None);
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        side.choose(Mode::Connect, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+    }
+
+    #[test]
+    fn the_sign_in_side_shows_after_looking_at_sharing() {
+        // #2109: not sharing, the sharing side looked at, then the sign-in
+        // side chosen.
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+        side.choose(Mode::Share, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        side.choose(Mode::Connect, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+    }
+
+    #[test]
+    fn follows_the_device_once_it_does_what_was_chosen() {
+        // Sharing, the sign-in side looked at, sharing stopped and started
+        // again from elsewhere: the pane follows it back to sharing.
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
+        side.choose(Mode::Connect, Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
     }
 
     #[test]

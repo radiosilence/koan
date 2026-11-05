@@ -97,6 +97,7 @@ pub fn start(
     install(&engine, cx);
     settings::resume(cx);
     cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));
+    cx.on_action(|_: &crate::platform::actions::SetUp, cx| crate::setup::open(cx));
     let queue = cx.global::<Mirror>().queue.clone();
 
     let (shown, showing) = futures::channel::oneshot::channel::<()>();
@@ -243,6 +244,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
     cx.global_mut::<MainWindowSlot>().ready = true;
     if show {
         open_window(saved, cx);
+        crate::setup::offer_at_launch(cx);
     } else {
         log::info!("opened at login; staying in the menu bar");
         crate::platform::residency::settle_dock(cx);

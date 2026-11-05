@@ -5224,6 +5224,45 @@ impl KoanEngine {
         })
     }
 
+    /// Put every setting back to its default (`Config::reset`): what the
+    /// desktop app's "reset to defaults" ends with, once it has stopped
+    /// sharing, signed out and forgotten the folders through their own calls.
+    /// Appearance changes still being saved land first, so none is written
+    /// back over the defaults afterwards. A signed-out server's library still
+    /// owed its forgetting is forgotten first; the reset is refused if that
+    /// fails again.
+    pub async fn reset_settings(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(|| {
+            // A sign-out just before forgets the server's library on a thread
+            // of its own, and marks it owed until it has: emptied with the
+            // rest, the mark would leave an unfinished forget nobody resumes.
+            koan_core::helpers::wait_for_forget();
+            // One that failed earlier is tried again here, so a reset asked
+            // again after that failure can finish without a relaunch.
+            if let Some(forget) = koan_core::helpers::resume_forget() {
+                forget();
+            }
+            if Config::load().is_ok_and(|cfg| cfg.remote.forget_owed) {
+                return Err(KoanError::Refused {
+                    message: "the server's library could not be forgotten; try again".into(),
+                });
+            }
+            APPEARANCE.settle();
+            let before = Config::cached();
+            Config::reset().map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })?;
+            // What `write_settings` does for a change to the same keys.
+            koan_core::remote::nearby::reconfigure();
+            koan_core::remote::queue::cache_limit_changed();
+            if Config::cached().remote.preload_covers && !before.remote.preload_covers {
+                koan_core::remote::covers::resume();
+            }
+            Ok(())
+        })
+        .await
+    }
+
     /// Forget every track that came from a folder.
     ///
     /// A track the server also has keeps its row and loses only its local path.

@@ -90,6 +90,7 @@ pub fn menus() -> Vec<MenuDef> {
                 plain::<About>("About kōan"),
                 Item::Separator,
                 item::<Settings>(),
+                plain::<SetUp>("Set Up kōan…"),
                 Item::Separator,
                 Item::Services,
                 Item::Separator,
@@ -330,6 +331,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(app, ["About kōan", "Settings…", "Quit kōan"]);
+        assert_eq!(
+            app,
+            ["About kōan", "Settings…", "Set Up kōan…", "Quit kōan"]
+        );
     }
 }

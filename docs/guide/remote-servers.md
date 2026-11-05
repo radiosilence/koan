@@ -87,7 +87,7 @@ Played tracks are kept, so they play again from disk, until the cache limit need
 ```toml
 [remote]
 cache_limit = "50GB"           # max cache size; bounds queue prefetch too; "0" keeps no cache (default: unlimited)
-download_ahead = 3             # tracks past the playing one to fetch (default: the whole queue)
+download_ahead = 3             # tracks past the playing one to fetch (default: the whole queue, up to 250)
 cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cache)
 preload_covers = true          # fetch every record's cover ahead (default: on)
 ```

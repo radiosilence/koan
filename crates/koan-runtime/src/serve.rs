@@ -435,6 +435,12 @@ impl KoanEngine {
         offload::offload(move || status(serving_port())).await
     }
 
+    /// Whether Tailscale is installed on this machine, running or not: what
+    /// the setup's checklist tells apart from it not running.
+    pub async fn tailscale_installed(self: Arc<Self>) -> bool {
+        offload::offload(koan_core::tailscale::installed).await
+    }
+
     /// Start taking down the Funnel kōan published, as the app quits: the
     /// server is not stopped then, so nothing else would. Returns at once;
     /// the next start publishes it again where it is wanted.
