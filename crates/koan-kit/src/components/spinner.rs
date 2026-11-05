@@ -45,6 +45,8 @@ pub struct Spinner {
     /// arrives: the spinner is centred in it.
     reserve: Option<Size<Pixels>>,
     color: Option<Hsla>,
+    /// A faint halo round the stroke, for a small wait beside a control.
+    glow: bool,
     /// What a screen reader announces while it shows, under its id.
     announce: Option<(ElementId, SharedString)>,
 }
@@ -56,6 +58,7 @@ impl Spinner {
             side,
             reserve: None,
             color: None,
+            glow: false,
             announce: None,
         }
     }
@@ -72,6 +75,16 @@ impl Spinner {
     /// Drawn in `color` rather than `muted`: the placeholder's faded mark.
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// A faint halo round the stroke as it turns, in the accent unless a
+    /// colour is given: a small wait beside a control (a check, a fetch) that
+    /// should read as kōan working rather than as something greyed. Drawn
+    /// past the spinner's square, which it leaves the layout as it was.
+    /// Where the renderer draws no shaders the stroke turns without it.
+    pub fn glow(mut self) -> Self {
+        self.glow = true;
         self
     }
 
@@ -204,6 +217,15 @@ fn shown(phase: f32, count: usize) -> std::ops::Range<usize> {
 /// When the first spinner was drawn: every spinner turns in step.
 static START: OnceLock<Instant> = OnceLock::new();
 
+/// How far the glow reaches from the stroke's middle, in half-brushes: three
+/// past its edge.
+const GLOW_REACH: f32 = 4.0;
+/// The glow's alpha at the stroke's edge, falling to nothing at its reach.
+const GLOW: f32 = 0.35;
+/// The room drawn past each side of a glowing spinner's square, as a share
+/// of the square: as far as the glow reaches beyond the stroke's extent.
+const GLOW_MARGIN: f32 = 0.18;
+
 /// The field's side in texels: a distance field magnifies cleanly, so one
 /// small bake serves every size.
 const FIELD: u32 = 128;
@@ -211,31 +233,58 @@ const FIELD: u32 = 128;
 /// The stroke as a fragment program sampling the field. Uniforms: 0 whether
 /// it turns (else the whole mark), 2 the stroke's length and 3 the brush's
 /// half-width, both in device pixels, 4 the field's distance range in device
-/// pixels; 8..12 the colour. Track 0 the turn's phase, looping 0 to 1.
+/// pixels; 5 the glow's reach and 12 the brush's half-width, both in the
+/// field's units (the square is 1; a reach of 0 is no glow), 6 the glow's
+/// alpha at the stroke's edge, 7 the margin drawn past each side of the
+/// square, as a share of it; 8..12 the colour. Track 0 the turn's phase,
+/// looping 0 to 1.
 static ENSO: ShaderProgram = ShaderProgram {
     name: "koan-enso",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float4 field = koan_sample(image, tile, position / size);
+    float2 uv = position / size * (1.0 + 2.0 * u[7]) - u[7];
+    float2 inside = clamp(uv, 0.0, 1.0);
+    float4 field = koan_sample(image, tile, inside);
     float along = field.r;
     float away = field.g * u[4];
-    float cover = clamp(u[3] - away + 0.5, 0.0, 1.0);
+    float cover = uv.x == inside.x && uv.y == inside.y ? clamp(u[3] - away + 0.5, 0.0, 1.0) : 0.0;
+    float glow = 0.0;
+    if (u[5] > 0.0) {
+        float d = field.b * u[5] + length(uv - inside);
+        float t = clamp((d - u[12]) / (u[5] - u[12]), 0.0, 1.0);
+        glow = u[6] * (1.0 - t) * (1.0 - t);
+    }
+    float mask = 1.0;
     if (u[0] > 0.5) {
         float phase = koan_track(u, 0, time);
         float head = phase < 0.5 ? smoothstep(0.0, 1.0, phase * 2.0) : 1.0;
         float tail = phase < 0.5 ? 0.0 : smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
-        cover *= clamp((head - along) * u[2] + 0.5, 0.0, 1.0);
-        cover *= clamp((along - tail) * u[2] + 0.5, 0.0, 1.0);
+        mask *= clamp((head - along) * u[2] + 0.5, 0.0, 1.0);
+        mask *= clamp((along - tail) * u[2] + 0.5, 0.0, 1.0);
     }
-    return float4(u[8], u[9], u[10], u[11] * cover);
+    cover *= mask;
+    glow *= mask;
+    return float4(u[8], u[9], u[10], u[11] * (cover + (1.0 - cover) * glow));
 }
 "#,
     wgsl: r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let field = koan_sample(tile, position / size);
+    let uv = position / size * (1.0 + 2.0 * u[1].w) - u[1].w;
+    let inside = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let field = koan_sample(tile, inside);
     let along = field.r;
     let away = field.g * u[1].x;
-    var cover = clamp(u[0].w - away + 0.5, 0.0, 1.0);
+    var cover = 0.0;
+    if (all(uv == inside)) {
+        cover = clamp(u[0].w - away + 0.5, 0.0, 1.0);
+    }
+    var glow = 0.0;
+    if (u[1].y > 0.0) {
+        let d = field.b * u[1].y + length(uv - inside);
+        let t = clamp((d - u[3].x) / (u[1].y - u[3].x), 0.0, 1.0);
+        glow = u[1].z * (1.0 - t) * (1.0 - t);
+    }
+    var mask = 1.0;
     if (u[0].x > 0.5) {
         let phase = koan_track(u, 0u, time);
         var head = 1.0;
@@ -245,10 +294,12 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         } else {
             tail = smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
         }
-        cover *= clamp((head - along) * u[0].z + 0.5, 0.0, 1.0);
-        cover *= clamp((along - tail) * u[0].z + 0.5, 0.0, 1.0);
+        mask *= clamp((head - along) * u[0].z + 0.5, 0.0, 1.0);
+        mask *= clamp((along - tail) * u[0].z + 0.5, 0.0, 1.0);
     }
-    return vec4<f32>(u[2].xyz, u[2].w * cover);
+    cover *= mask;
+    glow *= mask;
+    return vec4<f32>(u[2].xyz, u[2].w * (cover + (1.0 - cover) * glow));
 }
 "#,
     prepare: None,
@@ -263,6 +314,9 @@ struct Field {
     /// half-width, in the same units.
     range: f32,
     half_brush: f32,
+    /// The distance that reads as 1 in the field's third channel, which the
+    /// glow falls off over.
+    glow_range: f32,
 }
 
 /// The field, baked once for every spinner.
@@ -331,6 +385,7 @@ fn bake_field() -> Field {
     let length = *lengths.last().unwrap();
     let half_brush = BRUSH / extent / 2.0;
     let range = half_brush * 2.0;
+    let glow_range = half_brush * GLOW_REACH;
     let mut bgra = vec![0u8; (FIELD * FIELD * 4) as usize];
     for y in 0..FIELD {
         for x in 0..FIELD {
@@ -357,7 +412,7 @@ fn bake_field() -> Field {
             }
             let i = ((y * FIELD + x) * 4) as usize;
             let level = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-            bgra[i] = 0;
+            bgra[i] = level(best / glow_range);
             bgra[i + 1] = level(best / range);
             bgra[i + 2] = level(along);
             bgra[i + 3] = 255;
@@ -371,13 +426,18 @@ fn bake_field() -> Field {
         length,
         range,
         half_brush,
+        glow_range,
     }
 }
 
 impl RenderOnce for Spinner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let color = self.color.unwrap_or(look.palette.muted.hsla());
+        let color = self.color.unwrap_or(if self.glow {
+            look.accent.hsla()
+        } else {
+            look.palette.muted.hsla()
+        });
         let moving = KoanTheme::motion_allowed(cx);
         let announce = self.announce.clone();
         let mark = self.mark(color, moving, window, cx);
@@ -399,6 +459,9 @@ impl Spinner {
             };
             let side = f32::from(self.side) * window.scale_factor();
             let animated = Animated::new();
+            // Drawn over a margin past the square, the field still maps to
+            // the square, so every distance stays in the square's pixels.
+            let margin = if self.glow { GLOW_MARGIN } else { 0.0 };
             animated.set_all(
                 0,
                 &[
@@ -407,9 +470,13 @@ impl Spinner {
                     field.length * side,
                     field.half_brush * side,
                     field.range * side,
+                    if self.glow { field.glow_range } else { 0.0 },
+                    GLOW,
+                    margin,
                 ],
             );
             animated.set_color(8, color);
+            animated.set(12, field.half_brush);
             // Every spinner turns in step, from the first one drawn.
             animated.segment(
                 0,
@@ -420,11 +487,19 @@ impl Spinner {
                 Ease::Linear,
                 Repeat::Loop,
             );
-            let mark = AnimatedQuad::new(&ENSO, &animated)
+            let quad = AnimatedQuad::new(&ENSO, &animated)
                 .image(field.image.clone())
-                .decorative()
-                .size(self.side)
-                .flex_none();
+                .decorative();
+            if !self.glow {
+                return reserving(quad.size(self.side).flex_none(), self.reserve);
+            }
+            let past = self.side * GLOW_MARGIN;
+            let mark = div().relative().size(self.side).flex_none().child(
+                quad.absolute()
+                    .left(-past)
+                    .top(-past)
+                    .size(self.side + past * 2.0),
+            );
             return reserving(mark, self.reserve);
         }
         let stroke = stroke(self.side);
