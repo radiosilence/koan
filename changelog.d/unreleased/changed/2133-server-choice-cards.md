@@ -1,0 +1,1 @@
+- **Settings → Server asks before it shows a side.** A device that neither connects to a server nor shares its library is offered the two as cards, as the setup guide does, with nothing chosen and no sign-in form until one is.
