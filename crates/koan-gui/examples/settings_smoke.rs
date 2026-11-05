@@ -333,7 +333,7 @@ impl Ui {
 
     /// A field's text replaced, as dictation or a screen reader sets it.
     fn type_into(&mut self, label: &str, text: &str) -> Result {
-        let target = self.find(label, |n| is_field(n))?;
+        let target = self.find(label, is_field)?;
         self.send(target, Action::Focus, None)?;
         self.send(
             target,
@@ -344,7 +344,7 @@ impl Ui {
 
     /// A field committed as Return commits it: focus leaving it.
     fn commit(&mut self, label: &str) -> Result {
-        let target = self.find(label, |n| is_field(n))?;
+        let target = self.find(label, is_field)?;
         self.send(target, Action::Focus, None)?;
         self.cx.update_window(self.window, |_, window, cx| {
             window.dispatch_action(Box::new(koan_kit::components::field::Enter), cx)
