@@ -371,9 +371,10 @@ pub struct RemoteConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit: Option<String>,
     /// How many tracks past the playing one to fetch ahead of time. None
-    /// fetches the whole queue. 0 fetches only the track being played, so
-    /// nothing plays gaplessly and each new track waits for its download; 1
-    /// is the least that keeps gapless playback.
+    /// fetches the whole queue, up to 250 tracks past the playing one. 0
+    /// fetches only the track being played, so nothing plays gaplessly and
+    /// each new track waits for its download; 1 is the least that keeps
+    /// gapless playback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_ahead: Option<u32>,
     /// Sync the library from the server on startup, and on a timer for a server

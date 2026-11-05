@@ -947,7 +947,7 @@ impl Setting {
             },
             Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
             Setting::DownloadAhead => match cfg.remote.download_ahead {
-                None => "whole queue".into(),
+                None => "whole queue, up to 250".into(),
                 Some(1) => "1 track".into(),
                 Some(n) => format!("{n} tracks"),
             },
