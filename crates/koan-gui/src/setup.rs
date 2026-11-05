@@ -827,7 +827,7 @@ impl SetupWindow {
                 Some("Your other devices"),
                 vec![
                     text(
-                        "kōan's apps for iPhone, iPad, Apple TV and Android play from this computer or your server, and can control what plays here. Settings → Devices lists what this computer can play on and what can play on it.",
+                        "kōan's apps for iPhone, iPad, Apple TV and Android play from this computer or your server, and can control what plays here.",
                         TypeRole::Body,
                         Tone::Ink,
                         look,
