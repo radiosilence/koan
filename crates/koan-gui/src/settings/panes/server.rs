@@ -101,6 +101,10 @@ impl ServerPane {
             }),
             cx.observe(&ctx.sharing, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
+            // Sign In is enabled by what the fields hold.
+            cx.observe(&url, |_, _, cx| cx.notify()),
+            cx.observe(&username, |_, _, cx| cx.notify()),
+            cx.observe(&secret, |_, _, cx| cx.notify()),
             cx.observe(&cache, |_, _, cx| cx.notify()),
             // An invite, or an address with the account in it, pasted where
             // the address goes.
@@ -794,6 +798,9 @@ impl Render for ServerPane {
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {
+                                // The side asked for is the side shown, so
+                                // `stay` does not hold the one left.
+                                pane.shown = Some(mode);
                                 pane.chosen = (mode != doing).then_some(mode);
                                 cx.notify();
                             })

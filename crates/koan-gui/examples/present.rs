@@ -21,7 +21,7 @@ use koan_gui::{app, settings, theme};
 use koan_kit::app::*;
 use koan_runtime::KoanEngine;
 // The window's size, which the app's own code never sets.
-use koan_kit::raw::size;
+use koan_kit::raw::{px, size};
 
 const ROUNDS: usize = 12;
 const BUDGET: Duration = Duration::from_secs(600);

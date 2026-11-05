@@ -72,12 +72,15 @@ fn main() -> Result {
         koan_gui::settings::resume(cx);
     });
     cx.allow_parking();
+    let mut view = None;
     let window: AnyWindowHandle = cx
         .open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
-            let view = cx.new(|cx| SettingsWindow::new(Tab::Server, window, cx));
-            koan_kit::components::host(view, window, cx)
+            let made = cx.new(|cx| SettingsWindow::new(Tab::Server, window, cx));
+            view = Some(made.clone());
+            koan_kit::components::host(made, window, cx)
         })?
         .into();
+    let view = view.ok_or("the Settings window was not made")?;
     cx.update_window(window, |_, window, _| window.set_a11y_active_for_test(true))?;
     let mut ui = Ui { cx, window };
     ui.frame()?;
@@ -100,14 +103,14 @@ fn main() -> Result {
 
     // Where invites go: a tunnel's address, then this network again. Each
     // restarts the running server.
-    ui.choose("invites go to", "Custom address")?;
+    ui.choose("invite phones to", "Custom address")?;
     ui.type_into("Address", "https://smoke.example")?;
     ui.commit("Address")?;
     ui.until("the address is written", |cx| {
         settings(cx).is_some_and(|s| s.server_url == "https://smoke.example")
     })?;
     ui.until("sharing restarts", |cx| serving(cx).is_some())?;
-    ui.choose("invites go to", "This network")?;
+    ui.choose("invite phones to", "This network")?;
     ui.settle()?;
     println!("invites changed");
 
@@ -163,13 +166,10 @@ fn main() -> Result {
         Tab::Appearance,
         Tab::Server,
     ] {
-        ui.cx.update_window(ui.window, |root, window, cx| {
-            let host = root
-                .downcast::<koan_kit::components::Host<SettingsWindow>>()
-                .ok();
-            let _ = (host, window, cx, tab);
+        ui.cx.update_window(ui.window, |_, window, cx| {
+            view.update(cx, |view, cx| view.choose(tab, window, cx))
         })?;
-        ui.frame()?;
+        ui.settle()?;
     }
     ui.cx
         .update_window(ui.window, |_, window, _| window.remove_window())?;
@@ -267,7 +267,8 @@ impl Ui {
     }
 
     /// The node named `label` that `accepts` takes, waited for: a control
-    /// appears once what it follows has landed.
+    /// appears once what it follows has landed. Labels are matched without
+    /// case, since the theme may set them in lower case.
     fn find(&mut self, label: &str, accepts: impl Fn(&Value) -> bool) -> Result<NodeId> {
         let start = Instant::now();
         loop {
@@ -275,7 +276,12 @@ impl Ui {
             let nodes = self.nodes()?;
             let found: Vec<&Value> = nodes
                 .iter()
-                .filter(|n| n["aria"]["label"] == label && accepts(n))
+                .filter(|n| {
+                    n["aria"]["label"]
+                        .as_str()
+                        .is_some_and(|l| l.eq_ignore_ascii_case(label))
+                        && accepts(n)
+                })
                 .collect();
             if let Some(node) = found.last() {
                 let id = node["accesskit_id"]
@@ -287,7 +293,13 @@ impl Ui {
             if start.elapsed() > STEP {
                 let mut listed: Vec<String> = nodes
                     .iter()
-                    .map(|n| format!("{} {}", n["aria"]["role"], n["aria"]["label"]))
+                    .map(|n| {
+                        let aria = &n["aria"];
+                        format!(
+                            "{} {} value={} disabled={}",
+                            aria["role"], aria["label"], aria["value"], aria["disabled"]
+                        )
+                    })
                     .collect();
                 listed.sort();
                 return Err(format!("no {label} to act on, among:\n{}", listed.join("\n")).into());
@@ -358,7 +370,7 @@ impl Ui {
                     let sharing = cx.global::<Settings>().sharing.clone();
                     format!(
                         "settings say {:?}; sharing failed with {:?}",
-                        model.read(cx).message(),
+                        model.read(cx).last_error,
                         sharing.read(cx).failure
                     )
                 });

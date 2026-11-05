@@ -1,0 +1,1 @@
+- **Crash tests for Settings and presenting.** `just gui-settings-smoke` drives Settings' sharing, invite and sign-in flows through its controls against a real engine, and `just gui-present` resizes, minimises, closes and switches key on presenting windows; CI runs both.
