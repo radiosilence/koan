@@ -855,7 +855,8 @@ impl Render for Menu {
 struct Open(Option<(Point<Pixels>, Entity<Menu>, Subscription)>);
 
 /// A context menu on any element: `build` makes the menu each time the
-/// secondary button is pressed on it, and the menu opens at the pointer.
+/// secondary button is pressed on it, or a touch is held on it, and the menu
+/// opens where the press was.
 pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
     fn koan_context_menu(
         self,
@@ -915,10 +916,25 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             },
         );
         let by_key = open.clone();
-        let mut this = self
-            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                open(event.position, window, cx)
-            })
+        let by_touch: super::touch::Pressed = open.clone();
+        let lifting = state.clone();
+        let touch = Look::of(window, cx).touch;
+        let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+            open(event.position, window, cx)
+        });
+        // A touch screen's secondary press: held, where it went down.
+        if touch {
+            this = this.child(super::touch::long_press(
+                by_touch,
+                Some(Rc::new(move |_, cx| {
+                    let open = lifting.read(cx).0.as_ref().map(|(_, menu, _)| menu.clone());
+                    if let Some(menu) = open {
+                        menu.update(cx, |_, cx| cx.emit(DismissEvent));
+                    }
+                })),
+            ));
+        }
+        let mut this = this
             // The menu key: under the keyboard's cursor, where its ring is
             // laid out in the frames after the key. Bounds from before it are
             // not trusted: the list may have scrolled the row away since, or
@@ -1249,6 +1265,128 @@ mod tests {
             cx.debug_bounds("menu: Evening").is_none(),
             "the menus close once something is chosen"
         );
+    }
+
+    /// A touch held on the element opens its menu, and a tap on an entry
+    /// chooses it, as the secondary button and a click do.
+    #[gpui::test]
+    fn a_held_touch_opens_the_menu(cx: &mut TestAppContext) {
+        use gpui::{TouchEvent, TouchId, TouchPhase};
+
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
+        });
+        let chosen = Rc::new(Cell::new(None));
+        let held = chosen.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Page { chosen: held });
+        let cx: &mut gpui::VisualTestContext = cx;
+        cx.run_until_parked();
+        let page = cx.debug_bounds("page").expect("drawn");
+        let touch = |id, phase, position| TouchEvent {
+            id: TouchId(id),
+            phase,
+            position,
+            ..Default::default()
+        };
+        let at = page.origin + point(px(20.), px(20.));
+        cx.simulate_event(touch(1, TouchPhase::Started, at));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.simulate_event(touch(1, TouchPhase::Ended, at));
+        cx.run_until_parked();
+        let opener = cx
+            .debug_bounds("menu: add to playlist")
+            .expect("the menu opened");
+        cx.simulate_event(touch(2, TouchPhase::Started, opener.center()));
+        cx.simulate_event(touch(2, TouchPhase::Ended, opener.center()));
+        cx.run_until_parked();
+        let morning = cx
+            .debug_bounds("menu: Morning")
+            .expect("a tap opens the submenu");
+        cx.simulate_event(touch(3, TouchPhase::Started, morning.center()));
+        cx.simulate_event(touch(3, TouchPhase::Ended, morning.center()));
+        cx.run_until_parked();
+        assert_eq!(chosen.get(), Some("Morning"));
+    }
+
+    /// A draggable row with its own menu, or a list whose menu is on the list
+    /// and whose rows drag, as the library's grids and browsers are.
+    struct Draggable {
+        menu_on_list: bool,
+    }
+
+    impl Render for Draggable {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let row = div()
+                .id("row")
+                .size_full()
+                .debug_selector(|| "row".into())
+                .on_drag(1u32, |_, _, _, cx| cx.new(|_| gpui::Empty));
+            let menu = |menu: Menu, _: &mut Window, _: &mut Context<Menu>| {
+                menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+            };
+            if self.menu_on_list {
+                div()
+                    .size_full()
+                    .koan_context_menu("list-menu", window, cx, menu)
+                    .child(row)
+                    .into_any_element()
+            } else {
+                row.koan_context_menu("row-menu", window, cx, menu)
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// Held still, a draggable row opens its menu, wherever the menu is;
+    /// moved after, the menu makes way for the drag the same press lifts.
+    #[gpui::test]
+    fn a_held_touch_that_moves_drags_instead(cx: &mut TestAppContext) {
+        for menu_on_list in [false, true] {
+            held_then_moved(menu_on_list, cx);
+        }
+    }
+
+    fn held_then_moved(menu_on_list: bool, cx: &mut TestAppContext) {
+        use gpui::{TouchEvent, TouchId, TouchPhase};
+
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
+        });
+        let (_, cx) = cx.add_window_view(move |_, _| Draggable { menu_on_list });
+        let cx: &mut gpui::VisualTestContext = cx;
+        cx.run_until_parked();
+        let row = cx.debug_bounds("row").expect("drawn");
+        let at = row.origin + point(px(20.), px(20.));
+        let touch = |phase, position| TouchEvent {
+            id: TouchId(1),
+            phase,
+            position,
+            ..Default::default()
+        };
+        cx.simulate_event(touch(TouchPhase::Started, at));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("menu: play").is_some(),
+            "held, the menu opens"
+        );
+        for step in 1..=3 {
+            let to = at + point(px(15. * step as f32), px(0.));
+            cx.simulate_event(touch(TouchPhase::Moved, to));
+            cx.run_until_parked();
+        }
+        assert!(cx.update(|_, cx| cx.has_active_drag()), "moved, it drags");
+        assert!(
+            cx.debug_bounds("menu: play").is_none(),
+            "and the menu has made way"
+        );
+        cx.simulate_event(touch(TouchPhase::Ended, at + point(px(45.), px(0.))));
+        cx.run_until_parked();
     }
 
     struct Bar {
