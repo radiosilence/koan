@@ -482,7 +482,8 @@ impl QueueView {
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
         let modifiers = event.modifiers();
-        if event.click_count() >= 2 {
+        // A tap plays the row: a touch screen has no click to pick with.
+        if event.click_count() >= 2 || cx.global::<crate::theme::KoanTheme>().touch {
             self.play_row(row, cx);
         } else if modifiers.shift {
             self.select_range(row, cx);

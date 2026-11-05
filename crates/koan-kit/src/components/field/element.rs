@@ -310,8 +310,11 @@ impl gpui::Element for FieldElement {
         }
         let origin = bounds.origin - prepaint.scroll;
         let line_height = prepaint.line_height;
+        // Where the platform draws the caret, the selection and its handles
+        // (iOS's text interaction), the field draws its text alone.
+        let native = window.platform_draws_text_selection();
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
-            for selection in &prepaint.selection {
+            for selection in prepaint.selection.iter().filter(|_| !native) {
                 window.paint_quad(fill(*selection, self.colours.selection));
             }
             for (i, line) in prepaint.lines.iter().enumerate() {
@@ -327,6 +330,7 @@ impl gpui::Element for FieldElement {
                     .ok();
             }
             if focus.is_focused(window)
+                && !native
                 && let Some(at) = prepaint.caret
             {
                 caret.set_color(4, self.colours.caret);

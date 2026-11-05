@@ -315,7 +315,7 @@ pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
 /// What a click on a row does to a list's selection: picks it alone, ⌘ adds
 /// or removes it, ⇧ extends from the last one clicked, through the page's
 /// order, which only ⇧ needs. Returns whether it was a double click on the
-/// row, which plays.
+/// row, which plays, or under touch a tap outside picking.
 pub fn select(
     selection: &mut Selection,
     item: Playable,
@@ -324,6 +324,15 @@ pub fn select(
     cx: &App,
 ) -> bool {
     let m = event.modifiers();
+    // A touch screen has no click to pick with: a tap plays or opens the
+    // row, and picks it only while picking (the Select button's mode).
+    if cx.global::<crate::theme::KoanTheme>().touch {
+        if !selection.is_active() {
+            return true;
+        }
+        selection.click(item, false, &[]);
+        return false;
+    }
     if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
         return true;
     }

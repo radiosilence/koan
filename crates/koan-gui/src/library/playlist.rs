@@ -313,7 +313,8 @@ impl PlaylistPage {
             return;
         };
         let modifiers = event.modifiers();
-        if event.click_count() >= 2 {
+        // A tap plays from the row: a touch screen has no click to pick with.
+        if event.click_count() >= 2 || cx.global::<crate::theme::KoanTheme>().touch {
             self.play_from(first.parse().ok(), false, cx);
         } else if modifiers.shift {
             let at = |id: &str| self.items.iter().position(|i| i.queue_item_id == id);
