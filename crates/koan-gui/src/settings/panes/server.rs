@@ -99,6 +99,12 @@ impl ServerPane {
             }),
             cx.observe(&ctx.sharing, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
+            // Sign In is enabled by what the fields hold.
+            cx.subscribe_in(&username, window, |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.observe(&cache, |_, _, cx| cx.notify()),
             // An invite, or an address with the account in it, pasted where
             // the address goes.
@@ -109,14 +115,19 @@ impl ServerPane {
                     if matches!(event, InputEvent::Change) {
                         let typed = state.read(cx).value().to_string();
                         pane.join(&typed, true, window, cx);
+                        cx.notify();
                     }
                 },
             ),
-            cx.subscribe_in(&secret, window, |pane, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    pane.sign_in(cx);
-                }
-            }),
+            cx.subscribe_in(
+                &secret,
+                window,
+                |pane, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::PressEnter { .. } => pane.sign_in(cx),
+                    InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            ),
             cx.subscribe_in(
                 &cache_limit,
                 window,
