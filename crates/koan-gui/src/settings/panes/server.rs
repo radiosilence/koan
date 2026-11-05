@@ -3,7 +3,7 @@
 //! server's library.
 
 use crate::components::{
-    Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
+    Button, ButtonKind, ChoiceCards, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState};
@@ -189,6 +189,8 @@ impl ServerPane {
             return;
         };
         self.url.update(cx, |s, cx| s.set_value("", window, cx));
+        let doing = doing_now(&self.ctx, cx);
+        self.side.choose(Mode::Connect, doing);
         let host = host(&invite.server);
         if self.ctx.sharing.read(cx).serving.is_some() {
             let way = if self.pinned.is_some() {
@@ -789,12 +791,27 @@ impl Render for ServerPane {
         let status = mode_label(sharing, &connection);
         let doing = doing_now(&self.ctx, cx);
         let mode = self.pinned.unwrap_or_else(|| self.side.draw(doing));
+        // Neither signed in nor sharing: the two are offered as a question,
+        // and neither side shows until one is chosen.
+        let undecided = self.pinned.is_none()
+            && doing == Mode::Connect
+            && !settings.remote_signed_in
+            && !settings.remote_enabled;
+        if undecided && !self.side.picked {
+            return page(
+                "server",
+                &look,
+                vec![self.choice_section(None, &look, entity)],
+            );
+        }
         let mut sections = Vec::new();
         // Pinned to sharing, it says only what goes wrong or that it runs.
         if self.pinned == Some(Mode::Share) {
             if matches!(status, ModeLabel::Sharing(_) | ModeLabel::NotSharing(_)) {
                 sections.push(section(None, vec![status.render(&look)], None, &look));
             }
+        } else if undecided {
+            sections.push(self.choice_section(Some(mode), &look, entity.clone()));
         } else if self.pinned.is_none() {
             sections.push(self.mode_section(mode, &status, &look, entity.clone()));
         }
@@ -844,6 +861,44 @@ impl Render for ServerPane {
 }
 
 impl ServerPane {
+    /// The choice between signing in and sharing as two cards, for a device
+    /// doing neither yet: `chosen` is the side open under it, if any.
+    fn choice_section(
+        &self,
+        chosen: Option<Mode>,
+        look: &Look,
+        entity: Entity<Self>,
+    ) -> AnyElement {
+        section(
+            Some("What should this device do?"),
+            vec![
+                ChoiceCards::new("mode-cards", chosen.map(|mode| mode as usize))
+                    .named("what should this device do")
+                    .card(
+                        Icon::Server,
+                        "Connect to a server",
+                        Some("Play a kōan, Navidrome or Subsonic server's library, alongside this device's own folders."),
+                    )
+                    .card(
+                        Icon::Folder,
+                        "Share its library",
+                        Some("Your phone and other devices play this device's library, with an account you make here."),
+                    )
+                    .on_change(move |index, _, cx| {
+                        let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
+                        entity.update(cx, |pane, cx| {
+                            let doing = doing_now(&pane.ctx, cx);
+                            pane.side.choose(mode, doing);
+                            cx.notify();
+                        })
+                    })
+                    .into_any_element(),
+            ],
+            None,
+            look,
+        )
+    }
+
     /// The choice between signing in and sharing, with what this device
     /// does now under it.
     fn mode_section(
@@ -913,6 +968,9 @@ struct Side {
     /// What the device was doing at the last draw, so turning sharing off
     /// from the sharing side stays on it.
     was_doing: Option<Mode>,
+    /// Whether a side has been chosen or shown at all: a device doing
+    /// neither shows the choice alone until one is.
+    picked: bool,
 }
 
 impl Side {
@@ -924,12 +982,14 @@ impl Side {
         if self.was_doing == Some(Mode::Share) && doing == Mode::Connect && self.chosen.is_none() {
             self.chosen = Some(Mode::Share);
         }
+        self.picked |= self.chosen.is_some();
         self.was_doing = Some(doing);
         self.chosen = self.chosen.filter(|chosen| *chosen != doing);
         self.chosen.unwrap_or(doing)
     }
 
     fn choose(&mut self, mode: Mode, doing: Mode) {
+        self.picked = true;
         self.chosen = (mode != doing).then_some(mode);
     }
 }
@@ -1026,6 +1086,22 @@ mod tests {
         side.choose(Mode::Connect, Mode::Share);
         assert_eq!(side.draw(Mode::Connect), Mode::Connect);
         assert_eq!(side.draw(Mode::Share), Mode::Share);
+    }
+
+    #[test]
+    fn a_device_doing_neither_waits_for_a_choice() {
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+        assert!(!side.picked, "nothing chosen yet");
+        side.choose(Mode::Connect, Mode::Connect);
+        assert!(side.picked, "choosing the side it already draws counts");
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+
+        // Sharing turned off leaves its side chosen.
+        let mut side = Side::default();
+        side.draw(Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        assert!(side.picked);
     }
 
     #[test]
