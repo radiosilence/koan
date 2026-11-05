@@ -206,6 +206,9 @@ pub struct StoryContent {
     outputs: Entity<Menu>,
     more: more::State,
     playground: playground::State,
+    /// On a narrow window, whether the pages and the controls are open over
+    /// the page, from the menu button.
+    menu_open: bool,
     _accent: Subscription,
 }
 
@@ -295,6 +298,7 @@ impl StoryContent {
             }),
             more: more::State::new(window, cx),
             playground: playground::State::new(),
+            menu_open: false,
             _accent: theme::observe_accent(cx),
         }
     }
@@ -1120,14 +1124,19 @@ impl Render for StoryContent {
         let look = Look::of(window, cx);
         let entity = cx.entity();
         let story = self.story;
+        // A phone's width: the pages and the controls behind a menu button,
+        // so the page has the width to itself.
+        let narrow = window.viewport_size().width < px(NARROW);
         let nav = div()
             .flex()
             .flex_col()
             .flex_none()
-            .w(look.spaced(220.0))
+            .when(!narrow, |nav| {
+                nav.w(look.spaced(220.0))
+                    .border_r(HAIRLINE)
+                    .border_color(look.palette.rule.hsla())
+            })
             .pt(look.space(Space::L))
-            .border_r(HAIRLINE)
-            .border_color(look.palette.rule.hsla())
             .children(Story::ALL.into_iter().map(|page| {
                 let entity = entity.clone();
                 NavRow::new(page.slug(), page.name())
@@ -1135,41 +1144,73 @@ impl Render for StoryContent {
                     .on_click(move |_, _, cx| {
                         entity.update(cx, |content, cx| {
                             content.story = page;
+                            content.menu_open = false;
                             cx.notify();
                         })
                     })
             }));
         let controls = self.controls(&look, cx);
-        let page = self.page(&look, window, cx);
         let viewer = self.viewer(cx);
-        div()
+        let page = div().flex_1().min_h_0().child(ScrollArea::new(
+            ("story", story as usize),
+            div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::M))
+                .p(look.space(if narrow { Space::L } else { Space::Xxl }))
+                .children(self.page(&look, window, cx)),
+        ));
+        let root = div()
             .font_family(theme::FONT_FAMILY)
             .relative()
             .size_full()
-            .flex()
-            .child(nav)
+            .flex();
+        if !narrow {
+            return root
+                .child(nav)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(controls)
+                        .child(page),
+                )
+                .children(viewer);
+        }
+        let open = self.menu_open;
+        let toggle = entity.clone();
+        root.flex_col()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(controls)
-                    .child(
-                        div().flex_1().min_h_0().child(ScrollArea::new(
-                            ("story", story as usize),
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(look.space(Space::M))
-                                .p(look.space(Space::Xxl))
-                                .children(page),
-                        )),
-                    ),
+                Toolbar::new()
+                    .leading(
+                        ToolbarButton::new("story-menu", Icon::Sidebar, "pages")
+                            .selected(open)
+                            .on_click(move |_, _, cx| {
+                                toggle.update(cx, |content, cx| {
+                                    content.menu_open = !content.menu_open;
+                                    cx.notify();
+                                })
+                            }),
+                    )
+                    .principal(ToolbarTitle::new(story.name())),
             )
+            .child(if open {
+                div().flex_1().min_h_0().child(ScrollArea::new(
+                    "story-menu-list",
+                    div().flex().flex_col().child(controls).child(nav),
+                ))
+            } else {
+                page
+            })
             .children(viewer)
     }
 }
+
+/// The width below which the storybook folds its pages and controls behind
+/// a menu button: a phone held upright.
+const NARROW: f32 = 600.0;
 
 fn text(content: &'static str, role: TypeRole, tone: Tone, look: &Look) -> AnyElement {
     div()

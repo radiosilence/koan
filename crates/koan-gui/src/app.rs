@@ -244,7 +244,10 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
     cx.global_mut::<MainWindowSlot>().ready = true;
     if show {
         open_window(saved, cx);
-        crate::setup::offer_at_launch(cx);
+        // The guide is a window of its own, which a phone has no room for.
+        if !crate::mobile::phone() {
+            crate::setup::offer_at_launch(cx);
+        }
     } else {
         log::info!("opened at login; staying in the menu bar");
         crate::platform::residency::settle_dock(cx);
@@ -273,6 +276,10 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
                 window_state::write(window.window_bounds());
                 true
             });
+            if crate::mobile::phone() {
+                let shell = cx.new(|cx| crate::mobile::PhoneShell::new(window, cx));
+                return cx.new(|cx| WindowRoot::new(shell, window, cx));
+            }
             let shell = cx.new(|cx| Shell::new(window, cx));
             cx.global_mut::<MainWindowSlot>().shell = Some(shell.downgrade());
             cx.new(|cx| WindowRoot::new(shell, window, cx))
