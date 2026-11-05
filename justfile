@@ -518,11 +518,12 @@ kit-ios story="" shot="":
     IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p koan-kit --bin koan-kit --target aarch64-apple-ios-sim
     app=target/kit-ios/storybook.app
     rm -rf "$app" && mkdir -p "$app"
-    cp target/aarch64-apple-ios-sim/debug/koan-kit "$app/koan-kit"
+    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios-sim/debug/koan-kit" "$app/koan-kit"
     cp crates/koan-kit/ios/Info.plist "$app/Info.plist"
     codesign --force --sign - "$app"
     device=$(xcrun simctl list devices available -j \
-        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
+        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$device" ] || { echo "Needs an iPhone simulator on iOS {{ios_deployment_target}} or later." >&2; exit 1; }
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" "$app"

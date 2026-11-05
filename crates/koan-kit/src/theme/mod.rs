@@ -67,9 +67,11 @@ pub struct KoanTheme {
     /// "Wash the whole window": the wash runs under the sidebar and the
     /// toolbar as well as the page, and they draw no ground of their own.
     pub wash_window: bool,
-    /// Touch, not a pointer, is how the app is used: every control and row
-    /// is at least `HIT` tall, a finger's target. On by default on phones and
-    /// tablets; the storybook switches it to preview the look on a desktop.
+    /// Touch, not a pointer, is how the app is used: buttons, rows, menu
+    /// rows, toggles and segmented controls are at least `HIT` tall, a
+    /// finger's target, and a held touch opens context menus. On by default
+    /// on phones and tablets; the storybook switches it to preview the look
+    /// on a desktop.
     pub touch: bool,
     /// Low Power Mode, as the system last said.
     low_power: bool,
@@ -204,7 +206,7 @@ fn read_system_settings(cx: &mut App) {
             UIAccessibilityDarkerSystemColorsEnabled, UIAccessibilityIsReduceMotionEnabled,
             UIAccessibilityIsReduceTransparencyEnabled, UIApplication,
         };
-        let text = objc2::MainThreadMarker::new().map(|main| {
+        let text = objc2::MainThreadMarker::new().and_then(|main| {
             dynamic_type_factor(
                 &UIApplication::sharedApplication(main).preferredContentSizeCategory(),
             )
@@ -231,9 +233,10 @@ fn read_system_settings(cx: &mut App) {
 }
 
 /// The Dynamic Type size as a factor on kōan's text sizes: the body size
-/// each category gives, over Large's 17 pt, which is iOS's default.
+/// each category gives, over Large's 17 pt, which is iOS's default. None for
+/// a category with no size (Unspecified), which keeps the last one.
 #[cfg(target_os = "ios")]
-fn dynamic_type_factor(category: &objc2_ui_kit::UIContentSizeCategory) -> f32 {
+fn dynamic_type_factor(category: &objc2_ui_kit::UIContentSizeCategory) -> Option<f32> {
     use objc2_ui_kit::*;
     // SAFETY: the categories are immutable framework constants.
     let sizes = unsafe {
@@ -255,7 +258,7 @@ fn dynamic_type_factor(category: &objc2_ui_kit::UIContentSizeCategory) -> f32 {
     sizes
         .iter()
         .find(|(c, _)| *c == category)
-        .map_or(1.0, |(_, size)| size / 17.0)
+        .map(|(_, size)| size / 17.0)
 }
 
 /// The system's contrast, transparency and text size, each where it said
@@ -582,6 +585,11 @@ impl KoanTheme {
         cx.global::<KoanTheme>()
             .prism
             .filter(|_| crate::components::SHADED && Self::motion_allowed(cx))
+    }
+
+    pub fn set_touch(touch: bool, cx: &mut App) {
+        cx.global_mut::<KoanTheme>().touch = touch;
+        cx.refresh_windows();
     }
 
     pub fn set_icons(icons: bool, cx: &mut App) {

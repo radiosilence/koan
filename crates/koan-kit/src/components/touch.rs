@@ -1,34 +1,49 @@
 //! What a touch screen does in place of a pointer's secondary button: a
-//! long press, claimed by the innermost element listening for one.
+//! long press. Only under touch (`Look::touch`); a desktop never draws it.
 
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::*;
 
-/// A long press on any element: `pressed` runs with where the touch went
-/// down, once the press has been held long enough to be one. The press is
-/// claimed, so it becomes neither a tap nor a scroll, and an element inside
-/// that also listens hears it first and keeps it.
+use crate::theme::Look;
+
+/// A long press on any element, under touch: `pressed` runs with where the
+/// touch went down, once the press has been held long enough to be one. Of
+/// several elements listening under the touch, the one drawn last (on top)
+/// takes it. The press is claimed, so it becomes neither a tap nor a scroll.
 pub trait KoanLongPress: ParentElement + Sized {
     fn koan_long_press(
         self,
+        look: &Look,
         pressed: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
+        if !look.touch {
+            return self;
+        }
         self.child(long_press(Rc::new(pressed), None))
     }
 }
 
 impl<E: ParentElement> KoanLongPress for E {}
 
-type Pressed = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
-type Lifted = Rc<dyn Fn(&mut Window, &mut App)>;
+pub(crate) type Pressed = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
+pub(crate) type Lifted = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// Whether a koan-kit listener has taken the press now under way. GPUI's own
+/// claim cannot say: a draggable element claims every press over it so its
+/// drag can lift, and a menu over it must still open.
+#[derive(Default)]
+struct Taken(bool);
+
+impl Global for Taken {}
 
 /// A layer over its parent that takes nothing from the pointer (its hitbox
-/// leaves the elements under it hovered) and claims a long press that starts
-/// over it and over nothing that blocks the pointer above it. `lifted` runs
-/// while a held touch carries a drag, as moving a held row lifts one: what
-/// the press opened makes way for it.
+/// leaves the elements under it hovered) and takes a long press that starts
+/// over it and over nothing that blocks the pointer above it, unless a layer
+/// drawn after it took the press first. `lifted` runs while a held touch
+/// carries a drag, as moving a held row lifts one: what the press opened
+/// makes way for it.
 pub(crate) fn long_press(pressed: Pressed, lifted: Option<Lifted>) -> impl IntoElement {
     canvas(
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
@@ -36,25 +51,26 @@ pub(crate) fn long_press(pressed: Pressed, lifted: Option<Lifted>) -> impl IntoE
             let pressed = pressed.clone();
             let lifted = lifted.clone();
             window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-                match event.phase {
-                    TouchPhase::Started => {
-                        if window.default_prevented() || !hitbox.is_hovered(window) {
+                match (phase, event.phase) {
+                    (DispatchPhase::Capture, TouchPhase::Started) => {
+                        cx.default_global::<Taken>().0 = false;
+                    }
+                    (DispatchPhase::Bubble, TouchPhase::Started) => {
+                        if cx.default_global::<Taken>().0 || !hitbox.is_hovered(window) {
                             return;
                         }
-                        // Claimed, but left to bubble: a draggable element under
+                        cx.default_global::<Taken>().0 = true;
+                        // Claimed, and left to bubble: a draggable element under
                         // this one lifts its drag if the press then moves.
                         window.prevent_default();
                         pressed(event.start_position, window, cx);
                     }
-                    TouchPhase::Moved if cx.has_active_drag() => {
+                    (DispatchPhase::Bubble, TouchPhase::Moved) if cx.has_active_drag() => {
                         if let Some(lifted) = &lifted {
                             lifted(window, cx);
                         }
                     }
-                    TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {}
+                    _ => {}
                 }
             });
         },
@@ -74,23 +90,25 @@ mod tests {
     use gpui::{TestAppContext, TouchEvent, TouchId, VisualTestContext};
 
     use super::*;
+    use crate::theme::KoanTheme;
 
     struct Nested {
         heard: Rc<RefCell<Vec<&'static str>>>,
     }
 
     impl Render for Nested {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let look = Look::of(window, cx);
             let (outer, inner) = (self.heard.clone(), self.heard.clone());
             div()
                 .size_full()
                 .debug_selector(|| "outer".into())
-                .koan_long_press(move |_, _, _| outer.borrow_mut().push("outer"))
+                .koan_long_press(&look, move |_, _, _| outer.borrow_mut().push("outer"))
                 .child(
                     div()
                         .size(px(40.))
                         .debug_selector(|| "inner".into())
-                        .koan_long_press(move |_, _, _| inner.borrow_mut().push("inner")),
+                        .koan_long_press(&look, move |_, _, _| inner.borrow_mut().push("inner")),
                 )
         }
     }
@@ -109,10 +127,14 @@ mod tests {
         cx.run_until_parked();
     }
 
-    /// A press held over the inner element is the inner element's alone;
-    /// one beside it reaches the outer.
+    /// A press held over the element drawn on top is that element's alone;
+    /// one beside it reaches the one under it.
     #[gpui::test]
-    fn the_innermost_listener_keeps_the_press(cx: &mut TestAppContext) {
+    fn the_listener_on_top_takes_the_press(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            KoanTheme::set_touch(true, cx);
+        });
         let heard = Rc::new(RefCell::new(Vec::new()));
         let held = heard.clone();
         let (_, cx) = cx.add_window_view(move |_, _| Nested { heard: held });

@@ -916,22 +916,25 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             },
         );
         let by_key = open.clone();
-        let by_touch = open.clone();
+        let by_touch: super::touch::Pressed = open.clone();
         let lifting = state.clone();
-        let mut this = self
-            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                open(event.position, window, cx)
-            })
-            // A touch screen's secondary press: held, where it went down.
-            .child(super::touch::long_press(
-                Rc::new(move |at, window, cx| by_touch(at, window, cx)),
+        let touch = Look::of(window, cx).touch;
+        let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+            open(event.position, window, cx)
+        });
+        // A touch screen's secondary press: held, where it went down.
+        if touch {
+            this = this.child(super::touch::long_press(
+                by_touch,
                 Some(Rc::new(move |_, cx| {
                     let open = lifting.read(cx).0.as_ref().map(|(_, menu, _)| menu.clone());
                     if let Some(menu) = open {
                         menu.update(cx, |_, cx| cx.emit(DismissEvent));
                     }
                 })),
-            ))
+            ));
+        }
+        let mut this = this
             // The menu key: under the keyboard's cursor, where its ring is
             // laid out in the frames after the key. Bounds from before it are
             // not trusted: the list may have scrolled the row away since, or
@@ -1272,6 +1275,7 @@ mod tests {
 
         cx.update(|cx| {
             crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
         });
         let chosen = Rc::new(Cell::new(None));
         let held = chosen.clone();
@@ -1307,31 +1311,52 @@ mod tests {
         assert_eq!(chosen.get(), Some("Morning"));
     }
 
-    struct Draggable;
+    /// A draggable row with its own menu, or a list whose menu is on the list
+    /// and whose rows drag, as the library's grids and browsers are.
+    struct Draggable {
+        menu_on_list: bool,
+    }
 
     impl Render for Draggable {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div()
+            let row = div()
                 .id("row")
                 .size_full()
                 .debug_selector(|| "row".into())
-                .on_drag(1u32, |_, _, _, cx| cx.new(|_| gpui::Empty))
-                .koan_context_menu("row-menu", window, cx, |menu, _, _| {
-                    menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
-                })
+                .on_drag(1u32, |_, _, _, cx| cx.new(|_| gpui::Empty));
+            let menu = |menu: Menu, _: &mut Window, _: &mut Context<Menu>| {
+                menu.item(MenuEntry::new("play").on_click(|_, _, _| {}))
+            };
+            if self.menu_on_list {
+                div()
+                    .size_full()
+                    .koan_context_menu("list-menu", window, cx, menu)
+                    .child(row)
+                    .into_any_element()
+            } else {
+                row.koan_context_menu("row-menu", window, cx, menu)
+                    .into_any_element()
+            }
         }
     }
 
-    /// Held still, a draggable row opens its menu; moved after, the menu
-    /// makes way for the drag the same press lifts.
+    /// Held still, a draggable row opens its menu, wherever the menu is;
+    /// moved after, the menu makes way for the drag the same press lifts.
     #[gpui::test]
     fn a_held_touch_that_moves_drags_instead(cx: &mut TestAppContext) {
+        for menu_on_list in [false, true] {
+            held_then_moved(menu_on_list, cx);
+        }
+    }
+
+    fn held_then_moved(menu_on_list: bool, cx: &mut TestAppContext) {
         use gpui::{TouchEvent, TouchId, TouchPhase};
 
         cx.update(|cx| {
             crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
         });
-        let (_, cx) = cx.add_window_view(|_, _| Draggable);
+        let (_, cx) = cx.add_window_view(move |_, _| Draggable { menu_on_list });
         let cx: &mut gpui::VisualTestContext = cx;
         cx.run_until_parked();
         let row = cx.debug_bounds("row").expect("drawn");
