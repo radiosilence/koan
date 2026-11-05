@@ -513,7 +513,7 @@ impl SetupWindow {
         }));
     }
 
-    fn body(&mut self, look: &Look, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn body(&mut self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         if let Some(pane) = self.pane() {
             if self.step != Step::Share {
                 return pane.into_any_element();
@@ -980,7 +980,7 @@ impl Render for SetupWindow {
                 &look,
             )))
             .child(text(self.step.intro(), TypeRole::Body, Tone::Muted, &look));
-        let body = self.body(&look, window, cx);
+        let body = self.body(&look, cx);
         // Only while there is something to say: the guide has no room for
         // an empty line.
         let model = self.ctx.model.read(cx);
