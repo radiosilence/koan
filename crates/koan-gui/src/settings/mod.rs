@@ -159,6 +159,8 @@ pub fn answer(link: Incoming, cx: &mut App) {
         model.update(cx, |m, cx| m.when_loaded(cx, move |cx| answer(link, cx)));
         return;
     }
+    // Settings takes it from here, on a pane of its own.
+    crate::setup::close(cx);
     open(cx);
     let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
@@ -307,9 +309,19 @@ impl SettingsWindow {
                     this.forget_settled_pairs(window, cx);
                 }
             }),
-            cx.on_release(|_, cx| {
-                if cx.has_global::<Settings>() {
-                    cx.global_mut::<Settings>().window = None;
+            // Only this window's: one opened after it, before this one was
+            // let go of, stays.
+            cx.on_release({
+                let id = window.window_handle().window_id();
+                move |_, cx| {
+                    if let Some(settings) = cx.try_global::<Settings>()
+                        && settings
+                            .window
+                            .as_ref()
+                            .is_some_and(|(h, _)| h.window_id() == id)
+                    {
+                        cx.global_mut::<Settings>().window = None;
+                    }
                 }
             }),
         ];

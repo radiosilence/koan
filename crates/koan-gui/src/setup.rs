@@ -42,9 +42,9 @@ fn seen_path() -> PathBuf {
     koan_core::places::state().join(SEEN)
 }
 
-/// The guide's window while it is open.
+/// The guide's window and view while it is open.
 #[derive(Default)]
-struct Slot(Option<AnyWindowHandle>);
+struct Slot(Option<(AnyWindowHandle, WeakEntity<SetupWindow>)>);
 
 impl Global for Slot {}
 
@@ -87,7 +87,7 @@ pub fn offer_at_launch(cx: &mut App) {
 
 /// Opens the guide, or brings the open one forward.
 pub fn open(cx: &mut App) {
-    if let Some(handle) = cx.try_global::<Slot>().and_then(|slot| slot.0)
+    if let Some((handle, _)) = cx.try_global::<Slot>().and_then(|slot| slot.0.clone())
         && handle
             .update(cx, |_, window, _| window.activate_window())
             .is_ok()
@@ -100,12 +100,25 @@ pub fn open(cx: &mut App) {
         .transparent_titlebar()
         .open(cx, |window, cx| cx.new(|cx| SetupWindow::new(window, cx)));
     match opened {
-        Ok((handle, _)) => {
-            cx.set_global(Slot(Some(handle)));
+        Ok((handle, view)) => {
+            cx.set_global(Slot(Some((handle, view.downgrade()))));
             crate::platform::residency::settle_dock(cx);
         }
         Err(e) => log::error!("the setup window did not open: {e}"),
     }
+}
+
+/// Closes the guide, as seen, when Settings takes over: an invite or a
+/// pairing link opened it on a pane of its own.
+pub fn close(cx: &mut App) {
+    let Some((handle, view)) = cx.try_global::<Slot>().and_then(|slot| slot.0.clone()) else {
+        return;
+    };
+    handle
+        .update(cx, |_, window, cx| {
+            view.update(cx, |setup, cx| setup.close(window, cx)).ok();
+        })
+        .ok();
 }
 
 /// What a reset to defaults ends with: the app drawn as the defaults say,
@@ -257,8 +270,9 @@ pub struct SetupWindow {
     music: Option<Music>,
     share: Option<bool>,
     step: Step,
-    /// The Settings pane the step shows, made on arriving at it.
-    pane: Option<AnyView>,
+    /// The Settings panes the steps show, each made on first arriving at
+    /// its step and kept, so going back and on keeps what was typed.
+    panes: Vec<(Step, AnyView)>,
     /// Whether Tailscale is installed, running or not: `None` until read.
     tailscale_installed: Option<bool>,
     reading: Option<Task<()>>,
@@ -298,9 +312,16 @@ impl SetupWindow {
                     }
                 }
             }),
-            cx.on_release(|_, cx| {
-                if cx.has_global::<Slot>() {
-                    cx.global_mut::<Slot>().0 = None;
+            // Only this window's: one opened after it, before this one was
+            // let go of, stays in the slot.
+            cx.on_release({
+                let id = window.window_handle().window_id();
+                move |_, cx| {
+                    if let Some(slot) = cx.try_global::<Slot>()
+                        && slot.0.as_ref().is_some_and(|(h, _)| h.window_id() == id)
+                    {
+                        cx.global_mut::<Slot>().0 = None;
+                    }
                 }
             }),
         ];
@@ -317,7 +338,7 @@ impl SetupWindow {
             music,
             share,
             step: Step::Welcome,
-            pane: None,
+            panes: Vec::new(),
             tailscale_installed: None,
             reading: None,
             choosing: None,
@@ -338,10 +359,25 @@ impl SetupWindow {
         }
     }
 
+    /// The pane the step showing draws, if it draws one.
+    fn pane(&self) -> Option<AnyView> {
+        let wanted = match self.step {
+            Step::Share => self.share == Some(true),
+            Step::Server | Step::Playback => true,
+            _ => false,
+        };
+        wanted
+            .then(|| self.panes.iter().find(|(s, _)| *s == self.step))
+            .flatten()
+            .map(|(_, view)| view.clone())
+    }
+
     fn go(&mut self, step: Step, window: &mut Window, cx: &mut Context<Self>) {
         self.step = step;
         let ctx = self.ctx.clone();
-        self.pane = match step {
+        let made = self.panes.iter().any(|(s, _)| *s == step);
+        let pane: Option<AnyView> = match step {
+            _ if made => None,
             Step::Share if self.share == Some(true) => Some(
                 cx.new(|cx| ServerPane::new(ctx, window, cx).pinned(Mode::Share))
                     .into(),
@@ -353,6 +389,9 @@ impl SetupWindow {
             Step::Playback => Some(cx.new(|cx| PlaybackPane::new(ctx, cx)).into()),
             _ => None,
         };
+        if let Some(pane) = pane {
+            self.panes.push((step, pane));
+        }
         if step == Step::Away {
             self.read_tailscale(cx);
         }
@@ -390,16 +429,26 @@ impl SetupWindow {
         }
     }
 
-    /// Done or skipped: seen, and the window goes.
+    /// Done or skipped: seen, the window goes, and the main window comes
+    /// forward.
     fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::settings::hand_on_unanswered(&self.ctx.sheets, window, cx);
-        mark_seen(cx);
-        window.remove_window();
+        self.close(window, cx);
         crate::app::show_window(cx);
     }
 
+    /// Seen, and the window goes, its sheets answered as their Cancel would.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::settings::hand_on_unanswered(&self.ctx.sheets, window, cx);
+        mark_seen(cx);
+        window.remove_window();
+    }
+
+    /// Sharing or not. Not sharing, while this computer shares, is the
+    /// choice once the person has said to stop.
     fn choose_sharing(&mut self, share: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.share = Some(share);
+        if self.share == Some(share) {
+            return;
+        }
         let sharing = self
             .ctx
             .model
@@ -407,8 +456,17 @@ impl SetupWindow {
             .settings()
             .is_some_and(|s| s.share_enabled);
         if !share && sharing {
-            ShareForm::ask_stop_sharing(&self.ctx, window, cx);
+            let this = cx.entity().downgrade();
+            ShareForm::ask_stop_sharing(&self.ctx, window, cx, move |window, cx| {
+                this.update(cx, |this, cx| {
+                    this.share = Some(false);
+                    this.go(Step::Share, window, cx);
+                })
+                .ok();
+            });
+            return;
         }
+        self.share = Some(share);
         self.go(Step::Share, window, cx);
     }
 
@@ -430,7 +488,7 @@ impl SetupWindow {
     }
 
     fn body(&mut self, look: &Look, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(pane) = self.pane.clone() {
+        if let Some(pane) = self.pane() {
             if self.step != Step::Share {
                 return pane.into_any_element();
             }
@@ -633,7 +691,7 @@ impl SetupWindow {
             Some(false) => {
                 CheckItem::new("setup-ts-installed", Check::ToDo, "Tailscale is installed")
                     .detail(
-                        "Install it here and on your phone, and sign both in to the same account.",
+                        "Install it on this computer and on your phone, and sign both in to the same account.",
                     )
                     .action(
                         Button::new("setup-ts-get", ButtonKind::Bordered)
@@ -661,10 +719,10 @@ impl SetupWindow {
                     Check::ToDo,
                     "Tailscale is running and signed in",
                 )
-                .detail(if mac {
-                    "Open Tailscale and sign in. kōan looks again when you come back to this window."
-                } else {
-                    "Run `sudo tailscale up` in a terminal and sign in. kōan looks again when you come back to this window."
+                .detail(match (mac, installed) {
+                    (_, false) => "Once it is installed, sign in to it.",
+                    (true, true) => "Open Tailscale and sign in. kōan looks again when you come back to this window.",
+                    (false, true) => "Run \"sudo tailscale up\" in a terminal and sign in. kōan looks again when you come back to this window.",
                 });
                 if installed && mac {
                     item.action(

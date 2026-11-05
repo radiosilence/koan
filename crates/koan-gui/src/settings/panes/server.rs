@@ -825,7 +825,12 @@ impl Render for ServerPane {
                                 .label("Stop Sharing…")
                                 .disabled(busy)
                                 .on_click(move |_, window, cx| {
-                                    super::share::ShareForm::ask_stop_sharing(&ctx, window, cx)
+                                    super::share::ShareForm::ask_stop_sharing(
+                                        &ctx,
+                                        window,
+                                        cx,
+                                        |_, _| {},
+                                    )
                                 })
                                 .into_any_element(),
                         ],

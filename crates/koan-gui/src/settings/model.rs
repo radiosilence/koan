@@ -670,22 +670,25 @@ impl SettingsModel {
         after: impl FnOnce(&mut App) + 'static,
         cx: &mut Context<Self>,
     ) {
+        let Some(settings) = self.settings().cloned() else {
+            return;
+        };
+        let folders: Vec<String> = settings
+            .library_folders
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        let signed_in = settings.remote_signed_in || settings.remote_enabled;
+        // The folders leave the file before their tracks are forgotten, so
+        // the folder watcher has nothing to index them again from.
+        self.edit(cx, |s| s.library_folders.clear());
         self.when_written(cx, move |model, cx| {
-            let Some(settings) = model.settings().cloned() else {
-                return;
-            };
-            sharing.update(cx, |sharing, cx| sharing.stop(cx));
-            let folders: Vec<String> = settings
-                .library_folders
-                .iter()
-                .map(|f| f.path.clone())
-                .collect();
-            let signed_in = settings.remote_signed_in || settings.remote_enabled;
             model.run(
                 "Resetting kōan",
                 Uses::WHOLE_LIBRARY,
                 cx,
                 move |engine| async move {
+                    // Sharing reads what is running once this lands.
                     engine.clone().stop_server().await;
                     if signed_in {
                         engine.clone().sign_out_remote().await?;
@@ -695,13 +698,16 @@ impl SettingsModel {
                     }
                     engine.reset_settings().await
                 },
-                |model, result, cx| match result {
-                    Ok(()) => {
-                        crate::covers::Covers::purge(cx);
-                        model.done("Every setting is back to its default", cx);
-                        cx.defer(after);
+                move |model, result, cx| {
+                    sharing.update(cx, |sharing, cx| sharing.refresh(cx));
+                    match result {
+                        Ok(()) => {
+                            crate::covers::Covers::purge(cx);
+                            model.done("Every setting is back to its default", cx);
+                            cx.defer(after);
+                        }
+                        Err(e) => model.report(describe(&e), cx),
                     }
-                    Err(e) => model.report(describe(&e), cx),
                 },
             );
         });

@@ -111,13 +111,20 @@ impl ShareForm {
 
     /// Asks before sharing stops: every phone and device on it loses the
     /// library at once.
-    pub fn ask_stop_sharing(ctx: &Ctx, window: &mut Window, cx: &mut App) {
+    /// `stopped` runs once the person has said to stop.
+    pub fn ask_stop_sharing(
+        ctx: &Ctx,
+        window: &mut Window,
+        cx: &mut App,
+        stopped: impl Fn(&mut Window, &mut App) + 'static,
+    ) {
         let off = ctx.clone();
         let sheet = Sheet::new("Stop sharing this device's library?")
             .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
             .action(
-                Action::new("Stop Sharing", move |_, _, cx| {
-                    ShareForm::set_sharing(&off, false, cx)
+                Action::new("Stop Sharing", move |_, window, cx| {
+                    ShareForm::set_sharing(&off, false, cx);
+                    stopped(window, cx);
                 })
                 .destructive(),
             );
@@ -379,7 +386,7 @@ impl ShareForm {
                     ShareForm::set_sharing(&ctx, true, cx);
                     return;
                 }
-                ShareForm::ask_stop_sharing(&ctx, window, cx);
+                ShareForm::ask_stop_sharing(&ctx, window, cx, |_, _| {});
             })
             .into_any_element()
         }];
