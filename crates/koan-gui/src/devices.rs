@@ -84,11 +84,11 @@ impl ControlView {
     }
 }
 
-/// What this computer is called in the picker.
+/// What this device is called in the picker.
 const THIS_DEVICE: &str = if cfg!(target_os = "macos") {
     "this mac"
 } else {
-    "this computer"
+    "this device"
 };
 
 /// A device's glyph by its platform, as the Mac's picker gives it.

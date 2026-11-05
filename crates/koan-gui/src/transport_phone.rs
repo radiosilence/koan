@@ -367,9 +367,39 @@ impl Transport {
                     .text_color(p.muted)
                     .child(format)
             }));
+        // Pulled down by a finger it follows, and closes once let go past a
+        // fifth of the screen, as the iOS app's does; short of that it goes
+        // back. A pan the lyrics can still scroll is theirs.
+        let close_at = viewport.height * 0.2;
         div()
             .id("now-playing-page")
             .size_full()
+            .when_some(self.pull, |page, by| page.relative().top(by))
+            .on_scroll_wheel(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                if event.source != ScrollSource::Touch {
+                    return;
+                }
+                let dy = event.delta.pixel_delta(px(16.)).y;
+                match event.touch_phase {
+                    koan_kit::app::platform::TouchPhase::Started => {
+                        this.pull = Some(dy.max(px(0.)))
+                    }
+                    koan_kit::app::platform::TouchPhase::Moved => match this.pull {
+                        Some(by) => this.pull = Some((by + dy).max(px(0.))),
+                        // A fling's coasting after the release decided.
+                        None => return,
+                    },
+                    koan_kit::app::platform::TouchPhase::Ended => {
+                        let Some(by) = this.pull.take() else { return };
+                        if by + dy > close_at {
+                            cx.emit(Collapse);
+                        }
+                    }
+                    koan_kit::app::platform::TouchPhase::Cancelled => this.pull = None,
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
             .clear_of_system(crate::components::Clear::System, window)
             .child(page)
             .into_any_element()

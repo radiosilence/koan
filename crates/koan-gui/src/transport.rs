@@ -79,6 +79,8 @@ pub struct Transport {
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     /// The mini player's playhead, gliding on the GPU.
     mini_glide: crate::components::Glide,
+    /// How far Now Playing has been pulled down by a finger, while it is.
+    pull: Option<Pixels>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -251,6 +253,7 @@ impl Transport {
             lyrics_shown: false,
             lyrics: None,
             mini_glide: crate::components::Glide::new(),
+            pull: None,
         };
         this.reload_eq(cx);
         this
