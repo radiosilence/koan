@@ -83,6 +83,8 @@ pub fn open_eq(device: Option<String>, cx: &mut App) -> bool {
 pub struct PhoneShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
+    /// The queue's own controls, in the bar while it shows.
+    queue_controls: Entity<library::controls::ControlsSlot>,
     transport: Entity<Transport>,
     library: Option<Entity<LibraryStage>>,
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
@@ -107,6 +109,11 @@ impl PhoneShell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
+        let queue_controls = cx.new(|cx| {
+            let mut slot = library::controls::ControlsSlot::default();
+            slot.show(&queue, QueueView::controls, cx);
+            slot
+        });
         let transport = cx.new(|cx| {
             let mut transport = Transport::new(&nav, window, cx);
             transport.set_form(transport::Form::Mini, cx);
@@ -166,6 +173,7 @@ impl PhoneShell {
         Self {
             nav,
             queue,
+            queue_controls,
             transport,
             library: None,
             downloads: None,
@@ -378,8 +386,19 @@ impl PhoneShell {
             Route::SettingsSection(tab) => Some(tab.title()),
             _ => None,
         };
-        // A tab's first page that heads itself has nothing for a bar to say.
-        if nav.at_root() && title.is_none() {
+        // The page's own controls: the queue's, a library page's filter and
+        // sort.
+        let controls = if route == Route::Queue {
+            Some(self.queue_controls.clone().into())
+        } else {
+            self.library
+                .as_ref()
+                .filter(|_| LibraryStage::draws(route))
+                .and_then(|library| library.read(cx).toolbar())
+        };
+        // A tab's first page that heads itself, with no controls of its own,
+        // has nothing for a bar to say.
+        if nav.at_root() && title.is_none() && controls.is_none() {
             return None;
         }
         let bar = Toolbar::new()
@@ -395,7 +414,8 @@ impl PhoneShell {
                     .flex()
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
-            );
+            )
+            .when_some(controls, |bar, controls: AnyView| bar.trailing(controls));
         Some(bar.into_any_element())
     }
 

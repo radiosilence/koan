@@ -245,6 +245,49 @@ impl Transport {
         )
         .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
         let lyrics_shown = self.lyrics_shown;
+        // The bar's menus, as the desktop's: sleep, the device controlled,
+        // the output, this output's EQ.
+        let sleeping = now.sleep.is_some();
+        let sleep = self.menu_button(
+            super::Menu::Sleep,
+            if sleeping {
+                Icon::SleepSet
+            } else {
+                Icon::Sleep
+            },
+            if sleeping { "sleeping" } else { "sleep" },
+            if sleeping {
+                "sleep timer: set".to_owned()
+            } else {
+                "sleep timer".to_owned()
+            },
+            true,
+            &p,
+            window,
+            cx,
+        );
+        let devices = self.control_button(&p, window, cx);
+        let output = self.menu_button(
+            super::Menu::Output,
+            Icon::Speaker,
+            "output",
+            "output".to_owned(),
+            true,
+            &p,
+            window,
+            cx,
+        );
+        let eq = self
+            .eq
+            .clone()
+            .filter(|_| {
+                self.outputs
+                    .read(cx)
+                    .0
+                    .as_ref()
+                    .is_some_and(|o| o.owner.is_none())
+            })
+            .map(|eq| self.eq_button(&eq, &p, window, cx));
         let format = now.format.as_ref().map(format_badge);
         // The system's insets are padding of their own: the page's margins
         // go inside them.
@@ -295,13 +338,21 @@ impl Transport {
                                 cx.notify();
                             })),
                     )
-                    .children(format.map(|format| {
-                        div()
-                            .text_role(TypeRole::Fine, &p.look)
-                            .text_color(p.muted)
-                            .child(format)
-                    })),
-            );
+                    .child(sleep)
+                    .child(devices)
+                    .child(output)
+                    .children(eq),
+            )
+            // What is playing as it reaches the output.
+            .children(format.map(|format| {
+                div()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .text_role(TypeRole::Fine, &p.look)
+                    .text_color(p.muted)
+                    .child(format)
+            }));
         div()
             .id("now-playing-page")
             .size_full()

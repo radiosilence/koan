@@ -155,6 +155,9 @@ pub struct QueueView {
     /// the crosshair, off by a scroll of the person's own or with nothing
     /// playing. For the session only.
     following: bool,
+    /// Under touch, picking rows: a tap ticks a row rather than playing it,
+    /// as the iOS app's Select does.
+    picking: bool,
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
@@ -241,6 +244,7 @@ impl QueueView {
             nav: nav.clone(),
             lib: None,
             following: false,
+            picking: false,
             followed: None,
             followed_row: None,
             dice: dice_refusal(&cx.global::<Mirror>().playback.read(cx).0),
@@ -482,8 +486,12 @@ impl QueueView {
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
         let modifiers = event.modifiers();
-        // A tap plays the row: a touch screen has no click to pick with.
-        if event.click_count() >= 2 || cx.global::<crate::theme::KoanTheme>().touch {
+        // A tap plays the row, or while picking ticks it: a touch screen has
+        // no click to pick with.
+        let touch = cx.global::<crate::theme::KoanTheme>().touch;
+        if touch && self.picking {
+            self.toggle(row, cx);
+        } else if event.click_count() >= 2 || touch {
             self.play_row(row, cx);
         } else if modifiers.shift {
             self.select_range(row, cx);
@@ -1559,8 +1567,46 @@ impl QueueView {
         let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();
+        let touch = cx.global::<crate::theme::KoanTheme>().touch;
         let mut controls = ToolbarGroup::new();
-        if picked > 0 {
+        // Under touch, picking is a mode of its own, entered by Select and
+        // left by Done, as the iOS app's.
+        if touch && self.picking {
+            let (done, remove) = (view.clone(), view.clone());
+            return controls
+                .child(
+                    ToolbarSelection::new(format!("{picked} selected"))
+                        .action("queue-remove", "remove", move |_, _, cx| {
+                            remove.update(cx, |this, cx| {
+                                let ids = this.selected_ids(cx);
+                                this.remove(ids, cx);
+                            })
+                        })
+                        .action("queue-done", "done", move |_, _, cx| {
+                            done.update(cx, |this, cx| {
+                                this.picking = false;
+                                this.selected.clear();
+                                cx.notify();
+                            })
+                        }),
+                )
+                .into_any_element();
+        }
+        if touch {
+            let pick = view.clone();
+            controls = controls.child(
+                ToolbarButton::new("queue-select", Icon::Select, "select")
+                    .disabled(count == 0)
+                    .on_click(move |_, _, cx| {
+                        pick.update(cx, |this, cx| {
+                            this.picking = true;
+                            this.selected.clear();
+                            cx.notify();
+                        })
+                    }),
+            );
+        }
+        if picked > 0 && !touch {
             let (clear, remove) = (view.clone(), view.clone());
             controls = controls
                 .child(
@@ -1614,16 +1660,21 @@ impl QueueView {
                     },
                 ),
             )
-            .child(
-                ToolbarButton::new("queue-undo", Icon::Undo, "undo")
-                    .help(crate::platform::actions::help("undo", &Undo, cx))
-                    .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
-            )
-            .child(
-                ToolbarButton::new("queue-redo", Icon::Redo, "redo")
-                    .help(crate::platform::actions::help("redo", &Redo, cx))
-                    .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
-            )
+            // Undo and redo are the keyboard's and the desktop's; a phone's
+            // header has no room for them, as the iOS app's has none.
+            .when(!touch, |controls| {
+                controls
+                    .child(
+                        ToolbarButton::new("queue-undo", Icon::Undo, "undo")
+                            .help(crate::platform::actions::help("undo", &Undo, cx))
+                            .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
+                    )
+                    .child(
+                        ToolbarButton::new("queue-redo", Icon::Redo, "redo")
+                            .help(crate::platform::actions::help("redo", &Redo, cx))
+                            .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+                    )
+            })
             .child(more(count, saveable))
             .into_any_element()
     }
