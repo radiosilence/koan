@@ -246,16 +246,15 @@ impl Transport {
         .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
         let lyrics_shown = self.lyrics_shown;
         let format = now.format.as_ref().map(format_badge);
-        div()
-            .id("now-playing-page")
+        // The system's insets are padding of their own: the page's margins
+        // go inside them.
+        let page = div()
             .size_full()
             .flex()
             .flex_col()
             .gap(p.space(Space::L))
             .px(margin)
             .pb(p.space(Space::L))
-            .bg(p.bg)
-            .clear_of_system(crate::components::Clear::System, window)
             .child(
                 div().flex().items_center().child(
                     Button::icon_only("np-close", Icon::Expand, "close")
@@ -302,7 +301,13 @@ impl Transport {
                             .text_color(p.muted)
                             .child(format)
                     })),
-            )
+            );
+        div()
+            .id("now-playing-page")
+            .size_full()
+            .bg(p.bg)
+            .clear_of_system(crate::components::Clear::System, window)
+            .child(page)
             .into_any_element()
     }
 }

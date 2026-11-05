@@ -1403,14 +1403,17 @@ pub(crate) fn track(
             .picked(look.picked)
             .into_any_element(),
     )
-    .figure(HEART, heart(item, &extras, look))
-    .figure(
-        CODEC,
-        div()
-            .text_role(TypeRole::Fine, &p.look)
-            .text_color(p.muted)
-            .children(item.codec.as_ref().map(|codec| codec.to_uppercase())),
-    )
+    // A phone's row is the title and the length: the heart and the format
+    // are the menu's and the record's, as on iOS.
+    .when(!p.look.touch, |row| {
+        row.figure(HEART, heart(item, &extras, look)).figure(
+            CODEC,
+            div()
+                .text_role(TypeRole::Fine, &p.look)
+                .text_color(p.muted)
+                .children(item.codec.as_ref().map(|codec| codec.to_uppercase())),
+        )
+    })
     .figure(
         LENGTH,
         div()

@@ -366,20 +366,23 @@ impl PhoneShell {
 
     /// The bar over the page: back while the tab has somewhere to go back
     /// to, and the name of a page that has no header of its own.
-    fn bar(&self, route: Route, cx: &mut Context<Self>) -> impl IntoElement {
+    fn bar(&self, route: Route, cx: &mut Context<Self>) -> Option<AnyElement> {
         let nav = self.nav.read(cx);
+        // Named only where the page has no heading of its own: the queue,
+        // the listings and the records head themselves.
         let title = match route {
-            Route::Queue => Some("queue"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
             Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
-            Route::History => Some("history"),
-            Route::Downloads => Some("downloads"),
             _ => None,
         };
-        Toolbar::new()
+        // A tab's first page that heads itself has nothing for a bar to say.
+        if nav.at_root() && title.is_none() {
+            return None;
+        }
+        let bar = Toolbar::new()
             .when(!nav.at_root(), |bar| {
                 bar.leading(
                     ToolbarButton::new("back", Icon::Back, "back")
@@ -392,7 +395,8 @@ impl PhoneShell {
                     .flex()
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
-            )
+            );
+        Some(bar.into_any_element())
     }
 
     /// Settings' tab, on `tab`'s screen or its list of sections.
@@ -538,7 +542,7 @@ impl Render for PhoneShell {
             .flex_col()
             .text_color(p.ink)
             .clear_of_system(Clear::System, window)
-            .child(self.bar(route, cx))
+            .children(self.bar(route, cx))
             .child(self.banner.clone())
             .child(self.output_wait.clone())
             .child(
