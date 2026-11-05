@@ -144,7 +144,8 @@ fn main() -> Result {
     println!("sharing stopped, started and stopped");
 
     // Signing in to the throwaway server, out, and in again.
-    ui.choose("this device", "Connects to a server")?;
+    // Sharing off leaves nothing chosen: the cards again.
+    ui.press_card("connect to a server")?;
     for round in 0..2 {
         ui.type_into("Server URL", &server)?;
         ui.type_into("Username", &user)?;
