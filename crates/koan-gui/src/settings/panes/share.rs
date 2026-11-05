@@ -109,6 +109,21 @@ impl ShareForm {
         });
     }
 
+    /// Asks before sharing stops: every phone and device on it loses the
+    /// library at once.
+    pub fn ask_stop_sharing(ctx: &Ctx, window: &mut Window, cx: &mut App) {
+        let off = ctx.clone();
+        let sheet = Sheet::new("Stop sharing this device's library?")
+            .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
+            .action(
+                Action::new("Stop Sharing", move |_, _, cx| {
+                    ShareForm::set_sharing(&off, false, cx)
+                })
+                .destructive(),
+            );
+        ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+    }
+
     /// With the values just typed, so the start never reads a setting still
     /// being written. A start stops the running server first, so a failed
     /// one leaves nothing serving and the switch says so.
@@ -364,17 +379,7 @@ impl ShareForm {
                     ShareForm::set_sharing(&ctx, true, cx);
                     return;
                 }
-                // Every phone and device on it loses the library at once.
-                let off = ctx.clone();
-                let sheet = Sheet::new("Stop sharing this device's library?")
-                    .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
-                    .action(
-                        Action::new("Stop Sharing", move |_, _, cx| {
-                            ShareForm::set_sharing(&off, false, cx)
-                        })
-                        .destructive(),
-                    );
-                ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+                ShareForm::ask_stop_sharing(&ctx, window, cx);
             })
             .into_any_element()
         }];

@@ -1,5 +1,5 @@
 //! The parts a guided flow is built from: a choice between ways forward
-//! (`ChoiceCard`), where the flow has got to (`Steps`), and what is in place
+//! (`ChoiceCards`), where the flow has got to (`Steps`), and what is in place
 //! on the machine and what is not (`CheckItem`).
 
 use std::sync::Arc;
@@ -14,175 +14,200 @@ use super::{
     Answer, Answerer, Handler, accessible, answers_click, child, fade, focus, hover_fill, ring,
     toggled, track,
 };
-use crate::theme::{
-    DISABLED_OPACITY, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label,
-};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
-/// One way forward among several, as a block the width of its column: a
-/// glyph, a title and a sentence saying what choosing it means. Chosen, its
-/// outline and glyph take the accent and a tick stands at its end, so the
-/// choice reads without colour too. A screen reader meets it as one of a
-/// group of radio buttons.
-#[derive(IntoElement)]
-pub struct ChoiceCard {
-    id: ElementId,
+/// One card of a `ChoiceCards`.
+struct Card {
     icon: Icon,
     title: SharedString,
     detail: Option<SharedString>,
-    chosen: bool,
-    disabled: bool,
-    place: Option<(usize, usize)>,
-    on_click: Option<Handler<gpui::ClickEvent>>,
 }
 
-impl ChoiceCard {
-    /// `title` is an app word, drawn in the theme's case.
-    pub fn new(id: impl Into<ElementId>, icon: Icon, title: impl AsRef<str>) -> Self {
+/// Ways forward to choose one of, each a block the width of the column: a
+/// glyph, a title and a sentence saying what choosing it means. The one
+/// chosen takes the accent in its outline and glyph, with a tick at its end
+/// so the choice reads without colour too. Like `Segmented`, the group is
+/// one stop for the keyboard, where the arrow keys move the choice, and a
+/// radio group to a screen reader; a click on a card chooses it.
+#[derive(IntoElement)]
+pub struct ChoiceCards {
+    id: ElementId,
+    name: Option<SharedString>,
+    cards: Vec<Card>,
+    chosen: Option<usize>,
+    on_change: Option<Handler<usize>>,
+}
+
+impl ChoiceCards {
+    /// `chosen` is the card chosen, if any is yet.
+    pub fn new(id: impl Into<ElementId>, chosen: Option<usize>) -> Self {
         Self {
             id: id.into(),
-            icon,
-            title: label(title),
-            detail: None,
-            chosen: false,
-            disabled: false,
-            place: None,
-            on_click: None,
+            name: None,
+            cards: Vec::new(),
+            chosen,
+            on_change: None,
         }
     }
 
-    /// A sentence under the title, which keeps its case.
-    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
-        self.detail = Some(detail.into());
+    /// What the group is called to a screen reader: the question it answers.
+    pub fn named(mut self, name: impl AsRef<str>) -> Self {
+        self.name = Some(label(name));
         self
     }
 
-    pub fn chosen(mut self, chosen: bool) -> Self {
-        self.chosen = chosen;
-        self
-    }
-
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
-    /// Its place among the cards it is chosen from, from one, and how many
-    /// there are: what a screen reader says as "2 of 3".
-    pub fn place(mut self, index: usize, of: usize) -> Self {
-        self.place = Some((index, of));
-        self
-    }
-
-    pub fn on_click(
+    /// A card: `title` is an app word, drawn in the theme's case; `detail`
+    /// a sentence, which keeps its case.
+    pub fn card(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+        icon: Icon,
+        title: impl AsRef<str>,
+        detail: Option<impl Into<SharedString>>,
     ) -> Self {
-        self.on_click = Some(Arc::new(handler));
+        self.cards.push(Card {
+            icon,
+            title: label(title),
+            detail: detail.map(Into::into),
+        });
+        self
+    }
+
+    pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
+        self.on_change = Some(Arc::new(handler));
         self
     }
 }
 
-impl RenderOnce for ChoiceCard {
+impl RenderOnce for ChoiceCards {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
-        let edge = fade(
-            child(&self.id, "edge"),
-            self.chosen,
-            look.palette.rule.hsla(),
-            accent,
-            window,
-            cx,
-        );
-        let glyph = fade(
-            child(&self.id, "glyph"),
-            self.chosen,
-            look.palette.muted.hsla(),
-            accent,
-            window,
-            cx,
-        );
-        let (pointer, lit) = hover_fill(&self.id, &look, window, cx);
-        let spoken: SharedString = match &self.detail {
-            Some(detail) => format!("{}. {detail}", self.title).into(),
-            None => self.title.clone(),
-        };
-        let mut card = accessible(
+        let count = self.cards.len();
+        let chosen = self.chosen;
+        let mut group = accessible(
             div().id(self.id.clone()),
-            gpui::Role::RadioButton,
-            Some(spoken),
+            gpui::Role::RadioGroup,
+            self.name.clone(),
         )
-        .aria_toggled(toggled(self.chosen))
-        .aria_disabled(self.disabled)
-        .when_some(self.place, |card, (index, of)| {
-            card.aria_position_in_set(index).aria_size_of_set(of)
-        })
         .relative()
         .w_full()
         .flex()
-        .items_start()
-        .gap(look.space(Space::M))
-        .p(look.space(Space::L))
-        .border(look.hairline)
-        .border_color(edge)
-        .child(lit)
-        .child(
-            div()
-                .relative()
-                .flex_none()
-                .child(KoanIcon::new(self.icon).role(TypeRole::Title).color(glyph)),
-        )
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::Xs))
-                .child(
-                    div()
-                        .text_role(TypeRole::Body, &look)
-                        .text_color(look.palette.strong.hsla())
-                        .child(self.title),
-                )
-                .children(self.detail.map(|detail| {
-                    div()
-                        .text_role(TypeRole::Meta, &look)
-                        .text_color(look.palette.muted.hsla())
-                        .child(detail)
-                })),
-        )
-        .child(
-            div()
-                .relative()
-                .flex_none()
-                .size(px(crate::theme::icons::side(look.points(TypeRole::Body))))
-                .when(self.chosen, |mark| {
-                    mark.child(
-                        KoanIcon::new(Icon::Check)
-                            .role(TypeRole::Body)
-                            .color(accent),
+        .flex_col()
+        .gap(look.space(Space::M));
+        for (index, card) in self.cards.into_iter().enumerate() {
+            let id = ElementId::NamedChild(Arc::new(self.id.clone()), format!("{index}").into());
+            let on = chosen == Some(index);
+            let answers = Answerer::of(&id, window, cx);
+            let edge = fade(
+                child(&id, "edge"),
+                on,
+                look.palette.rule.hsla(),
+                accent,
+                window,
+                cx,
+            );
+            let glyph = fade(
+                child(&id, "glyph"),
+                on,
+                look.palette.muted.hsla(),
+                accent,
+                window,
+                cx,
+            );
+            let (pointer, lit) = hover_fill(&id, &look, window, cx);
+            let spoken: SharedString = match &card.detail {
+                Some(detail) => format!("{}. {detail}", card.title).into(),
+                None => card.title.clone(),
+            };
+            let mut option =
+                accessible(div().id(id.clone()), gpui::Role::RadioButton, Some(spoken))
+                    .aria_toggled(toggled(on))
+                    .aria_position_in_set(index + 1)
+                    .aria_size_of_set(count)
+                    .relative()
+                    .w_full()
+                    .flex()
+                    .items_start()
+                    .gap(look.space(Space::M))
+                    .p(look.space(Space::L))
+                    .border(look.hairline)
+                    .border_color(edge)
+                    .child(lit)
+                    .child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .child(KoanIcon::new(card.icon).role(TypeRole::Title).color(glyph)),
                     )
-                }),
-        )
-        .children(answers.layer(window, cx));
-        if self.disabled {
-            card = card.opacity(DISABLED_OPACITY);
-        } else if let Some(on_click) = self.on_click {
-            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
-            let press: Handler<gpui::ClickEvent> = Arc::new(move |event, window, cx| {
-                answers.start(Answer::Lift, accent, cx);
-                on_click(event, window, cx)
-            });
-            card = answers_click(track(card, &pointer), press.clone())
-                .track_focus(&handle)
-                .cursor_pointer()
-                .on_click(move |event, window, cx| press(event, window, cx));
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(look.space(Space::Xs))
+                            .child(
+                                div()
+                                    .text_role(TypeRole::Body, &look)
+                                    .text_color(look.palette.strong.hsla())
+                                    .child(card.title),
+                            )
+                            .children(card.detail.map(|detail| {
+                                div()
+                                    .text_role(TypeRole::Meta, &look)
+                                    .text_color(look.palette.muted.hsla())
+                                    .child(detail)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .size(px(crate::theme::icons::side(look.points(TypeRole::Body))))
+                            .when(on, |mark| {
+                                mark.child(
+                                    KoanIcon::new(Icon::Check)
+                                        .role(TypeRole::Body)
+                                        .color(accent),
+                                )
+                            }),
+                    )
+                    .children(answers.layer(window, cx));
+            if let Some(on_change) = self.on_change.clone() {
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
+                let choose: Handler<gpui::ClickEvent> = {
+                    let handle = handle.clone();
+                    Arc::new(move |_, window, cx| {
+                        answers.start(Answer::Lift, accent, cx);
+                        // The group holds the keyboard after a click, as a
+                        // segmented control does, so the arrows go on from it.
+                        window.focus(&handle, cx);
+                        on_change(&index, window, cx)
+                    })
+                };
+                option = answers_click(track(option, &pointer), choose.clone())
+                    .cursor_pointer()
+                    .on_click(move |event, window, cx| choose(event, window, cx));
+            }
+            group = group.child(option);
         }
-        card.children(ring(&handle, &look, window))
+        if let Some(on_change) = self.on_change {
+            group = group
+                .track_focus(&handle)
+                .on_key_down(move |event, window, cx| {
+                    let next = match (event.keystroke.key.as_str(), chosen) {
+                        ("up" | "left", Some(at)) if at > 0 => at - 1,
+                        ("down" | "right", Some(at)) if at + 1 < count => at + 1,
+                        ("up" | "left" | "down" | "right", None) if count > 0 => 0,
+                        _ => return,
+                    };
+                    cx.stop_propagation();
+                    on_change(&next, window, cx);
+                });
+        }
+        group.children(ring(&handle, &look, window))
     }
 }
 
@@ -381,5 +406,102 @@ impl RenderOnce for CheckItem {
                     ),
             )
             .children(self.actions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::accesskit::Action;
+    use gpui::{IntoElement, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::components::testing::{act, click, node, press, redraw, stage, tree};
+
+    fn music(cx: &mut TestAppContext, chosen: Rc<Cell<Option<usize>>>) -> &mut VisualTestContext {
+        let (_, cx) = stage(cx, move |_, _| {
+            let chosen = chosen.clone();
+            vec![(
+                "music",
+                ChoiceCards::new("music", chosen.get())
+                    .named("where is your music")
+                    .card(Icon::Laptop, "On this computer", Some("Files here."))
+                    .card(Icon::Server, "On a server", None::<&str>)
+                    .on_change(move |index, _, _| chosen.set(Some(*index)))
+                    .into_any_element(),
+            )]
+        });
+        cx
+    }
+
+    #[gpui::test]
+    fn a_radio_group_of_cards_one_toggled(cx: &mut TestAppContext) {
+        let cx = music(cx, Rc::new(Cell::new(Some(1))));
+        assert!(tree(cx).to_string().contains("RadioGroup"));
+        for (name, at, on) in [
+            ("on this computer. Files here.", 1, "False"),
+            ("on a server", 2, "True"),
+        ] {
+            let (_, card) = node(cx, name);
+            assert_eq!(card["role"], "RadioButton");
+            assert_eq!(card["toggled"], on, "{name}");
+            assert_eq!(card["position_in_set"], at, "{name}");
+            assert_eq!(card["size_of_set"], 2, "{name}");
+        }
+    }
+
+    #[gpui::test]
+    fn a_click_chooses_and_the_arrows_move_on(cx: &mut TestAppContext) {
+        let chosen = Rc::new(Cell::new(None));
+        let cx = music(cx, chosen.clone());
+        act(cx, "on a server", Action::Click);
+        assert_eq!(chosen.get(), Some(1));
+        redraw(cx);
+        press(cx, "up");
+        assert_eq!(chosen.get(), Some(0));
+        redraw(cx);
+        press(cx, "up");
+        assert_eq!(chosen.get(), Some(0), "the first card stays chosen");
+        click(cx, "music");
+        assert!(chosen.get().is_some());
+    }
+
+    #[gpui::test]
+    fn a_check_says_its_state(cx: &mut TestAppContext) {
+        let (_, cx) = stage(cx, |_, _| {
+            vec![
+                (
+                    "installed",
+                    CheckItem::new("installed", Check::Done, "Tailscale is installed")
+                        .into_any_element(),
+                ),
+                (
+                    "running",
+                    CheckItem::new("running", Check::ToDo, "Tailscale is running")
+                        .into_any_element(),
+                ),
+                (
+                    "looking",
+                    CheckItem::new("looking", Check::Looking, "Funnel is allowed")
+                        .into_any_element(),
+                ),
+            ]
+        });
+        node(cx, "Tailscale is installed, done");
+        node(cx, "Tailscale is running, not yet");
+        node(cx, "Funnel is allowed, checking");
+    }
+
+    #[gpui::test]
+    fn steps_say_where_the_flow_is(cx: &mut TestAppContext) {
+        let (_, cx) = stage(cx, |_, _| {
+            vec![(
+                "steps",
+                Steps::new("steps", ["welcome", "your music", "playback"], 1).into_any_element(),
+            )]
+        });
+        node(cx, "step 2 of 3: your music");
     }
 }

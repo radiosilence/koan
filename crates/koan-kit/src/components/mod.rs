@@ -130,7 +130,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,
 };
-pub use guide::{Check, CheckItem, ChoiceCard, Steps};
+pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};

@@ -7,12 +7,12 @@
 //! row, the pane chosen, the status line and the sheet slot, the pane a
 //! cached view of its own that observes what it draws.
 
-mod form;
+pub(crate) mod form;
 pub mod model;
 pub(crate) mod panes;
 mod qr;
 pub mod sharing;
-mod sheet;
+pub(crate) mod sheet;
 
 use std::sync::Arc;
 
@@ -36,6 +36,13 @@ pub struct Settings {
 }
 
 impl Global for Settings {}
+
+impl Settings {
+    /// Whether the Settings window is open.
+    pub fn is_open(&self) -> bool {
+        self.window.is_some()
+    }
+}
 
 /// Makes the model and sharing, and applies the saved appearance. Call once
 /// the mirror is installed.

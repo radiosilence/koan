@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use koan_kit::app::{App, Context, SharedString, Subscription, Task};
+use koan_kit::app::{App, Context, Entity, SharedString, Subscription, Task};
 use koan_runtime::{KoanEngine, KoanError, Settings};
 
 use crate::mirror::{Mirror, Slice};
@@ -656,6 +656,55 @@ impl SettingsModel {
                 Err(e) => model.report(describe(&e), cx),
             },
         );
+    }
+
+    /// Puts kōan back as it was first opened: stops sharing, signs out
+    /// (forgetting the server's library and the account's favourites,
+    /// history and playlists here), forgets each folder's tracks, and sets
+    /// every setting back to its default. Starts once the edits still being
+    /// written have landed, so none lands over the defaults; `after` runs
+    /// once it has succeeded.
+    pub fn reset(
+        &mut self,
+        sharing: Entity<crate::settings::sharing::Sharing>,
+        after: impl FnOnce(&mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.when_written(cx, move |model, cx| {
+            let Some(settings) = model.settings().cloned() else {
+                return;
+            };
+            sharing.update(cx, |sharing, cx| sharing.stop(cx));
+            let folders: Vec<String> = settings
+                .library_folders
+                .iter()
+                .map(|f| f.path.clone())
+                .collect();
+            let signed_in = settings.remote_signed_in || settings.remote_enabled;
+            model.run(
+                "Resetting kōan",
+                Uses::WHOLE_LIBRARY,
+                cx,
+                move |engine| async move {
+                    engine.clone().stop_server().await;
+                    if signed_in {
+                        engine.clone().sign_out_remote().await?;
+                    }
+                    for path in folders {
+                        engine.clone().forget_folder(path).await?;
+                    }
+                    engine.reset_settings().await
+                },
+                |model, result, cx| match result {
+                    Ok(()) => {
+                        crate::covers::Covers::purge(cx);
+                        model.done("Every setting is back to its default", cx);
+                        cx.defer(after);
+                    }
+                    Err(e) => model.report(describe(&e), cx),
+                },
+            );
+        });
     }
 
     pub fn sync(&mut self, cx: &mut Context<Self>) {

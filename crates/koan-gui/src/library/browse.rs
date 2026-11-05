@@ -136,6 +136,16 @@ impl Browse {
         cx.notify();
     }
 
+    /// No filter and the default sorts, as a reset to defaults leaves them.
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.update(cx, |browse| {
+            browse.filter = BrowseFilter::default();
+            browse.search.clear();
+            browse.album_sort = AlbumSort::RecentlyAdded;
+            browse.track_sort = TrackBrowseSort::Artist;
+        });
+    }
+
     fn save(&self) {
         let f = &self.filter;
         self.writer.write(Stored {

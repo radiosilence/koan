@@ -67,7 +67,11 @@ fn cli() -> Option<PathBuf> {
     ]
     .into_iter()
     .map(PathBuf::from)
-    .chain(std::env::split_paths(&path).map(|dir| dir.join("tailscale")))
+    .chain(
+        std::env::split_paths(&path)
+            .filter(|dir| dir.is_absolute())
+            .map(|dir| dir.join("tailscale")),
+    )
     .find(|p| p.is_file())
 }
 

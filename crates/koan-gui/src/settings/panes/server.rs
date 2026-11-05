@@ -818,12 +818,14 @@ impl Render for ServerPane {
                 .into_any_element()];
                 if self.pinned.is_some() {
                     let ctx = self.ctx.clone();
+                    let busy = self.ctx.sharing.read(cx).busy();
                     rows.push(buttons(
                         vec![
                             Button::new("stop-sharing", ButtonKind::Bordered)
-                                .label("Stop Sharing")
-                                .on_click(move |_, _, cx| {
-                                    super::share::ShareForm::set_sharing(&ctx, false, cx)
+                                .label("Stop Sharing…")
+                                .disabled(busy)
+                                .on_click(move |_, window, cx| {
+                                    super::share::ShareForm::ask_stop_sharing(&ctx, window, cx)
                                 })
                                 .into_any_element(),
                         ],
