@@ -139,7 +139,7 @@ pub fn init(cx: &mut App) {
     // deterministic test scheduler refuses as activity it cannot order.
     if !cx.is_test() {
         read_system_settings(cx);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         watch_system_settings(cx);
         #[cfg(target_os = "linux")]
         watch_desktop_settings(cx);
@@ -193,8 +193,64 @@ fn read_system_settings(cx: &mut App) {
             cx.refresh_windows();
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    {
+        use objc2_ui_kit::{
+            UIAccessibilityDarkerSystemColorsEnabled, UIAccessibilityIsReduceMotionEnabled,
+            UIAccessibilityIsReduceTransparencyEnabled, UIApplication,
+        };
+        let text = objc2::MainThreadMarker::new().map(|main| {
+            dynamic_type_factor(
+                &UIApplication::sharedApplication(main).preferredContentSizeCategory(),
+            )
+        });
+        set_system_display(
+            Some(UIAccessibilityDarkerSystemColorsEnabled()),
+            Some(UIAccessibilityIsReduceTransparencyEnabled()),
+            text,
+            cx,
+        );
+        let reduce = UIAccessibilityIsReduceMotionEnabled();
+        if cx.reduce_motion() != reduce {
+            cx.set_reduce_motion(reduce);
+            cx.global_mut::<KoanTheme>();
+        }
+        let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
+        if cx.global::<KoanTheme>().low_power != low_power {
+            cx.global_mut::<KoanTheme>().low_power = low_power;
+            cx.refresh_windows();
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let _ = cx;
+}
+
+/// The Dynamic Type size as a factor on kōan's text sizes: the body size
+/// each category gives, over Large's 17 pt, which is iOS's default.
+#[cfg(target_os = "ios")]
+fn dynamic_type_factor(category: &objc2_ui_kit::UIContentSizeCategory) -> f32 {
+    use objc2_ui_kit::*;
+    // SAFETY: the categories are immutable framework constants.
+    let sizes = unsafe {
+        [
+            (UIContentSizeCategoryExtraSmall, 14.0),
+            (UIContentSizeCategorySmall, 15.0),
+            (UIContentSizeCategoryMedium, 16.0),
+            (UIContentSizeCategoryLarge, 17.0),
+            (UIContentSizeCategoryExtraLarge, 19.0),
+            (UIContentSizeCategoryExtraExtraLarge, 21.0),
+            (UIContentSizeCategoryExtraExtraExtraLarge, 23.0),
+            (UIContentSizeCategoryAccessibilityMedium, 28.0),
+            (UIContentSizeCategoryAccessibilityLarge, 33.0),
+            (UIContentSizeCategoryAccessibilityExtraLarge, 40.0),
+            (UIContentSizeCategoryAccessibilityExtraExtraLarge, 47.0),
+            (UIContentSizeCategoryAccessibilityExtraExtraExtraLarge, 53.0),
+        ]
+    };
+    sizes
+        .iter()
+        .find(|(c, _)| *c == category)
+        .map_or(1.0, |(_, size)| size / 17.0)
 }
 
 /// The system's contrast, transparency and text size, each where it said
@@ -344,17 +400,68 @@ fn watch_system_settings(cx: &mut App) {
     .detach();
 }
 
+/// Reads the system's settings again whenever UIKit says one changed: each
+/// of Reduce Motion, Darker System Colors, Reduce Transparency and the
+/// Dynamic Type size has a notification of its own, and Low Power Mode is
+/// `NSProcessInfoPowerStateDidChangeNotification`, posted on whatever thread
+/// changed it. Each observer only wakes a task on the main thread.
+#[cfg(target_os = "ios")]
+fn watch_system_settings(cx: &mut App) {
+    use std::ptr::NonNull;
+
+    use block2::RcBlock;
+    use futures::StreamExt as _;
+    use objc2_foundation::{
+        NSNotification, NSNotificationCenter, NSProcessInfoPowerStateDidChangeNotification,
+    };
+    use objc2_ui_kit::{
+        UIAccessibilityDarkerSystemColorsStatusDidChangeNotification,
+        UIAccessibilityReduceMotionStatusDidChangeNotification,
+        UIAccessibilityReduceTransparencyStatusDidChangeNotification,
+        UIContentSizeCategoryDidChangeNotification,
+    };
+
+    let (changed, mut changes) = futures::channel::mpsc::unbounded::<()>();
+    let center = NSNotificationCenter::defaultCenter();
+    // SAFETY: the names are immutable framework constants.
+    let names = unsafe {
+        [
+            NSProcessInfoPowerStateDidChangeNotification,
+            UIAccessibilityReduceMotionStatusDidChangeNotification,
+            UIAccessibilityDarkerSystemColorsStatusDidChangeNotification,
+            UIAccessibilityReduceTransparencyStatusDidChangeNotification,
+            UIContentSizeCategoryDidChangeNotification,
+        ]
+    };
+    let observers = names.map(|name| {
+        let changed = changed.clone();
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+            changed.unbounded_send(()).ok();
+        });
+        // SAFETY: no object is given, the block runs on the poster's thread,
+        // and it holds only a channel sender, which is Send and Sync.
+        unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) }
+    });
+    cx.set_global(MotionObservers(observers));
+    cx.spawn(async move |cx| {
+        while changes.next().await.is_some() {
+            cx.update(read_system_settings);
+        }
+    })
+    .detach();
+}
+
 /// The notification observers, held for the life of the app: the centres
 /// keep calling a block only while its observer is retained.
-#[cfg(target_os = "macos")]
-struct MotionObservers(
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+struct MotionObservers<const N: usize>(
     #[allow(dead_code)]
     [objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>;
-        2],
+        N],
 );
 
-#[cfg(target_os = "macos")]
-impl Global for MotionObservers {}
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl<const N: usize> Global for MotionObservers<N> {}
 
 /// Holds a window to one appearance whatever the system's, or lets it follow
 /// the system again with `None`.
