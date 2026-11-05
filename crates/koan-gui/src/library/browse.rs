@@ -11,6 +11,10 @@ use koan_kit::app::*;
 use koan_runtime::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use serde::{Deserialize, Serialize};
 
+/// The sorts before any is chosen.
+const DEFAULT_ALBUM_SORT: AlbumSort = AlbumSort::RecentlyAdded;
+const DEFAULT_TRACK_SORT: TrackBrowseSort = TrackBrowseSort::Artist;
+
 pub struct Browse {
     writer: Writer,
     pub filter: BrowseFilter,
@@ -46,12 +50,12 @@ impl Browse {
                 .album_sort
                 .as_deref()
                 .and_then(album_sort)
-                .unwrap_or(AlbumSort::RecentlyAdded),
+                .unwrap_or(DEFAULT_ALBUM_SORT),
             track_sort: stored
                 .track_sort
                 .as_deref()
                 .and_then(track_sort)
-                .unwrap_or(TrackBrowseSort::Artist),
+                .unwrap_or(DEFAULT_TRACK_SORT),
             seed: seed(),
         }
     }
@@ -64,8 +68,8 @@ impl Browse {
             writer: Writer::spawn(),
             filter: BrowseFilter::default(),
             search: String::new(),
-            album_sort: AlbumSort::RecentlyAdded,
-            track_sort: TrackBrowseSort::Artist,
+            album_sort: DEFAULT_ALBUM_SORT,
+            track_sort: DEFAULT_TRACK_SORT,
             seed: seed(),
         }
     }
@@ -141,8 +145,8 @@ impl Browse {
         self.update(cx, |browse| {
             browse.filter = BrowseFilter::default();
             browse.search.clear();
-            browse.album_sort = AlbumSort::RecentlyAdded;
-            browse.track_sort = TrackBrowseSort::Artist;
+            browse.album_sort = DEFAULT_ALBUM_SORT;
+            browse.track_sort = DEFAULT_TRACK_SORT;
         });
     }
 

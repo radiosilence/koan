@@ -126,6 +126,11 @@ pub fn close(cx: &mut App) {
 pub fn after_reset(cx: &mut App) {
     let engine = crate::engine::engine(cx);
     crate::settings::apply_appearance(engine, cx);
+    // Opening at login is the system's to keep, not the file's.
+    use crate::platform::residency::{self, Login};
+    if matches!(residency::login(cx), Login::On | Login::NeedsApproval) {
+        residency::set_login(false, cx);
+    }
     if let Some(shell) = crate::app::main_shell(cx)
         && let Some(stage) = shell.read(cx).library().cloned()
     {
@@ -139,6 +144,14 @@ pub fn after_reset(cx: &mut App) {
             Err(e) => log::warn!("setup: could not forget it was seen: {e}"),
         }
     });
+    // A guide already open starts again from the beginning.
+    if let Some((handle, view)) = cx.try_global::<Slot>().and_then(|slot| slot.0.clone()) {
+        handle
+            .update(cx, |_, _, cx| {
+                view.update(cx, |setup, cx| setup.start_over(cx)).ok();
+            })
+            .ok();
+    }
     cx.spawn(async move |cx| {
         forget.await;
         cx.update(open);
@@ -293,7 +306,7 @@ impl SetupWindow {
         let (music, share) = match ctx.model.read(cx).settings() {
             Some(s) if s.remote_signed_in => (Some(Music::Server), None),
             Some(s) if s.share_enabled => (Some(Music::Here), Some(true)),
-            Some(s) if !s.library_folders.is_empty() => (Some(Music::Here), None),
+            Some(s) if !s.library_folders.is_empty() => (Some(Music::Here), Some(false)),
             _ => (None, None),
         };
         let subscriptions = vec![
@@ -348,6 +361,15 @@ impl SetupWindow {
 
     fn steps(&self) -> Vec<Step> {
         steps(self.music, self.share)
+    }
+
+    /// Back to the first step with nothing chosen, as after a reset.
+    fn start_over(&mut self, cx: &mut Context<Self>) {
+        self.music = None;
+        self.share = None;
+        self.step = Step::Welcome;
+        self.panes.clear();
+        cx.notify();
     }
 
     /// Whether the step showing has what it needs to go on from.
@@ -511,7 +533,7 @@ impl SetupWindow {
             Step::Welcome => vec![self.welcome(look, cx)],
             Step::Folders => self.folders(look, cx),
             Step::Share => vec![self.share_question(look, cx)],
-            Step::Away => self.away(look, window, cx),
+            Step::Away => self.away(look, cx),
             Step::Keys => self.keys(look, cx),
             Step::Server | Step::Playback => Vec::new(),
         };
@@ -662,7 +684,7 @@ impl SetupWindow {
         )
     }
 
-    fn away(&self, look: &Look, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn away(&self, look: &Look, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let sharing = self.ctx.sharing.read(cx);
         let status = sharing.status.as_ref();
         let tailscale = status.and_then(|s| s.tailscale.clone());
@@ -791,7 +813,6 @@ impl SetupWindow {
                 look,
             ));
         }
-        let _ = window;
         vec![section(
             Some("Tailscale"),
             rows,

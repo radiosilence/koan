@@ -5242,11 +5242,16 @@ impl KoanEngine {
                 });
             }
             APPEARANCE.settle();
+            let before = Config::cached();
             Config::reset().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
+            // What `write_settings` does for a change to the same keys.
             koan_core::remote::nearby::reconfigure();
             koan_core::remote::queue::cache_limit_changed();
+            if Config::cached().remote.preload_covers && !before.remote.preload_covers {
+                koan_core::remote::covers::resume();
+            }
             Ok(())
         })
         .await

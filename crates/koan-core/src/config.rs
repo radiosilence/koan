@@ -1869,15 +1869,26 @@ impl Config {
     }
 
     /// Puts every setting back to its default. What `config.toml` held is
-    /// kept beside it as `config.toml.bak`; `config.local.toml`, which holds
-    /// this machine's secrets, keeps nothing. Both files are emptied rather
+    /// kept beside it as `config.toml.bak`, or `config.toml.bak.1` and on
+    /// where an earlier reset's copy is there, which is never overwritten;
+    /// an empty file keeps no copy. `config.local.toml`, which holds this
+    /// machine's secrets, keeps nothing. Both files are emptied rather
     /// than removed, so one that is a link into a dotfiles repository stays a
     /// link. Environment variables still apply over the defaults.
     pub fn reset() -> Result<(), ConfigError> {
         let _one = ONE_WRITE_AT_A_TIME.lock();
         let base = config_file_path();
         if base.exists() {
-            fs::copy(&base, base.with_extension("toml.bak"))?;
+            if !fs::read_to_string(&base)?.trim().is_empty() {
+                let kept = (0..)
+                    .map(|n| match n {
+                        0 => base.with_extension("toml.bak"),
+                        n => base.with_extension(format!("toml.bak.{n}")),
+                    })
+                    .find(|path| !path.exists())
+                    .expect("a free name");
+                fs::copy(&base, kept)?;
+            }
             write_document(&base, &toml_edit::DocumentMut::new(), false)?;
         }
         let local = config_local_file_path();
@@ -3235,6 +3246,23 @@ fps = 30
         let cfg = Config::cached();
         assert_eq!(cfg.visualizer.palette, Config::default().visualizer.palette);
         assert!(cfg.remote.password.is_empty());
+
+        // A second reset keeps the first copy and its own beside it.
+        Config::persist(|cfg| cfg.visualizer.palette = "fire".into()).unwrap();
+        Config::reset().unwrap();
+        assert!(
+            fs::read_to_string(base.with_extension("toml.bak"))
+                .unwrap()
+                .contains("neon")
+        );
+        assert!(
+            fs::read_to_string(base.with_extension("toml.bak.1"))
+                .unwrap()
+                .contains("fire")
+        );
+        // An empty file keeps no copy.
+        Config::reset().unwrap();
+        assert!(!base.with_extension("toml.bak.2").exists());
     }
 
     #[test]

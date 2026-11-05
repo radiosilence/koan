@@ -65,7 +65,7 @@ impl LibraryPane {
                 count(tracks)
             ));
         }
-        message.push("config.toml is kept beside itself as config.toml.bak. config.local.toml, which holds passwords and keys, is emptied. The output kōan is playing through stays in use until it next opens one.".into());
+        message.push("config.toml is kept beside itself as config.toml.bak. config.local.toml, which holds passwords and keys, is emptied. The output kōan is playing through, and whether it is muted, stay as they are until it next opens one. kōan no longer opens at login.".into());
         let model = self.ctx.model.clone();
         let sharing = self.ctx.sharing.clone();
         let sheets = self.ctx.sheets.clone();

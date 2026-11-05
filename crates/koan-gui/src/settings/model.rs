@@ -708,10 +708,13 @@ impl SettingsModel {
                             cx.defer(after);
                         }
                         Err(e) => {
-                            // Nothing was reset: the folders go back in the
-                            // list, and a scan reads again what was forgotten.
+                            // Stopped part way: sharing is stopped and may be
+                            // signed out of, so the file says so; the
+                            // folders go back in the list, and a scan reads
+                            // again what was forgotten.
                             let failed = describe(&e);
                             model.edit(cx, move |s| {
+                                s.share_enabled = false;
                                 for folder in &listed {
                                     if !s.library_folders.iter().any(|f| f.path == folder.path) {
                                         s.library_folders.push(folder.clone());
@@ -719,7 +722,7 @@ impl SettingsModel {
                                 }
                             });
                             model.report(
-                                format!("{failed}. Nothing was reset; Scan reads again any tracks it had forgotten."),
+                                format!("{failed}. The reset stopped part way: sharing is off, and the folders are back in the list. Reset again to finish it."),
                                 cx,
                             );
                         }
