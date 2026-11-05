@@ -510,8 +510,9 @@ ios-bundle: ios-ffi
 
 # koan-kit's storybook on an iOS simulator, through GPUI's iOS backend: a
 # booted simulator if there is one, otherwise the first that can run it.
-# `shot=PATH` saves a screenshot of the simulator once it has drawn.
-kit-ios shot="":
+# `just kit-ios rainbow` opens it on that page (by its slug); a second
+# argument, an absolute path, saves a screenshot once it has drawn.
+kit-ios story="" shot="":
     #!/usr/bin/env bash
     set -euo pipefail
     IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p koan-kit --bin koan-kit --target aarch64-apple-ios-sim
@@ -526,7 +527,7 @@ kit-ios shot="":
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" "$app"
     xcrun simctl terminate "$device" cc.blit.koan.storybook 2>/dev/null || true
-    xcrun simctl launch "$device" cc.blit.koan.storybook
+    SIMCTL_CHILD_KOAN_STORY="{{story}}" xcrun simctl launch "$device" cc.blit.koan.storybook
     if [ -n "{{shot}}" ]; then
         sleep 8
         xcrun simctl io "$device" screenshot --display=1 "{{shot}}"
