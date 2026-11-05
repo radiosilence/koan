@@ -23,9 +23,12 @@ pub enum Form {
 pub struct Expand;
 /// Now Playing's close, tapped.
 pub struct Collapse;
+/// Now Playing's title, tapped: the playing track's details are asked for.
+pub struct ShowInfo(pub i64);
 
 impl EventEmitter<Expand> for Transport {}
 impl EventEmitter<Collapse> for Transport {}
+impl EventEmitter<ShowInfo> for Transport {}
 
 /// The mini player's height, the playhead's line included, in points at the
 /// theme's size.
@@ -210,12 +213,19 @@ impl Transport {
                         .flex()
                         .flex_col()
                         .gap(p.space(Space::Xs))
+                        // The title opens the track's details, as on iOS.
                         .child(
                             div()
+                                .id("np-full-title")
                                 .text_role(TypeRole::TitleSmall, &p.look)
                                 .text_color(p.strong)
                                 .truncate()
-                                .child(e.title.clone()),
+                                .child(e.title.clone())
+                                .when_some(e.track_id, |d, track| {
+                                    d.on_click(
+                                        cx.listener(move |_, _, _, cx| cx.emit(ShowInfo(track))),
+                                    )
+                                }),
                         )
                         .child(links::names(credit, TypeRole::Body, p.ink, &p))
                         .when(!e.album.is_empty(), |d| {

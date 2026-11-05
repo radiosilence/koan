@@ -97,7 +97,10 @@ pub struct PhoneShell {
     output_wait: Entity<crate::output_wait::OutputWaitBanner>,
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
-    now_playing: Option<(Entity<Transport>, Subscription)>,
+    now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
+    /// A track's details over everything, while they are asked for: from a
+    /// row's menu or Now Playing's title.
+    info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
     /// EQ's model and page, made on first showing and kept.
     eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
     /// The search sheet over the tab showing, while it is open.
@@ -135,10 +138,14 @@ impl PhoneShell {
                 let feed = lib.feed.clone();
                 this.transport
                     .update(cx, |transport, cx| transport.set_feed(feed, cx));
-                // The playlists page follows the library's playlists.
+                // The playlists page follows the library's playlists, and
+                // the details over every page what the library asks for.
                 let feed = lib.feed.clone();
                 this._subscriptions
                     .push(cx.observe(&feed, |_, _, cx| cx.notify()));
+                let library_nav = lib.nav.clone();
+                this._subscriptions
+                    .push(cx.observe(&library_nav, |_, _, cx| cx.notify()));
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })
@@ -180,6 +187,7 @@ impl PhoneShell {
             settings: None,
             search: None,
             eq: None,
+            info: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
@@ -494,7 +502,16 @@ impl PhoneShell {
             this.now_playing = None;
             cx.notify();
         });
-        self.now_playing = Some((full, closed));
+        // The title asks for the track's details, over the page Now Playing
+        // closes to.
+        let info = cx.subscribe(&full, |this, _, asked: &transport::ShowInfo, cx| {
+            this.now_playing = None;
+            if let Some(lib) = this.library.as_ref().map(|l| l.read(cx).lib()) {
+                lib.nav.update(cx, |nav, cx| nav.show_info(asked.0, cx));
+            }
+            cx.notify();
+        });
+        self.now_playing = Some((full, closed, info));
         cx.notify();
     }
 
@@ -550,7 +567,7 @@ impl Render for PhoneShell {
         // Now Playing in place of the tabs, so the window's wash of the
         // playing record runs behind it, as the iOS app's bleed does; the
         // tabs keep their places under it.
-        if let Some((full, _)) = &self.now_playing {
+        if let Some((full, ..)) = &self.now_playing {
             return div()
                 .key_context(crate::platform::actions::CONTEXT)
                 .relative()
@@ -563,6 +580,19 @@ impl Render for PhoneShell {
         }
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
+        let wanted = self
+            .library
+            .as_ref()
+            .and_then(|library| library.read(cx).lib().nav.read(cx).info);
+        if self.info.as_ref().map(|(id, _)| *id) != wanted {
+            let lib = self.library.as_ref().map(|library| library.read(cx).lib());
+            self.info = wanted.zip(lib).map(|(id, lib)| {
+                (
+                    id,
+                    cx.new(|cx| crate::library::info::TrackInfo::new(lib, id, window, cx)),
+                )
+            });
+        }
         let activity = cx
             .global::<crate::library::activity::ActivityHandle>()
             .0
@@ -620,6 +650,11 @@ impl Render for PhoneShell {
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
+            .children(
+                self.info
+                    .as_ref()
+                    .map(|(_, info)| ask::layered(Layer::Sheet, info.clone())),
+            )
             .children(
                 self.search
                     .as_ref()
