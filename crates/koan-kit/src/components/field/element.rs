@@ -259,6 +259,14 @@ impl gpui::Element for FieldElement {
             let state = self.state.read(cx);
             (state.focus.clone(), state.caret.clone())
         };
+        // The field is drawn as part of a view, which a cached view's frame
+        // replays until the view itself is told it changed: the state tells
+        // the view it was last drawn in (`FieldState::drawn_in`).
+        let view = window.current_view();
+        if self.state.read(cx).drawn_in != Some(view) {
+            self.state
+                .update(cx, |state, _| state.drawn_in = Some(view));
+        }
         if self.editable {
             window.handle_input(
                 &focus,

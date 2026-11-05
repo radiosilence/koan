@@ -195,6 +195,8 @@ pub struct StoryContent {
     tab: usize,
     field: Entity<InputState>,
     empty_field: Entity<InputState>,
+    /// The bare field's own, so typing in it changes no other field.
+    bare_field: Entity<InputState>,
     /// The text fields page's own: a long line, a password, a disabled
     /// field and several lines.
     long_field: Entity<InputState>,
@@ -218,6 +220,7 @@ impl StoryContent {
     fn new(wash: Entity<Wash>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| InputState::new(window, cx).default_value("Sunday morning"));
         let empty_field = cx.new(|cx| InputState::new(window, cx).placeholder("search"));
+        let bare_field = cx.new(|cx| InputState::new(window, cx).placeholder("a title"));
         let long_field = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(
@@ -268,6 +271,7 @@ impl StoryContent {
             tab: 0,
             field,
             empty_field,
+            bare_field,
             long_field,
             secret,
             still,
@@ -388,8 +392,9 @@ impl StoryContent {
             }))
             .child(
                 Stepper::new("text-size", "text size", i64::from(text_size), 80..=130)
+                    .step(i64::from(theme::tokens::TEXT_SIZE_STEP))
                     .shown(format!("{text_size}%"))
-                    .on_change(|size, _, cx| KoanTheme::set_text_size((*size as u32 / 5) * 5, cx)),
+                    .on_change(|size, _, cx| KoanTheme::set_text_size(*size as u32, cx)),
             )
             .child(
                 Toggle::new("reduce-motion", "reduce motion", reduce).on_change(|on, _, cx| {
@@ -765,7 +770,7 @@ impl StoryContent {
                     div()
                         .w(look.spaced(280.0))
                         .child(
-                            TextField::new(&self.empty_field)
+                            TextField::new(&self.bare_field)
                                 .bare()
                                 .role(TypeRole::Title),
                         )

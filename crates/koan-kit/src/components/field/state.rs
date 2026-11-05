@@ -7,9 +7,9 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine,
-    SharedString, Subscription, Task, UTF16Selection, Window, point, px,
+    App, Bounds, ClipboardItem, Context, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
+    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ShapedLine, SharedString, Subscription, Task, UTF16Selection, Window, point, px,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -119,7 +119,12 @@ pub struct FieldState {
     /// The caret's shader uniforms: 0 whether it shows, 4..8 its colour.
     pub(super) caret: Animated,
     blink: Task<()>,
-    _focus: [Subscription; 3],
+    /// The view the field was last drawn in, which redraws whenever the
+    /// field changes: the text, the selection, a composition. Without it a
+    /// cached view replays its last frame, and the field shows its old text
+    /// until something else redraws the view.
+    pub(super) drawn_in: Option<EntityId>,
+    _focus: [Subscription; 4],
 }
 
 impl EventEmitter<InputEvent> for FieldState {}
@@ -140,6 +145,11 @@ impl FieldState {
         // A window in the background shows no caret, and blinks none.
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             this.blink_from_shown(window, cx);
+        });
+        let redraw = cx.observe_self(|this, cx| {
+            if let Some(view) = this.drawn_in {
+                App::notify(cx, view);
+            }
         });
         let blurred = cx.on_blur(&focus, window, |this, _, cx| {
             this.blink = Task::ready(());
@@ -172,7 +182,8 @@ impl FieldState {
             last_edit: None,
             caret: Animated::new(),
             blink: Task::ready(()),
-            _focus: [focused, blurred, activation],
+            drawn_in: None,
+            _focus: [focused, blurred, activation, redraw],
         }
     }
 
