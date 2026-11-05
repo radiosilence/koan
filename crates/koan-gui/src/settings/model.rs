@@ -678,6 +678,7 @@ impl SettingsModel {
             .iter()
             .map(|f| f.path.clone())
             .collect();
+        let listed = settings.library_folders.clone();
         let signed_in = settings.remote_signed_in || settings.remote_enabled;
         // The folders leave the file before their tracks are forgotten, so
         // the folder watcher has nothing to index them again from.
@@ -706,7 +707,22 @@ impl SettingsModel {
                             model.done("Every setting is back to its default", cx);
                             cx.defer(after);
                         }
-                        Err(e) => model.report(describe(&e), cx),
+                        Err(e) => {
+                            // Nothing was reset: the folders go back in the
+                            // list, and a scan reads again what was forgotten.
+                            let failed = describe(&e);
+                            model.edit(cx, move |s| {
+                                for folder in &listed {
+                                    if !s.library_folders.iter().any(|f| f.path == folder.path) {
+                                        s.library_folders.push(folder.clone());
+                                    }
+                                }
+                            });
+                            model.report(
+                                format!("{failed}. Nothing was reset; Scan reads again any tracks it had forgotten."),
+                                cx,
+                            );
+                        }
                     }
                 },
             );
