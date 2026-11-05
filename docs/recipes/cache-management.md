@@ -29,7 +29,7 @@ Or: `KOAN_REMOTE__CACHE_DIR=/path/to/custom/cache`
 download_ahead = 3
 ```
 
-The number of tracks past the playing one that are fetched before they are reached. Unset, the whole queue is fetched, which is what to want before going somewhere without a connection; a number keeps a long queue from downloading in full when it will be listened to with a connection anyway. `0` fetches only the track being played: nothing plays gaplessly, since the decoder has nothing to read ahead into, and each track waits for its download before it starts. `1` is the least that keeps gapless playback. Settings → Downloads → **Download ahead** offers 0 to 10 and the whole queue.
+The number of tracks past the playing one that are fetched before they are reached. Unset, the whole queue is fetched, up to 250 tracks past the playing one, which is what to want before going somewhere without a connection; past that the fetching follows the cursor, so a queue holding a whole library does not download the whole library; a number keeps a long queue from downloading in full when it will be listened to with a connection anyway. `0` fetches only the track being played: nothing plays gaplessly, since the decoder has nothing to read ahead into, and each track waits for its download before it starts. `1` is the least that keeps gapless playback. Settings → Downloads → **Download ahead** offers 0 to 10 and the whole queue.
 
 ## Size limit
 
@@ -46,7 +46,7 @@ Eviction takes, in order:
 1. Downloads fetched for playback, least recently used first. Tracks already played from the queue are among them, as is anything past the window above.
 2. Downloads you asked for with **Download to Cache**, least recently used first. These are pinned, not permanent: they go only once nothing fetched for playback is left to remove.
 
-It works a file at a time, so a part-played album loses only the tracks already played. It never takes a track from an album with a favourited track, nor a track in the window ahead of the cursor. Eviction runs at startup, at most once a minute as downloads land, and as soon as the limit changes in Settings. Size comes from the database, not a filesystem walk.
+It works a file at a time, so a part-played album loses only the tracks already played. It never takes a track from an album with a favourited track, nor a track in the window ahead of the cursor. Eviction runs at startup, whenever the cursor moves, at most once a minute as downloads land, and as soon as the limit changes in Settings. A jump to tracks not yet fetched therefore makes room for them before they arrive. Size comes from the database, not a filesystem walk.
 
 If no `cache_limit` is set, nothing is evicted and the cache grows without bound.
 

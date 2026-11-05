@@ -157,8 +157,7 @@ struct Queue {
     cache: VecDeque<i64>,
     priority_active: usize,
     /// The tracks in the playback window as last worked out, which eviction
-    /// leaves alone. `None` when the whole playlist is wanted: no cache limit,
-    /// or a window that could not be worked out.
+    /// leaves alone. `None` until the first sync works it out.
     window: Option<HashSet<i64>>,
 }
 
@@ -326,7 +325,7 @@ fn wake_workers(inner: &Arc<Inner>) {
 /// cursor to the end, then from the top. Anything the playlist no longer
 /// holds is let go.
 ///
-/// With a cache limit, only the entries in the playback window are wanted.
+/// Only the entries in the playback window are wanted.
 /// One past it is let go like one removed, and a later sync brings it in when
 /// the cursor or the cache makes room. One inside it is wanted on every sync
 /// that finds it there, so its transfer is never abandoned by a window
@@ -341,43 +340,37 @@ fn sync(inner: &Arc<Inner>) {
     let window = playback_window(&inner.state, &config::Config::cached());
     let mut q = inner.queue.lock();
     let wanted = inner.state.pending_downloads();
-    let entries = window
-        .as_ref()
-        .map(|w| w.iter().map(|(_, id)| *id).collect::<HashSet<_>>());
-    let added = sync_with(&mut q, inner.state.downloads(), &wanted, entries.as_ref());
-    q.window = window.map(|w| w.into_iter().map(|(track, _)| track).collect());
+    let entries: HashSet<_> = window.iter().map(|(_, id)| *id).collect();
+    let added = sync_with(&mut q, inner.state.downloads(), &wanted, &entries);
+    q.window = Some(window.into_iter().map(|(track, _)| track).collect());
     drop(q);
     if added {
         wake_workers(inner);
     }
 }
 
+/// How far past the playing track "the whole queue" reaches. A queue holding
+/// a whole library would otherwise fetch the whole library; the window moves
+/// with the cursor, so a queue this long is still fetched as it plays.
+const WHOLE_QUEUE_AHEAD: u32 = 250;
+
 /// The entries to fetch, from the cursor on: as many as `download_ahead`
-/// allows past the playing one, then as many of those as the cache limit has
-/// room for (`helpers::playback_window`). `None` when neither is set, and when
-/// the database cannot say and nothing else cuts it: then the whole playlist
-/// is fetched. A limit of
-/// nothing keeps no cache rather than holding the queue to a track or two;
-/// `download_ahead` alone decides how far ahead it reaches.
-fn playback_window(
-    state: &SharedPlayerState,
-    cfg: &config::Config,
-) -> Option<Vec<(i64, QueueItemId)>> {
-    let ahead = cfg.remote.download_ahead;
-    let limit = cfg.cache_limit_bytes();
-    if ahead.is_none() && limit.is_none() {
-        return None;
-    }
+/// allows past the playing one ([`WHOLE_QUEUE_AHEAD`] when it is unset), then
+/// as many of those as the cache limit has room for
+/// (`helpers::playback_window`). When the database cannot say, the limit
+/// cuts nothing. A limit of nothing keeps no cache rather than holding the
+/// queue to a track or two; `download_ahead` alone decides how far ahead it
+/// reaches.
+fn playback_window(state: &SharedPlayerState, cfg: &config::Config) -> Vec<(i64, QueueItemId)> {
+    let ahead = cfg.remote.download_ahead.unwrap_or(WHOLE_QUEUE_AHEAD);
     let mut order = state.playback_order();
-    if let Some(ahead) = ahead {
-        // Counted from the cursor, which leads the order only when it has a
-        // track to fetch.
-        let cursor = state.cursor();
-        let leads = order.first().is_some_and(|(_, id)| Some(*id) == cursor);
-        order.truncate(ahead as usize + usize::from(leads));
-    }
-    let Some(limit) = limit.filter(|limit| *limit > 0) else {
-        return Some(order);
+    // Counted from the cursor, which leads the order only when it has a track
+    // to fetch.
+    let cursor = state.cursor();
+    let leads = order.first().is_some_and(|(_, id)| Some(*id) == cursor);
+    order.truncate(ahead as usize + usize::from(leads));
+    let Some(limit) = cfg.cache_limit_bytes().filter(|limit| *limit > 0) else {
+        return order;
     };
     let tracks: Vec<i64> = order.iter().map(|(track, _)| *track).collect();
     let fits = crate::db::pool::shared()
@@ -389,32 +382,28 @@ fn playback_window(
     match fits {
         Ok(fits) => {
             order.truncate(fits);
-            Some(order)
+            order
         }
         Err(e) => {
             log::warn!("cache window: {e}");
-            ahead.is_some().then_some(order)
+            order
         }
     }
 }
 
 /// [`sync`] against a list already read, in the order to fetch it, cut to
-/// `window` when there is one. Whether anything was queued that was not
-/// before.
+/// `window`. Whether anything was queued that was not before.
 fn sync_with(
     q: &mut Queue,
     store: &DownloadStore,
     wanted: &[(i64, QueueItemId)],
-    window: Option<&HashSet<QueueItemId>>,
+    window: &HashSet<QueueItemId>,
 ) -> bool {
-    let wanted: Vec<_> = match window {
-        Some(window) => wanted
-            .iter()
-            .filter(|(_, id)| window.contains(id))
-            .copied()
-            .collect(),
-        None => wanted.to_vec(),
-    };
+    let wanted: Vec<_> = wanted
+        .iter()
+        .filter(|(_, id)| window.contains(id))
+        .copied()
+        .collect();
     let unfetched = store.resync(&wanted);
     let before: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
     let added = unfetched.iter().any(|(_, id)| !before.contains(id));
@@ -557,7 +546,7 @@ const EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Trim the cache to its configured limit, keeping the playback window: the
 /// player may be reading those files, and they are what is wanted next.
-/// Without a window, everything in the playlist is kept. `now` skips the
+/// Before the first window is worked out, everything in the playlist is kept. `now` skips the
 /// throttle, for a limit just changed. The limit is read afresh, so one set
 /// in Settings applies without a restart.
 fn trim_cache(inner: &Inner, now: bool) {
@@ -690,10 +679,12 @@ fn follow_playlist(inner: Arc<Inner>) {
             if let Some(cursor_id) = current {
                 promote_cursor(&inner, cursor_id);
             }
-            // With no cache, what the cursor has just left is to go now, not
-            // at the next download: there may be none. After the cursor's
-            // track is on its way, which waits for nothing here.
-            if config::Config::cached().cache_limit_bytes() == Some(0) {
+            // What the window has just left is to go now, not at the next
+            // download: there may be none, and a jump to tracks not yet
+            // fetched would otherwise fill the cache past its limit before
+            // the throttled trim catches up. After the cursor's track is on
+            // its way, which waits for nothing here.
+            if config::Config::cached().cache_limit_bytes().is_some() {
                 trim_cache(&inner, true);
             }
         }
@@ -733,6 +724,12 @@ mod tests {
 
     fn qid() -> QueueItemId {
         QueueItemId::new()
+    }
+
+    /// [`sync_with`] with every entry in the window.
+    fn sync_all(q: &mut Queue, store: &DownloadStore, wanted: &[(i64, QueueItemId)]) -> bool {
+        let window = wanted.iter().map(|(_, id)| *id).collect();
+        sync_with(q, store, wanted, &window)
     }
 
     fn waiters(store: &DownloadStore, db_id: i64) -> HashSet<QueueItemId> {
@@ -910,7 +907,7 @@ mod tests {
         q.pending.extend([(1, old), (2, kept)]);
         store.claim(3, Some(waiter));
 
-        sync_with(&mut q, &store, &[(2, kept)], None);
+        sync_all(&mut q, &store, &[(2, kept)]);
 
         assert_eq!(q.pending, VecDeque::from([(2, kept)]));
         assert!(waiters(&store, 3).is_empty());
@@ -930,18 +927,13 @@ mod tests {
         q.pending.extend([(1, a), (2, b), (3, c)]);
 
         assert!(
-            !sync_with(&mut q, &store, &[(3, c), (1, a), (2, b)], None),
+            !sync_all(&mut q, &store, &[(3, c), (1, a), (2, b)]),
             "nothing new"
         );
         assert_eq!(q.pending, VecDeque::from([(3, c), (1, a), (2, b)]));
 
         let d = qid();
-        assert!(sync_with(
-            &mut q,
-            &store,
-            &[(3, c), (4, d), (1, a), (2, b)],
-            None
-        ));
+        assert!(sync_all(&mut q, &store, &[(3, c), (4, d), (1, a), (2, b)]));
         assert_eq!(q.pending, VecDeque::from([(3, c), (4, d), (1, a), (2, b)]));
     }
 
@@ -969,12 +961,7 @@ mod tests {
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         store.claim(7, Some(running));
 
-        assert!(!sync_with(
-            &mut q,
-            &store,
-            &[(7, running), (7, again)],
-            None
-        ));
+        assert!(!sync_all(&mut q, &store, &[(7, running), (7, again)]));
 
         assert!(q.pending.is_empty());
         assert_eq!(waiters(&store, 7), HashSet::from([running, again]));
@@ -988,7 +975,7 @@ mod tests {
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         store.claim(7, Some(old));
 
-        sync_with(&mut q, &store, &[(7, new)], None);
+        sync_all(&mut q, &store, &[(7, new)]);
 
         assert_eq!(waiters(&store, 7), HashSet::from([new]));
         assert!(!store.abandoned(7));
@@ -1000,11 +987,11 @@ mod tests {
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         let wanted = [(2, next), (3, beyond), (1, played)];
 
-        sync_with(&mut q, &store, &wanted, Some(&HashSet::from([next])));
+        sync_with(&mut q, &store, &wanted, &HashSet::from([next]));
         assert_eq!(q.pending, VecDeque::from([(2, next)]));
 
         // The cursor moves on and the window with it.
-        sync_with(&mut q, &store, &wanted, Some(&HashSet::from([beyond])));
+        sync_with(&mut q, &store, &wanted, &HashSet::from([beyond]));
         assert_eq!(q.pending, VecDeque::from([(3, beyond)]));
     }
 
@@ -1018,12 +1005,7 @@ mod tests {
 
         // The download of the next track lands, the window is worked out
         // again from the cache's new size, and comes out smaller.
-        sync_with(
-            &mut q,
-            &store,
-            &wanted,
-            Some(&HashSet::from([playing, next])),
-        );
+        sync_with(&mut q, &store, &wanted, &HashSet::from([playing, next]));
 
         assert!(!store.abandoned(2), "inside the window: still wanted");
         assert_eq!(waiters(&store, 2), HashSet::from([next]));
@@ -1036,17 +1018,29 @@ mod tests {
         let (inner, ids, _) = queue_over(&[1, 2, 3, 4, 5]);
         let tracks = |cfg: &config::Config| {
             playback_window(&inner.state, cfg)
-                .map(|w| w.into_iter().map(|(track, _)| track).collect::<Vec<_>>())
+                .into_iter()
+                .map(|(track, _)| track)
+                .collect::<Vec<_>>()
         };
         let mut cfg = config::Config::default();
-        assert_eq!(tracks(&cfg), None, "unset: the whole queue");
+        assert_eq!(tracks(&cfg), vec![1, 2, 3, 4, 5], "unset: the whole queue");
 
         cfg.remote.download_ahead = Some(0);
-        assert_eq!(tracks(&cfg), Some(vec![1]), "only what is playing");
+        assert_eq!(tracks(&cfg), vec![1], "only what is playing");
 
         cfg.remote.download_ahead = Some(2);
         inner.state.set_cursor(Some(ids[3].1));
-        assert_eq!(tracks(&cfg), Some(vec![4, 5]), "from the cursor to the end");
+        assert_eq!(tracks(&cfg), vec![4, 5], "from the cursor to the end");
+    }
+
+    #[test]
+    fn the_whole_queue_stops_short_of_a_whole_library() {
+        let tracks: Vec<i64> = (1..=1000).collect();
+        let (inner, ids, _) = queue_over(&tracks);
+        inner.state.set_cursor(Some(ids[0].1));
+        let window = playback_window(&inner.state, &config::Config::default());
+        assert_eq!(window.len(), WHOLE_QUEUE_AHEAD as usize + 1);
+        assert_eq!(window[0], ids[0], "from the cursor");
     }
 
     #[test]
@@ -1054,11 +1048,11 @@ mod tests {
         let (inner, _, _) = queue_over(&[1, 2, 3, 4]);
         let mut cfg = config::Config::default();
         cfg.remote.cache_limit = Some("0GB".into());
-        let window = playback_window(&inner.state, &cfg).expect("a limit makes a window");
+        let window = playback_window(&inner.state, &cfg);
         assert_eq!(window.len(), 4, "the whole queue, not a track or two");
 
         cfg.remote.download_ahead = Some(1);
-        let window = playback_window(&inner.state, &cfg).expect("a window");
+        let window = playback_window(&inner.state, &cfg);
         assert_eq!(window.len(), 2);
     }
 
@@ -1071,7 +1065,6 @@ mod tests {
         let mut cfg = config::Config::default();
         cfg.remote.cache_limit = Some("0".into());
         let window: Vec<i64> = playback_window(&inner.state, &cfg)
-            .expect("a window")
             .into_iter()
             .map(|(track, _)| track)
             .collect();
@@ -1091,7 +1084,6 @@ mod tests {
         cfg.remote.cache_limit = Some("0".into());
         cfg.remote.download_ahead = Some(3);
         let window: Vec<i64> = playback_window(&inner.state, &cfg)
-            .expect("a window")
             .into_iter()
             .map(|(track, _)| track)
             .collect();
