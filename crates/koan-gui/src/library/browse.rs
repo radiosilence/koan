@@ -11,6 +11,10 @@ use koan_kit::app::*;
 use koan_runtime::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use serde::{Deserialize, Serialize};
 
+/// The sorts before any is chosen.
+const DEFAULT_ALBUM_SORT: AlbumSort = AlbumSort::RecentlyAdded;
+const DEFAULT_TRACK_SORT: TrackBrowseSort = TrackBrowseSort::Artist;
+
 pub struct Browse {
     writer: Writer,
     pub filter: BrowseFilter,
@@ -46,12 +50,12 @@ impl Browse {
                 .album_sort
                 .as_deref()
                 .and_then(album_sort)
-                .unwrap_or(AlbumSort::RecentlyAdded),
+                .unwrap_or(DEFAULT_ALBUM_SORT),
             track_sort: stored
                 .track_sort
                 .as_deref()
                 .and_then(track_sort)
-                .unwrap_or(TrackBrowseSort::Artist),
+                .unwrap_or(DEFAULT_TRACK_SORT),
             seed: seed(),
         }
     }
@@ -64,8 +68,8 @@ impl Browse {
             writer: Writer::spawn(),
             filter: BrowseFilter::default(),
             search: String::new(),
-            album_sort: AlbumSort::RecentlyAdded,
-            track_sort: TrackBrowseSort::Artist,
+            album_sort: DEFAULT_ALBUM_SORT,
+            track_sort: DEFAULT_TRACK_SORT,
             seed: seed(),
         }
     }
@@ -77,7 +81,7 @@ impl Browse {
         if album_sorts(&self.filter, self.search().is_some()).contains(&self.album_sort) {
             self.album_sort
         } else {
-            AlbumSort::RecentlyAdded
+            DEFAULT_ALBUM_SORT
         }
     }
 
@@ -85,7 +89,7 @@ impl Browse {
         if track_sorts(&self.filter, self.search().is_some()).contains(&self.track_sort) {
             self.track_sort
         } else {
-            TrackBrowseSort::Artist
+            DEFAULT_TRACK_SORT
         }
     }
 
@@ -134,6 +138,16 @@ impl Browse {
     pub fn reshuffle(&mut self, cx: &mut Context<Self>) {
         self.seed = seed();
         cx.notify();
+    }
+
+    /// No filter and the default sorts, as a reset to defaults leaves them.
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.update(cx, |browse| {
+            browse.filter = BrowseFilter::default();
+            browse.search.clear();
+            browse.album_sort = DEFAULT_ALBUM_SORT;
+            browse.track_sort = DEFAULT_TRACK_SORT;
+        });
     }
 
     fn save(&self) {
@@ -206,6 +220,16 @@ pub const STATE: &str = "gui-state.json";
 
 fn path() -> PathBuf {
     koan_core::places::state().join(STATE)
+}
+
+/// Removes the stored file, so the next `load` reads the defaults. Blocking:
+/// call it off the main thread.
+pub fn forget_stored() {
+    match std::fs::remove_file(path()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("could not remove {STATE}: {e}"),
+    }
 }
 
 fn seed() -> i64 {

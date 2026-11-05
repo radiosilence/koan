@@ -38,6 +38,7 @@ pub mod field;
 mod filter_field;
 pub mod focus_trap;
 mod form;
+mod guide;
 mod heart;
 mod inspector;
 mod layer;
@@ -129,6 +130,7 @@ pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,
 };
+pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};

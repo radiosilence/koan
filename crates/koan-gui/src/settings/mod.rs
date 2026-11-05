@@ -7,12 +7,12 @@
 //! row, the pane chosen, the status line and the sheet slot, the pane a
 //! cached view of its own that observes what it draws.
 
-mod form;
+pub(crate) mod form;
 pub mod model;
 pub(crate) mod panes;
 mod qr;
 pub mod sharing;
-mod sheet;
+pub(crate) mod sheet;
 
 use std::sync::Arc;
 
@@ -36,6 +36,13 @@ pub struct Settings {
 }
 
 impl Global for Settings {}
+
+impl Settings {
+    /// Whether the Settings window is open.
+    pub fn is_open(&self) -> bool {
+        self.window.is_some()
+    }
+}
 
 /// Makes the model and sharing, and applies the saved appearance. Call once
 /// the mirror is installed.
@@ -65,6 +72,12 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         }
     })
     .detach();
+    apply_appearance(engine, cx);
+}
+
+/// Draws the app as `[appearance]` says: as it opens, and once the settings
+/// are reset.
+pub fn apply_appearance(engine: Arc<KoanEngine>, cx: &mut App) {
     // `appearance` waits for saves still landing, so it is read off the
     // main thread.
     let read = cx
@@ -79,6 +92,7 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
             KoanTheme::set_wash_window(saved.wash_window, cx);
             cx.global_mut::<KoanTheme>().icons = saved.icons;
             KoanTheme::set_text_size(u32::from(saved.text_size), cx);
+            cx.refresh_windows();
         });
     })
     .detach();
@@ -145,6 +159,8 @@ pub fn answer(link: Incoming, cx: &mut App) {
         model.update(cx, |m, cx| m.when_loaded(cx, move |cx| answer(link, cx)));
         return;
     }
+    // Settings takes it from here, on a pane of its own.
+    crate::setup::close(cx);
     open(cx);
     let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
@@ -293,9 +309,19 @@ impl SettingsWindow {
                     this.forget_settled_pairs(window, cx);
                 }
             }),
-            cx.on_release(|_, cx| {
-                if cx.has_global::<Settings>() {
-                    cx.global_mut::<Settings>().window = None;
+            // Only this window's: one opened after it, before this one was
+            // let go of, stays.
+            cx.on_release({
+                let id = window.window_handle().window_id();
+                move |_, cx| {
+                    if let Some(settings) = cx.try_global::<Settings>()
+                        && settings
+                            .window
+                            .as_ref()
+                            .is_some_and(|(h, _)| h.window_id() == id)
+                    {
+                        cx.global_mut::<Settings>().window = None;
+                    }
                 }
             }),
         ];
@@ -625,15 +651,21 @@ impl SettingsWindow {
     }
 }
 
-/// As the window closes: sheets left unanswered are answered the way their
-/// Cancel would be, and those showing something only once go to the next
-/// Settings window.
+/// As the Settings window closes: it stops being the Settings window, and
+/// its sheets are handed on (`hand_on_unanswered`).
 fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
     // No longer the Settings window: what it hands on below waits for the
     // next one rather than coming back to this one as it goes.
     if cx.has_global::<Settings>() {
         cx.global_mut::<Settings>().window = None;
     }
+    hand_on_unanswered(sheets, window, cx);
+}
+
+/// As any window holding Settings' sheets closes: those left unanswered
+/// are answered the way their Cancel would be, and those showing something
+/// only once go to the next Settings window.
+pub(crate) fn hand_on_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
     for dismissed in sheets.read(cx).unanswered() {
         dismissed(window, cx);
     }
@@ -650,7 +682,7 @@ fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App)
 /// The result of the last action, or why it failed: one line, always in the
 /// same place, since an action that reports nothing looks like it did
 /// nothing.
-fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
+pub(crate) fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
     let running: Vec<&str> = model.running().map(SharedString::as_ref).collect();
     let (text, tone, icon) = match (&model.last_error, &model.last_result) {
         (Some(error), _) => (error.clone(), Tone::Bad, Some(Icon::WarningFilled)),
