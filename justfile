@@ -541,13 +541,24 @@ ios-bundle: ios-ffi
 # `just kit-ios rainbow` opens it on that page (by its slug); a second
 # argument, an absolute path, saves a screenshot once it has drawn.
 kit-ios story="" shot="":
+    just _gpui-sim koan-kit cc.blit.koan.storybook "KOAN_STORY={{story}}" "{{shot}}"
+
+# The kōan GUI app on an iOS simulator, as `kit-ios` runs the storybook: the
+# desktop app's code as it stands, built for the phone; an absolute path
+# saves a screenshot once it has drawn.
+gui-ios shot="":
+    just _gpui-sim koan-gui cc.blit.koan.gpui "" "{{shot}}"
+
+# A GPUI crate's binary bundled with its `ios/Info.plist`, installed and
+# launched on a single-screen iPhone simulator with one `NAME=value` set.
+_gpui-sim crate bundle env shot:
     #!/usr/bin/env bash
     set -euo pipefail
-    IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p koan-kit --bin koan-kit --target aarch64-apple-ios-sim
-    app=target/kit-ios/storybook.app
+    IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p {{crate}} --bin {{crate}} --target aarch64-apple-ios-sim
+    app=target/{{crate}}-ios/{{crate}}.app
     rm -rf "$app" && mkdir -p "$app"
-    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios-sim/debug/koan-kit" "$app/koan-kit"
-    cp crates/koan-kit/ios/Info.plist "$app/Info.plist"
+    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios-sim/debug/{{crate}}" "$app/{{crate}}"
+    cp crates/{{crate}}/ios/Info.plist "$app/Info.plist"
     codesign --force --sign - "$app"
     device=$(xcrun simctl list devices available -j \
         | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
@@ -555,8 +566,9 @@ kit-ios story="" shot="":
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" "$app"
-    xcrun simctl terminate "$device" cc.blit.koan.storybook 2>/dev/null || true
-    SIMCTL_CHILD_KOAN_STORY="{{story}}" xcrun simctl launch "$device" cc.blit.koan.storybook
+    xcrun simctl terminate "$device" {{bundle}} 2>/dev/null || true
+    env=(); [ -n "{{env}}" ] && env=("SIMCTL_CHILD_{{env}}")
+    env ${env[@]+"${env[@]}"} xcrun simctl launch "$device" {{bundle}}
     if [ -n "{{shot}}" ]; then
         sleep 8
         xcrun simctl io "$device" screenshot --display=1 "{{shot}}"
