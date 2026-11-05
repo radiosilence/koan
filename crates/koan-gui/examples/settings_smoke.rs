@@ -109,9 +109,11 @@ fn main() -> Result {
     ui.until("the address is written", |cx| {
         settings(cx).is_some_and(|s| s.server_url == "https://smoke.example")
     })?;
-    ui.until("sharing restarts", |cx| serving(cx).is_some())?;
+    ui.until("still serving after the change", |cx| serving(cx).is_some())?;
     ui.choose("invite phones to", "This network")?;
-    ui.settle()?;
+    ui.until("invites go to this network", |cx| {
+        settings(cx).is_some_and(|s| s.share_invite_to == koan_runtime::InviteTo::Network)
+    })?;
     println!("invites changed");
 
     // Another port, which restarts the server on it.

@@ -53,6 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let application = koan_kit::app::platform::application().with_assets(theme::icons::Assets);
     application.run(move |cx| {
         theme::init(cx);
+        // Closing the main window must not end the run, wherever the
+        // platform would quit on the last window.
+        cx.set_quit_mode(QuitMode::Explicit);
         // No session to restore: the window opens at once.
         app::start(engine, async { None }, cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
@@ -70,12 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 async fn churn(cx: &mut AsyncApp) -> Result<(), Box<dyn Error>> {
     let beat = |cx: &mut AsyncApp| cx.background_executor().timer(BEAT);
-    for _ in 0..40 {
-        if cx.update(|cx| app::main_window(cx)).is_some() {
-            break;
-        }
-        beat(cx).await;
-    }
+    opened(cx).await;
     let sizes = [
         (1200.0, 750.0),
         (900.0, 600.0),
@@ -120,11 +118,22 @@ async fn churn(cx: &mut AsyncApp) -> Result<(), Box<dyn Error>> {
         }
         if round % 2 == 1 {
             cx.update(app::show_window);
-            beat(cx).await;
+            opened(cx).await;
         }
         println!("round {}", round + 1);
     }
     Ok(())
+}
+
+/// Waits for the main window to open, up to ten seconds: it opens once its
+/// saved bounds are read, off the main thread.
+async fn opened(cx: &mut AsyncApp) {
+    for _ in 0..40 {
+        if cx.update(|cx| app::main_window(cx)).is_some() {
+            return;
+        }
+        cx.background_executor().timer(BEAT).await;
+    }
 }
 
 /// Refuses any configuration but a throwaway one: not the person's own,

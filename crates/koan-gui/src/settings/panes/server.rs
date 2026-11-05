@@ -102,9 +102,11 @@ impl ServerPane {
             cx.observe(&ctx.sharing, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
             // Sign In is enabled by what the fields hold.
-            cx.observe(&url, |_, _, cx| cx.notify()),
-            cx.observe(&username, |_, _, cx| cx.notify()),
-            cx.observe(&secret, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&username, window, |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.observe(&cache, |_, _, cx| cx.notify()),
             // An invite, or an address with the account in it, pasted where
             // the address goes.
@@ -115,14 +117,19 @@ impl ServerPane {
                     if matches!(event, InputEvent::Change) {
                         let typed = state.read(cx).value().to_string();
                         pane.join(&typed, true, window, cx);
+                        cx.notify();
                     }
                 },
             ),
-            cx.subscribe_in(&secret, window, |pane, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    pane.sign_in(cx);
-                }
-            }),
+            cx.subscribe_in(
+                &secret,
+                window,
+                |pane, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::PressEnter { .. } => pane.sign_in(cx),
+                    InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            ),
             cx.subscribe_in(
                 &cache_limit,
                 window,
@@ -155,6 +162,22 @@ impl ServerPane {
             cache,
             share,
             _subscriptions: subscriptions,
+        }
+    }
+
+    /// The side this device is on: sharing, while the setting or a server
+    /// says so.
+    fn doing(&self, cx: &App) -> Mode {
+        let enabled = self
+            .ctx
+            .model
+            .read(cx)
+            .settings()
+            .is_some_and(|s| s.share_enabled);
+        if enabled || self.ctx.sharing.read(cx).serving.is_some() {
+            Mode::Share
+        } else {
+            Mode::Connect
         }
     }
 
@@ -776,11 +799,7 @@ impl Render for ServerPane {
         let entity = cx.entity();
         let sharing = self.ctx.sharing.read(cx);
         let status = mode_label(sharing, &connection);
-        let doing = if settings.share_enabled || sharing.serving.is_some() {
-            Mode::Share
-        } else {
-            Mode::Connect
-        };
+        let doing = self.doing(cx);
         self.chosen = stay(self.shown, self.chosen, doing);
         let mode = self.chosen.unwrap_or(doing);
         self.shown = Some(mode);
@@ -798,6 +817,9 @@ impl Render for ServerPane {
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {
+                                // Against what the device does now, which may
+                                // have moved since the pane was drawn.
+                                let doing = pane.doing(cx);
                                 // The side asked for is the side shown, so
                                 // `stay` does not hold the one left.
                                 pane.shown = Some(mode);
