@@ -20,12 +20,12 @@ use gpui::*;
 
 use crate::components::{
     Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, Cover,
-    CoverArt, EmptyState, FormRow, IconToggle, KoanInsets, Level, ListRow, Menu, MenuEntry,
-    MenuPanel, MenuRow, NavRow, PageHeader, Picker, Placeholder, ProgressBar, ProgressRing,
-    ProgressRow, RowKind, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar,
-    Slider, Sparkline, Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea,
-    TextField, TileArt, TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle,
-    Tooltip,
+    CoverArt, DragChip, EmptyState, FormRow, INSERTION, IconToggle, KoanContextMenu, KoanInsets,
+    Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, NavRow, PageHeader, Picker, Placeholder,
+    ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea, SectionHeader, SectionHeading,
+    Segmented, SelectionBar, Slider, Sparkline, Spinner, StatusBlock, StatusLine, Stepper,
+    TabStrip, TableRow, TextArea, TextField, TileArt, TileMark, TileSleeve, Toggle, Toolbar,
+    ToolbarButton, ToolbarTitle, Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -209,6 +209,8 @@ pub struct StoryContent {
     /// On a narrow window, whether the pages and the controls are open over
     /// the page, from the menu button.
     menu_open: bool,
+    /// The list rows' order, as dragging leaves it: indices into `ROWS`.
+    rows: Vec<usize>,
     _accent: Subscription,
 }
 
@@ -299,6 +301,7 @@ impl StoryContent {
             more: more::State::new(window, cx),
             playground: playground::State::new(),
             menu_open: false,
+            rows: (0..ROWS.len()).collect(),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -776,37 +779,69 @@ impl StoryContent {
             }
             Story::Rows => {
                 let selected_row = self.selected_row;
+                let accent = look.accent.hsla();
                 vec![
                     SectionHeader::new("List rows").into_any_element(),
                     div()
                         .flex()
                         .flex_col()
                         .children(
-                            [
-                                ("1", "Shoreline Pinball", "Low Tide Arcade", "3:41"),
-                                ("2", "Coin Return", "Low Tide Arcade", "4:02"),
-                                ("3", "Neon Breakwater", "Low Tide Arcade", "5:17"),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            .map(
-                                |(index, (number, title, detail, length))| {
-                                    let entity = entity.clone();
-                                    ListRow::new(("row", index))
-                                        .number(number)
-                                        .title(title)
-                                        .detail(detail)
-                                        .figure(length)
-                                        .selected(index == selected_row)
-                                        .playing(index == 2)
-                                        .on_click(move |_, _, cx| {
-                                            entity.update(cx, |story, cx| {
-                                                story.selected_row = index;
-                                                cx.notify();
-                                            })
+                            self.rows.iter().enumerate().map(|(at, &track)| {
+                                let (title, length) = ROWS[track];
+                                let entity = entity.clone();
+                                let dropped = entity.clone();
+                                // Held, a row opens its menu; held and moved,
+                                // it lifts and drops between the others.
+                                div()
+                                    .id(("row-drag", track))
+                                    .on_drag(RowDrag(track), |row, _, _, cx| {
+                                        let title = ROWS[row.0].0;
+                                        cx.new(|_| RowChip(title))
+                                    })
+                                    .drag_over::<RowDrag>(move |style, _, _, _| {
+                                        style.border_t(INSERTION).border_color(accent)
+                                    })
+                                    .on_drop(move |row: &RowDrag, _, cx| {
+                                        dropped.update(cx, |story, cx| {
+                                            story.rows.retain(|&t| t != row.0);
+                                            let at = at.min(story.rows.len());
+                                            story.rows.insert(at, row.0);
+                                            cx.notify();
                                         })
-                                },
-                            ),
+                                    })
+                                    .child(
+                                        ListRow::new(("row", track))
+                                            .number((at + 1).to_string())
+                                            .title(title)
+                                            .detail("Low Tide Arcade")
+                                            .figure(length)
+                                            .selected(track == selected_row)
+                                            .playing(track == 2)
+                                            .on_click(move |_, _, cx| {
+                                                entity.update(cx, |story, cx| {
+                                                    story.selected_row = track;
+                                                    cx.notify();
+                                                })
+                                            }),
+                                    )
+                                    .koan_context_menu(
+                                        ("row-menu", track),
+                                        window,
+                                        cx,
+                                        |menu, _, _| {
+                                            menu.item(
+                                                MenuEntry::new("play next")
+                                                    .icon(Icon::Play)
+                                                    .on_click(|_, _, _| {}),
+                                            )
+                                            .item(
+                                                MenuEntry::new("remove")
+                                                    .destructive()
+                                                    .on_click(|_, _, _| {}),
+                                            )
+                                        },
+                                    )
+                            }),
                         )
                         .into_any_element(),
                     SectionHeader::new("Table rows").into_any_element(),
@@ -1205,6 +1240,27 @@ impl Render for StoryContent {
                 page
             })
             .children(viewer)
+    }
+}
+
+/// The rows page's tracks: a title and a length.
+const ROWS: [(&str, &str); 5] = [
+    ("Shoreline Pinball", "3:41"),
+    ("Coin Return", "4:02"),
+    ("Neon Breakwater", "5:17"),
+    ("Tilt", "2:58"),
+    ("High Score at Dusk", "6:30"),
+];
+
+/// A row of the rows page being dragged, by its index into `ROWS`.
+struct RowDrag(usize);
+
+/// What a dragged row shows under the finger.
+struct RowChip(&'static str);
+
+impl Render for RowChip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        DragChip::new(self.0)
     }
 }
 
