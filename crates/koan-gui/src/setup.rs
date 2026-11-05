@@ -267,7 +267,7 @@ pub struct SetupWindow {
 }
 
 impl SetupWindow {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = cx.global::<Settings>();
         let ctx = Ctx {
             model: settings.model.clone(),
@@ -359,7 +359,21 @@ impl SetupWindow {
         cx.notify();
     }
 
-    fn next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Makes the choices a person would, for tools that draw the guide
+    /// offscreen: music here (and shared or not) or on a server.
+    #[doc(hidden)]
+    pub fn choose(&mut self, here: bool, share: bool) {
+        self.music = Some(if here { Music::Here } else { Music::Server });
+        self.share = here.then_some(share);
+    }
+
+    /// The step showing, by its name.
+    pub fn step(&self) -> &'static str {
+        self.step.name()
+    }
+
+    /// On to the next step, or done after the last.
+    pub fn next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let steps = self.steps();
         match steps.iter().position(|s| *s == self.step) {
             Some(at) if at + 1 < steps.len() => self.go(steps[at + 1], window, cx),
