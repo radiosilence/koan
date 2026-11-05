@@ -40,6 +40,8 @@ pub enum Route {
     Settings,
     /// A section of Settings, as a phone's screen.
     SettingsSection(crate::settings::Tab),
+    /// EQ, as a phone's screen.
+    Eq,
 }
 
 /// A shelf, as a route names it.

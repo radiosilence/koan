@@ -26,6 +26,9 @@ pub fn init(cx: &mut App) {
 
 /// Shows EQ for `device`, or for the output in use.
 pub fn open(device: Option<String>, cx: &mut App) {
+    if crate::mobile::open_eq(device.clone(), cx) {
+        return;
+    }
     if !cx.has_global::<EqWindow>() {
         let dsp = Dsp::new(engine(cx), cx);
         cx.set_global(EqWindow { dsp, window: None });

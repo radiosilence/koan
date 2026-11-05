@@ -4502,6 +4502,7 @@ dependencies = [
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-avf-audio",
  "objc2-foundation 0.3.2",
  "parking_lot 0.13.0",
  "serde",

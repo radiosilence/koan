@@ -983,12 +983,17 @@ fn row_menu(
     if let Some(lib) = lib.as_ref().filter(|_| !picked.is_empty()) {
         menu = actions::playlist_submenu(menu.separator(), lib, picked, None, window, cx);
     }
-    menu = menu
-        .separator()
-        .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
-            let (tracks, title) = (tracks.clone(), title.clone());
-            move |_, window, cx| crate::organize::open(title.clone(), tracks.clone(), window, cx)
-        }));
+    // A phone keeps no folders of its own to organise, as on iOS.
+    if !crate::mobile::phone() {
+        menu = menu
+            .separator()
+            .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
+                let (tracks, title) = (tracks.clone(), title.clone());
+                move |_, window, cx| {
+                    crate::organize::open(title.clone(), tracks.clone(), window, cx)
+                }
+            }));
+    }
     if let (Some(lib), Some(track)) = (lib, one.as_ref().and_then(|item| item.track_id)) {
         let favourited = lib.feed.read(cx).is_favourite(Playable::Track(track));
         menu = menu.item(

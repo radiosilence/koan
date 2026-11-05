@@ -33,6 +33,53 @@ const TABS: [(Route, &str, Icon); 3] = [
     (Route::Settings, "settings", Icon::Settings),
 ];
 
+/// The phone's shell, for what opens a window on a desktop (Settings, EQ, a
+/// link Settings answers) to open its screen instead.
+struct Screens(WeakEntity<PhoneShell>);
+
+impl Global for Screens {}
+
+/// On a phone, runs `f` on the shell in its window: whether it did.
+fn on_shell(
+    cx: &mut App,
+    f: impl FnOnce(&mut PhoneShell, &mut Window, &mut Context<PhoneShell>),
+) -> bool {
+    let Some(shell) = cx.try_global::<Screens>().and_then(|s| s.0.upgrade()) else {
+        return false;
+    };
+    let Some(window) = crate::app::main_window(cx) else {
+        return false;
+    };
+    window
+        .update(cx, |_, window, cx| {
+            shell.update(cx, |s, cx| f(s, window, cx))
+        })
+        .is_ok()
+}
+
+/// Settings, on `tab` or on its list of sections: on a phone, its screen on
+/// the Settings tab. Whether the phone took it.
+pub fn open_settings(tab: Option<crate::settings::Tab>, cx: &mut App) -> bool {
+    on_shell(cx, |shell, window, cx| shell.go_settings(tab, window, cx))
+}
+
+/// A link Settings answers (an invite, a pairing), on a phone: on its
+/// section's screen. Whether the phone took it.
+pub fn answer_settings(link: crate::settings::Incoming, cx: &mut App) -> bool {
+    on_shell(cx, |shell, window, cx| {
+        let settings = shell.settings(window, cx);
+        settings.update(cx, |s, cx| s.answer(link, window, cx));
+        let tab = settings.read(cx).tab();
+        shell.go_settings(Some(tab), window, cx);
+    })
+}
+
+/// EQ for `device`, or the output in use: on a phone, its screen on the tab
+/// showing. Whether the phone took it.
+pub fn open_eq(device: Option<String>, cx: &mut App) -> bool {
+    on_shell(cx, |shell, window, cx| shell.go_eq(device, window, cx))
+}
+
 pub struct PhoneShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
@@ -49,6 +96,8 @@ pub struct PhoneShell {
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription)>,
+    /// EQ's model and page, made on first showing and kept.
+    eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
     /// The search sheet over the tab showing, while it is open.
     search: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     _subscriptions: Vec<Subscription>,
@@ -64,6 +113,7 @@ impl PhoneShell {
             transport
         });
         window.focus(&queue.focus_handle(cx), cx);
+        cx.set_global(Screens(cx.weak_entity()));
         let navigator = nav.clone();
         cx.spawn_in(window, async move |this, cx| {
             let browse = cx
@@ -121,6 +171,7 @@ impl PhoneShell {
             downloads: None,
             settings: None,
             search: None,
+            eq: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
@@ -266,7 +317,10 @@ impl PhoneShell {
             }
             Route::Settings => {
                 let settings = self.settings(window, cx);
-                let tabs = settings.read(cx).tabs(cx);
+                // No Library pane: a phone keeps no folders to scan, and
+                // its library is the server's, as on iOS.
+                let mut tabs = settings.read(cx).tabs(cx);
+                tabs.retain(|tab| *tab != crate::settings::Tab::Library);
                 let nav = self.nav.clone();
                 crate::components::ScrollArea::new(
                     "settings-sections",
@@ -292,6 +346,10 @@ impl PhoneShell {
                 )
                 .into_any_element()
             }
+            Route::Eq => match &self.eq {
+                Some((_, page)) => page.clone().cached(full()).into_any_element(),
+                None => div().size_full().into_any_element(),
+            },
             Route::SettingsSection(tab) => {
                 let settings = self.settings(window, cx);
                 // Back and forward land here too: the pane follows the route.
@@ -314,6 +372,7 @@ impl PhoneShell {
             Route::Queue => Some("queue"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
+            Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
             Route::History => Some("history"),
@@ -334,6 +393,51 @@ impl PhoneShell {
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
             )
+    }
+
+    /// Settings' tab, on `tab`'s screen or its list of sections.
+    fn go_settings(
+        &mut self,
+        tab: Option<crate::settings::Tab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.now_playing = None;
+        self.search = None;
+        let at = TABS
+            .iter()
+            .position(|(root, ..)| *root == Route::Settings)
+            .unwrap_or(0);
+        self.nav.update(cx, |nav, cx| {
+            if nav.tab() != at {
+                nav.switch(at, Route::Settings);
+            }
+            if let Some(tab) = tab {
+                nav.go(Route::SettingsSection(tab));
+            }
+            cx.notify();
+        });
+        if let Some(tab) = tab {
+            let settings = self.settings(window, cx);
+            settings.update(cx, |s, cx| s.choose(tab, window, cx));
+        }
+    }
+
+    /// EQ's screen on the tab showing.
+    fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.now_playing = None;
+        match &self.eq {
+            Some((_, page)) => page.update(cx, |p, cx| p.show(device, cx)),
+            None => {
+                let dsp = crate::dsp::Dsp::new(crate::engine::engine(cx), cx);
+                let page = cx.new(|cx| crate::dsp::EqPage::new(dsp.clone(), device, window, cx));
+                self.eq = Some((dsp, page));
+            }
+        }
+        self.nav.update(cx, |nav, cx| {
+            nav.go(Route::Eq);
+            cx.notify();
+        });
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that

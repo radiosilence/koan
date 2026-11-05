@@ -237,6 +237,12 @@ impl RenderOnce for PageHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let p = look.palette;
+        // At a phone's width the text beside a cover has no room: the cover,
+        // then the title and detail, then the controls in one row, as the
+        // iOS app's record pages stack.
+        if window.viewport_size().width < px(NARROW) {
+            return self.stacked(&look).into_any_element();
+        }
         // The whole row's width, whatever holds it: a list item sizes to its
         // content, and the text beside a cover would collapse to nothing.
         div()
@@ -315,6 +321,61 @@ impl RenderOnce for PageHeader {
                     .gap(look.space(Space::L))
                     .child(t)
             }))
+            .into_any_element()
+    }
+}
+
+/// The width below which a page header stacks: a phone held upright.
+const NARROW: f32 = 600.0;
+
+impl PageHeader {
+    fn stacked(self, look: &Look) -> impl IntoElement {
+        let p = look.palette;
+        let title = super::accessible(
+            div().id(ElementId::Name(format!("page-title-{}", self.title).into())),
+            gpui::Role::Heading,
+            Some(self.title.clone()),
+        )
+        .aria_level(1)
+        .text_role(TypeRole::Title, look)
+        .text_color(p.strong.hsla())
+        .line_clamp(3)
+        .child(self.title);
+        #[cfg(test)]
+        let title = title.debug_selector(|| "page-header-title".into());
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(look.spaced(10.0))
+            .children(self.art)
+            .child(title)
+            .when(self.detail.is_some() || !self.badges.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(look.space(Space::S))
+                        .text_role(TypeRole::Control, look)
+                        .text_color(p.muted.hsla())
+                        .children(self.detail)
+                        .children(self.badges),
+                )
+            })
+            .when(!self.lead.is_empty() || !self.actions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(look.space(Space::M))
+                        .children(self.lead)
+                        .children(self.actions),
+                )
+            })
+            .children(self.body)
+            .children(self.trailing)
     }
 }
 

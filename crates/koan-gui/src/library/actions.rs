@@ -384,11 +384,13 @@ pub fn menu(
     if let Some(why) = unavailable {
         menu = menu.note(why);
     }
-    // Moving the pick's files where a pattern puts them, previewed first.
-    let (organise_lib, organise_items, organise_after) =
-        (lib.clone(), items.clone(), after.clone());
-    menu =
-        menu.separator()
+    // Moving the pick's files where a pattern puts them, previewed first. A
+    // phone keeps no folders of its own to organise, as on iOS.
+    if !crate::mobile::phone() {
+        let (organise_lib, organise_items, organise_after) =
+            (lib.clone(), items.clone(), after.clone());
+        menu = menu
+            .separator()
             .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click(
                 move |_, window, cx| {
                     organise(&organise_lib, &organise_items, window, cx);
@@ -397,6 +399,7 @@ pub fn menu(
                     }
                 },
             ));
+    }
     // A remote library's files on this device: fetched now, or let go.
     let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
     let (drop_lib, drop_items) = (lib.clone(), items.clone());
