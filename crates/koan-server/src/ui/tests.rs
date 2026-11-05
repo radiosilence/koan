@@ -371,6 +371,21 @@ async fn signing_out_revokes_the_refresh_token() {
 }
 
 #[tokio::test]
+async fn scripts_are_compressed_for_a_browser_that_accepts_it() {
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        get("/ui/assets/datastar.js")
+            .header(header::ACCEPT_ENCODING, "br, gzip")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_ENCODING], "br");
+}
+
+#[tokio::test]
 async fn streams_serve_ranges_to_a_signed_in_user() {
     let f = setup(true);
     let uri = format!("/ui/stream/{}", f.track_id);
@@ -378,6 +393,7 @@ async fn streams_serve_ranges_to_a_signed_in_user() {
         &f.app,
         authed(&f.state, &uri)
             .header(header::RANGE, "bytes=2-4")
+            .header(header::ACCEPT_ENCODING, "br")
             .body(Body::empty())
             .unwrap(),
     )
@@ -386,6 +402,7 @@ async fn streams_serve_ranges_to_a_signed_in_user() {
         (r.status, r.body.as_str()),
         (StatusCode::PARTIAL_CONTENT, "234")
     );
+    assert!(!r.headers.contains_key(header::CONTENT_ENCODING));
     let r = send(&f.app, get(&uri).body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     let r = send(
