@@ -379,13 +379,13 @@ impl Transport {
                 if event.source != ScrollSource::Touch {
                     return;
                 }
-                let dy = event.delta.pixel_delta(px(16.)).y;
+                let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
                 match event.touch_phase {
                     koan_kit::app::platform::TouchPhase::Started => {
-                        this.pull = Some(dy.max(px(0.)))
+                        this.pull = Some(dy.max(Pixels::ZERO))
                     }
                     koan_kit::app::platform::TouchPhase::Moved => match this.pull {
-                        Some(by) => this.pull = Some((by + dy).max(px(0.))),
+                        Some(by) => this.pull = Some((by + dy).max(Pixels::ZERO)),
                         // A fling's coasting after the release decided.
                         None => return,
                     },
