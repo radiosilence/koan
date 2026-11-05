@@ -6,6 +6,8 @@
 
 use gpui::prelude::*;
 use gpui::*;
+
+use crate::components::KoanTouchDrag as _;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -367,6 +369,7 @@ impl StoryContent {
             .border(HAIRLINE)
             .border_color(look.palette.rule.hsla())
             .child(plot)
+            .koan_touch_drag(look)
             .on_mouse_down(MouseButton::Left, move |event, _, cx| {
                 down.update(cx, |story, cx| {
                     let state = &mut story.playground;

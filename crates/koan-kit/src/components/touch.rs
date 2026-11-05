@@ -27,6 +27,45 @@ pub trait KoanLongPress: ParentElement + Sized {
 
 impl<E: ParentElement> KoanLongPress for E {}
 
+/// Under touch, an element dragged by the pointer (a slider, a handle, a
+/// divider) dragged by a finger: a touch that lands on it is its drag from
+/// the start, never a scroll, and arrives as the pointer's press, moves with
+/// the button held and release, so its pointer handling serves both.
+pub trait KoanTouchDrag: ParentElement + Sized {
+    fn koan_touch_drag(self, look: &Look) -> Self {
+        if !look.touch {
+            return self;
+        }
+        self.child(touch_drag())
+    }
+}
+
+impl<E: ParentElement> KoanTouchDrag for E {}
+
+/// A layer over its parent, leaving what is under it hovered, that claims a
+/// touch drag starting over it unless one drawn above claimed it first.
+fn touch_drag() -> impl IntoElement {
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            window.on_mouse_event(move |event: &TouchDragEvent, phase, window, _| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == TouchPhase::Started
+                    && !window.default_prevented()
+                    && hitbox.is_hovered(window)
+                {
+                    window.prevent_default();
+                    window.carry_touch_drag_as_pointer();
+                }
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 pub(crate) type Pressed = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
 pub(crate) type Lifted = Rc<dyn Fn(&mut Window, &mut App)>;
 
