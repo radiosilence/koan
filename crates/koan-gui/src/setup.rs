@@ -147,8 +147,9 @@ pub fn after_reset(cx: &mut App) {
     // A guide already open starts again from the beginning.
     if let Some((handle, view)) = cx.try_global::<Slot>().and_then(|slot| slot.0.clone()) {
         handle
-            .update(cx, |_, _, cx| {
-                view.update(cx, |setup, cx| setup.start_over(cx)).ok();
+            .update(cx, |_, window, cx| {
+                view.update(cx, |setup, cx| setup.start_over(window, cx))
+                    .ok();
             })
             .ok();
     }
@@ -363,8 +364,11 @@ impl SetupWindow {
         steps(self.music, self.share)
     }
 
-    /// Back to the first step with nothing chosen, as after a reset.
-    fn start_over(&mut self, cx: &mut Context<Self>) {
+    /// Back to the first step with nothing chosen, as after a reset. A
+    /// question left open is answered as its Cancel would be, since it was
+    /// about what the reset has changed.
+    fn start_over(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::settings::hand_on_unanswered(&self.ctx.sheets, window, cx);
         self.music = None;
         self.share = None;
         self.step = Step::Welcome;

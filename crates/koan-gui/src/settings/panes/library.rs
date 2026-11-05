@@ -65,22 +65,34 @@ impl LibraryPane {
                 count(tracks)
             ));
         }
-        message.push("config.toml is kept beside itself as config.toml.bak. config.local.toml, which holds passwords and keys, is emptied. The output kōan is playing through, and whether it is muted, stay as they are until it next opens one. kōan no longer opens at login.".into());
+        use crate::platform::residency::{self, Login};
+        if matches!(residency::login(cx), Login::On | Login::NeedsApproval) {
+            message.push("kōan no longer opens at login.".into());
+        }
+        let ending = "config.local.toml, which holds passwords and keys, is emptied. The output kōan is playing through, and whether it is muted, stay as they are until it next opens one.";
         let model = self.ctx.model.clone();
         let sharing = self.ctx.sharing.clone();
         let sheets = self.ctx.sheets.clone();
         // A config.toml kept in a dotfiles repository is a link into it, and
         // emptying it empties the file there, for every machine sharing it.
-        let linked = cx.background_executor().spawn(async {
+        // Whether config.toml holds anything to keep a copy of.
+        let read = cx.background_executor().spawn(async {
             let path = koan_core::config::config_file_path();
-            std::fs::symlink_metadata(&path)
+            let linked = std::fs::symlink_metadata(&path)
                 .is_ok_and(|m| m.file_type().is_symlink())
                 .then(|| std::fs::canonicalize(&path).ok())
-                .flatten()
+                .flatten();
+            let kept = std::fs::read_to_string(&path).is_ok_and(|text| !text.trim().is_empty());
+            (linked, kept)
         });
         window
             .spawn(cx, async move |cx| {
-                if let Some(target) = linked.await {
+                let (linked, kept) = read.await;
+                if kept {
+                    message.push("A copy of config.toml is kept beside it, as config.toml.bak, or the next free config.toml.bak.N where an earlier reset's copy is there.".into());
+                }
+                message.push(ending.into());
+                if let Some(target) = linked {
                     message.push(format!(
                         "config.toml is a link to {}. Emptying it empties that file, for every machine that shares it.",
                         homely(&target.to_string_lossy())

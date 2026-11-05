@@ -680,6 +680,7 @@ impl SettingsModel {
             .collect();
         let listed = settings.library_folders.clone();
         let signed_in = settings.remote_signed_in || settings.remote_enabled;
+        let host = crate::settings::panes::server::host(&settings.remote_url);
         // The folders leave the file before their tracks are forgotten, so
         // the folder watcher has nothing to index them again from.
         self.edit(cx, |s| s.library_folders.clear());
@@ -721,8 +722,13 @@ impl SettingsModel {
                                     }
                                 }
                             });
+                            let signed_out = if signed_in {
+                                format!(" kōan may already be signed out of {host}.")
+                            } else {
+                                String::new()
+                            };
                             model.report(
-                                format!("{failed}. The reset stopped part way: sharing is off, and the folders are back in the list. Reset again to finish it."),
+                                format!("{failed}. The reset stopped part way: sharing is off, and the folders are back in the list.{signed_out} Reset again to finish it."),
                                 cx,
                             );
                         }
