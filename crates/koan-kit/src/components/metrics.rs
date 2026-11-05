@@ -408,6 +408,7 @@ mod transport_tests {
             icons: true,
             hairline: crate::theme::HAIRLINE,
             opaque: false,
+            touch: false,
         }
     }
 
