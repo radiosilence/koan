@@ -796,7 +796,7 @@ impl Render for ServerPane {
                 sections.push(section(None, vec![status.render(&look)], None, &look));
             }
         } else if self.pinned.is_none() {
-            sections.push(self.mode_section(mode, doing, &status, &look, entity.clone()));
+            sections.push(self.mode_section(mode, &status, &look, entity.clone()));
         }
         match mode {
             Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
@@ -849,7 +849,6 @@ impl ServerPane {
     fn mode_section(
         &self,
         mode: Mode,
-        doing: Mode,
         status: &ModeLabel,
         look: &Look,
         entity: Entity<Self>,
