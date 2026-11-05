@@ -200,7 +200,7 @@ if it can be woken.
 ### Keeping a Mac reachable
 
 A Mac can be controlled from your other devices only while kōan is running on
-it. With **Keep running in the menu bar** (Settings ▸ Devices ▸ In the
+it. With **Keep running in the menu bar** (Settings ▸ General ▸ In the
 background), closing the window leaves kōan running: it stays signed in to the
 server and listening on the network, leaves the Dock and ⌘-Tab, and keeps its
 ensō in the menu bar, with what is playing, play and pause, next, **Open kōan**

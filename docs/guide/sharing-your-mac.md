@@ -13,7 +13,7 @@ The foot of the sidebar always says what the Mac is doing: playing its own libra
 
 A Mac that shares its library writes its public address to `server.url`, so don't point a headless kōan server at the same config folder. A Mac shares or connects, not both. To sign in to another server, turn sharing off first; to share, sign out of the server first.
 
-The Mac serves while kōan is open and the Mac is awake. **Keep running in the menu bar** (Settings → Devices) keeps it serving with the window closed.
+The Mac serves while kōan is open and the Mac is awake. **Keep running in the menu bar** (Settings → General) keeps it serving with the window closed.
 
 ## On your network
 

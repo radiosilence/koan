@@ -7,6 +7,7 @@ mod appearance;
 mod cache;
 pub mod devices;
 mod eq;
+mod general;
 pub mod integrations;
 mod keys;
 mod library;
@@ -23,6 +24,7 @@ use super::Ctx;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
+    General,
     Library,
     Server,
     Account,
@@ -37,6 +39,7 @@ pub enum Tab {
 impl Tab {
     pub fn title(self) -> &'static str {
         match self {
+            Tab::General => "General",
             Tab::Library => "Library",
             Tab::Server => "Server",
             Tab::Account => "Account",
@@ -51,6 +54,7 @@ impl Tab {
 
     pub fn icon(self) -> Icon {
         match self {
+            Tab::General => Icon::Settings,
             Tab::Library => Icon::Library,
             Tab::Server => Icon::Server,
             Tab::Account => Icon::Account,
@@ -76,6 +80,7 @@ impl Pane {
     ) -> Pane {
         let ctx = ctx.clone();
         Pane(match tab {
+            Tab::General => cx.new(|_| general::GeneralPane::new(ctx)).into(),
             Tab::Library => cx.new(|cx| library::LibraryPane::new(ctx, cx)).into(),
             Tab::Server => cx.new(|cx| server::ServerPane::new(ctx, window, cx)).into(),
             Tab::Account => cx

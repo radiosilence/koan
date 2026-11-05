@@ -20,6 +20,7 @@ use koan_core::updates::{self, Release};
 use koan_kit::app::*;
 
 use super::about::VERSION;
+use crate::components::sheet as ask;
 use crate::theme::Tone;
 
 /// How often a running kōan looks again, after the check at launch.
@@ -119,6 +120,7 @@ pub fn init(engine: &std::sync::Arc<koan_runtime::KoanEngine>, cx: &mut App) {
         if source {
             return;
         }
+        cx.update(announce_updated);
         loop {
             let due = cx.update(|cx| {
                 let u = cx.global::<Updates>();
@@ -217,17 +219,20 @@ pub fn check(cx: &mut App) {
         if let Install::Told(_) = install {
             cx.update(|cx| {
                 let told = &mut cx.global_mut::<Updates>().told;
-                if told.as_ref() != Some(&version) {
+                let new = told.as_ref() != Some(&version);
+                if new {
                     *told = Some(version.clone());
-                    crate::notice::show(format!("kōan {version} is out"), Tone::Muted, cx);
                 }
                 set_state(
                     State::Available {
-                        version,
-                        page: release.page,
+                        version: version.clone(),
+                        page: release.page.clone(),
                     },
                     cx,
                 );
+                if new && let Install::Told(why) = install {
+                    offer_page(&version, why, release.page, cx);
+                }
             });
             return;
         }
@@ -243,12 +248,8 @@ pub fn check(cx: &mut App) {
             Ok(staged) => {
                 log::info!("updates: kōan {version} is ready");
                 cx.global_mut::<Updates>().staged = staged;
-                crate::notice::show(
-                    format!("kōan {version} is ready: it opens next time kōan starts"),
-                    Tone::Muted,
-                    cx,
-                );
-                set_state(State::Ready(version), cx);
+                set_state(State::Ready(version.clone()), cx);
+                offer_restart(&version, cx);
             }
             Err(e) => {
                 log::warn!("updates: fetching {version}: {e}");
@@ -260,6 +261,85 @@ pub fn check(cx: &mut App) {
 }
 
 /// Quits, and opens the new version once it is in.
+/// A version fetched and waiting: asked once, in the main window, whether to
+/// restart into it now. Declined, it is installed whenever kōan next quits.
+fn offer_restart(version: &str, cx: &mut App) {
+    let Some(main) = crate::app::main_window(cx) else {
+        crate::notice::show(
+            format!("kōan {version} is ready: it opens next time kōan starts"),
+            Tone::Muted,
+            cx,
+        );
+        return;
+    };
+    let confirm = ask::Confirm {
+        title: format!("kōan {version} is ready").into(),
+        verb: "restart now".into(),
+        destructive: false,
+        lines: vec![
+            format!("kōan quits and opens again as {version}, the queue as it was.").into(),
+        ],
+        note: Some("Otherwise it is installed when kōan next quits.".into()),
+    };
+    main.update(cx, |_, window, cx| {
+        ask::confirm(confirm, window, cx, restart)
+    })
+    .ok();
+}
+
+/// A version this install cannot take itself, said once: how it is updated,
+/// and the release's page.
+fn offer_page(version: &str, why: &str, page: String, cx: &mut App) {
+    let Some(main) = crate::app::main_window(cx) else {
+        crate::notice::show(format!("kōan {version} is out"), Tone::Muted, cx);
+        return;
+    };
+    let confirm = ask::Confirm {
+        title: format!("kōan {version} is out").into(),
+        verb: "release notes".into(),
+        destructive: false,
+        lines: vec![why.to_owned().into()],
+        note: None,
+    };
+    main.update(cx, |_, window, cx| {
+        ask::confirm(confirm, window, cx, move |cx| cx.open_url(&page))
+    })
+    .ok();
+}
+
+/// Says so once when this launch runs a newer kōan than the last did,
+/// however it was installed, and remembers this version for the next.
+fn announce_updated(cx: &mut App) {
+    let task = cx.spawn(async move |cx| {
+        let Some(last) = off_thread(remember_version).await else {
+            return;
+        };
+        if last.is_some_and(|last| updates::is_newer(VERSION, &last)) {
+            cx.update(|cx| {
+                crate::notice::show(format!("Updated to kōan {VERSION}"), Tone::Muted, cx)
+            });
+        }
+    });
+    task.detach();
+}
+
+/// The version the last launch ran, if one was kept, replaced by this one.
+fn remember_version() -> Option<String> {
+    let path = koan_core::places::state().join("last-version");
+    let last = std::fs::read_to_string(&path)
+        .ok()
+        .map(|v| v.trim().to_owned());
+    if last.as_deref() != Some(VERSION) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, VERSION) {
+            log::warn!("updates: could not keep the version run: {e}");
+        }
+    }
+    last
+}
+
 pub fn restart(cx: &mut App) {
     if cx.has_global::<Updates>() {
         cx.global_mut::<Updates>().relaunch = true;
