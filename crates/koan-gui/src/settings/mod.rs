@@ -125,7 +125,7 @@ pub fn open(cx: &mut App) {
         .min(600.0, 480.0)
         .transparent_titlebar()
         .open(cx, |window, cx| {
-            cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx))
+            cx.new(|cx| SettingsWindow::new(Tab::General, window, cx))
         });
     match opened {
         Ok((handle, view)) => {
@@ -420,7 +420,7 @@ impl SettingsWindow {
     fn tabs(&self, cx: &App) -> Vec<Tab> {
         let connection = &self.ctx.connection.read(cx).0;
         let signed = self.account(cx).is_some();
-        let mut tabs = vec![Tab::Library, Tab::Server];
+        let mut tabs = vec![Tab::General, Tab::Library, Tab::Server];
         if signed
             && (offers(connection, panes::people::EXTENSION)
                 || offers(connection, panes::account::PASSWORDS)

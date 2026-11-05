@@ -1,0 +1,1 @@
+- **An overlay fading out takes no input.** The window takes clicks the moment a sheet, question or the command bar is put away, and Tab never lands in one that has gone.

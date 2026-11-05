@@ -1,9 +1,11 @@
 //! `cargo run -p koan-kit`: the storybook in a window. Its offscreen PNGs
-//! are `cargo run -p koan-kit --example storybook -- DIR`.
+//! are `cargo run -p koan-kit --example storybook -- DIR`. `KOAN_STORY`
+//! opens it on a page by its slug (`rainbow`), which is how `just kit-ios`
+//! reaches a page on a simulator nothing taps.
 
 use gpui::{App, AppContext};
 use koan_kit::components::SecondaryWindow;
-use koan_kit::storybook::Storybook;
+use koan_kit::storybook::{Story, Storybook};
 use koan_kit::theme;
 
 fn main() {
@@ -21,6 +23,10 @@ fn main() {
                     true
                 });
                 let book = cx.new(|cx| Storybook::new(window, cx));
+                let opening = std::env::var("KOAN_STORY").ok();
+                if let Some(story) = Story::ALL.into_iter().find(|s| Some(s.slug()) == opening) {
+                    book.update(cx, |book, cx| book.show(story, cx));
+                }
                 koan_kit::components::host(book, window, cx)
             });
             if let Err(e) = opened {

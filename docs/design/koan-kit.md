@@ -52,10 +52,18 @@ As SwiftUI's environment reaches a view: from one place, inherited, never passed
 
 The theme follows what the system asks for, read where the platform says it and again on its change notifications, never polled:
 
-- **Reduce Motion** (macOS): every transition, fade and ease lands at once, the wash and the spinner stand still, and an unknown amount of progress is a still arc. Low Power Mode does the same for decorative motion.
-- **Increase Contrast** (macOS) and high contrast (the desktop portal's `contrast`, which GNOME sets): `Look` takes the contrast palettes (`Palette::DARK_CONTRAST`, `LIGHT_CONTRAST`), where every text token reaches 7:1 on `bg` and `surface` and `rule` 3:1; the accent is held to 7:1 on both grounds (`Shade::held`); rules are twice as thick (`Look::hairline`); and a picked row is outlined as well as filled. `every_text_token_reads_on_every_ground` checks the palettes.
-- **Reduce Transparency** (macOS): no wash, the window's ground in its place, and the veils behind sheets and the artwork viewer near opaque (`Look::veil`).
-- **Text size** (GNOME's `text-scaling-factor`, through the portal): the app's own text size multiplies it, so 100 % is the system's size (`Scale::at`). macOS has no system-wide size, and the app's setting is the control there.
+- **Reduce Motion** (macOS, iOS): every transition, fade and ease lands at once, the wash and the spinner stand still, and an unknown amount of progress is a still arc. Low Power Mode does the same for decorative motion.
+- **Increase Contrast** (macOS), Darker System Colors (iOS) and high contrast (the desktop portal's `contrast`, which GNOME sets): `Look` takes the contrast palettes (`Palette::DARK_CONTRAST`, `LIGHT_CONTRAST`), where every text token reaches 7:1 on `bg` and `surface` and `rule` 3:1; the accent is held to 7:1 on both grounds (`Shade::held`); rules are twice as thick (`Look::hairline`); and a picked row is outlined as well as filled. `every_text_token_reads_on_every_ground` checks the palettes.
+- **Reduce Transparency** (macOS, iOS): no wash, the window's ground in its place, and the veils behind sheets and the artwork viewer near opaque (`Look::veil`).
+- **Text size** (GNOME's `text-scaling-factor`, through the portal; iOS's Dynamic Type, as each category's body size over Large's 17 pt): the app's own text size multiplies it, so 100 % is the system's size (`Scale::at`). macOS has no system-wide size, and the app's setting is the control there.
+
+### Touch
+
+GPUI's iOS backend draws through the same Metal renderer as macOS, so koan-kit runs there unchanged; `just kit-ios [STORY] [SHOT]` puts the storybook on a simulator. What a touch screen changes is the theme's and the components', never a page's:
+
+- **Targets.** `KoanTheme::touch` (on by default on iOS and Android; the storybook's "touch" switch previews it) makes every button, row, toggle and segmented control at least `HIT` (44 pt) tall: `Look::target`, which `RowMetrics` and the controls take.
+- **The secondary press is a held touch.** `koan_context_menu` opens on a long press where the touch went down, claimed by the innermost element listening (`KoanLongPress` for anything else that wants one). If the same press moves, the element's drag lifts (GPUI's `on_drag`, from a held touch) and the menu makes way, as on iOS.
+- **The system's insets.** `KoanInsets::clear_of_system` holds content clear of the status bar, notch and home indicator, and of the keyboard with `Clear::Keyboard`; grounds and the wash run under them.
 
 ## What pages decide, and what they may not
 

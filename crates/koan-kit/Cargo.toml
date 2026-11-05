@@ -53,6 +53,27 @@ objc2-foundation = { version = "0.3.2", features = [
   "block2",
 ] }
 
+# Reduce Motion, Darker System Colors, Reduce Transparency, Low Power Mode
+# and the Dynamic Type size, with the notifications that say when one
+# changes.
+[target.'cfg(target_os = "ios")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", features = [
+  "NSNotification",
+  "NSOperation",
+  "NSProcessInfo",
+  "NSString",
+  "block2",
+] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "UIAccessibility",
+  "UIApplication",
+  "UIContentSizeCategory",
+  "UIResponder",
+] }
+
 # High contrast and the text scaling factor, read through the desktop
 # portal's settings as GPUI reads the colour scheme, with their change
 # signals.
