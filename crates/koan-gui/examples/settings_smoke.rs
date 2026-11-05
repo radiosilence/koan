@@ -93,7 +93,8 @@ fn main() -> Result {
 
     // The account the library is shared under, made from the sharing side:
     // creating it starts sharing from inside its own callback (#2088).
-    ui.choose("this device", "Shares its library")?;
+    // Doing neither yet, the pane offers the two sides as cards.
+    ui.press("Share its library")?;
     ui.type_into("Username", "smoke")?;
     ui.type_into("Password", "smoke-password")?;
     ui.type_into("Again", "smoke-password")?;
@@ -143,7 +144,8 @@ fn main() -> Result {
     println!("sharing stopped, started and stopped");
 
     // Signing in to the throwaway server, out, and in again.
-    ui.choose("this device", "Connects to a server")?;
+    // Sharing off and signed in nowhere, the cards are back.
+    ui.press("Connect to a server")?;
     for round in 0..2 {
         ui.type_into("Server URL", &server)?;
         ui.type_into("Username", &user)?;
@@ -270,7 +272,8 @@ impl Ui {
 
     /// The node named `label` that `accepts` takes, waited for: a control
     /// appears once what it follows has landed. Labels are matched without
-    /// case, since the theme may set them in lower case.
+    /// case, since the theme may set them in lower case, and a card is found
+    /// by its title, which its spoken label begins: "Title. Detail".
     fn find(&mut self, label: &str, accepts: impl Fn(&Value) -> bool) -> Result<NodeId> {
         let start = Instant::now();
         loop {
@@ -279,10 +282,11 @@ impl Ui {
             let found: Vec<&Value> = nodes
                 .iter()
                 .filter(|n| {
-                    n["aria"]["label"]
-                        .as_str()
-                        .is_some_and(|l| l.eq_ignore_ascii_case(label))
-                        && accepts(n)
+                    n["aria"]["label"].as_str().is_some_and(|l| {
+                        l.eq_ignore_ascii_case(label)
+                            || l.to_lowercase()
+                                .starts_with(&format!("{}. ", label.to_lowercase()))
+                    }) && accepts(n)
                 })
                 .collect();
             if let Some(node) = found.last() {
