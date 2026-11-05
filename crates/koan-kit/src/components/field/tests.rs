@@ -566,3 +566,54 @@ fn a_click_ends_a_composition(cx: &mut TestAppContext) {
     cx.simulate_input("x");
     assert_eq!(value(&host, cx), "xabc に");
 }
+
+/// A page holding a field in a cached view, counting its renders.
+struct Cached {
+    page: Entity<Page>,
+}
+
+struct Page {
+    field: Entity<FieldState>,
+    renders: usize,
+}
+
+impl Render for Cached {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            self.page
+                .clone()
+                .cached(gpui::StyleRefinement::default().size_full()),
+        )
+    }
+}
+
+impl Render for Page {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
+        div().w(px(240.0)).child(TextField::new(&self.field))
+    }
+}
+
+/// Text from the platform's input handler, with no key event around it (as
+/// iOS's text input sends it), redraws the cached view the field is in.
+#[gpui::test]
+fn text_from_the_platform_redraws_the_view_holding_the_field(cx: &mut TestAppContext) {
+    cx.update(crate::theme::init);
+    let (root, cx) = cx.add_window_view(|window, cx| {
+        let field = cx.new(|cx| FieldState::new(window, cx));
+        Cached {
+            page: cx.new(|_| Page { field, renders: 0 }),
+        }
+    });
+    cx.run_until_parked();
+    let page = root.read_with(cx, |root, _| root.page.clone());
+    let field = page.read_with(cx, |page, _| page.field.clone());
+    let before = page.read_with(cx, |page, _| page.renders);
+    cx.update(|window, cx| {
+        field.update(cx, |field, cx| {
+            field.replace_text_in_range(None, "k", window, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.renders) > before);
+}
