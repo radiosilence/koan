@@ -331,6 +331,10 @@ pub fn select(
     // A touch screen has no click to pick with: a tap plays or opens the
     // row, and picks it only while picking (the Select button's mode).
     if cx.global::<crate::theme::KoanTheme>().touch {
+        // A quick second tap is the same tap again, not a second play.
+        if event.click_count() > 1 {
+            return false;
+        }
         if !selection.is_active() {
             return true;
         }

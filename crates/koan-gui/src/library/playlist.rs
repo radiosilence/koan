@@ -313,8 +313,13 @@ impl PlaylistPage {
             return;
         };
         let modifiers = event.modifiers();
-        // A tap plays from the row: a touch screen has no click to pick with.
-        if event.click_count() >= 2 || cx.global::<crate::theme::KoanTheme>().touch {
+        // A tap plays from the row: a touch screen has no click to pick with,
+        // and a quick second tap is the same tap again.
+        let touch = cx.global::<crate::theme::KoanTheme>().touch;
+        if touch && event.click_count() > 1 {
+            return;
+        }
+        if event.click_count() >= 2 || touch {
             self.play_from(first.parse().ok(), false, cx);
         } else if modifiers.shift {
             let at = |id: &str| self.items.iter().position(|i| i.queue_item_id == id);

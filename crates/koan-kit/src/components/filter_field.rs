@@ -115,6 +115,21 @@ impl RenderOnce for FilterField {
         let fading = cleared.read(cx).animated.clone();
         let (on_escape, on_mark) = (cleared.clone(), cleared.clone());
         let hover = look.palette.ink.hsla();
+        // The whole control keeps the keyboard under touch: its clear mark
+        // and glyph are the field's, not somewhere else to tap.
+        let keeps = self.input.clone();
+        let measure = canvas(
+            move |bounds, _, cx| {
+                if keeps.read(cx).keeps != Some(bounds) {
+                    keeps.update(cx, |state, _| state.keeps = Some(bounds));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         div()
             .id("filter-field")
             .map(|d| {
@@ -122,6 +137,8 @@ impl RenderOnce for FilterField {
                 let d = d.debug_selector(|| "filter".into());
                 d
             })
+            .relative()
+            .child(measure)
             .flex()
             .items_center()
             .cursor_text()

@@ -14,7 +14,7 @@ use crate::components::{
     Clear, KoanInsets, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
 };
 use crate::library::{self, stage::LibraryStage};
-use crate::navigator::{Chosen, Navigator, Route};
+use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::theme::{Icon, KoanStyled, TypeRole};
@@ -23,7 +23,8 @@ use crate::transport::{self, Transport};
 /// Whether the app takes the phone's layout: on iOS, and on a desktop with
 /// `KOAN_GUI_PHONE` set, so it can be walked at a phone's size.
 pub fn phone() -> bool {
-    cfg!(target_os = "ios") || std::env::var_os("KOAN_GUI_PHONE").is_some()
+    static PHONE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PHONE.get_or_init(|| cfg!(target_os = "ios") || std::env::var_os("KOAN_GUI_PHONE").is_some())
 }
 
 /// The tabs in the order the bar shows them, each with its first page.
@@ -234,6 +235,10 @@ impl PhoneShell {
         let Some(page) = &self.search else {
             return div().size_full().into_any_element();
         };
+        let asked = self
+            .library
+            .as_ref()
+            .is_some_and(|l| !l.read(cx).lib().search.read(cx).query().is_empty());
         div()
             .size_full()
             .flex()
@@ -248,13 +253,17 @@ impl PhoneShell {
                             .fill(),
                     ),
             )
-            .child(
-                div().flex_1().min_h_0().child(
-                    page.results
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                ),
-            )
+            // An empty field finds nothing: the last query's results go with
+            // its text.
+            .when(asked, |d| {
+                d.child(
+                    div().flex_1().min_h_0().child(
+                        page.results
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
@@ -507,6 +516,11 @@ impl PhoneShell {
             if nav.tab() != at {
                 nav.switch(at, Route::Settings);
             }
+            // The tab as it was left may be deep in a section: back to its
+            // list first, then on to the section asked for.
+            if !nav.at_root() {
+                nav.switch(at, Route::Settings);
+            }
             if let Some(tab) = tab {
                 nav.go(Route::SettingsSection(tab));
             }
@@ -586,10 +600,8 @@ impl PhoneShell {
                 let nav = self.nav.clone();
                 strip.tab(icon, title, ix == showing, move |_, _, cx| {
                     nav.update(cx, |nav, cx| {
-                        let chosen = nav.switch(ix, root);
-                        if chosen == Chosen::Moved || nav.at_root() {
-                            cx.notify();
-                        }
+                        nav.switch(ix, root);
+                        cx.notify();
                     });
                 })
             })

@@ -35,8 +35,6 @@ impl EventEmitter<ShowInfo> for Transport {}
 pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
 const SLEEVE: f32 = 36.0;
-/// The playhead's line along the mini player's top.
-const LINE: f32 = 2.0;
 
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow
@@ -60,9 +58,21 @@ impl Transport {
         self.cover = covers::art(entry.and_then(|e| e.album_id), sleeve, self.scale, cx);
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
-        let playhead = cx.global::<Mirror>().playhead.read(cx).position_ms;
+        // The playhead's line glides on the GPU from the engine's last anchor,
+        // as the seek bar does: no frame is drawn between the anchors.
+        let anchor = cx.global::<Mirror>().playhead.read(cx).clone();
         let share = if now.duration_ms > 0 {
-            (playhead as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
+            let at = anchor.at(std::time::Instant::now(), now.duration_ms);
+            self.mini_glide.set(
+                (anchor.position_ms as f64 / now.duration_ms as f64) as f32,
+                if anchor.playing {
+                    1000.0 / now.duration_ms as f32
+                } else {
+                    0.0
+                },
+                anchor.at,
+            );
+            (at as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -93,13 +103,10 @@ impl Transport {
             .border_color(p.rule)
             // The playhead, along the top: where the track is, at a glance.
             .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .h(p.look.spaced(LINE))
-                    .w(relative(share))
-                    .bg(p.look.accent.hsla()),
+                div().absolute().top_0().left_0().right_0().child(
+                    crate::components::ProgressBar::new("mini-playhead", Some(share))
+                        .glide(&self.mini_glide),
+                ),
             )
             .child(Cover::new(self.cover.clone(), sleeve))
             .child(

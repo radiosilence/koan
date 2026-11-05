@@ -433,15 +433,34 @@ impl gpui::Element for Labelled {
 thread_local! {
     /// The field holding the keyboard and where it was last drawn, for the
     /// scroll area around it to keep it clear of a software keyboard.
-    static TYPING: std::cell::RefCell<Option<(gpui::FocusHandle, gpui::Bounds<gpui::Pixels>)>> =
-        const { std::cell::RefCell::new(None) };
+    static TYPING: std::cell::RefCell<Option<Typing>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The field holding the keyboard as last drawn: its focus, its bounds, and
+/// the clip it was drawn in, which is a scroll area's when the field is in
+/// one (and a sheet's when it is in a sheet over the page).
+#[derive(Clone)]
+pub(crate) struct Typing {
+    pub focus: gpui::FocusHandle,
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub clip: gpui::Bounds<gpui::Pixels>,
 }
 
 /// The focused field and its bounds as last drawn.
-pub(crate) fn typing_in() -> Option<(gpui::FocusHandle, gpui::Bounds<gpui::Pixels>)> {
+pub(crate) fn typing_in() -> Option<Typing> {
     TYPING.with_borrow(|typing| typing.clone())
 }
 
-pub(super) fn drawn_focused(focus: &gpui::FocusHandle, bounds: gpui::Bounds<gpui::Pixels>) {
-    TYPING.with_borrow_mut(|typing| *typing = Some((focus.clone(), bounds)));
+pub(super) fn drawn_focused(
+    focus: &gpui::FocusHandle,
+    bounds: gpui::Bounds<gpui::Pixels>,
+    clip: gpui::Bounds<gpui::Pixels>,
+) {
+    TYPING.with_borrow_mut(|typing| {
+        *typing = Some(Typing {
+            focus: focus.clone(),
+            bounds,
+            clip,
+        })
+    });
 }
