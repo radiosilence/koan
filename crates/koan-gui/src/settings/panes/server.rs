@@ -797,8 +797,11 @@ impl Render for ServerPane {
         let mode = self.pinned.or(self.chosen).unwrap_or(doing);
         self.shown = Some(mode);
         let mut sections = Vec::new();
+        // Pinned to sharing, it says only what goes wrong or that it runs.
         if self.pinned == Some(Mode::Share) {
-            sections.push(section(None, vec![status.render(&look)], None, &look));
+            if matches!(status, ModeLabel::Sharing(_) | ModeLabel::NotSharing(_)) {
+                sections.push(section(None, vec![status.render(&look)], None, &look));
+            }
         } else if self.pinned.is_none() {
             sections.push(self.mode_section(mode, doing, &status, &look, entity.clone()));
         }

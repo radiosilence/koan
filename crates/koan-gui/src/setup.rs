@@ -252,13 +252,13 @@ fn steps(music: Option<Music>, share: Option<bool>) -> Vec<Step> {
 fn keys_worth_knowing() -> Vec<(&'static str, Box<dyn Action>)> {
     use actions::*;
     vec![
-        ("Search everything", Box::new(Search)),
-        ("Find something and play it", Box::new(AddMusic)),
+        ("Search", Box::new(Search)),
+        ("Find and play", Box::new(AddMusic)),
         ("Play or pause", Box::new(bare::TogglePlayPause)),
         ("Next track", Box::new(Next)),
         ("Previous track", Box::new(Previous)),
-        ("Favourite what is playing", Box::new(FavouriteCurrentTrack)),
-        ("Lyrics beside the page", Box::new(ToggleLyrics)),
+        ("Favourite the track", Box::new(FavouriteCurrentTrack)),
+        ("Lyrics", Box::new(ToggleLyrics)),
         ("EQ", Box::new(ShowEq)),
         ("Settings", Box::new(Settings)),
         ("Every shortcut", Box::new(ShowShortcuts)),
@@ -598,28 +598,21 @@ impl SetupWindow {
         let none = rows.is_empty();
         rows.push(buttons(
             vec![
-                Button::new(
-                    "setup-add-folder",
-                    if none {
-                        ButtonKind::Prominent
+                Button::new("setup-add-folder", ButtonKind::Bordered)
+                    .label(if none {
+                        "Add Folder…"
                     } else {
-                        ButtonKind::Bordered
-                    },
-                )
-                .label(if none {
-                    "Add Folder…"
-                } else {
-                    "Add Another…"
-                })
-                .icon(Icon::Add)
-                .disabled(scanning)
-                .on_click(move |_, _, cx| {
-                    entity.update(cx, |this, cx| {
-                        let model = this.ctx.model.clone();
-                        this.choosing = Some(choose_folders(model, cx));
+                        "Add Another…"
                     })
-                })
-                .into_any_element(),
+                    .icon(Icon::Add)
+                    .disabled(scanning)
+                    .on_click(move |_, _, cx| {
+                        entity.update(cx, |this, cx| {
+                            let model = this.ctx.model.clone();
+                            this.choosing = Some(choose_folders(model, cx));
+                        })
+                    })
+                    .into_any_element(),
             ],
             look,
         ));
@@ -867,6 +860,18 @@ impl SetupWindow {
         })
     }
 
+    /// Whether going on is what the step is for: not while its own action,
+    /// which is then the screen's one prominent control, is still to do.
+    fn done(&self, cx: &App) -> bool {
+        let settings = self.ctx.model.read(cx).settings();
+        match self.step {
+            Step::Folders => settings.is_some_and(|s| !s.library_folders.is_empty()),
+            Step::Server => settings.is_some_and(|s| s.remote_signed_in),
+            Step::Share if self.share == Some(true) => self.ctx.sharing.read(cx).account.is_some(),
+            _ => self.ready(),
+        }
+    }
+
     fn footer(&self, look: &Look, cx: &mut Context<Self>) -> Div {
         let steps = self.steps();
         let at = steps.iter().position(|s| *s == self.step).unwrap_or(0);
@@ -887,13 +892,18 @@ impl SetupWindow {
         {
             let entity = entity.clone();
             trailing.push(
-                Button::new("setup-next", ButtonKind::Prominent)
-                    .label(if last { "Start Listening" } else { "Continue" })
-                    .disabled(!self.ready())
-                    .on_click(move |_, window, cx| {
-                        entity.update(cx, |this, cx| this.next(window, cx))
-                    })
-                    .into_any_element(),
+                Button::new(
+                    "setup-next",
+                    if self.done(cx) {
+                        ButtonKind::Prominent
+                    } else {
+                        ButtonKind::Standard
+                    },
+                )
+                .label(if last { "Start Listening" } else { "Continue" })
+                .disabled(!self.ready())
+                .on_click(move |_, window, cx| entity.update(cx, |this, cx| this.next(window, cx)))
+                .into_any_element(),
             );
         }
         div()
@@ -946,7 +956,13 @@ impl Render for SetupWindow {
             )))
             .child(text(self.step.intro(), TypeRole::Body, Tone::Muted, &look));
         let body = self.body(&look, window, cx);
-        let status = crate::settings::status_line(self.ctx.model.read(cx));
+        // Only while there is something to say: the guide has no room for
+        // an empty line.
+        let model = self.ctx.model.read(cx);
+        let status = (model.last_error.is_some()
+            || model.last_result.is_some()
+            || model.running().next().is_some())
+        .then(|| crate::settings::status_line(model));
         let sheets = self.ctx.sheets.clone();
         let sheet = Sheets::render(&sheets, &look, window, cx);
         div()
@@ -958,7 +974,7 @@ impl Render for SetupWindow {
             .child(self.top_strip(window, cx))
             .child(header)
             .child(div().flex_1().min_h_0().child(body))
-            .child(status)
+            .children(status)
             .child(self.footer(&look, cx))
             .children(sheet)
     }
