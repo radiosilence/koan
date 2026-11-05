@@ -36,9 +36,9 @@ pub struct ServerPane {
     /// The side the person chose to look at, while it differs from what
     /// this device is doing; otherwise the pane follows that.
     chosen: Option<Mode>,
-    /// The side drawn last, so turning sharing off from the sharing side
-    /// stays on it (`stay`).
-    shown: Option<Mode>,
+    /// What the device was doing at the last draw, so turning sharing off
+    /// from the sharing side stays on it (`stay`).
+    was_doing: Option<Mode>,
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
@@ -140,7 +140,7 @@ impl ServerPane {
         Self {
             ctx,
             chosen: None,
-            shown: None,
+            was_doing: None,
             url,
             username,
             secret,
@@ -777,9 +777,9 @@ impl Render for ServerPane {
         } else {
             Mode::Connect
         };
-        self.chosen = stay(self.shown, self.chosen, doing);
+        self.chosen = stay(self.was_doing, self.chosen, doing);
+        self.was_doing = Some(doing);
         let mode = self.chosen.unwrap_or(doing);
-        self.shown = Some(mode);
         let mut sections = vec![section(
             None,
             vec![
@@ -832,11 +832,12 @@ impl Render for ServerPane {
     }
 }
 
-/// The side chosen, given the side drawn last and what the device does now.
+/// The side chosen, given what the device did at the last draw and does now.
 /// Sharing turned off while its side shows leaves that side showing, with
-/// sharing off, rather than sending the pane to the sign-in form.
-fn stay(shown: Option<Mode>, chosen: Option<Mode>, doing: Mode) -> Option<Mode> {
-    match (shown, chosen, doing) {
+/// sharing off, rather than sending the pane to the sign-in form. Only the
+/// change does that: choosing the sign-in side afterwards shows it.
+fn stay(was_doing: Option<Mode>, chosen: Option<Mode>, doing: Mode) -> Option<Mode> {
+    match (was_doing, chosen, doing) {
         (Some(Mode::Share), None, Mode::Connect) => Some(Mode::Share),
         _ => chosen,
     }
@@ -915,6 +916,13 @@ mod tests {
         assert_eq!(stay(Some(Mode::Connect), None, Mode::Connect), None);
         // Sharing: the pane follows it.
         assert_eq!(stay(Some(Mode::Share), None, Mode::Share), None);
+        // Not sharing, the sharing side looked at, then the sign-in side
+        // chosen: the sign-in side shows (#2109).
+        assert_eq!(stay(Some(Mode::Connect), None, Mode::Connect), None);
+        assert_eq!(
+            stay(Some(Mode::Connect), Some(Mode::Share), Mode::Connect),
+            Some(Mode::Share)
+        );
     }
 
     #[test]
