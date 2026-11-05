@@ -15,6 +15,7 @@
     --text-fine: 12px;
     --text-meta: 13px;
     --text-control: 14px;
+    --text-control--line-height: 1.45;
     --text-body: 15px;
     --text-body--line-height: 1.45;
     --text-input: 16px;
@@ -736,14 +737,15 @@
     font-size: var(--text-body);
     line-height: var(--tw-leading, var(--text-body--line-height));
   }
+  .text-control {
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+  }
   .text-\[11px\] {
     font-size: 11px;
   }
   .text-\[22px\] {
     font-size: 22px;
-  }
-  .text-control {
-    font-size: var(--text-control);
   }
   .text-fine {
     font-size: var(--text-fine);
@@ -1143,6 +1145,7 @@
   --muted: #919191;
   --brand: #7dd3a7;
   --bad: #ef6b73;
+  --warn: #e6b450;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -1155,6 +1158,7 @@
     --muted: #666666;
     --brand: #1f7a50;
     --bad: #c43f3f;
+    --warn: #8a6100;
   }
 }
 @layer base {
@@ -1398,6 +1402,7 @@
     padding-inline: var(--spacing);
     padding-block: calc(var(--spacing) * 2);
     font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
     &:hover {
       @media (hover: hover) {
         background-color: transparent;
@@ -1444,6 +1449,7 @@
     padding-block: calc(var(--spacing) * 2);
     text-align: left;
     font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
     color: var(--ink);
     &:hover {
       @media (hover: hover) {

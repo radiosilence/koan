@@ -443,6 +443,7 @@
   --muted: #919191;
   --brand: #7dd3a7;
   --bad: #ef6b73;
+  --warn: #e6b450;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -455,6 +456,7 @@
     --muted: #666666;
     --brand: #1f7a50;
     --bad: #c43f3f;
+    --warn: #8a6100;
   }
 }
 @layer base {
