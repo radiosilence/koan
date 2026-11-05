@@ -254,17 +254,24 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         float t = clamp((d - u[12]) / (u[5] - u[12]), 0.0, 1.0);
         glow = u[6] * (1.0 - t) * (1.0 - t);
     }
+    // The stroke ends sharp at its head and tail; the glow fades out over
+    // its own reach there, so the ends are not cut across the halo.
     float mask = 1.0;
+    float soft = 1.0;
     if (u[0] > 0.5) {
         float phase = koan_track(u, 0, time);
         float head = phase < 0.5 ? smoothstep(0.0, 1.0, phase * 2.0) : 1.0;
         float tail = phase < 0.5 ? 0.0 : smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
         mask *= clamp((head - along) * u[2] + 0.5, 0.0, 1.0);
         mask *= clamp((along - tail) * u[2] + 0.5, 0.0, 1.0);
+        float reach = max((u[5] - u[12]) * u[4] / (2.0 * u[12]), 1.0);
+        soft *= clamp((head - along) * u[2] / reach + 0.5, 0.0, 1.0);
+        soft *= clamp((along - tail) * u[2] / reach + 0.5, 0.0, 1.0);
     }
     cover *= mask;
-    glow *= mask;
-    return float4(u[8], u[9], u[10], u[11] * (cover + (1.0 - cover) * glow));
+    float a = u[11] * (cover + (1.0 - cover) * glow * soft);
+    if (a <= 0.0) { return float4(0.0); }
+    return float4(u[8], u[9], u[10], a);
 }
 "#,
     wgsl: r#"
@@ -285,6 +292,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         glow = u[1].z * (1.0 - t) * (1.0 - t);
     }
     var mask = 1.0;
+    var soft = 1.0;
     if (u[0].x > 0.5) {
         let phase = koan_track(u, 0u, time);
         var head = 1.0;
@@ -296,10 +304,16 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
         }
         mask *= clamp((head - along) * u[0].z + 0.5, 0.0, 1.0);
         mask *= clamp((along - tail) * u[0].z + 0.5, 0.0, 1.0);
+        let reach = max((u[1].y - u[3].x) * u[1].x / (2.0 * u[3].x), 1.0);
+        soft *= clamp((head - along) * u[0].z / reach + 0.5, 0.0, 1.0);
+        soft *= clamp((along - tail) * u[0].z / reach + 0.5, 0.0, 1.0);
     }
     cover *= mask;
-    glow *= mask;
-    return vec4<f32>(u[2].xyz, u[2].w * (cover + (1.0 - cover) * glow));
+    let a = u[2].w * (cover + (1.0 - cover) * glow * soft);
+    if (a <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(u[2].xyz, a);
 }
 "#,
     prepare: None,
