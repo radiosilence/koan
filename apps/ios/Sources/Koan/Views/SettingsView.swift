@@ -691,7 +691,7 @@ private struct RemoteSettings: View {
         if let set = model.settings.downloadAhead.map(Int.init), set > 10 {
             options.append((label: "\(set) tracks", value: set))
         }
-        options.append((label: "Whole queue", value: -1))
+        options.append((label: "Whole queue, up to 250", value: -1))
         return options
     }
 

@@ -546,9 +546,9 @@ const EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Trim the cache to its configured limit, keeping the playback window: the
 /// player may be reading those files, and they are what is wanted next.
-/// Before the first window is worked out, everything in the playlist is kept. `now` skips the
-/// throttle, for a limit just changed. The limit is read afresh, so one set
-/// in Settings applies without a restart.
+/// Before the first window is worked out, everything in the playlist is kept.
+/// `now` skips the throttle, for a limit just changed. The limit is read
+/// afresh, so one set in Settings applies without a restart.
 fn trim_cache(inner: &Inner, now: bool) {
     {
         let mut last = inner.last_evicted.lock();
@@ -641,9 +641,9 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
 }
 
 /// Keep the queue following the player: when the set of entries waiting for a
-/// file may have changed, bring the queue in line with it; when the cursor moves to a pending track, hand it
-/// and the next track to the priority lane and bump same-album tracks to the
-/// front.
+/// file may have changed, bring the queue in line with it; when the cursor
+/// moves to a pending track, hand it and the next track to the priority lane
+/// and bump same-album tracks to the front.
 ///
 /// A cursor move also wakes the workers, which hold back while the cursor's
 /// track is being fetched: one that looked before the cursor moved is waiting
@@ -675,16 +675,21 @@ fn follow_playlist(inner: Arc<Inner>) {
         }
         if current != last_cursor {
             last_cursor = current;
+            let jumped_to_unfetched =
+                current.is_some_and(|id| inner.state.item_state(id) == Some(ItemState::Pending));
             inner.has_work.notify_all();
             if let Some(cursor_id) = current {
                 promote_cursor(&inner, cursor_id);
             }
             // What the window has just left is to go now, not at the next
-            // download: there may be none, and a jump to tracks not yet
-            // fetched would otherwise fill the cache past its limit before
-            // the throttled trim catches up. After the cursor's track is on
-            // its way, which waits for nothing here.
-            if config::Config::cached().cache_limit_bytes().is_some() {
+            // download. With no cache there may be no next download; a jump
+            // to tracks not yet fetched would otherwise fill the cache past
+            // its limit before the throttled trim catches up. Playing on
+            // through tracks already here leaves it to that trim, since
+            // measuring the cache is not free. After the cursor's track is
+            // on its way, which waits for nothing here.
+            let limit = config::Config::cached().cache_limit_bytes();
+            if limit == Some(0) || (limit.is_some() && jumped_to_unfetched) {
                 trim_cache(&inner, true);
             }
         }

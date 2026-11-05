@@ -29,7 +29,7 @@ Or: `KOAN_REMOTE__CACHE_DIR=/path/to/custom/cache`
 download_ahead = 3
 ```
 
-The number of tracks past the playing one that are fetched before they are reached. Unset, the whole queue is fetched, up to 250 tracks past the playing one, which is what to want before going somewhere without a connection; past that the fetching follows the cursor, so a queue holding a whole library does not download the whole library; a number keeps a long queue from downloading in full when it will be listened to with a connection anyway. `0` fetches only the track being played: nothing plays gaplessly, since the decoder has nothing to read ahead into, and each track waits for its download before it starts. `1` is the least that keeps gapless playback. Settings → Downloads → **Download ahead** offers 0 to 10 and the whole queue.
+The number of tracks past the playing one that are fetched before they are reached. Unset, the whole queue is fetched, which is what to want before going somewhere without a connection. It stops 250 tracks past the playing one and follows the cursor from there, so a queue holding a whole library does not download the whole library; to take a longer queue offline, set a larger number by hand. A small number keeps a long queue from downloading in full when it will be listened to with a connection anyway. `0` fetches only the track being played: nothing plays gaplessly, since the decoder has nothing to read ahead into, and each track waits for its download before it starts. `1` is the least that keeps gapless playback. Settings → Downloads → **Download ahead** offers 0 to 10 and the whole queue up to 250.
 
 ## Size limit
 
