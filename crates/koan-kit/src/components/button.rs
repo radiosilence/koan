@@ -92,7 +92,12 @@ impl ButtonKind {
             }
             _ => px(0.0),
         };
-        glyph + look.spaced(vertical) * 2.0 + outline * 2.0
+        let side = glyph + look.spaced(vertical) * 2.0 + outline * 2.0;
+        if self == ButtonKind::IconOutlined {
+            side.max(look.target())
+        } else {
+            side
+        }
     }
 
     fn tone(self) -> Tone {
@@ -324,8 +329,12 @@ impl RenderOnce for Button {
             .text_color(color);
         button = match kind {
             ButtonKind::Icon => button.min_w(HIT).min_h(HIT),
-            ButtonKind::Toolbar => button.min_w(TOOLBAR_BUTTON).h(TOOLBAR_BUTTON),
-            _ => button,
+            ButtonKind::IconOutlined => button.min_w(look.target()).min_h(look.target()),
+            ButtonKind::Toolbar => {
+                let side = TOOLBAR_BUTTON.max(look.target());
+                button.min_w(side).h(side)
+            }
+            _ => button.min_h(look.target()),
         };
         if let Some(outline) = outline {
             button = button.border(look.hairline).border_color(outline);

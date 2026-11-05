@@ -536,6 +536,32 @@ ios-bundle: ios-ffi
     fi
     echo "built $app"
 
+# koan-kit's storybook on an iOS simulator, through GPUI's iOS backend: a
+# booted simulator if there is one, otherwise the first that can run it.
+# `just kit-ios rainbow` opens it on that page (by its slug); a second
+# argument, an absolute path, saves a screenshot once it has drawn.
+kit-ios story="" shot="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p koan-kit --bin koan-kit --target aarch64-apple-ios-sim
+    app=target/kit-ios/storybook.app
+    rm -rf "$app" && mkdir -p "$app"
+    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios-sim/debug/koan-kit" "$app/koan-kit"
+    cp crates/koan-kit/ios/Info.plist "$app/Info.plist"
+    codesign --force --sign - "$app"
+    device=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$device" ] || { echo "Needs an iPhone simulator on iOS {{ios_deployment_target}} or later." >&2; exit 1; }
+    xcrun simctl boot "$device" 2>/dev/null || true
+    xcrun simctl bootstatus "$device" -b
+    xcrun simctl install "$device" "$app"
+    xcrun simctl terminate "$device" cc.blit.koan.storybook 2>/dev/null || true
+    SIMCTL_CHILD_KOAN_STORY="{{story}}" xcrun simctl launch "$device" cc.blit.koan.storybook
+    if [ -n "{{shot}}" ]; then
+        sleep 8
+        xcrun simctl io "$device" screenshot --display=1 "{{shot}}"
+    fi
+
 # Install and launch koan on a booted simulator.
 ios-run: ios-bundle
     #!/usr/bin/env bash
@@ -816,7 +842,7 @@ ios-invite-sheet: (ios-ffi "iphonesimulator") ios-project
     rm -rf "$out" && mkdir -p "$out"
     cleanup=()
     trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
-    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and "iPhone" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
     [ -n "$phone" ] || { echo "Needs an iPhone simulator." >&2; exit 1; }
     url=$(just _demo-server "" "$out")
     cleanup+=("just _demo-server-stop '$out'")

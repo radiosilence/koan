@@ -40,6 +40,7 @@ pub mod focus_trap;
 mod form;
 mod guide;
 mod heart;
+mod insets;
 mod inspector;
 mod layer;
 mod level;
@@ -80,6 +81,7 @@ mod tabs;
 mod tile;
 mod toggle;
 mod toolbar;
+mod touch;
 mod transport_control;
 mod viewer;
 mod window;
@@ -132,6 +134,7 @@ pub use form::{
 };
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
+pub use insets::{Clear, KoanInsets, system_insets};
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
@@ -179,6 +182,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
+pub use touch::KoanLongPress;
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{

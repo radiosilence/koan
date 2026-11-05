@@ -1,1 +1,0 @@
-- **Settings' Server pane follows the side chosen and the fields typed.** Choosing "Connects to a server" after turning sharing off now moves the pane to it, and Sign In is enabled as soon as the address, username and password are filled.

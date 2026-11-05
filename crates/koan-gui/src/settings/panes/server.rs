@@ -33,12 +33,7 @@ const SYNC_EVERY: [(&str, u64); 5] = [
 
 pub struct ServerPane {
     pub(super) ctx: Ctx,
-    /// The side the person chose to look at, while it differs from what
-    /// this device is doing; otherwise the pane follows that.
-    chosen: Option<Mode>,
-    /// The side drawn last, so turning sharing off from the sharing side
-    /// stays on it (`stay`).
-    shown: Option<Mode>,
+    side: Side,
     /// One side only, without the choice between them or what is kept of
     /// a server's library: the setup's sign-in and sharing steps.
     pinned: Option<Mode>,
@@ -153,8 +148,7 @@ impl ServerPane {
         ];
         Self {
             ctx,
-            chosen: None,
-            shown: None,
+            side: Side::default(),
             pinned: None,
             url,
             username,
@@ -166,22 +160,6 @@ impl ServerPane {
             cache,
             share,
             _subscriptions: subscriptions,
-        }
-    }
-
-    /// The side this device is on: sharing, while the setting or a server
-    /// says so.
-    fn doing(&self, cx: &App) -> Mode {
-        let enabled = self
-            .ctx
-            .model
-            .read(cx)
-            .settings()
-            .is_some_and(|s| s.share_enabled);
-        if enabled || self.ctx.sharing.read(cx).serving.is_some() {
-            Mode::Share
-        } else {
-            Mode::Connect
         }
     }
 
@@ -820,10 +798,8 @@ impl Render for ServerPane {
         let entity = cx.entity();
         let sharing = self.ctx.sharing.read(cx);
         let status = mode_label(sharing, &connection);
-        let doing = self.doing(cx);
-        self.chosen = stay(self.shown, self.chosen, doing);
-        let mode = self.pinned.or(self.chosen).unwrap_or(doing);
-        self.shown = Some(mode);
+        let doing = doing_now(&self.ctx, cx);
+        let mode = self.pinned.unwrap_or_else(|| self.side.draw(doing));
         let mut sections = Vec::new();
         // Pinned to sharing, it says only what goes wrong or that it runs.
         if self.pinned == Some(Mode::Share) {
@@ -902,13 +878,8 @@ impl ServerPane {
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {
-                                // Against what the device does now, which may
-                                // have moved since the pane was drawn.
-                                let doing = pane.doing(cx);
-                                // The side asked for is the side shown, so
-                                // `stay` does not hold the one left.
-                                pane.shown = Some(mode);
-                                pane.chosen = (mode != doing).then_some(mode);
+                                let doing = doing_now(&pane.ctx, cx);
+                                pane.side.choose(mode, doing);
                                 cx.notify();
                             })
                         }),
@@ -929,13 +900,48 @@ impl ServerPane {
     }
 }
 
-/// The side chosen, given the side drawn last and what the device does now.
-/// Sharing turned off while its side shows leaves that side showing, with
-/// sharing off, rather than sending the pane to the sign-in form.
-fn stay(shown: Option<Mode>, chosen: Option<Mode>, doing: Mode) -> Option<Mode> {
-    match (shown, chosen, doing) {
-        (Some(Mode::Share), None, Mode::Connect) => Some(Mode::Share),
-        _ => chosen,
+/// What this device is doing: sharing, or about to, or not.
+fn doing_now(ctx: &Ctx, cx: &App) -> Mode {
+    let sharing = ctx.sharing.read(cx).serving.is_some();
+    let enabled = ctx
+        .model
+        .read(cx)
+        .settings()
+        .is_some_and(|s| s.share_enabled);
+    if enabled || sharing {
+        Mode::Share
+    } else {
+        Mode::Connect
+    }
+}
+
+/// Which side of the pane shows.
+#[derive(Default)]
+struct Side {
+    /// The side the person chose to look at, while it differs from what
+    /// this device is doing; otherwise the pane follows that.
+    chosen: Option<Mode>,
+    /// What the device was doing at the last draw, so turning sharing off
+    /// from the sharing side stays on it.
+    was_doing: Option<Mode>,
+}
+
+impl Side {
+    /// The side to draw, given what the device does now. Sharing turned off
+    /// while its side shows leaves that side showing, with sharing off,
+    /// rather than sending the pane to the sign-in form; only the change
+    /// does that, so choosing the sign-in side afterwards shows it.
+    fn draw(&mut self, doing: Mode) -> Mode {
+        if self.was_doing == Some(Mode::Share) && doing == Mode::Connect && self.chosen.is_none() {
+            self.chosen = Some(Mode::Share);
+        }
+        self.was_doing = Some(doing);
+        self.chosen = self.chosen.filter(|chosen| *chosen != doing);
+        self.chosen.unwrap_or(doing)
+    }
+
+    fn choose(&mut self, mode: Mode, doing: Mode) {
+        self.chosen = (mode != doing).then_some(mode);
     }
 }
 
@@ -998,20 +1004,39 @@ pub fn mode_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, host, stay};
+    use super::{Mode, Side, host};
 
     #[test]
     fn turning_sharing_off_stays_on_the_sharing_side() {
-        // Sharing, then turned off: the sharing side stays, sharing off.
-        assert_eq!(
-            stay(Some(Mode::Share), None, Mode::Connect),
-            Some(Mode::Share)
-        );
-        // Opened while not sharing: the sign-in side, as before.
-        assert_eq!(stay(None, None, Mode::Connect), None);
-        assert_eq!(stay(Some(Mode::Connect), None, Mode::Connect), None);
-        // Sharing: the pane follows it.
-        assert_eq!(stay(Some(Mode::Share), None, Mode::Share), None);
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        side.choose(Mode::Connect, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+    }
+
+    #[test]
+    fn the_sign_in_side_shows_after_looking_at_sharing() {
+        // #2109: not sharing, the sharing side looked at, then the sign-in
+        // side chosen.
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+        side.choose(Mode::Share, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Share);
+        side.choose(Mode::Connect, Mode::Connect);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+    }
+
+    #[test]
+    fn follows_the_device_once_it_does_what_was_chosen() {
+        // Sharing, the sign-in side looked at, sharing stopped and started
+        // again from elsewhere: the pane follows it back to sharing.
+        let mut side = Side::default();
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
+        side.choose(Mode::Connect, Mode::Share);
+        assert_eq!(side.draw(Mode::Connect), Mode::Connect);
+        assert_eq!(side.draw(Mode::Share), Mode::Share);
     }
 
     #[test]

@@ -662,6 +662,7 @@ impl RenderOnce for MenuRow {
             .mx(look.space(Space::Xs))
             .px(look.space(Space::M) - look.space(Space::Xs))
             .py(look.space(if rich { Space::S } else { Space::Xs }))
+            .min_h(look.target())
             .rounded(look.spaced(ROW_RADIUS))
             // A rich row keeps two lines' height with one line of text, its
             // title centred, so a list of them does not jump as details come

@@ -1,0 +1,1 @@
+- **Sign In is enabled as the fields are filled.** The Server pane redraws on each edit to the address, username and password, so Sign In no longer stays disabled until something else redraws it.
