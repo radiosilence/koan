@@ -286,6 +286,9 @@ impl gpui::Element for FieldElement {
                 }
             });
         }
+        if focus.is_focused(window) {
+            super::drawn_focused(&focus, bounds);
+        }
         // Under touch, a tap anywhere but the field puts the keyboard away:
         // the tap goes where it landed first (a button presses, another
         // field takes the keyboard), and the field lets go only if it still
@@ -297,9 +300,9 @@ impl gpui::Element for FieldElement {
                     return;
                 }
                 let focus = focus.clone();
-                window.defer(cx, move |window, _| {
+                window.defer(cx, move |window, cx| {
                     if focus.is_focused(window) {
-                        window.blur();
+                        window.blur(cx);
                         window.dismiss_virtual_keyboard();
                     }
                 });

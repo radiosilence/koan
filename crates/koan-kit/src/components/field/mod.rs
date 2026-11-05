@@ -429,3 +429,19 @@ impl gpui::Element for Labelled {
         self.child.paint(window, cx);
     }
 }
+
+thread_local! {
+    /// The field holding the keyboard and where it was last drawn, for the
+    /// scroll area around it to keep it clear of a software keyboard.
+    static TYPING: std::cell::RefCell<Option<(gpui::FocusHandle, gpui::Bounds<gpui::Pixels>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The focused field and its bounds as last drawn.
+pub(crate) fn typing_in() -> Option<(gpui::FocusHandle, gpui::Bounds<gpui::Pixels>)> {
+    TYPING.with_borrow(|typing| typing.clone())
+}
+
+pub(super) fn drawn_focused(focus: &gpui::FocusHandle, bounds: gpui::Bounds<gpui::Pixels>) {
+    TYPING.with_borrow_mut(|typing| *typing = Some((focus.clone(), bounds)));
+}
