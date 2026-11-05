@@ -10,7 +10,7 @@
 @source "../templates";
 @source not "../templates/share";
 @source "../scripts/ui.ts";
-@import "../../../site/src/theme.css";
+@import "@radiosilence/theme";
 @import "./controls.css";
 
 @theme {

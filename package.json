@@ -1,0 +1,8 @@
+{
+  "name": "koan-styles",
+  "private": true,
+  "description": "The shared theme the web UI, share page and koan.rocks stylesheets import. Tailwind itself is the standalone binary from mise.",
+  "dependencies": {
+    "@radiosilence/theme": "0.1.0"
+  }
+}

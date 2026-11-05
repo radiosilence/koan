@@ -125,8 +125,10 @@ release version *args:
     scripts/release.sh {{version}} {{args}}
 
 # Compile the web UI and share page stylesheets. The output is committed, since
-# the server embeds it; CI fails a build where it is stale.
+# the server embeds it; CI fails a build where it is stale. The theme they
+# import is an npm package, installed first (scripts/styles-deps.sh).
 css:
+    scripts/styles-deps.sh
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
 

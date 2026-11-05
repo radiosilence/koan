@@ -2,7 +2,7 @@
 @source "../public/**/*.html";
 @source "./docs.html";
 
-@import "./theme.css";
+@import "@radiosilence/theme";
 
 /* Syntax colours for the documentation's code, which the web UI has no use for. */
 :root {
