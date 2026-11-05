@@ -356,7 +356,6 @@ impl Transport {
         div()
             .id("now-playing-page")
             .size_full()
-            .bg(p.bg)
             .clear_of_system(crate::components::Clear::System, window)
             .child(page)
             .into_any_element()

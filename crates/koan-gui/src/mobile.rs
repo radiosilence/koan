@@ -547,6 +547,20 @@ impl PhoneShell {
 impl Render for PhoneShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
+        // Now Playing in place of the tabs, so the window's wash of the
+        // playing record runs behind it, as the iOS app's bleed does; the
+        // tabs keep their places under it.
+        if let Some((full, _)) = &self.now_playing {
+            return div()
+                .key_context(crate::platform::actions::CONTEXT)
+                .relative()
+                .size_full()
+                .text_color(p.ink)
+                .child(full.clone().cached(StyleRefinement::default().size_full()))
+                .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
+                .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
+                .into_any_element();
+        }
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
         let activity = cx
@@ -606,21 +620,11 @@ impl Render for PhoneShell {
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
-            .children(self.now_playing.as_ref().map(|(full, _)| {
-                ask::layered(
-                    Layer::Sheet,
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .child(full.clone().cached(StyleRefinement::default().size_full())),
-                )
-            }))
             .children(
                 self.search
                     .as_ref()
                     .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
             )
+            .into_any_element()
     }
 }
