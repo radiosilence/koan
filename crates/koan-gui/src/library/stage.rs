@@ -24,6 +24,11 @@ pub struct LibraryStage {
 }
 
 impl LibraryStage {
+    /// What the browsers are narrowed and ordered by.
+    pub fn browse(&self) -> &Entity<super::browse::Browse> {
+        &self.lib.browse
+    }
+
     pub fn new(lib: Lib, _: &mut Window, cx: &mut Context<Self>) -> Self {
         // A page is dropped when the shell shows a page of its own, so a
         // hidden grid neither reloads nor keeps its sleeves ranked on screen;

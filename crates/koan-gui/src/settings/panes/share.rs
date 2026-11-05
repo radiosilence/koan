@@ -109,6 +109,28 @@ impl ShareForm {
         });
     }
 
+    /// Asks before sharing stops: every phone and device on it loses the
+    /// library at once.
+    /// `stopped` runs once the person has said to stop.
+    pub fn ask_stop_sharing(
+        ctx: &Ctx,
+        window: &mut Window,
+        cx: &mut App,
+        stopped: impl Fn(&mut Window, &mut App) + 'static,
+    ) {
+        let off = ctx.clone();
+        let sheet = Sheet::new("Stop sharing this device's library?")
+            .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
+            .action(
+                Action::new("Stop Sharing", move |_, window, cx| {
+                    ShareForm::set_sharing(&off, false, cx);
+                    stopped(window, cx);
+                })
+                .destructive(),
+            );
+        ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+    }
+
     /// With the values just typed, so the start never reads a setting still
     /// being written. A start stops the running server first, so a failed
     /// one leaves nothing serving and the switch says so.
@@ -253,7 +275,7 @@ impl ShareForm {
                 None,
                 vec![text(
                     format!(
-                        "This device is signed in to {}. Sign out of it under Connects to a server, then share this device's own library here.",
+                        "This device is signed in to {}. Sign out of it in Settings → Server, then share this device's own library here.",
                         super::server::host(&settings.remote_url)
                     ),
                     TypeRole::Body,
@@ -364,17 +386,7 @@ impl ShareForm {
                     ShareForm::set_sharing(&ctx, true, cx);
                     return;
                 }
-                // Every phone and device on it loses the library at once.
-                let off = ctx.clone();
-                let sheet = Sheet::new("Stop sharing this device's library?")
-                    .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
-                    .action(
-                        Action::new("Stop Sharing", move |_, _, cx| {
-                            ShareForm::set_sharing(&off, false, cx)
-                        })
-                        .destructive(),
-                    );
-                ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+                ShareForm::ask_stop_sharing(&ctx, window, cx, |_, _| {});
             })
             .into_any_element()
         }];

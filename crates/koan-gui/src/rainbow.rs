@@ -190,6 +190,16 @@ pub fn install(cx: &mut App) {
     refresh(cx);
 }
 
+/// Reads the kept switch again, after something other than the code changed
+/// it: a reset to defaults.
+pub fn reload(cx: &mut App) {
+    let on = engine(cx).appearance().rainbow;
+    if cx.global::<Rainbow>().on != on {
+        cx.update_global::<Rainbow, _>(|r, _| r.on = on);
+        refresh(cx);
+    }
+}
+
 /// How much of the code is in before the keys it goes on with are held back
 /// from the app: every arrow, since ↑ ↑ ↓ ↓ ← → ← → is ordinary use of a
 /// list or a grid and always moves it. Only B and A, once the arrows are in,

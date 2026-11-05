@@ -25,52 +25,94 @@ impl LibraryPane {
     }
 
     fn add_folder(&mut self, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: true,
-            prompt: Some("Add".into()),
-        });
-        let model = self.ctx.model.clone();
-        self.choosing = Some(cx.spawn(async move |_, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
-            };
-            let paths = paths
-                .into_iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect();
-            model.update(cx, |model, cx| model.add_folders(paths, cx));
-        }));
+        self.choosing = Some(choose_folders(self.ctx.model.clone(), cx));
     }
 
-    /// Asks before a folder goes: kept rows stay in the library, forgotten
-    /// ones go, and its files are not touched either way.
     fn remove(&self, path: String, tracks: u64, window: &mut Window, cx: &mut App) {
-        let keep = {
-            let model = self.ctx.model.clone();
-            let path = path.clone();
-            move |_: &[String], _: &mut Window, cx: &mut App| {
-                model.update(cx, |model, cx| model.remove_folder(path.clone(), false, cx))
-            }
+        ask_remove(&self.ctx, path, tracks, window, cx);
+    }
+
+    /// Asks before kōan goes back to its defaults, saying what of this
+    /// device's setup goes with it.
+    fn reset(&self, window: &mut Window, cx: &mut App) {
+        let Some(settings) = self.ctx.model.read(cx).settings() else {
+            return;
         };
-        let forget = {
-            let model = self.ctx.model.clone();
-            let path = path.clone();
-            move |_: &[String], _: &mut Window, cx: &mut App| {
-                model.update(cx, |model, cx| model.remove_folder(path.clone(), true, cx))
-            }
-        };
-        let sheet = Sheet::new(format!("Stop scanning {path}?"))
-            .message(format!(
-                "Its {} tracks are in the library now. Keeping them leaves records kōan will not scan again; forgetting them removes them. Your files are not touched either way.",
+        let mut message = vec![
+            "Every setting goes back to how it was when kōan was first opened, and the setup guide opens again.".to_owned(),
+        ];
+        if settings.share_enabled || self.ctx.sharing.read(cx).serving.is_some() {
+            message.push(
+                "This device stops sharing its library. The accounts made for it are kept.".into(),
+            );
+        }
+        if settings.remote_signed_in || settings.remote_enabled {
+            let host = super::server::host(&settings.remote_url);
+            message.push(format!(
+                "kōan signs out of {host} and forgets its library here, with the account's favourites, history and playlists. Nothing on the server changes."
+            ));
+        }
+        if !settings.library_folders.is_empty() {
+            let tracks: u64 = settings.library_folders.iter().map(|f| f.tracks).sum();
+            let folders = settings.library_folders.len();
+            message.push(format!(
+                "kōan stops scanning {} and forgets its {} tracks. Your files are not touched.",
+                if folders == 1 {
+                    "1 folder".to_owned()
+                } else {
+                    format!("{folders} folders")
+                },
                 count(tracks)
-            ))
-            .action(Action::new("Remove, Keep Them in the Library", keep))
-            .action(Action::new("Remove and Forget Its Tracks", forget).destructive());
-        self.ctx
-            .sheets
-            .update(cx, |sheets, cx| sheets.show(sheet, window, cx));
+            ));
+        }
+        use crate::platform::residency::{self, Login};
+        if matches!(residency::login(cx), Login::On | Login::NeedsApproval) {
+            message.push("kōan no longer opens at login.".into());
+        }
+        let ending = "config.local.toml, which holds passwords and keys, is emptied. The output kōan is playing through, and whether it is muted, stay as they are until it next opens one.";
+        let model = self.ctx.model.clone();
+        let sharing = self.ctx.sharing.clone();
+        let sheets = self.ctx.sheets.clone();
+        // A config.toml kept in a dotfiles repository is a link into it, and
+        // emptying it empties the file there, for every machine sharing it.
+        // Whether config.toml holds anything to keep a copy of.
+        let read = cx.background_executor().spawn(async {
+            let path = koan_core::config::config_file_path();
+            let linked = std::fs::symlink_metadata(&path)
+                .is_ok_and(|m| m.file_type().is_symlink())
+                .then(|| std::fs::canonicalize(&path).ok())
+                .flatten();
+            let kept = std::fs::read_to_string(&path).is_ok_and(|text| !text.trim().is_empty());
+            (linked, kept)
+        });
+        window
+            .spawn(cx, async move |cx| {
+                let (linked, kept) = read.await;
+                if kept {
+                    message.push("A copy of config.toml is kept beside it, as config.toml.bak, or the next free config.toml.bak.N where an earlier reset's copy is there.".into());
+                }
+                message.push(ending.into());
+                if let Some(target) = linked {
+                    message.push(format!(
+                        "config.toml is a link to {}. Emptying it empties that file, for every machine that shares it.",
+                        homely(&target.to_string_lossy())
+                    ));
+                }
+                let sheet = Sheet::new("Reset kōan to its defaults?")
+                    .message(message.join("\n\n"))
+                    .action(
+                        Action::new("Reset to Defaults", move |_, _, cx| {
+                            let sharing = sharing.clone();
+                            model.update(cx, |model, cx| {
+                                model.reset(sharing, crate::setup::after_reset, cx)
+                            })
+                        })
+                        .destructive(),
+                    );
+                cx.update(|window, cx| sheets.update(cx, |s, cx| s.show(sheet, window, cx)))
+                    .ok();
+            })
+            .detach();
     }
 
     fn rebuild(&self, window: &mut Window, cx: &mut App) {
@@ -198,8 +240,26 @@ impl Render for LibraryPane {
                     .label("Clear Library Index…")
                     .destructive(true)
                     .disabled(whole)
+                    .on_click({
+                        let entity = entity.clone();
+                        move |_, window, cx| entity.update(cx, |this, cx| this.rebuild(window, cx))
+                    })
+                    .into_any_element(),
+            ],
+            &look,
+        );
+        let start_over = buttons(
+            vec![
+                Button::new("set-up", ButtonKind::Bordered)
+                    .label("Set Up kōan…")
+                    .on_click(|_, _, cx| crate::setup::open(cx))
+                    .into_any_element(),
+                Button::new("reset", ButtonKind::Bordered)
+                    .label("Reset to Defaults…")
+                    .destructive(true)
+                    .disabled(whole)
                     .on_click(move |_, window, cx| {
-                        entity.update(cx, |this, cx| this.rebuild(window, cx))
+                        entity.update(cx, |this, cx| this.reset(window, cx))
                     })
                     .into_any_element(),
             ],
@@ -229,13 +289,71 @@ impl Render for LibraryPane {
                     Some("Forgets every artist, album and track so the next scan builds them again from your files. Favourites survive — they are kept against file paths. Lyrics, play counts and audio analysis do not; they are tied to rows that will not exist.".into()),
                     &look,
                 ),
+                section(
+                    Some("Start over"),
+                    vec![start_over],
+                    Some("The setup guide walks through choosing your music, sharing it and playback again. Resetting puts every setting back to its default first.".into()),
+                    &look,
+                ),
             ],
         )
     }
 }
 
+/// Asks for folders to add, and adds and scans them. The task is the
+/// question: dropped, it is not answered.
+pub(crate) fn choose_folders(
+    model: Entity<crate::settings::model::SettingsModel>,
+    cx: &mut App,
+) -> Task<()> {
+    let chosen = cx.prompt_for_paths(PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: true,
+        prompt: Some("Add".into()),
+    });
+    cx.spawn(async move |cx| {
+        let Ok(Ok(Some(paths))) = chosen.await else {
+            return;
+        };
+        let paths = paths
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        model.update(cx, |model, cx| model.add_folders(paths, cx));
+    })
+}
+
+/// Asks before a folder goes: kept rows stay in the library, forgotten ones
+/// go, and its files are not touched either way.
+pub(crate) fn ask_remove(ctx: &Ctx, path: String, tracks: u64, window: &mut Window, cx: &mut App) {
+    let keep = {
+        let model = ctx.model.clone();
+        let path = path.clone();
+        move |_: &[String], _: &mut Window, cx: &mut App| {
+            model.update(cx, |model, cx| model.remove_folder(path.clone(), false, cx))
+        }
+    };
+    let forget = {
+        let model = ctx.model.clone();
+        let path = path.clone();
+        move |_: &[String], _: &mut Window, cx: &mut App| {
+            model.update(cx, |model, cx| model.remove_folder(path.clone(), true, cx))
+        }
+    };
+    let sheet = Sheet::new(format!("Stop scanning {path}?"))
+            .message(format!(
+                "Its {} tracks are in the library now. Keeping them leaves records kōan will not scan again; forgetting them removes them. Your files are not touched either way.",
+                count(tracks)
+            ))
+            .action(Action::new("Remove, Keep Them in the Library", keep))
+            .action(Action::new("Remove and Forget Its Tracks", forget).destructive());
+    ctx.sheets
+        .update(cx, |sheets, cx| sheets.show(sheet, window, cx));
+}
+
 /// A path as people write it: the home directory as `~`.
-fn homely(path: &str) -> String {
+pub(crate) fn homely(path: &str) -> String {
     match std::env::var("HOME") {
         Ok(home) if !home.is_empty() && path.starts_with(&home) => {
             let rest = &path[home.len()..];

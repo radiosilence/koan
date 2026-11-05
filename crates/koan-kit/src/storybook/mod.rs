@@ -51,12 +51,13 @@ pub enum Story {
     Lists,
     Panels,
     Motion,
+    Guide,
     Rainbow,
     Playground,
 }
 
 impl Story {
-    pub const ALL: [Story; 19] = [
+    pub const ALL: [Story; 20] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -74,6 +75,7 @@ impl Story {
         Story::Lists,
         Story::Panels,
         Story::Motion,
+        Story::Guide,
         Story::Rainbow,
         Story::Playground,
     ];
@@ -98,6 +100,7 @@ impl Story {
             Story::Lists => "tables and lists",
             Story::Panels => "panels and sheets",
             Story::Motion => "motion and drag",
+            Story::Guide => "choices and checklists",
             Story::Rainbow => "rainbow",
             Story::Playground => "motion playground",
         }
@@ -414,7 +417,12 @@ impl StoryContent {
         };
         match self.story {
             Story::Playground => self.playground(look, window, cx),
-            Story::Collections | Story::Lists | Story::Panels | Story::Motion | Story::Rainbow => {
+            Story::Collections
+            | Story::Lists
+            | Story::Panels
+            | Story::Motion
+            | Story::Guide
+            | Story::Rainbow => {
                 self.more(look, window, cx)
             }
             Story::Type => {

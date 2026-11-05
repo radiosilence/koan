@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use koan_kit::app::{App, Context, SharedString, Subscription, Task};
+use koan_kit::app::{App, Context, Entity, SharedString, Subscription, Task};
 use koan_runtime::{KoanEngine, KoanError, Settings};
 
 use crate::mirror::{Mirror, Slice};
@@ -183,6 +183,10 @@ pub struct SettingsModel {
     /// What koan is doing on its own (a watched folder's scan, an automatic
     /// sync), from the engine's tasks slice.
     engine_busy: Uses,
+    /// What a task waiting for the edits before it to land will hold, from
+    /// when it is asked for: a reset, which clicked again in that gap would
+    /// start twice.
+    awaiting_write: Uses,
     /// A key or app password made as its window closed, shown by the next
     /// Settings window: it is shown only once, and must reach someone.
     pub unseen: Vec<crate::settings::sheet::Sheet>,
@@ -212,6 +216,7 @@ impl SettingsModel {
             running: Vec::new(),
             next_task: 0,
             engine_busy: Uses::NONE,
+            awaiting_write: Uses::NONE,
             unseen: Vec::new(),
             waiting_pairs: Vec::new(),
             _tasks: cx.observe(&tasks, |model, tasks, cx| {
@@ -251,7 +256,10 @@ impl SettingsModel {
     pub fn conflicts(&self, wanted: Uses) -> bool {
         self.running
             .iter()
-            .fold(self.engine_busy, |held, (_, uses, _)| held.with(*uses))
+            .fold(
+                self.engine_busy.with(self.awaiting_write),
+                |held, (_, uses, _)| held.with(*uses),
+            )
             .overlaps(wanted)
     }
 
@@ -395,6 +403,9 @@ impl SettingsModel {
                     // so.
                     let whole = model.draft.as_mut().is_none_or(Draft::chain_done);
                     let waiting = std::mem::take(&mut model.written);
+                    if !whole {
+                        model.awaiting_write = Uses::NONE;
+                    }
                     if whole {
                         for then in waiting {
                             then(model, cx);
@@ -656,6 +667,88 @@ impl SettingsModel {
                 Err(e) => model.report(describe(&e), cx),
             },
         );
+    }
+
+    /// Puts kōan back as it was first opened: stops sharing, signs out
+    /// (forgetting the server's library and the account's favourites,
+    /// history and playlists here), forgets each folder's tracks, and sets
+    /// every setting back to its default. Starts once the edits still being
+    /// written have landed, so none lands over the defaults; `after` runs
+    /// once it has succeeded.
+    pub fn reset(
+        &mut self,
+        sharing: Entity<crate::settings::sharing::Sharing>,
+        after: impl FnOnce(&mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(settings) = self.settings().cloned() else {
+            return;
+        };
+        let folders: Vec<String> = settings
+            .library_folders
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        let listed = settings.library_folders.clone();
+        let signed_in = settings.remote_signed_in || settings.remote_enabled;
+        let host = crate::settings::panes::server::host(&settings.remote_url);
+        // The folders leave the file before their tracks are forgotten, so
+        // the folder watcher has nothing to index them again from.
+        self.awaiting_write = Uses::WHOLE_LIBRARY;
+        self.edit(cx, |s| s.library_folders.clear());
+        self.when_written(cx, move |model, cx| {
+            model.awaiting_write = Uses::NONE;
+            model.run(
+                "Resetting kōan",
+                Uses::WHOLE_LIBRARY,
+                cx,
+                move |engine| async move {
+                    // Sharing reads what is running once this lands.
+                    engine.clone().stop_server().await;
+                    if signed_in {
+                        engine.clone().sign_out_remote().await?;
+                    }
+                    for path in folders {
+                        engine.clone().forget_folder(path).await?;
+                    }
+                    engine.reset_settings().await
+                },
+                move |model, result, cx| {
+                    sharing.update(cx, |sharing, cx| sharing.refresh(cx));
+                    match result {
+                        Ok(()) => {
+                            crate::covers::Covers::purge(cx);
+                            model.done("Every setting is back to its default", cx);
+                            cx.defer(after);
+                        }
+                        Err(e) => {
+                            // Stopped part way: sharing is stopped and may be
+                            // signed out of, so the file says so; the
+                            // folders go back in the list, and a scan reads
+                            // again what was forgotten.
+                            let failed = describe(&e);
+                            model.edit(cx, move |s| {
+                                s.share_enabled = false;
+                                for folder in &listed {
+                                    if !s.library_folders.iter().any(|f| f.path == folder.path) {
+                                        s.library_folders.push(folder.clone());
+                                    }
+                                }
+                            });
+                            let signed_out = if signed_in {
+                                format!(" kōan may already be signed out of {host}.")
+                            } else {
+                                String::new()
+                            };
+                            model.report(
+                                format!("{failed}. The reset stopped part way: sharing is off, and the folders are back in the list.{signed_out} Reset again to finish it."),
+                                cx,
+                            );
+                        }
+                    }
+                },
+            );
+        });
     }
 
     pub fn sync(&mut self, cx: &mut Context<Self>) {

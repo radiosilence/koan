@@ -312,7 +312,7 @@ impl Sheets {
     }
 
     /// The sheet up, over its scrim, if one is.
-    pub(super) fn render(
+    pub(crate) fn render(
         this: &Entity<Self>,
         look: &Look,
         window: &mut Window,

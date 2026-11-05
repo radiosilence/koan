@@ -1526,6 +1526,19 @@ pub enum Layer {
     Machine,
 }
 
+/// The settings that are secrets: kept in `config.local.toml`, and left out
+/// of the copy a reset keeps of a `config.toml` written by hand or by an
+/// older version.
+const SECRETS: [&str; 7] = [
+    "remote.password",
+    "remote.api_key",
+    "remote.device_key",
+    "subsonic.password",
+    "auth.refresh_token",
+    "lastfm.api_key",
+    "lastfm.secret",
+];
+
 /// Where the setting at a dotted path belongs.
 ///
 /// `config.toml` is meant to be committed to a dotfiles repo, so three kinds of
@@ -1537,16 +1550,9 @@ pub enum Layer {
 /// Anything not named here is taste, and taste travels.
 pub fn layer_of(path: &str) -> Layer {
     match path {
-        // Secrets.
-        "remote.password"
-        | "remote.api_key"
-        | "remote.device_key"
-        | "subsonic.password"
-        | "auth.refresh_token"
-        | "lastfm.api_key"
-        | "lastfm.secret"
+        p if SECRETS.contains(&p) => Layer::Machine,
         // This machine's paths, disk and account.
-        | "library.folders"
+        "library.folders"
         | "remote.enabled"
         | "remote.url"
         | "remote.username"
@@ -1829,11 +1835,7 @@ impl Config {
     where
         F: FnOnce(&mut Config),
     {
-        // Each write reads both files and writes them back whole, so two at
-        // once would lose whichever finished first: the player's volume and a
-        // setting changed in the app, say.
-        static ONE_AT_A_TIME: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-        let _one = ONE_AT_A_TIME.lock();
+        let _one = ONE_WRITE_AT_A_TIME.lock();
         let before = Self::from_files()?;
         let mut after = before.clone();
         mutate(&mut after);
@@ -1870,6 +1872,50 @@ impl Config {
         write_document(&local_path, &local, true)?;
         Self::invalidate_cache();
         Ok(true)
+    }
+
+    /// Puts every setting back to its default. What `config.toml` held is
+    /// kept beside it as `config.toml.bak`, or `config.toml.bak.1` and on
+    /// where an earlier reset's copy is there, which is never overwritten;
+    /// an empty file keeps no copy, and the copy leaves out any secret the
+    /// file held. `config.local.toml`, which holds this machine's secrets,
+    /// keeps nothing. Both files are emptied rather
+    /// than removed, so one that is a link into a dotfiles repository stays a
+    /// link. Environment variables still apply over the defaults.
+    pub fn reset() -> Result<(), ConfigError> {
+        let _one = ONE_WRITE_AT_A_TIME.lock();
+        let base = config_file_path();
+        if base.exists() {
+            let contents = fs::read_to_string(&base)?;
+            if !contents.trim().is_empty() {
+                // A file that does not parse is kept as it is, readable by
+                // this user alone.
+                let kept_contents = match contents.parse::<toml_edit::DocumentMut>() {
+                    Ok(mut doc) => {
+                        for secret in SECRETS {
+                            doc_remove(&mut doc, secret);
+                        }
+                        doc.to_string()
+                    }
+                    Err(_) => contents,
+                };
+                let kept = (0..)
+                    .map(|n| match n {
+                        0 => base.with_extension("toml.bak"),
+                        n => base.with_extension(format!("toml.bak.{n}")),
+                    })
+                    .find(|path| !path.exists())
+                    .expect("a free name");
+                write_private(&kept, kept_contents.as_bytes())?;
+            }
+            write_document(&base, &toml_edit::DocumentMut::new(), false)?;
+        }
+        let local = config_local_file_path();
+        if local.exists() {
+            write_document(&local, &toml_edit::DocumentMut::new(), true)?;
+        }
+        Self::invalidate_cache();
+        Ok(())
     }
 
     /// Resolved cache directory — the explicit setting, or `default_cache_dir`.
@@ -1930,6 +1976,11 @@ fn diff_into(
         }
     }
 }
+
+/// Each write reads both files and writes them back whole, so two at once
+/// would lose whichever finished first: the player's volume and a setting
+/// changed in the app, say. A reset waits its turn the same way.
+static ONE_WRITE_AT_A_TIME: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 fn read_document(path: &Path) -> Result<toml_edit::DocumentMut, ConfigError> {
     let Ok(contents) = fs::read_to_string(path) else {
@@ -3182,6 +3233,59 @@ fps = 30
         }
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         reader.join().unwrap();
+    }
+
+    #[test]
+    fn reset_keeps_the_shared_file_aside_and_empties_both() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, local) = persist_sandbox("reset");
+        Config::persist(|cfg| {
+            cfg.visualizer.palette = "neon".into();
+            cfg.remote.password = "hunter2".into();
+        })
+        .unwrap();
+        assert_eq!(Config::cached().visualizer.palette, "neon");
+
+        // A secret written into the shared file by hand.
+        let mut shared = fs::read_to_string(&base).unwrap();
+        shared.push_str("\n[subsonic]\npassword = \"hunter2\"\n");
+        fs::write(&base, shared).unwrap();
+        Config::reset().unwrap();
+
+        let kept = fs::read_to_string(base.with_extension("toml.bak")).unwrap();
+        assert!(
+            kept.contains("neon"),
+            "the shared file is kept aside: {kept}"
+        );
+        assert!(fs::read_to_string(&base).unwrap().trim().is_empty());
+        assert!(fs::read_to_string(&local).unwrap().trim().is_empty());
+        assert!(
+            !fs::read_dir(base.parent().unwrap())
+                .unwrap()
+                .flatten()
+                .any(|e| fs::read_to_string(e.path()).is_ok_and(|t| t.contains("hunter2"))),
+            "no copy of a secret is left behind"
+        );
+        let cfg = Config::cached();
+        assert_eq!(cfg.visualizer.palette, Config::default().visualizer.palette);
+        assert!(cfg.remote.password.is_empty());
+
+        // A second reset keeps the first copy and its own beside it.
+        Config::persist(|cfg| cfg.visualizer.palette = "fire".into()).unwrap();
+        Config::reset().unwrap();
+        assert!(
+            fs::read_to_string(base.with_extension("toml.bak"))
+                .unwrap()
+                .contains("neon")
+        );
+        assert!(
+            fs::read_to_string(base.with_extension("toml.bak.1"))
+                .unwrap()
+                .contains("fire")
+        );
+        // An empty file keeps no copy.
+        Config::reset().unwrap();
+        assert!(!base.with_extension("toml.bak.2").exists());
     }
 
     #[test]

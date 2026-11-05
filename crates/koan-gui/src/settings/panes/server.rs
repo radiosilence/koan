@@ -18,7 +18,7 @@ use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Mode {
+pub enum Mode {
     Connect,
     Share,
 }
@@ -39,6 +39,9 @@ pub struct ServerPane {
     /// The side drawn last, so turning sharing off from the sharing side
     /// stays on it (`stay`).
     shown: Option<Mode>,
+    /// One side only, without the choice between them or what is kept of
+    /// a server's library: the setup's sign-in and sharing steps.
+    pinned: Option<Mode>,
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
@@ -141,6 +144,7 @@ impl ServerPane {
             ctx,
             chosen: None,
             shown: None,
+            pinned: None,
             url,
             username,
             secret,
@@ -152,6 +156,12 @@ impl ServerPane {
             share,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Shows `mode`'s side alone, its essentials only.
+    pub fn pinned(mut self, mode: Mode) -> Self {
+        self.pinned = Some(mode);
+        self
     }
 
     fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -187,9 +197,14 @@ impl ServerPane {
         self.url.update(cx, |s, cx| s.set_value("", window, cx));
         let host = host(&invite.server);
         if self.ctx.sharing.read(cx).serving.is_some() {
+            let way = if self.pinned.is_some() {
+                "Stop sharing"
+            } else {
+                "Turn sharing off under Shares its library"
+            };
             model.update(cx, |m, cx| {
                 m.report(
-                    format!("This device is sharing its library. Turn sharing off under Shares its library to sign in to {host}."),
+                    format!("This device is sharing its library. {way} to sign in to {host}."),
                     cx,
                 )
             });
@@ -439,6 +454,9 @@ impl ServerPane {
                 look,
             ));
             sections.push(section(Some("Signed in"), rows, None, look));
+            if self.pinned.is_some() {
+                return sections;
+            }
             sections.push(offers(connection, look));
         } else {
             let signing_in = model
@@ -510,6 +528,9 @@ impl ServerPane {
                 Some("Paste an invite here, or into Server URL, and kōan fills in the rest. The account is checked against the server, then saved to config.local.toml, readable only by you.".into()),
                 look,
             ));
+        }
+        if self.pinned.is_some() {
+            return sections;
         }
 
         let mut sync_rows = vec![{
@@ -778,9 +799,74 @@ impl Render for ServerPane {
             Mode::Connect
         };
         self.chosen = stay(self.shown, self.chosen, doing);
-        let mode = self.chosen.unwrap_or(doing);
+        let mode = self.pinned.or(self.chosen).unwrap_or(doing);
         self.shown = Some(mode);
-        let mut sections = vec![section(
+        let mut sections = Vec::new();
+        // Pinned to sharing, it says only what goes wrong or that it runs.
+        if self.pinned == Some(Mode::Share) {
+            if matches!(status, ModeLabel::Sharing(_) | ModeLabel::NotSharing(_)) {
+                sections.push(section(None, vec![status.render(&look)], None, &look));
+            }
+        } else if self.pinned.is_none() {
+            sections.push(self.mode_section(mode, doing, &status, &look, entity.clone()));
+        }
+        match mode {
+            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
+            Mode::Connect if settings.share_enabled => {
+                let mut rows = vec![text(
+                    if self.pinned.is_some() {
+                        "This device is sharing its library. It signs in to a server once it stops sharing."
+                    } else {
+                        "This device is sharing its library. Turn sharing off under Shares its library to sign in to a server instead."
+                    },
+                    TypeRole::Body,
+                    Tone::Muted,
+                    &look,
+                )
+                .into_any_element()];
+                if self.pinned.is_some() {
+                    let ctx = self.ctx.clone();
+                    let busy = self.ctx.sharing.read(cx).busy();
+                    rows.push(buttons(
+                        vec![
+                            Button::new("stop-sharing", ButtonKind::Bordered)
+                                .label("Stop Sharing…")
+                                .disabled(busy)
+                                .on_click(move |_, window, cx| {
+                                    super::share::ShareForm::ask_stop_sharing(
+                                        &ctx,
+                                        window,
+                                        cx,
+                                        |_, _| {},
+                                    )
+                                })
+                                .into_any_element(),
+                        ],
+                        &look,
+                    ));
+                }
+                sections.push(section(None, rows, None, &look));
+            }
+            Mode::Connect => {
+                sections.extend(self.connect_sections(&settings, &connection, &look, cx))
+            }
+        }
+        page("server", &look, sections)
+    }
+}
+
+impl ServerPane {
+    /// The choice between signing in and sharing, with what this device
+    /// does now under it.
+    fn mode_section(
+        &self,
+        mode: Mode,
+        doing: Mode,
+        status: &ModeLabel,
+        look: &Look,
+        entity: Entity<Self>,
+    ) -> AnyElement {
+        section(
             None,
             vec![
                 Row::new("This device")
@@ -800,7 +886,7 @@ impl Render for ServerPane {
                         }),
                     )
                     .into_any_element(),
-                status.render(&look),
+                status.render(look),
             ],
             Some(
                 if mode == Mode::Share {
@@ -810,25 +896,8 @@ impl Render for ServerPane {
                 }
                 .into(),
             ),
-            &look,
-        )];
-        match mode {
-            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
-            Mode::Connect if settings.share_enabled => sections.push(section(
-                None,
-                vec![text(
-                    "This device is sharing its library. Turn sharing off under Shares its library to sign in to a server instead.",
-                    TypeRole::Body,
-                    Tone::Muted,
-                    &look,
-                )
-                .into_any_element()],
-                None,
-                &look,
-            )),
-            Mode::Connect => sections.extend(self.connect_sections(&settings, &connection, &look, cx)),
-        }
-        page("server", &look, sections)
+            look,
+        )
     }
 }
 

@@ -10,12 +10,12 @@ mod eq;
 mod general;
 pub mod integrations;
 mod keys;
-mod library;
+pub(crate) mod library;
 mod link;
 pub mod people;
-mod playback;
+pub(crate) mod playback;
 pub mod server;
-mod share;
+pub(crate) mod share;
 
 use crate::theme::Icon;
 use koan_kit::app::*;
