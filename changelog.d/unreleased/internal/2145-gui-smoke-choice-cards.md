@@ -1,0 +1,1 @@
+- **The Settings smoke test picks the server choice cards.** It still opened the side picker that the cards replace while a device neither shares nor is signed in.
