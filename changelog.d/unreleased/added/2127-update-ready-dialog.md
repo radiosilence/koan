@@ -1,0 +1,1 @@
+- **The desktop app asks to restart into an update.** Once a new version is downloaded, kōan offers to restart now instead of waiting quietly for the next quit, and a copy Homebrew or `apt` keeps is pointed at the release notes. The first launch of a newer version says so. Updates and running in the background move to a new General pane, first in Settings.

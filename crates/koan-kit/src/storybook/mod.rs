@@ -938,6 +938,8 @@ impl StoryContent {
                         .child(Placeholder::new(look.spaced(64.0)))
                         .child(Placeholder::new(look.spaced(64.0)).loading(true))
                         .child(Spinner::new(look.spaced(24.0)))
+                        .child(Spinner::new(look.spaced(24.0)).glow())
+                        .child(Spinner::new(look.font_size(TypeRole::Fine)).glow())
                         .into_any_element(),
                     SectionHeader::new("Record tiles").into_any_element(),
                     row()
