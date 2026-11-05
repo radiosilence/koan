@@ -183,6 +183,10 @@ pub struct SettingsModel {
     /// What koan is doing on its own (a watched folder's scan, an automatic
     /// sync), from the engine's tasks slice.
     engine_busy: Uses,
+    /// What a task waiting for the edits before it to land will hold, from
+    /// when it is asked for: a reset, which clicked again in that gap would
+    /// start twice.
+    awaiting_write: Uses,
     /// A key or app password made as its window closed, shown by the next
     /// Settings window: it is shown only once, and must reach someone.
     pub unseen: Vec<crate::settings::sheet::Sheet>,
@@ -212,6 +216,7 @@ impl SettingsModel {
             running: Vec::new(),
             next_task: 0,
             engine_busy: Uses::NONE,
+            awaiting_write: Uses::NONE,
             unseen: Vec::new(),
             waiting_pairs: Vec::new(),
             _tasks: cx.observe(&tasks, |model, tasks, cx| {
@@ -251,7 +256,10 @@ impl SettingsModel {
     pub fn conflicts(&self, wanted: Uses) -> bool {
         self.running
             .iter()
-            .fold(self.engine_busy, |held, (_, uses, _)| held.with(*uses))
+            .fold(
+                self.engine_busy.with(self.awaiting_write),
+                |held, (_, uses, _)| held.with(*uses),
+            )
             .overlaps(wanted)
     }
 
@@ -395,6 +403,9 @@ impl SettingsModel {
                     // so.
                     let whole = model.draft.as_mut().is_none_or(Draft::chain_done);
                     let waiting = std::mem::take(&mut model.written);
+                    if !whole {
+                        model.awaiting_write = Uses::NONE;
+                    }
                     if whole {
                         for then in waiting {
                             then(model, cx);
@@ -683,8 +694,10 @@ impl SettingsModel {
         let host = crate::settings::panes::server::host(&settings.remote_url);
         // The folders leave the file before their tracks are forgotten, so
         // the folder watcher has nothing to index them again from.
+        self.awaiting_write = Uses::WHOLE_LIBRARY;
         self.edit(cx, |s| s.library_folders.clear());
         self.when_written(cx, move |model, cx| {
+            model.awaiting_write = Uses::NONE;
             model.run(
                 "Resetting kōan",
                 Uses::WHOLE_LIBRARY,

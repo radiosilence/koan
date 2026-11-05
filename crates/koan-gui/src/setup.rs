@@ -33,7 +33,7 @@ use crate::theme::{self, Icon, Look, Space, Tone, TypeRole, label};
 /// Where Tailscale is downloaded, for every platform.
 const TAILSCALE_DOWNLOAD: &str = "https://tailscale.com/download";
 /// The Mac app, opened from the checklist when it is installed and stopped.
-const TAILSCALE_APP: &str = "file:///Applications/Tailscale.app";
+const TAILSCALE_APP: &str = "/Applications/Tailscale.app";
 
 /// The file that records the guide has been seen, in the state directory.
 const SEEN: &str = "desktop-setup";
@@ -126,18 +126,25 @@ pub fn close(cx: &mut App) {
 pub fn after_reset(cx: &mut App) {
     let engine = crate::engine::engine(cx);
     crate::settings::apply_appearance(engine, cx);
+    crate::rainbow::reload(cx);
     // Opening at login is the system's to keep, not the file's.
     use crate::platform::residency::{self, Login};
     if matches!(residency::login(cx), Login::On | Login::NeedsApproval) {
         residency::set_login(false, cx);
     }
-    if let Some(shell) = crate::app::main_shell(cx)
-        && let Some(stage) = shell.read(cx).library().cloned()
-    {
-        let browse = stage.read(cx).browse().clone();
+    // With the main window closed its filters are only on disk, which the
+    // next window reads; without the file it starts from the defaults.
+    let browse = crate::app::main_shell(cx)
+        .and_then(|shell| shell.read(cx).library().cloned())
+        .map(|stage| stage.read(cx).browse().clone());
+    let cleared = browse.is_some();
+    if let Some(browse) = browse {
         browse.update(cx, |browse, cx| browse.clear(cx));
     }
-    let forget = cx.background_executor().spawn(async {
+    let forget = cx.background_executor().spawn(async move {
+        if !cleared {
+            crate::library::browse::forget_stored();
+        }
         match std::fs::remove_file(seen_path()) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -262,21 +269,30 @@ fn steps(music: Option<Music>, share: Option<bool>) -> Vec<Step> {
     steps
 }
 
-/// The keys the last step lists, each with what it does.
-fn keys_worth_knowing() -> Vec<(&'static str, Box<dyn Action>)> {
+/// The keys the last step lists, each with what it does and the keys that
+/// do it, read from the shortcut tables once.
+fn keys_worth_knowing() -> &'static [(&'static str, Vec<&'static str>)] {
     use actions::*;
-    vec![
-        ("Search", Box::new(Search)),
-        ("Find and play", Box::new(AddMusic)),
-        ("Play or pause", Box::new(bare::TogglePlayPause)),
-        ("Next track", Box::new(Next)),
-        ("Previous track", Box::new(Previous)),
-        ("Favourite the track", Box::new(FavouriteCurrentTrack)),
-        ("Lyrics", Box::new(ToggleLyrics)),
-        ("EQ", Box::new(ShowEq)),
-        ("Settings", Box::new(Settings)),
-        ("Every shortcut", Box::new(ShowShortcuts)),
-    ]
+    static KEYS: std::sync::OnceLock<Vec<(&'static str, Vec<&'static str>)>> =
+        std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        let actions: [(&'static str, Box<dyn Action>); 10] = [
+            ("Search", Box::new(Search)),
+            ("Find and play", Box::new(AddMusic)),
+            ("Play or pause", Box::new(bare::TogglePlayPause)),
+            ("Next track", Box::new(Next)),
+            ("Previous track", Box::new(Previous)),
+            ("Favourite the track", Box::new(FavouriteCurrentTrack)),
+            ("Lyrics", Box::new(ToggleLyrics)),
+            ("EQ", Box::new(ShowEq)),
+            ("Settings", Box::new(Settings)),
+            ("Every shortcut", Box::new(ShowShortcuts)),
+        ];
+        actions
+            .into_iter()
+            .map(|(what, action)| (what, keys_for(action.as_ref())))
+            .collect()
+    })
 }
 
 pub struct SetupWindow {
@@ -289,6 +305,9 @@ pub struct SetupWindow {
     panes: Vec<(Step, AnyView)>,
     /// Whether Tailscale is installed, running or not: `None` until read.
     tailscale_installed: Option<bool>,
+    /// Whether the Mac app is installed, rather than only the command line
+    /// (Homebrew's formula), which the checklist cannot open.
+    tailscale_app: bool,
     reading: Option<Task<()>>,
     choosing: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -354,6 +373,7 @@ impl SetupWindow {
             step: Step::Welcome,
             panes: Vec::new(),
             tailscale_installed: None,
+            tailscale_app: false,
             reading: None,
             choosing: None,
             _subscriptions: subscriptions,
@@ -505,8 +525,13 @@ impl SetupWindow {
         let engine = self.ctx.model.read(cx).engine().clone();
         self.reading = Some(cx.spawn(async move |this, cx| {
             let installed = engine.tailscale_installed().await;
+            let app = cx
+                .background_executor()
+                .spawn(async { std::path::Path::new(TAILSCALE_APP).exists() })
+                .await;
             this.update(cx, |this, cx| {
                 this.tailscale_installed = Some(installed);
+                this.tailscale_app = app;
                 cx.notify();
             })
             .ok();
@@ -693,7 +718,7 @@ impl SetupWindow {
         let status = sharing.status.as_ref();
         let tailscale = status.and_then(|s| s.tailscale.clone());
         let installed = self.tailscale_installed;
-        let mac = cx.platform_info().os == platform::OperatingSystem::Mac;
+        let mac_app = self.tailscale_app && cx.platform_info().os == platform::OperatingSystem::Mac;
         let busy = sharing.busy();
         let invite_to = status.map(|s| s.to);
         let serving = sharing.serving.is_some();
@@ -738,16 +763,16 @@ impl SetupWindow {
                     Check::ToDo,
                     "Tailscale is running and signed in",
                 )
-                .detail(match (mac, installed) {
+                .detail(match (mac_app, installed) {
                     (_, false) => "Once it is installed, sign in to it.",
                     (true, true) => "Open Tailscale and sign in. kōan looks again when you come back to this window.",
                     (false, true) => "Run \"sudo tailscale up\" in a terminal and sign in. kōan looks again when you come back to this window.",
                 });
-                if installed && mac {
+                if installed && mac_app {
                     item.action(
                         Button::new("setup-ts-open", ButtonKind::Bordered)
                             .label("Open Tailscale")
-                            .on_click(|_, _, cx| cx.open_url(TAILSCALE_APP)),
+                            .on_click(|_, _, cx| cx.open_url(&format!("file://{TAILSCALE_APP}"))),
                     )
                 } else {
                     item
@@ -828,17 +853,16 @@ impl SetupWindow {
     fn keys(&self, look: &Look, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let os = cx.platform_info().os;
         let rows = keys_worth_knowing()
-            .into_iter()
+            .iter()
             .enumerate()
-            .map(|(row, (what, action))| {
-                let keys = actions::keys_for(action.as_ref());
-                Row::new(what)
+            .map(|(row, (what, keys))| {
+                Row::new(*what)
                     .control(
                         div()
                             .flex()
                             .flex_wrap()
                             .gap(look.space(Space::Xs))
-                            .children(keys.into_iter().enumerate().map(|(k, key)| {
+                            .children(keys.iter().enumerate().map(|(k, key)| {
                                 Badge::new(caption(key, os))
                                     .key((SharedString::from(format!("setup-key-{row}")), k))
                             })),
@@ -1029,11 +1053,8 @@ mod tests {
 
     #[test]
     fn every_key_worth_knowing_is_bound() {
-        for (what, action) in keys_worth_knowing() {
-            assert!(
-                !actions::keys_for(action.as_ref()).is_empty(),
-                "{what} has no key"
-            );
+        for (what, keys) in keys_worth_knowing() {
+            assert!(!keys.is_empty(), "{what} has no key");
         }
     }
 }

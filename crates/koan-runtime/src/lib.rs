@@ -5228,14 +5228,20 @@ impl KoanEngine {
     /// desktop app's "reset to defaults" ends with, once it has stopped
     /// sharing, signed out and forgotten the folders through their own calls.
     /// Appearance changes still being saved land first, so none is written
-    /// back over the defaults afterwards. Refused while a signed-out
-    /// server's library is still owed its forgetting.
+    /// back over the defaults afterwards. A signed-out server's library still
+    /// owed its forgetting is forgotten first; the reset is refused if that
+    /// fails again.
     pub async fn reset_settings(self: Arc<Self>) -> Result<(), KoanError> {
         offload::offload(|| {
             // A sign-out just before forgets the server's library on a thread
             // of its own, and marks it owed until it has: emptied with the
             // rest, the mark would leave an unfinished forget nobody resumes.
             koan_core::helpers::wait_for_forget();
+            // One that failed earlier is tried again here, so a reset asked
+            // again after that failure can finish without a relaunch.
+            if let Some(forget) = koan_core::helpers::resume_forget() {
+                forget();
+            }
             if Config::load().is_ok_and(|cfg| cfg.remote.forget_owed) {
                 return Err(KoanError::Refused {
                     message: "the server's library could not be forgotten; try again".into(),

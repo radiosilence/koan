@@ -197,9 +197,14 @@ impl ServerPane {
         self.url.update(cx, |s, cx| s.set_value("", window, cx));
         let host = host(&invite.server);
         if self.ctx.sharing.read(cx).serving.is_some() {
+            let way = if self.pinned.is_some() {
+                "Stop sharing"
+            } else {
+                "Turn sharing off under Shares its library"
+            };
             model.update(cx, |m, cx| {
                 m.report(
-                    format!("This device is sharing its library. Turn sharing off under Shares its library to sign in to {host}."),
+                    format!("This device is sharing its library. {way} to sign in to {host}."),
                     cx,
                 )
             });

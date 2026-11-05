@@ -275,7 +275,7 @@ impl ShareForm {
                 None,
                 vec![text(
                     format!(
-                        "This device is signed in to {}. Sign out of it under Connects to a server, then share this device's own library here.",
+                        "This device is signed in to {}. Sign out of it in Settings → Server, then share this device's own library here.",
                         super::server::host(&settings.remote_url)
                     ),
                     TypeRole::Body,

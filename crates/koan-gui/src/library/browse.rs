@@ -81,7 +81,7 @@ impl Browse {
         if album_sorts(&self.filter, self.search().is_some()).contains(&self.album_sort) {
             self.album_sort
         } else {
-            AlbumSort::RecentlyAdded
+            DEFAULT_ALBUM_SORT
         }
     }
 
@@ -89,7 +89,7 @@ impl Browse {
         if track_sorts(&self.filter, self.search().is_some()).contains(&self.track_sort) {
             self.track_sort
         } else {
-            TrackBrowseSort::Artist
+            DEFAULT_TRACK_SORT
         }
     }
 
@@ -220,6 +220,16 @@ pub const STATE: &str = "gui-state.json";
 
 fn path() -> PathBuf {
     koan_core::places::state().join(STATE)
+}
+
+/// Removes the stored file, so the next `load` reads the defaults. Blocking:
+/// call it off the main thread.
+pub fn forget_stored() {
+    match std::fs::remove_file(path()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("could not remove {STATE}: {e}"),
+    }
 }
 
 fn seed() -> i64 {

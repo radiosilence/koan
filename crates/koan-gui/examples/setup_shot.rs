@@ -39,7 +39,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
 
-    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
