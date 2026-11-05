@@ -65,6 +65,12 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         }
     })
     .detach();
+    apply_appearance(engine, cx);
+}
+
+/// Draws the app as `[appearance]` says: as it opens, and once the settings
+/// are reset.
+pub fn apply_appearance(engine: Arc<KoanEngine>, cx: &mut App) {
     // `appearance` waits for saves still landing, so it is read off the
     // main thread.
     let read = cx
@@ -79,6 +85,7 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
             KoanTheme::set_wash_window(saved.wash_window, cx);
             cx.global_mut::<KoanTheme>().icons = saved.icons;
             KoanTheme::set_text_size(u32::from(saved.text_size), cx);
+            cx.refresh_windows();
         });
     })
     .detach();
@@ -625,15 +632,21 @@ impl SettingsWindow {
     }
 }
 
-/// As the window closes: sheets left unanswered are answered the way their
-/// Cancel would be, and those showing something only once go to the next
-/// Settings window.
+/// As the Settings window closes: it stops being the Settings window, and
+/// its sheets are handed on (`hand_on_unanswered`).
 fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
     // No longer the Settings window: what it hands on below waits for the
     // next one rather than coming back to this one as it goes.
     if cx.has_global::<Settings>() {
         cx.global_mut::<Settings>().window = None;
     }
+    hand_on_unanswered(sheets, window, cx);
+}
+
+/// As any window holding Settings' sheets closes: those left unanswered
+/// are answered the way their Cancel would be, and those showing something
+/// only once go to the next Settings window.
+pub(crate) fn hand_on_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
     for dismissed in sheets.read(cx).unanswered() {
         dismissed(window, cx);
     }
@@ -650,7 +663,7 @@ fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App)
 /// The result of the last action, or why it failed: one line, always in the
 /// same place, since an action that reports nothing looks like it did
 /// nothing.
-fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
+pub(crate) fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
     let running: Vec<&str> = model.running().map(SharedString::as_ref).collect();
     let (text, tone, icon) = match (&model.last_error, &model.last_result) {
         (Some(error), _) => (error.clone(), Tone::Bad, Some(Icon::WarningFilled)),

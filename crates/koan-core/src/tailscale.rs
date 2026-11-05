@@ -55,14 +55,25 @@ fn cli() -> Option<PathBuf> {
     if cfg!(target_os = "macos") && bundled.exists() {
         return Some(bundled);
     }
+    // `PATH` last: an app opened from the Dock or a desktop entry is given
+    // a short one, which can leave out where Homebrew, a snap or NixOS put it.
+    let path = std::env::var_os("PATH").unwrap_or_default();
     [
         "/usr/local/bin/tailscale",
         "/opt/homebrew/bin/tailscale",
         "/usr/bin/tailscale",
+        "/snap/bin/tailscale",
+        "/run/current-system/sw/bin/tailscale",
     ]
     .into_iter()
     .map(PathBuf::from)
-    .find(|p| p.exists())
+    .chain(std::env::split_paths(&path).map(|dir| dir.join("tailscale")))
+    .find(|p| p.is_file())
+}
+
+/// Whether Tailscale is installed here, running or not.
+pub fn installed() -> bool {
+    cli().is_some()
 }
 
 /// Run the CLI with `args`, giving up after `COMMAND_TIMEOUT`. Its output,

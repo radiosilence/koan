@@ -5224,6 +5224,24 @@ impl KoanEngine {
         })
     }
 
+    /// Put every setting back to its default (`Config::reset`): what the
+    /// desktop app's "reset to defaults" ends with, once it has stopped
+    /// sharing, signed out and forgotten the folders through their own calls.
+    /// Appearance changes still being saved land first, so none is written
+    /// back over the defaults afterwards.
+    pub async fn reset_settings(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(|| {
+            APPEARANCE.settle();
+            Config::reset().map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })?;
+            koan_core::remote::nearby::reconfigure();
+            koan_core::remote::queue::cache_limit_changed();
+            Ok(())
+        })
+        .await
+    }
+
     /// Forget every track that came from a folder.
     ///
     /// A track the server also has keeps its row and loses only its local path.
