@@ -128,51 +128,53 @@ fn updates(
     };
     let state = update::state(cx);
     let busy = matches!(state, State::Checking | State::Fetching(_));
-    let (detail, tone) = match &state {
-        State::Idle => (
-            format!("kōan {}", crate::platform::about::VERSION),
-            Tone::Muted,
-        ),
-        State::Checking => ("Checking…".into(), Tone::Muted),
-        State::Current => (
-            format!(
-                "kōan {} is the latest version",
-                crate::platform::about::VERSION
-            ),
-            Tone::Muted,
-        ),
-        State::Fetching(v) => (format!("Downloading kōan {v}…"), Tone::Muted),
-        State::Ready(v) => (format!("kōan {v} opens next time kōan starts"), Tone::Muted),
-        State::Available { version, .. } => (format!("kōan {version} is out"), Tone::Muted),
-        State::Failed(e) => (e.clone(), Tone::Bad),
+    let status = match &state {
+        State::Idle => None,
+        State::Checking => Some(("Checking…".to_owned(), Tone::Muted)),
+        State::Current => Some(("This is the latest version".to_owned(), Tone::Muted)),
+        State::Fetching(v) => Some((format!("Downloading kōan {v}…"), Tone::Muted)),
+        State::Ready(v) => Some((
+            format!("kōan {v} is downloaded, and installed when kōan quits"),
+            Tone::Ink,
+        )),
+        State::Available { version, .. } => Some((format!("kōan {version} is out"), Tone::Ink)),
+        State::Failed(e) => Some((e.clone(), Tone::Bad)),
     };
-    let mut buttons = vec![
-        Button::new("updates-check", ButtonKind::Bordered)
+    // One button, following the state: look, take what was found, or read
+    // about what this install cannot take itself.
+    let button = match state {
+        State::Ready(_) => Button::new("updates-restart", ButtonKind::Prominent)
+            .label("Update now")
+            .on_click(|_, _, cx| update::restart(cx)),
+        State::Available { page, .. } => Button::new("updates-page", ButtonKind::Bordered)
+            .label("Release notes")
+            .on_click(move |_, _, cx| cx.open_url(&page)),
+        _ => Button::new("updates-check", ButtonKind::Bordered)
             .label("Check now")
-            .disabled(busy || matches!(state, State::Ready(_)))
-            .on_click(|_, _, cx| update::check(cx))
-            .into_any_element(),
-    ];
-    match state {
-        State::Ready(_) => buttons.push(
-            Button::new("updates-restart", ButtonKind::Prominent)
-                .label("Restart now")
-                .on_click(|_, _, cx| update::restart(cx))
-                .into_any_element(),
-        ),
-        State::Available { page, .. } => buttons.push(
-            Button::new("updates-page", ButtonKind::Bordered)
-                .label("Release notes")
-                .on_click(move |_, _, cx| cx.open_url(&page))
-                .into_any_element(),
-        ),
-        _ => {}
-    }
+            .disabled(busy)
+            .on_click(|_, _, cx| update::check(cx)),
+    };
     let mut rows = vec![
         toggle,
-        text(detail, TypeRole::Fine, tone, look).into_any_element(),
+        text(
+            format!(
+                "kōan {} ({})",
+                crate::platform::about::VERSION,
+                crate::platform::about::BUILD
+            ),
+            TypeRole::Body,
+            Tone::Ink,
+            look,
+        )
+        .into_any_element(),
     ];
-    rows.push(crate::settings::form::buttons(buttons, look));
+    if let Some((status, tone)) = status {
+        rows.push(text(status, TypeRole::Fine, tone, look).into_any_element());
+    }
+    rows.push(crate::settings::form::buttons(
+        vec![button.into_any_element()],
+        look,
+    ));
     let footer = told.map_or_else(
         || {
             "New versions are downloaded from GitHub, checked, and installed when kōan quits."
