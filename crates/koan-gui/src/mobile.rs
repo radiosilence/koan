@@ -11,13 +11,13 @@ use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
-    Clear, KoanInsets, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
+    Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
 };
 use crate::library::{self, stage::LibraryStage};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::queue::QueueView;
-use crate::theme::{Icon, KoanStyled, TypeRole};
+use crate::theme::Icon;
 use crate::transport::{self, Transport};
 
 /// Whether the app takes the phone's layout: on iOS, and on a desktop with
@@ -105,6 +105,9 @@ pub struct PhoneShell {
     /// the bar on every page.
     banner: Entity<crate::server_banner::ServerBanner>,
     output_wait: Entity<crate::output_wait::OutputWaitBanner>,
+    /// How far a swipe from the edge has gone toward going back, while one is
+    /// under way.
+    back_swipe: Option<f32>,
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
@@ -199,6 +202,7 @@ impl PhoneShell {
             search: None,
             eq: None,
             info: None,
+            back_swipe: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
@@ -483,6 +487,7 @@ impl PhoneShell {
             return None;
         }
         let bar = Toolbar::new()
+            .flush()
             .when(!nav.at_root(), |bar| {
                 bar.leading(
                     ToolbarButton::new("back", Icon::Back, "back")
@@ -594,9 +599,9 @@ impl PhoneShell {
 
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let showing = self.nav.read(cx).tab();
-        TABS.iter()
-            .enumerate()
-            .fold(TabStrip::new(), |strip, (ix, &(root, title, icon))| {
+        TABS.iter().enumerate().fold(
+            TabStrip::new().bar(),
+            |strip, (ix, &(root, title, icon))| {
                 let nav = self.nav.clone();
                 strip.tab(icon, title, ix == showing, move |_, _, cx| {
                     nav.update(cx, |nav, cx| {
@@ -604,7 +609,8 @@ impl PhoneShell {
                         cx.notify();
                     });
                 })
-            })
+            },
+        )
     }
 }
 
@@ -644,15 +650,37 @@ impl Render for PhoneShell {
             .global::<crate::library::activity::ActivityHandle>()
             .0
             .clone();
+        // The page clears the status bar and the notch; the foot's surface
+        // runs on under the home indicator, as the iOS app's bar does.
+        let insets = crate::components::system_insets(Clear::System, window);
+        let swiped = self
+            .back_swipe
+            .map(|progress| window.viewport_size().width * progress);
         div()
             .key_context(crate::platform::actions::CONTEXT)
-            .on_back_gesture(cx.listener(|this, _, _, cx| this.back(cx)))
+            // The swipe from the edge: the page follows the finger, and goes
+            // back only once the platform says the swipe went far enough.
+            .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, _, cx| {
+                match event.phase {
+                    BackGesturePhase::Started | BackGesturePhase::Progressed => {
+                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
+                    }
+                    BackGesturePhase::Committed => {
+                        this.back_swipe = None;
+                        this.back(cx);
+                    }
+                    BackGesturePhase::Cancelled => this.back_swipe = None,
+                }
+                cx.notify();
+            }))
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .text_color(p.ink)
-            .clear_of_system(Clear::System, window)
+            .pt(insets.top)
+            .pl(insets.left)
+            .pr(insets.right)
             .children(self.bar(route, cx))
             .child(self.banner.clone())
             .child(self.output_wait.clone())
@@ -663,6 +691,7 @@ impl Render for PhoneShell {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .when_some(swiped, |stage, by| stage.left(by))
                     .child(stage)
                     // What the library is busy with, floating over the foot of
                     // every page while anything runs, as the iOS app has it:
@@ -672,27 +701,36 @@ impl Render for PhoneShell {
                             .absolute()
                             .left(p.space(crate::theme::Space::M))
                             .right(p.space(crate::theme::Space::M))
-                            .bottom(p.space(crate::theme::Space::M))
-                            .p(p.space(crate::theme::Space::S))
+                            .bottom(p.space(crate::theme::Space::S))
+                            .px(p.space(crate::theme::Space::S))
+                            .py(p.space(crate::theme::Space::Xs))
                             .bg(p.look.palette.surface.hsla())
                             .border(p.look.hairline)
                             .border_color(p.rule)
                             .child(activity.clone())
                     })),
             )
-            .child(
-                self.transport.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(p.look.spaced(transport::MINI_HEIGHT))
-                        .flex_shrink_0(),
-                ),
-            )
+            // The foot: the mini player over the tabs on one surface, each
+            // under a rule, as the iOS app's bar.
             .child(
                 div()
-                    .pt(p.space(crate::theme::Space::S))
-                    .text_role(TypeRole::Fine, &p.look)
-                    .child(self.tabs(cx)),
+                    .flex_shrink_0()
+                    .bg(p.look.palette.surface.hsla())
+                    .pb(insets.bottom)
+                    .child(
+                        self.transport.clone().cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .h(p.look.spaced(transport::MINI_HEIGHT))
+                                .flex_shrink_0(),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .border_t(p.look.hairline)
+                            .border_color(p.rule)
+                            .child(self.tabs(cx)),
+                    ),
             )
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))

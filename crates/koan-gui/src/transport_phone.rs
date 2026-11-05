@@ -98,9 +98,6 @@ impl Transport {
             .gap(p.space(Space::M))
             .pl(p.space(Space::L))
             .pr(p.space(Space::S))
-            .bg(p.bg)
-            .border_t(p.look.hairline)
-            .border_color(p.rule)
             // The playhead, along the top: where the track is, at a glance.
             .child(
                 div().absolute().top_0().left_0().right_0().child(

@@ -63,11 +63,18 @@ pub struct Toolbar {
     leading: Vec<AnyElement>,
     principal: Option<AnyElement>,
     trailing: Vec<AnyElement>,
+    flush: bool,
 }
 
 impl Toolbar {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// No ground and no rule: a phone's bar, which the page runs up to.
+    pub fn flush(mut self) -> Self {
+        self.flush = true;
+        self
     }
 
     /// The window's own buttons sit over the toolbar's leading edge (the
@@ -113,7 +120,9 @@ impl RenderOnce for Toolbar {
             // ground and meets the page at a hairline; otherwise it is on
             // `bg`, flush with the page.
             .map(|d| {
-                if KoanTheme::washes_window(cx) {
+                if self.flush {
+                    d
+                } else if KoanTheme::washes_window(cx) {
                     d.border_b(look.hairline)
                         .border_color(look.palette.rule.hsla())
                 } else {

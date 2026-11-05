@@ -4,11 +4,15 @@
 //! glyphs: play next, queue, copy share link, favourite.
 
 use koan_kit::app::*;
+use std::sync::Arc;
+
 use koan_runtime::Placement;
 
 use super::drag::Playable;
 use super::{Lib, actions};
-use crate::components::{Button, ButtonKind, PageHeader, PlayButton, ShuffleButton};
+use crate::components::{
+    Button, ButtonKind, KoanContextMenu, PageHeader, PlayButton, ShuffleButton,
+};
 use crate::theme::{Icon, TypeRole};
 
 /// `title` is data (a record's or an artist's name), kept in its case.
@@ -16,7 +20,8 @@ pub fn playable_header(
     lib: &Lib,
     item: Playable,
     title: impl Into<SharedString>,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> PageHeader {
     let title: SharedString = title.into();
     let favourite = lib.feed.read(cx).is_favourite(item);
@@ -33,7 +38,7 @@ pub fn playable_header(
         lib.clone(),
     );
     let name = title.clone();
-    PageHeader::data(title)
+    let header = PageHeader::data(title)
         .lead(
             PlayButton::new("header-play", "play")
                 .on_click(move |_, _, cx| actions::play(&play, &[item], false, cx).detach()),
@@ -41,7 +46,47 @@ pub fn playable_header(
         .lead(
             ShuffleButton::new("header-shuffle", name.clone())
                 .on_click(move |_, _, cx| actions::play(&shuffle, &[item], true, cx).detach()),
-        )
+        );
+    // A phone's header keeps the heart and puts the rest under "more", as
+    // the iOS app's does: four verbs in a row do not fit its width.
+    if crate::mobile::phone() {
+        let more = lib.clone();
+        return header
+            .action(
+                Button::new("header-favourite", ButtonKind::Compact)
+                    .icon(if favourite {
+                        Icon::Favourited
+                    } else {
+                        Icon::Favourite
+                    })
+                    .label(if favourite { "favourited" } else { "favourite" })
+                    .on_click(move |_, _, cx| {
+                        heart
+                            .feed
+                            .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
+                    }),
+            )
+            .action(
+                div()
+                    .koan_menu_on_press("header-more", window, cx, move |m, window, cx| {
+                        actions::menu(
+                            m,
+                            &more,
+                            Arc::from([item]),
+                            None,
+                            Default::default(),
+                            window,
+                            cx,
+                        )
+                    })
+                    .child(
+                        Button::new("header-more-button", ButtonKind::Compact)
+                            .icon(Icon::More)
+                            .label("more"),
+                    ),
+            );
+    }
+    header
         .action(
             verb("header-next", Icon::PlayNext, "play next").on_click(move |_, _, cx| {
                 actions::queue(&next, &[item], Placement::Next, cx).detach()

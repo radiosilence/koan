@@ -297,13 +297,16 @@ pub fn track_row<V: TrackList>(
             .id(("row-availability", key))
             .picked(state.selected),
         )
-        // A phone's row is the title and the length: the heart and the
-        // format are its menu's and its record's, as on iOS.
+        .figure(20.0, heart)
+        // A phone's row leaves the format to its record, as on iOS, and its
+        // length takes no more than its digits.
         .when(!p.look.touch, |row| {
-            row.figure(20.0, heart)
-                .figure(110.0, div().children(format::quality(track)))
+            row.figure(110.0, div().children(format::quality(track)))
         })
-        .figure(64.0, format::duration(track.duration_ms))
+        .figure(
+            if p.look.touch { 44.0 } else { 64.0 },
+            format::duration(track.duration_ms),
+        )
         .on_click(click(RowPart::Row))
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
         .on_mouse_down(MouseButton::Right, actions::mark(view, target))
