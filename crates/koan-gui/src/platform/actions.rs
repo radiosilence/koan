@@ -104,6 +104,7 @@ actions!(
         // The application.
         About,
         Settings,
+        SetUp,
         Hide,
         HideOthers,
         ShowAll,
@@ -116,7 +117,7 @@ actions!(
 /// The bare keys whose commands are also menu items: their own actions, so
 /// the menu's Play / Pause and Delete are never given space and ⌫ as key
 /// equivalents. Each is handled as its menu twin is.
-mod bare {
+pub(crate) mod bare {
     koan_kit::app::actions!(koan_bare, [TogglePlayPause, Delete]);
 }
 
@@ -320,6 +321,18 @@ pub const LISTS: &[Shortcut] = &[
         list::ShowMenu
     ),
 ];
+
+/// Every key that does `action`, from all the tables, in the order the
+/// shortcuts sheet lists them: modifier shortcuts first, single keys after.
+pub fn keys_for(action: &dyn Action) -> Vec<&'static str> {
+    MENU.iter()
+        .chain(APPLICATION)
+        .chain(HOTKEYS)
+        .chain(LISTS)
+        .filter(|s| (s.action)().partial_eq(action))
+        .flat_map(|s| s.keys.iter().copied())
+        .collect()
+}
 
 /// What each list key binds to: a line of `LISTS` can name two keys, one
 /// for each way.

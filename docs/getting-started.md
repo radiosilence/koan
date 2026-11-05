@@ -16,7 +16,7 @@ brew install --cask radiosilence/tap/koan-app
 
 On Linux, each release carries an AppImage and a `.deb`. See [The desktop app](guide/desktop.md).
 
-Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the computer's own library](guide/sharing-your-mac.md) with your phone. On a Mac it needs macOS 26 or later. It shares its config and library with the terminal UI.
+The first launch opens a setup guide that asks where your music is and sets up the rest from there; Settings → Library opens it again. Everything it sets is in Settings too: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the computer's own library](guide/sharing-your-mac.md) with your phone. On a Mac it needs macOS 26 or later. It shares its config and library with the terminal UI.
 
 The SwiftUI Mac app is no longer released. The desktop app replaces it on the same configuration, as described in [The desktop app](guide/desktop.md#replacing-the-mac-app).
 
