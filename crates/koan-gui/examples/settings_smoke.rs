@@ -92,8 +92,9 @@ fn main() -> Result {
     }
 
     // The account the library is shared under, made from the sharing side:
-    // creating it starts sharing from inside its own callback (#2088).
-    ui.choose("this device", "Shares its library")?;
+    // creating it starts sharing from inside its own callback (#2088). With
+    // nothing chosen yet, the choice is the pane's cards.
+    ui.press_card("share its library")?;
     ui.type_into("Username", "smoke")?;
     ui.type_into("Password", "smoke-password")?;
     ui.type_into("Again", "smoke-password")?;
@@ -353,6 +354,33 @@ impl Ui {
     }
 
     /// A picker opened and one of its options chosen.
+    /// A choice card, by its title: a card is named by its title and its
+    /// description together.
+    fn press_card(&mut self, title: &str) -> Result {
+        let start = Instant::now();
+        let title = format!("{}.", title.to_lowercase());
+        loop {
+            self.frame()?;
+            let found = self.nodes()?.into_iter().find(|n| {
+                n["aria"]["role"] == "RadioButton"
+                    && n["aria"]["label"]
+                        .as_str()
+                        .is_some_and(|l| l.to_lowercase().starts_with(&title))
+            });
+            if let Some(node) = found {
+                let id = node["accesskit_id"]
+                    .as_str()
+                    .ok_or("a node without an id")?
+                    .parse()?;
+                return self.send(NodeId(id), Action::Click, None);
+            }
+            if start.elapsed() > STEP {
+                return Err(format!("no card {title} to choose").into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn choose(&mut self, picker: &str, option: &str) -> Result {
         self.press(picker)?;
         self.press(option)
