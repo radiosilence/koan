@@ -210,7 +210,9 @@ impl RowMetrics {
     /// A record page's sleeve in its header, square, the Mac's: fixed
     /// whatever the window's width, so a resize never moves it.
     pub fn header_art(look: &Look) -> Pixels {
-        px((132.0 * look.scale.size).round())
+        // On a phone the header stacks, and the sleeve heads the page.
+        let side = if look.touch { 220.0 } else { 132.0 };
+        px((side * look.scale.size).round())
     }
 
     /// An artist's photo in their page's header: the size of a record's sleeve

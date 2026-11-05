@@ -32,6 +32,18 @@ pub enum Route {
     /// A shelf's "see all": the album, artist or track browser with the
     /// shelf as its own filter, leaving the library browser's as it was.
     Shelved(Shelf, Listing),
+    /// The phone's Library tab: the library's sections.
+    Library,
+    /// The phone's list of playlists, a section of its Library tab.
+    Playlists,
+    /// The phone's Search tab: the field, and the results under it.
+    SearchTab,
+    /// The phone's Settings tab: its sections.
+    Settings,
+    /// A section of Settings, as a phone's screen.
+    SettingsSection(crate::settings::Tab),
+    /// EQ, as a phone's screen.
+    Eq,
 }
 
 /// A shelf, as a route names it.
@@ -93,6 +105,11 @@ pub struct Navigator {
     /// keeps its place watches its own count and goes to its top when it
     /// moves.
     rewinds: HashMap<Route, u32>,
+    /// On a phone, the tab showing, and every other tab's history and cursor
+    /// as it was left, each tab a stack of its own as on iOS. The desktop has
+    /// one tab.
+    tab: usize,
+    stashed: HashMap<usize, (Vec<Route>, usize)>,
 }
 
 impl Default for Navigator {
@@ -101,6 +118,8 @@ impl Default for Navigator {
             history: vec![Route::Queue],
             cursor: 0,
             rewinds: HashMap::new(),
+            tab: 0,
+            stashed: HashMap::new(),
         }
     }
 }
@@ -145,6 +164,37 @@ impl Navigator {
         }
     }
 
+    pub fn tab(&self) -> usize {
+        self.tab
+    }
+
+    /// Whether the page showing is its tab's first, which a phone's back
+    /// gesture cannot leave.
+    pub fn at_root(&self) -> bool {
+        self.cursor == 0
+    }
+
+    /// A phone's tab chosen: its stack as it was left, or `root` alone the
+    /// first time. The tab showing, chosen again, goes back to its root, as
+    /// a tab bar's own tab does, and its root, chosen at the root, rewinds.
+    pub fn switch(&mut self, tab: usize, root: Route) -> Chosen {
+        if tab == self.tab {
+            if self.cursor == 0 {
+                *self.rewinds.entry(self.history[0]).or_default() += 1;
+            } else {
+                self.history.truncate(1);
+                self.cursor = 0;
+            }
+            return Chosen::Rewound;
+        }
+        let (history, cursor) = self.stashed.remove(&tab).unwrap_or_else(|| (vec![root], 0));
+        let left = (std::mem::replace(&mut self.history, history), self.cursor);
+        self.stashed.insert(self.tab, left);
+        self.cursor = cursor;
+        self.tab = tab;
+        Chosen::Moved
+    }
+
     pub fn back(&mut self) -> bool {
         let moved = self.can_go_back();
         if moved {
@@ -169,6 +219,28 @@ impl Navigator {
     /// Rewind counts are kept: they only ever grow, so a route that comes
     /// back (a row id reused) never repeats a count a page has seen.
     pub fn forget(&mut self, route: Route) {
+        for (history, cursor) in self.stashed.values_mut() {
+            std::mem::swap(history, &mut self.history);
+            std::mem::swap(cursor, &mut self.cursor);
+            Self::forget_here(&mut self.history, &mut self.cursor, route);
+            std::mem::swap(history, &mut self.history);
+            std::mem::swap(cursor, &mut self.cursor);
+        }
+        Self::forget_here(&mut self.history, &mut self.cursor, route);
+    }
+
+    fn forget_here(history: &mut Vec<Route>, cursor: &mut usize, route: Route) {
+        let mut nav = Navigator {
+            history: std::mem::take(history),
+            cursor: *cursor,
+            ..Navigator::default()
+        };
+        nav.forget_showing(route);
+        *history = nav.history;
+        *cursor = nav.cursor;
+    }
+
+    fn forget_showing(&mut self, route: Route) {
         if !self.history.contains(&route) {
             return;
         }
@@ -335,10 +407,49 @@ mod tests {
     fn forgetting_every_page_leaves_the_queue() {
         let mut nav = Navigator {
             history: vec![PLAYLIST],
-            cursor: 0,
-            rewinds: HashMap::new(),
+            ..Navigator::default()
         };
         nav.forget(PLAYLIST);
         assert_eq!(nav.current(), QUEUE);
+    }
+
+    #[test]
+    fn each_tab_keeps_its_own_stack() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        assert_eq!(nav.switch(1, Route::Library), Chosen::Moved);
+        assert_eq!(nav.current(), Route::Library);
+        assert!(!nav.can_go_back());
+        nav.go(PLAYLIST);
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), ALBUMS);
+        assert!(nav.back());
+        assert_eq!(nav.current(), QUEUE);
+        nav.switch(1, Route::Library);
+        assert_eq!(nav.current(), PLAYLIST);
+    }
+
+    #[test]
+    fn the_tab_showing_chosen_again_goes_to_its_root_then_rewinds() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(TRACKS);
+        assert_eq!(nav.switch(0, QUEUE), Chosen::Rewound);
+        assert_eq!(nav.current(), QUEUE);
+        assert!(!nav.can_go_forward());
+        assert_eq!(nav.rewinds(QUEUE), 0);
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.rewinds(QUEUE), 1);
+    }
+
+    #[test]
+    fn forgetting_a_page_reaches_the_tabs_not_showing() {
+        let mut nav = Navigator::default();
+        nav.go(PLAYLIST);
+        nav.switch(1, Route::Library);
+        nav.forget(PLAYLIST);
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), QUEUE);
+        assert!(!nav.can_go_forward());
     }
 }

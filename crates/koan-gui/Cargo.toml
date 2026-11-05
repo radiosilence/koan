@@ -89,3 +89,11 @@ objc2-app-kit = { version = "0.3.2", features = [
   "NSStatusItem",
 ] }
 objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString"] }
+
+# The audio session the engine plays through on iOS.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "AVAudioSession",
+  "AVAudioSessionTypes",
+] }

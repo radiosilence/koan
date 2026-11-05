@@ -11,7 +11,11 @@ use crate::theme::Icon;
 /// What a window's content sits in (`Root`): Tab and Shift-Tab kept inside
 /// an open sheet or menu. Every window and offscreen render goes through
 /// here.
-pub fn host(view: impl Into<AnyView>, _: &mut Window, cx: &mut App) -> Entity<super::Root> {
+pub fn host(view: impl Into<AnyView>, window: &mut Window, cx: &mut App) -> Entity<super::Root> {
+    // koan-kit's fields draw no caret or selection where the platform draws
+    // them, so the platform's own text editing is asked for where it has it
+    // (iOS: UIKit's handles, loupe and edit menu).
+    window.set_native_text_interaction(true);
     cx.new(|_| super::Root::new(view))
 }
 

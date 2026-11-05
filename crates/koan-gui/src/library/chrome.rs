@@ -590,7 +590,9 @@ pub fn selection_bar<V: Picking>(
             },
             verb(actions::favourite),
         )
-        .verb("sel-organise", "organise…", organise)
+        .when(!crate::mobile::phone(), |bar| {
+            bar.verb("sel-organise", "organise…", organise)
+        })
         .on_done(move |_, _, cx| end(cx))
         .done_help("stop selecting (esc)")
 }

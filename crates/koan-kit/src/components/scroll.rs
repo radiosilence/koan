@@ -91,6 +91,9 @@ impl RenderOnce for ScrollArea {
                 .use_keyed_state(child(&self.id, "followed"), cx, |_, _| 0u64)
                 .clone()
         });
+        let typing = window
+            .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
+            .clone();
         let scrolled = div()
             .id(self.id)
             .size_full()
@@ -125,6 +128,40 @@ impl RenderOnce for ScrollArea {
             .absolute()
             .size_full()
         });
+        let scrolling = handle.clone();
+        let clear_of_keyboard = canvas(
+            move |area, window, cx| {
+                let keyboard = window.insets().ime.bottom;
+                let Some((focus, field)) = super::field::typing_in() else {
+                    return;
+                };
+                // Once for each field and each height the keyboard takes,
+                // so a scroll by hand afterwards is left alone.
+                let asked = Some((focus.clone(), f32::from(keyboard).to_bits()));
+                if keyboard <= Pixels::ZERO
+                    || !focus.is_focused(window)
+                    || *typing.read(cx) == asked
+                    || field.left() < area.left()
+                    || field.right() > area.right()
+                    || field.top() < area.top()
+                {
+                    return;
+                }
+                typing.update(cx, |t, _| *t = asked);
+                let margin = px(16.);
+                let clear = (window.viewport_size().height - keyboard).min(area.bottom()) - margin;
+                if field.bottom() <= clear {
+                    return;
+                }
+                let by = (field.bottom() - clear).min(field.top() - area.top());
+                let offset = scrolling.offset();
+                scrolling.set_offset(point(offset.x, offset.y - by));
+                window.refresh();
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         div()
             .relative()
             .size_full()
@@ -140,6 +177,7 @@ impl RenderOnce for ScrollArea {
                     .children(items.into_iter().map(|item| div().flex_none().child(item))),
             })
             .children(follow)
+            .child(clear_of_keyboard)
             .child(Scrollbar::vertical(&handle))
     }
 }

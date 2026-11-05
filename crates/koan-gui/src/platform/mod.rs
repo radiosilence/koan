@@ -8,6 +8,8 @@ pub mod actions;
 pub mod dock;
 pub mod drop;
 pub mod instance;
+#[cfg(target_os = "ios")]
+pub mod ios;
 pub mod logging;
 pub mod media;
 pub mod menus;
@@ -87,6 +89,8 @@ pub fn init(
     // As the Mac app does: closing the last window quits, unless kōan is
     // kept running (`residency`), when it stays in the menu bar.
     residency::init(engine, cx);
+    #[cfg(target_os = "ios")]
+    ios::init(engine, cx);
     actions::register(engine, cx);
     about::init(cx);
     update::init(engine, cx);

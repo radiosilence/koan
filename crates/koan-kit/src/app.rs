@@ -25,12 +25,12 @@ pub use gpui::{
 
 /// What the app asks of the platform beyond its windows' content: starting
 /// up, the menu bar and the Dock's menu, which system this is, the keymap
-/// as the shortcuts sheet and the tests read it, and how a trackpad's
-/// scroll is phased.
+/// as the shortcuts sheet and the tests read it, how a trackpad's scroll is
+/// phased, and on a phone the app leaving the screen and coming back.
 pub mod platform {
     pub use gpui::{
-        KeyBindingContextPredicate, Keymap, Menu, MenuItem, OperatingSystem, OsAction,
-        SystemMenuType, TouchPhase,
+        AppLifecyclePhase, KeyBindingContextPredicate, Keymap, Menu, MenuItem, OperatingSystem,
+        OsAction, SystemMenuType, TouchPhase,
     };
     pub use gpui_platform::application;
 }

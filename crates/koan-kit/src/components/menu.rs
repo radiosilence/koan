@@ -916,7 +916,31 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
             },
         );
         let by_key = open.clone();
-        let by_touch: super::touch::Pressed = open.clone();
+        // A touch screen's secondary press is the secondary button's, sent
+        // once the touch has been handled: what a right press does over the
+        // element (a row marking itself as the one the menu acts on, the
+        // menu opening there) a held finger does too.
+        let by_touch: super::touch::Pressed = Rc::new(|at, window, cx| {
+            window.defer(cx, move |window, cx| {
+                for event in [
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Right,
+                        position: at,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Right,
+                        position: at,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                ] {
+                    window.dispatch_event(event, cx);
+                }
+            })
+        });
         let lifting = state.clone();
         let touch = Look::of(window, cx).touch;
         let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {

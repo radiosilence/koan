@@ -241,7 +241,14 @@ impl LibraryStage {
 impl Render for LibraryStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page = self.page(window, cx);
-        let wanted = self.lib.nav.read(cx).info;
+        // A phone's shell holds the details over every page, the queue's
+        // and Now Playing's too, not only the library's.
+        let wanted = self
+            .lib
+            .nav
+            .read(cx)
+            .info
+            .filter(|_| !crate::mobile::phone());
         if self.info.as_ref().map(|(id, _)| *id) != wanted {
             let lib = self.lib.clone();
             self.info = wanted.map(|id| {

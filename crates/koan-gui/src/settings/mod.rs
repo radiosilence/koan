@@ -108,6 +108,9 @@ pub fn resume(cx: &mut App) {
 
 /// Opens the Settings window, or brings the open one forward.
 pub fn open(cx: &mut App) {
+    if crate::mobile::open_settings(None, cx) {
+        return;
+    }
     let held = cx.global::<Settings>().window.clone();
     if let Some((handle, _)) = held
         && handle
@@ -141,6 +144,7 @@ pub fn open(cx: &mut App) {
 }
 
 /// A link from outside that Settings answers.
+#[derive(Clone)]
 pub enum Incoming {
     /// An invite, as its link reads.
     Invite(String),
@@ -159,6 +163,9 @@ pub fn answer(link: Incoming, cx: &mut App) {
         model.update(cx, |m, cx| m.when_loaded(cx, move |cx| answer(link, cx)));
         return;
     }
+    if crate::mobile::answer_settings(link.clone(), cx) {
+        return;
+    }
     // Settings takes it from here, on a pane of its own.
     crate::setup::close(cx);
     open(cx);
@@ -174,6 +181,9 @@ pub fn answer(link: Incoming, cx: &mut App) {
 
 /// Opens Settings on the server's pane: the sign-in the banner offers.
 pub fn open_server(cx: &mut App) {
+    if crate::mobile::open_settings(Some(Tab::Server), cx) {
+        return;
+    }
     open(cx);
     let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
         return;
@@ -270,6 +280,9 @@ pub struct SettingsWindow {
     people: Option<Entity<panes::people::People>>,
     people_for: Option<String>,
     _people: Option<Subscription>,
+    /// Drawn as a phone's screen: the pane alone, its tab chosen from the
+    /// screen before it rather than a strip of tabs.
+    screen: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -342,6 +355,7 @@ impl SettingsWindow {
             people: None,
             people_for: None,
             _people: None,
+            screen: false,
             _subscriptions: subscriptions,
         };
         this.follow_account(window, cx);
@@ -417,7 +431,8 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn tabs(&self, cx: &App) -> Vec<Tab> {
+    /// The tabs the account and the server offer, in their order.
+    pub fn tabs(&self, cx: &App) -> Vec<Tab> {
         let connection = &self.ctx.connection.read(cx).0;
         let signed = self.account(cx).is_some();
         let mut tabs = vec![Tab::General, Tab::Library, Tab::Server];
@@ -451,6 +466,16 @@ impl SettingsWindow {
         tabs
     }
 
+    /// The tab showing.
+    pub fn tab(&self) -> Tab {
+        self.tab
+    }
+
+    /// Drawn as a phone's screen from now on: the pane alone.
+    pub fn as_screen(&mut self) {
+        self.screen = true;
+    }
+
     pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
         if tab != self.tab {
             self.show(tab, window, cx);
@@ -458,7 +483,7 @@ impl SettingsWindow {
         }
     }
 
-    fn answer(
+    pub fn answer(
         &mut self,
         link: Incoming,
         window: &mut Window,
@@ -579,9 +604,11 @@ impl Render for SettingsWindow {
             .size_full()
             .flex()
             .flex_col()
-            .bg(look.palette.bg.hsla())
-            .child(self.top_strip(window, cx))
-            .child(row)
+            .when(!self.screen, |d| {
+                d.bg(look.palette.bg.hsla())
+                    .child(self.top_strip(window, cx))
+                    .child(row)
+            })
             .child(
                 div()
                     .flex_1()

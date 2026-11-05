@@ -361,7 +361,25 @@ impl RenderOnce for Button {
 
         // Fills: the outlined kinds' pressed `hover`. The toolbar button has
         // none; its glyph changes colour instead.
+        // Under touch every button with a ground or a word dims while the
+        // finger is down, as a touch screen's do, and the outlined kinds'
+        // fill is that quieter dim too: the finger covers what a stronger
+        // fill would say.
+        let touch_dim = look.touch
+            && !matches!(
+                kind,
+                ButtonKind::Toolbar | ButtonKind::Link | ButtonKind::Text
+            );
         match kind {
+            _ if touch_dim => {
+                let press = transition(
+                    child(&self.id, "press-fill"),
+                    pressed || (self.selected && kind == ButtonKind::IconOutlined),
+                    window,
+                    cx,
+                );
+                button = button.child(fill(look.palette.hover.hsla().opacity(0.5), &press));
+            }
             ButtonKind::Prominent | ButtonKind::IconOutlined => {
                 let press = transition(
                     child(&self.id, "press-fill"),

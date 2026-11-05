@@ -15,6 +15,7 @@ pub mod lyrics;
 #[cfg(feature = "profiler")]
 pub mod measure;
 pub mod mirror;
+pub mod mobile;
 pub mod navigator;
 pub mod notice;
 pub mod organize;

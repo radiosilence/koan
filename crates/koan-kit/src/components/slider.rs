@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::KoanTouchDrag as _;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
@@ -710,12 +711,15 @@ impl RenderOnce for Slider {
             }
             let down_bounds = track_bounds.clone();
             let step = self.step;
-            rail = rail.on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                let bounds = *down_bounds.read(cx);
-                let to = at(bounds, event.position);
-                dragging.update(cx, |d, _| *d = Some(to));
-                down(&to, window, cx);
-            });
+            rail = rail.koan_touch_drag(&look).on_mouse_down(
+                MouseButton::Left,
+                move |event, window, cx| {
+                    let bounds = *down_bounds.read(cx);
+                    let to = at(bounds, event.position);
+                    dragging.update(cx, |d, _| *d = Some(to));
+                    down(&to, window, cx);
+                },
+            );
             slider = track(slider, &state)
                 .track_focus(&handle)
                 .cursor_pointer()

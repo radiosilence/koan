@@ -297,8 +297,12 @@ pub fn track_row<V: TrackList>(
             .id(("row-availability", key))
             .picked(state.selected),
         )
-        .figure(20.0, heart)
-        .figure(110.0, div().children(format::quality(track)))
+        // A phone's row is the title and the length: the heart and the
+        // format are its menu's and its record's, as on iOS.
+        .when(!p.look.touch, |row| {
+            row.figure(20.0, heart)
+                .figure(110.0, div().children(format::quality(track)))
+        })
         .figure(64.0, format::duration(track.duration_ms))
         .on_click(click(RowPart::Row))
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -315,7 +319,7 @@ pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
 /// What a click on a row does to a list's selection: picks it alone, ⌘ adds
 /// or removes it, ⇧ extends from the last one clicked, through the page's
 /// order, which only ⇧ needs. Returns whether it was a double click on the
-/// row, which plays.
+/// row, which plays, or under touch a tap outside picking.
 pub fn select(
     selection: &mut Selection,
     item: Playable,
@@ -324,6 +328,15 @@ pub fn select(
     cx: &App,
 ) -> bool {
     let m = event.modifiers();
+    // A touch screen has no click to pick with: a tap plays or opens the
+    // row, and picks it only while picking (the Select button's mode).
+    if cx.global::<crate::theme::KoanTheme>().touch {
+        if !selection.is_active() {
+            return true;
+        }
+        selection.click(item, false, &[]);
+        return false;
+    }
     if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
         return true;
     }

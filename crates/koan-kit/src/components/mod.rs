@@ -182,7 +182,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
-pub use touch::KoanLongPress;
+pub use touch::{KoanLongPress, KoanTouchDrag};
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{
@@ -225,10 +225,16 @@ pub(crate) fn track<E: InteractiveElement + StatefulInteractiveElement>(
     let up = set(state, |p| p.pressed = false);
     let up_out = set(state, |p| p.pressed = false);
     element
-        .on_hover(move |hovered, _, cx| {
+        .on_hover(move |hovered, window, cx| {
             let hovered = *hovered;
+            // A touch hovers only what it holds down, and a tap's press
+            // arrives with its release: held is pressed.
+            let touch = window.last_input_was_touch();
             hover.update(cx, |pointer, cx| {
                 pointer.hovered = hovered;
+                if touch {
+                    pointer.pressed = hovered;
+                }
                 cx.notify();
             })
         })

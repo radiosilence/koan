@@ -22,7 +22,7 @@ use koan_kit::app::*;
 
 use super::Ctx;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
     General,
     Library,

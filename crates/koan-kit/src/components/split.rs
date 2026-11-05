@@ -15,6 +15,8 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::*;
 
+use super::KoanTouchDrag as _;
+
 use super::child;
 use crate::theme::{Look, Motion};
 
@@ -134,6 +136,7 @@ impl RenderOnce for SplitView {
                 .left(width - px(GRIP / 2.))
                 .w(px(GRIP))
                 .cursor_col_resize()
+                .koan_touch_drag(&look)
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     cx.stop_propagation();
                     if event.click_count == 2 {

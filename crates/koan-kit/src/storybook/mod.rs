@@ -19,13 +19,13 @@ use gpui::prelude::*;
 use gpui::*;
 
 use crate::components::{
-    Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, Cover,
-    CoverArt, EmptyState, FormRow, IconToggle, KoanInsets, Level, ListRow, Menu, MenuEntry,
-    MenuPanel, MenuRow, NavRow, PageHeader, Picker, Placeholder, ProgressBar, ProgressRing,
-    ProgressRow, RowKind, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar,
-    Slider, Sparkline, Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea,
-    TextField, TileArt, TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle,
-    Tooltip,
+    Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, CopyButton,
+    Cover, CoverArt, DragChip, EmptyState, FormRow, INSERTION, IconToggle, KoanContextMenu,
+    KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, NavRow, PageHeader, Picker,
+    Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea, SectionHeader,
+    SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner, StatusBlock, StatusLine,
+    Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark, TileSleeve, Toggle,
+    Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -195,6 +195,8 @@ pub struct StoryContent {
     tab: usize,
     field: Entity<InputState>,
     empty_field: Entity<InputState>,
+    /// The bare field's own, so typing in it changes no other field.
+    bare_field: Entity<InputState>,
     /// The text fields page's own: a long line, a password, a disabled
     /// field and several lines.
     long_field: Entity<InputState>,
@@ -206,6 +208,11 @@ pub struct StoryContent {
     outputs: Entity<Menu>,
     more: more::State,
     playground: playground::State,
+    /// On a narrow window, whether the pages and the controls are open over
+    /// the page, from the menu button.
+    menu_open: bool,
+    /// The list rows' order, as dragging leaves it: indices into `ROWS`.
+    rows: Vec<usize>,
     _accent: Subscription,
 }
 
@@ -213,6 +220,7 @@ impl StoryContent {
     fn new(wash: Entity<Wash>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| InputState::new(window, cx).default_value("Sunday morning"));
         let empty_field = cx.new(|cx| InputState::new(window, cx).placeholder("search"));
+        let bare_field = cx.new(|cx| InputState::new(window, cx).placeholder("a title"));
         let long_field = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(
@@ -263,6 +271,7 @@ impl StoryContent {
             tab: 0,
             field,
             empty_field,
+            bare_field,
             long_field,
             secret,
             still,
@@ -295,6 +304,8 @@ impl StoryContent {
             }),
             more: more::State::new(window, cx),
             playground: playground::State::new(),
+            menu_open: false,
+            rows: (0..ROWS.len()).collect(),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -381,8 +392,9 @@ impl StoryContent {
             }))
             .child(
                 Stepper::new("text-size", "text size", i64::from(text_size), 80..=130)
+                    .step(i64::from(theme::tokens::TEXT_SIZE_STEP))
                     .shown(format!("{text_size}%"))
-                    .on_change(|size, _, cx| KoanTheme::set_text_size((*size as u32 / 5) * 5, cx)),
+                    .on_change(|size, _, cx| KoanTheme::set_text_size(*size as u32, cx)),
             )
             .child(
                 Toggle::new("reduce-motion", "reduce motion", reduce).on_change(|on, _, cx| {
@@ -515,7 +527,11 @@ impl StoryContent {
                                 .label("Favourite")
                                 .icon(Icon::Favourite),
                         )
-                        .child(Button::new("copy", ButtonKind::Bordered).label("Copy"))
+                        .child(CopyButton::new(
+                            "copy",
+                            "copy link",
+                            "https://koan.blit.cc/invite/7Q4M",
+                        ))
                         .child(Button::new("token", ButtonKind::Link).label("Find your token"))
                         .child(Button::new("clear", ButtonKind::Text).label("Clear"))
                         .into_any_element(),
@@ -758,7 +774,7 @@ impl StoryContent {
                     div()
                         .w(look.spaced(280.0))
                         .child(
-                            TextField::new(&self.empty_field)
+                            TextField::new(&self.bare_field)
                                 .bare()
                                 .role(TypeRole::Title),
                         )
@@ -772,37 +788,69 @@ impl StoryContent {
             }
             Story::Rows => {
                 let selected_row = self.selected_row;
+                let accent = look.accent.hsla();
                 vec![
                     SectionHeader::new("List rows").into_any_element(),
                     div()
                         .flex()
                         .flex_col()
                         .children(
-                            [
-                                ("1", "Shoreline Pinball", "Low Tide Arcade", "3:41"),
-                                ("2", "Coin Return", "Low Tide Arcade", "4:02"),
-                                ("3", "Neon Breakwater", "Low Tide Arcade", "5:17"),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            .map(
-                                |(index, (number, title, detail, length))| {
-                                    let entity = entity.clone();
-                                    ListRow::new(("row", index))
-                                        .number(number)
-                                        .title(title)
-                                        .detail(detail)
-                                        .figure(length)
-                                        .selected(index == selected_row)
-                                        .playing(index == 2)
-                                        .on_click(move |_, _, cx| {
-                                            entity.update(cx, |story, cx| {
-                                                story.selected_row = index;
-                                                cx.notify();
-                                            })
+                            self.rows.iter().enumerate().map(|(at, &track)| {
+                                let (title, length) = ROWS[track];
+                                let entity = entity.clone();
+                                let dropped = entity.clone();
+                                // Held, a row opens its menu; held and moved,
+                                // it lifts and drops between the others.
+                                div()
+                                    .id(("row-drag", track))
+                                    .on_drag(RowDrag(track), |row, _, _, cx| {
+                                        let title = ROWS[row.0].0;
+                                        cx.new(|_| RowChip(title))
+                                    })
+                                    .drag_over::<RowDrag>(move |style, _, _, _| {
+                                        style.border_t(INSERTION).border_color(accent)
+                                    })
+                                    .on_drop(move |row: &RowDrag, _, cx| {
+                                        dropped.update(cx, |story, cx| {
+                                            story.rows.retain(|&t| t != row.0);
+                                            let at = at.min(story.rows.len());
+                                            story.rows.insert(at, row.0);
+                                            cx.notify();
                                         })
-                                },
-                            ),
+                                    })
+                                    .child(
+                                        ListRow::new(("row", track))
+                                            .number((at + 1).to_string())
+                                            .title(title)
+                                            .detail("Low Tide Arcade")
+                                            .figure(length)
+                                            .selected(track == selected_row)
+                                            .playing(track == 2)
+                                            .on_click(move |_, _, cx| {
+                                                entity.update(cx, |story, cx| {
+                                                    story.selected_row = track;
+                                                    cx.notify();
+                                                })
+                                            }),
+                                    )
+                                    .koan_context_menu(
+                                        ("row-menu", track),
+                                        window,
+                                        cx,
+                                        |menu, _, _| {
+                                            menu.item(
+                                                MenuEntry::new("play next")
+                                                    .icon(Icon::Play)
+                                                    .on_click(|_, _, _| {}),
+                                            )
+                                            .item(
+                                                MenuEntry::new("remove")
+                                                    .destructive()
+                                                    .on_click(|_, _, _| {}),
+                                            )
+                                        },
+                                    )
+                            }),
                         )
                         .into_any_element(),
                     SectionHeader::new("Table rows").into_any_element(),
@@ -1120,14 +1168,19 @@ impl Render for StoryContent {
         let look = Look::of(window, cx);
         let entity = cx.entity();
         let story = self.story;
+        // A phone's width: the pages and the controls behind a menu button,
+        // so the page has the width to itself.
+        let narrow = window.viewport_size().width < px(NARROW);
         let nav = div()
             .flex()
             .flex_col()
             .flex_none()
-            .w(look.spaced(220.0))
+            .when(!narrow, |nav| {
+                nav.w(look.spaced(220.0))
+                    .border_r(HAIRLINE)
+                    .border_color(look.palette.rule.hsla())
+            })
             .pt(look.space(Space::L))
-            .border_r(HAIRLINE)
-            .border_color(look.palette.rule.hsla())
             .children(Story::ALL.into_iter().map(|page| {
                 let entity = entity.clone();
                 NavRow::new(page.slug(), page.name())
@@ -1135,41 +1188,94 @@ impl Render for StoryContent {
                     .on_click(move |_, _, cx| {
                         entity.update(cx, |content, cx| {
                             content.story = page;
+                            content.menu_open = false;
                             cx.notify();
                         })
                     })
             }));
         let controls = self.controls(&look, cx);
-        let page = self.page(&look, window, cx);
         let viewer = self.viewer(cx);
-        div()
+        let page = div().flex_1().min_h_0().child(ScrollArea::new(
+            ("story", story as usize),
+            div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::M))
+                .p(look.space(if narrow { Space::L } else { Space::Xxl }))
+                .children(self.page(&look, window, cx)),
+        ));
+        let root = div()
             .font_family(theme::FONT_FAMILY)
             .relative()
             .size_full()
-            .flex()
-            .child(nav)
+            .flex();
+        if !narrow {
+            return root
+                .child(nav)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(controls)
+                        .child(page),
+                )
+                .children(viewer);
+        }
+        let open = self.menu_open;
+        let toggle = entity.clone();
+        root.flex_col()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(controls)
-                    .child(
-                        div().flex_1().min_h_0().child(ScrollArea::new(
-                            ("story", story as usize),
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(look.space(Space::M))
-                                .p(look.space(Space::Xxl))
-                                .children(page),
-                        )),
-                    ),
+                Toolbar::new()
+                    .leading(
+                        ToolbarButton::new("story-menu", Icon::Sidebar, "pages")
+                            .selected(open)
+                            .on_click(move |_, _, cx| {
+                                toggle.update(cx, |content, cx| {
+                                    content.menu_open = !content.menu_open;
+                                    cx.notify();
+                                })
+                            }),
+                    )
+                    .principal(ToolbarTitle::new(story.name())),
             )
+            .child(if open {
+                div().flex_1().min_h_0().child(ScrollArea::new(
+                    "story-menu-list",
+                    div().flex().flex_col().child(controls).child(nav),
+                ))
+            } else {
+                page
+            })
             .children(viewer)
     }
 }
+
+/// The rows page's tracks: a title and a length.
+const ROWS: [(&str, &str); 5] = [
+    ("Shoreline Pinball", "3:41"),
+    ("Coin Return", "4:02"),
+    ("Neon Breakwater", "5:17"),
+    ("Tilt", "2:58"),
+    ("High Score at Dusk", "6:30"),
+];
+
+/// A row of the rows page being dragged, by its index into `ROWS`.
+struct RowDrag(usize);
+
+/// What a dragged row shows under the finger.
+struct RowChip(&'static str);
+
+impl Render for RowChip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        DragChip::new(self.0)
+    }
+}
+
+/// The width below which the storybook folds its pages and controls behind
+/// a menu button: a phone held upright.
+const NARROW: f32 = 600.0;
 
 fn text(content: &'static str, role: TypeRole, tone: Tone, look: &Look) -> AnyElement {
     div()

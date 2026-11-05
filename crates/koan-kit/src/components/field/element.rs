@@ -8,8 +8,8 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, DispatchPhase, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels, Point, SharedString, Style,
-    TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
+    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
@@ -259,6 +259,14 @@ impl gpui::Element for FieldElement {
             let state = self.state.read(cx);
             (state.focus.clone(), state.caret.clone())
         };
+        // The field is drawn as part of a view, which a cached view's frame
+        // replays until the view itself is told it changed: the state tells
+        // the view it was last drawn in (`FieldState::drawn_in`).
+        let view = window.current_view();
+        if self.state.read(cx).drawn_in != Some(view) {
+            self.state
+                .update(cx, |state, _| state.drawn_in = Some(view));
+        }
         if self.editable {
             window.handle_input(
                 &focus,
@@ -278,10 +286,35 @@ impl gpui::Element for FieldElement {
                 }
             });
         }
+        if focus.is_focused(window) {
+            super::drawn_focused(&focus, bounds);
+        }
+        // Under touch, a tap anywhere but the field puts the keyboard away:
+        // the tap goes where it landed first (a button presses, another
+        // field takes the keyboard), and the field lets go only if it still
+        // has it.
+        if focus.is_focused(window) && window.last_input_was_touch() {
+            let focus = focus.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || bounds.contains(&event.position) {
+                    return;
+                }
+                let focus = focus.clone();
+                window.defer(cx, move |window, cx| {
+                    if focus.is_focused(window) {
+                        window.blur(cx);
+                        window.dismiss_virtual_keyboard();
+                    }
+                });
+            });
+        }
         let origin = bounds.origin - prepaint.scroll;
         let line_height = prepaint.line_height;
+        // Where the platform draws the caret, the selection and its handles
+        // (iOS's text interaction), the field draws its text alone.
+        let native = window.platform_draws_text_selection();
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
-            for selection in &prepaint.selection {
+            for selection in prepaint.selection.iter().filter(|_| !native) {
                 window.paint_quad(fill(*selection, self.colours.selection));
             }
             for (i, line) in prepaint.lines.iter().enumerate() {
@@ -297,6 +330,7 @@ impl gpui::Element for FieldElement {
                     .ok();
             }
             if focus.is_focused(window)
+                && !native
                 && let Some(at) = prepaint.caret
             {
                 caret.set_color(4, self.colours.caret);

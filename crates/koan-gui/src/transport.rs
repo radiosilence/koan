@@ -24,6 +24,10 @@ use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
 pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
+
+#[path = "transport_phone.rs"]
+mod phone;
+pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -66,6 +70,13 @@ pub struct Transport {
     /// The library version the EQ was last read at.
     eq_library: u64,
     _eq_load: Option<Task<()>>,
+    /// The bar, or on a phone the mini player or Now Playing.
+    form: Form,
+    /// The phone's forms follow the playhead themselves.
+    playhead_followed: Option<Subscription>,
+    /// Now Playing shows the lyrics in place of the art.
+    lyrics_shown: bool,
+    lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -233,6 +244,10 @@ impl Transport {
             eq_profile: None,
             eq_library: mirror.library.read(cx).version,
             _eq_load: None,
+            form: Form::Bar,
+            playhead_followed: None,
+            lyrics_shown: false,
+            lyrics: None,
         };
         this.reload_eq(cx);
         this
@@ -851,6 +866,11 @@ fn format_badge(format: &StreamFormat) -> String {
 
 impl Render for Transport {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.form {
+            Form::Mini => return self.mini(window, cx),
+            Form::Full => return self.full(window, cx),
+            Form::Bar => {}
+        }
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
@@ -861,21 +881,6 @@ impl Render for Transport {
         // back and forth for it.
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
-        let repeat_icon = match now.repeat_mode {
-            RepeatMode::One => Icon::RepeatOne,
-            RepeatMode::Off | RepeatMode::Queue => Icon::RepeatQueue,
-        };
-        let repeat_label = match now.repeat_mode {
-            RepeatMode::One => "repeat one",
-            RepeatMode::Off | RepeatMode::Queue => "repeat",
-        };
-        let next_repeat = match now.repeat_mode {
-            RepeatMode::Off => RepeatMode::Queue,
-            RepeatMode::Queue => RepeatMode::One,
-            RepeatMode::One => RepeatMode::Off,
-        };
-        let shuffle = now.shuffle;
-
         let left = div()
             .flex_1()
             .min_w_0()
@@ -1213,59 +1218,7 @@ impl Render for Transport {
                     .items_center()
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
-                    .child(
-                        TransportControl::new(
-                            "shuffle",
-                            Icon::Shuffle,
-                            "shuffle",
-                            theme::label(if shuffle {
-                                "shuffle: on"
-                            } else {
-                                "shuffle: off"
-                            }),
-                        )
-                        .on(shuffle)
-                        .on_click(move |_, _, cx| {
-                            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                        }),
-                    )
-                    .child(
-                        TransportControl::new(
-                            "previous",
-                            Icon::Previous,
-                            "prev",
-                            help("previous track", &Previous, cx),
-                        )
-                        .answer(crate::components::Answer::Nudge(false))
-                        .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
-                    )
-                    .child(play_pause)
-                    .child(
-                        TransportControl::new(
-                            "next",
-                            Icon::Next,
-                            "next",
-                            help("next track", &Next, cx),
-                        )
-                        .answer(crate::components::Answer::Nudge(true))
-                        .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
-                    )
-                    .child(
-                        TransportControl::new(
-                            "repeat",
-                            repeat_icon,
-                            repeat_label,
-                            theme::label(match now.repeat_mode {
-                                RepeatMode::Off => "repeat: off",
-                                RepeatMode::Queue => "repeat: the queue",
-                                RepeatMode::One => "repeat: this track",
-                            }),
-                        )
-                        .on(now.repeat_mode != RepeatMode::Off)
-                        .on_click(move |_, _, cx| {
-                            command(cx, "repeat", move |e| e.set_repeat(next_repeat))
-                        }),
-                    ),
+                    .children(controls(&now, play_pause, cx)),
             )
             // Its own cached view. A second of the clock re-renders the slider and the views
             // that hold it (the bar, the shell), whose other cached children
@@ -1341,7 +1294,71 @@ impl Render for Transport {
             .child(centre)
             .child(right)
             .children(ring)
+            .into_any_element()
     }
+}
+
+/// The transport's five controls, in the bar's order: shuffle, previous,
+/// `play_pause`, next, repeat. The desktop bar, the phone's Now Playing.
+fn controls(now: &NowPlaying, play_pause: impl IntoElement, cx: &App) -> Vec<AnyElement> {
+    let shuffle = now.shuffle;
+    let repeat_icon = match now.repeat_mode {
+        RepeatMode::One => Icon::RepeatOne,
+        RepeatMode::Off | RepeatMode::Queue => Icon::RepeatQueue,
+    };
+    let repeat_label = match now.repeat_mode {
+        RepeatMode::One => "repeat one",
+        RepeatMode::Off | RepeatMode::Queue => "repeat",
+    };
+    let next_repeat = match now.repeat_mode {
+        RepeatMode::Off => RepeatMode::Queue,
+        RepeatMode::Queue => RepeatMode::One,
+        RepeatMode::One => RepeatMode::Off,
+    };
+    vec![
+        TransportControl::new(
+            "shuffle",
+            Icon::Shuffle,
+            "shuffle",
+            theme::label(if shuffle {
+                "shuffle: on"
+            } else {
+                "shuffle: off"
+            }),
+        )
+        .on(shuffle)
+        .on_click(move |_, _, cx| {
+            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
+        })
+        .into_any_element(),
+        TransportControl::new(
+            "previous",
+            Icon::Previous,
+            "prev",
+            help("previous track", &Previous, cx),
+        )
+        .answer(crate::components::Answer::Nudge(false))
+        .on_click(|_, _, cx| command(cx, "previous", |e| e.previous()))
+        .into_any_element(),
+        play_pause.into_any_element(),
+        TransportControl::new("next", Icon::Next, "next", help("next track", &Next, cx))
+            .answer(crate::components::Answer::Nudge(true))
+            .on_click(|_, _, cx| command(cx, "next", |e| e.next()))
+            .into_any_element(),
+        TransportControl::new(
+            "repeat",
+            repeat_icon,
+            repeat_label,
+            theme::label(match now.repeat_mode {
+                RepeatMode::Off => "repeat: off",
+                RepeatMode::Queue => "repeat: the queue",
+                RepeatMode::One => "repeat: this track",
+            }),
+        )
+        .on(now.repeat_mode != RepeatMode::Off)
+        .on_click(move |_, _, cx| command(cx, "repeat", move |e| e.set_repeat(next_repeat)))
+        .into_any_element(),
+    ]
 }
 
 impl Focusable for Transport {
