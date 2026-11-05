@@ -1,0 +1,1 @@
+- **A queue holding the whole library no longer downloads all of it.** With Download ahead on the whole queue, fetching reaches 250 tracks past the playing one and follows the cursor from there. With a cache limit, jumping to tracks not yet fetched makes room for them at once instead of filling the cache past its limit first.
