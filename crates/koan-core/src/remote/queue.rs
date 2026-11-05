@@ -944,12 +944,7 @@ mod tests {
         let (inner, ids, _) = queue_over(&[1, 2, 3, 4, 5]);
         inner.state.set_cursor(Some(ids[2].1));
         let wanted = inner.state.pending_downloads();
-        sync_with(
-            &mut inner.queue.lock(),
-            inner.state.downloads(),
-            &wanted,
-            None,
-        );
+        sync_all(&mut inner.queue.lock(), inner.state.downloads(), &wanted);
 
         let order: Vec<i64> = inner.queue.lock().pending.iter().map(|(t, _)| *t).collect();
         assert_eq!(order, vec![3, 4, 5, 1, 2]);
