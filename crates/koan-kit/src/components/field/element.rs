@@ -8,8 +8,8 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, DispatchPhase, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels, Point, SharedString, Style,
-    TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
+    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
@@ -284,6 +284,25 @@ impl gpui::Element for FieldElement {
                 if phase == DispatchPhase::Bubble {
                     state.update(cx, |state, cx| state.mouse_move(event, window, cx));
                 }
+            });
+        }
+        // Under touch, a tap anywhere but the field puts the keyboard away:
+        // the tap goes where it landed first (a button presses, another
+        // field takes the keyboard), and the field lets go only if it still
+        // has it.
+        if focus.is_focused(window) && window.last_input_was_touch() {
+            let focus = focus.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || bounds.contains(&event.position) {
+                    return;
+                }
+                let focus = focus.clone();
+                window.defer(cx, move |window, _| {
+                    if focus.is_focused(window) {
+                        window.blur();
+                        window.dismiss_virtual_keyboard();
+                    }
+                });
             });
         }
         let origin = bounds.origin - prepaint.scroll;
