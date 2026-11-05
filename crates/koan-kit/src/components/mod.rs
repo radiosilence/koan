@@ -39,6 +39,7 @@ mod filter_field;
 pub mod focus_trap;
 mod form;
 mod heart;
+mod insets;
 mod inspector;
 mod layer;
 mod level;
@@ -131,6 +132,7 @@ pub use form::{
     form_note, form_text,
 };
 pub use heart::Heart;
+pub use insets::{Clear, KoanInsets, system_insets};
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;

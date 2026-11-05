@@ -19,12 +19,13 @@ use gpui::prelude::*;
 use gpui::*;
 
 use crate::components::{
-    Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Cover, CoverArt,
-    EmptyState, FormRow, IconToggle, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, NavRow,
-    PageHeader, Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea,
-    SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner,
-    StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark,
-    TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
+    Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, Cover,
+    CoverArt, EmptyState, FormRow, IconToggle, KoanInsets, Level, ListRow, Menu, MenuEntry,
+    MenuPanel, MenuRow, NavRow, PageHeader, Picker, Placeholder, ProgressBar, ProgressRing,
+    ProgressRow, RowKind, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar,
+    Slider, Sparkline, Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea,
+    TextField, TileArt, TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle,
+    Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -147,7 +148,7 @@ impl Storybook {
 }
 
 impl Render for Storybook {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .relative()
             .size_full()
@@ -159,11 +160,15 @@ impl Render for Storybook {
                 ),
             )
             .child(
-                div().absolute().size_full().child(
-                    self.content
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                ),
+                div()
+                    .absolute()
+                    .size_full()
+                    .clear_of_system(Clear::Keyboard, window)
+                    .child(
+                        self.content
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    ),
             )
     }
 }

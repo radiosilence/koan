@@ -528,8 +528,8 @@ kit-ios shot="":
     xcrun simctl terminate "$device" cc.blit.koan.storybook 2>/dev/null || true
     xcrun simctl launch "$device" cc.blit.koan.storybook
     if [ -n "{{shot}}" ]; then
-        sleep 4
-        xcrun simctl io "$device" screenshot "{{shot}}"
+        sleep 8
+        xcrun simctl io "$device" screenshot --display=1 "{{shot}}"
     fi
 
 # Install and launch koan on a booted simulator.
