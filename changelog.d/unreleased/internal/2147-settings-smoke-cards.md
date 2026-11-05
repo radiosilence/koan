@@ -1,0 +1,1 @@
+- **Settings smoke test follows the Server pane's choice cards.** It chose the mode from the picker the cards replaced while nothing is chosen.
