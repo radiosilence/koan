@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.71.0
+
+### Added
+
+- **The desktop app asks to restart into an update.** Once a new version is downloaded, kōan offers to restart now instead of waiting quietly for the next quit, and a copy Homebrew or `apt` keeps is pointed at the release notes. The first launch of a newer version says so. Updates and running in the background move to a new General pane, first in Settings.
+- **The desktop app walks a new install through setting up.** On a first launch with nothing set up, a guide explains what kōan is and asks where the music is: folders on this computer, which it can then share with your phone and other devices, with a checklist for reaching them through Tailscale away from home; or a server to sign in to. It ends with playback and the keys worth knowing. Settings → Library opens it again, beside Reset to Defaults, which stops sharing, signs out, forgets the folders' tracks and puts every setting back, keeping `config.toml` as `config.toml.bak`.
+
+### Changed
+
+- **Settings → Server asks before it shows a side.** A device that neither connects to a server nor shares its library is offered the two as cards, as the setup guide does, with nothing chosen and no sign-in form until one is.
+- **Compressed web UI.** The web UI's pages, page fragments and scripts are compressed with brotli, zstd or gzip, whichever the browser prefers; they were sent uncompressed. Audio served by byte range and the live scan and cache streams are left as they were.
+
+### Fixed
+
+- **Server settings switch back to signing in.** Choosing Connects to a server after looking at Shares its library shows the sign-in form at once, rather than after leaving the pane.
+- **A queue holding the whole library no longer downloads all of it.** Download ahead's whole queue now stops 250 tracks past the playing one and follows the cursor from there; Settings says so, and a larger number can be set by hand. With a cache limit, jumping to tracks not yet fetched makes room for them at once instead of filling the cache past its limit first.
+- **Sign In is enabled as the fields are filled.** The Server pane redraws on each edit to the address, username and password, so Sign In no longer stays disabled until something else redraws it.
+
+### Internal
+
+- **An overlay fading out takes no input.** The window takes clicks the moment a sheet, question or the command bar is put away, and Tab never lands in one that has gone.
+- **Crash tests for Settings and presenting.** `just gui-settings-smoke` drives Settings' sharing, invite and sign-in flows through its controls against a real engine, and `just gui-present` resizes, minimises, closes and switches key on presenting windows; CI runs both.
+- **koan-kit runs on iOS, and is ready for touch.** The storybook draws on an iPhone simulator through GPUI's iOS backend (`just kit-ios`), reading iOS's motion, contrast, transparency and Dynamic Type settings; under touch, controls and rows are finger-sized, a held touch opens a context menu or, moved, lifts a drag, and content keeps clear of the status bar, home indicator and keyboard.
+
 ## 0.70.5
 
 ### Added
