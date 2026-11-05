@@ -1,0 +1,1 @@
+- **Compressed web UI.** The web UI's pages, page fragments and scripts are compressed with brotli, zstd or gzip, whichever the browser prefers; they were sent uncompressed. Audio served by byte range and the live scan and cache streams are left as they were.

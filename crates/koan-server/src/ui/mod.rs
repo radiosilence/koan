@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, RawQuery, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{Extensions, HeaderMap, HeaderValue, Method, StatusCode, Version, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -45,6 +45,8 @@ use axum::routing::{get, post};
 use koan_core::auth;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 
 use crate::auth::AuthUser;
 use crate::auth::routes::{AuthRouteState, RateLimiter, login_rate_limit, rate_limit};
@@ -296,6 +298,16 @@ pub(crate) fn router(
             get(|| ui_asset(Path("apple-touch-icon.png".into()), RawQuery(None))),
         )
         .merge(path_inserted_discovery(&base))
+        // The default predicate skips `text/event-stream`, since an encoder
+        // buffers a live stream, and images. A body served by byte range is
+        // left alone too: a range of a compressed body is not the range asked for.
+        .layer(
+            CompressionLayer::new().compress_when(DefaultPredicate::new().and(
+                |_: StatusCode, _: Version, headers: &HeaderMap, _: &Extensions| {
+                    !headers.contains_key(header::ACCEPT_RANGES)
+                },
+            )),
+        )
         .with_state(state)
 }
 
