@@ -3,7 +3,7 @@
 //! server's library.
 
 use crate::components::{
-    Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
+    Button, ButtonKind, ChoiceCards, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState};
@@ -195,6 +195,7 @@ impl ServerPane {
             return;
         };
         self.url.update(cx, |s, cx| s.set_value("", window, cx));
+        self.chosen = Some(Mode::Connect);
         let host = host(&invite.server);
         if self.ctx.sharing.read(cx).serving.is_some() {
             let way = if self.pinned.is_some() {
@@ -799,6 +800,20 @@ impl Render for ServerPane {
             Mode::Connect
         };
         self.chosen = stay(self.shown, self.chosen, doing);
+        // Neither signed in nor sharing: the two are offered as a question,
+        // and neither side shows until one is chosen.
+        let undecided = self.pinned.is_none()
+            && doing == Mode::Connect
+            && !settings.remote_signed_in
+            && !settings.remote_enabled;
+        if undecided && self.chosen.is_none() {
+            self.shown = None;
+            return page(
+                "server",
+                &look,
+                vec![self.choice_section(None, &look, entity)],
+            );
+        }
         let mode = self.pinned.or(self.chosen).unwrap_or(doing);
         self.shown = Some(mode);
         let mut sections = Vec::new();
@@ -807,6 +822,8 @@ impl Render for ServerPane {
             if matches!(status, ModeLabel::Sharing(_) | ModeLabel::NotSharing(_)) {
                 sections.push(section(None, vec![status.render(&look)], None, &look));
             }
+        } else if undecided {
+            sections.push(self.choice_section(Some(mode), &look, entity.clone()));
         } else if self.pinned.is_none() {
             sections.push(self.mode_section(mode, doing, &status, &look, entity.clone()));
         }
@@ -856,6 +873,43 @@ impl Render for ServerPane {
 }
 
 impl ServerPane {
+    /// The choice between signing in and sharing as two cards, for a device
+    /// doing neither yet: `chosen` is the side open under it, if any.
+    fn choice_section(
+        &self,
+        chosen: Option<Mode>,
+        look: &Look,
+        entity: Entity<Self>,
+    ) -> AnyElement {
+        section(
+            Some("What should this device do?"),
+            vec![
+                ChoiceCards::new("mode-cards", chosen.map(|mode| mode as usize))
+                    .named("what should this device do")
+                    .card(
+                        Icon::Server,
+                        "Connect to a server",
+                        Some("Play a kōan, Navidrome or Subsonic server's library, alongside this device's own folders."),
+                    )
+                    .card(
+                        Icon::Folder,
+                        "Share its library",
+                        Some("Your phone and other devices play this device's library, with an account you make here."),
+                    )
+                    .on_change(move |index, _, cx| {
+                        let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
+                        entity.update(cx, |pane, cx| {
+                            pane.chosen = Some(mode);
+                            cx.notify();
+                        })
+                    })
+                    .into_any_element(),
+            ],
+            None,
+            look,
+        )
+    }
+
     /// The choice between signing in and sharing, with what this device
     /// does now under it.
     fn mode_section(
