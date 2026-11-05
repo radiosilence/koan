@@ -34,8 +34,10 @@ pub enum Route {
     Shelved(Shelf, Listing),
     /// The phone's Library tab: the library's sections and the playlists.
     Library,
-    /// The phone's Settings tab.
+    /// The phone's Settings tab: its sections.
     Settings,
+    /// A section of Settings, as a phone's screen.
+    SettingsSection(crate::settings::Tab),
 }
 
 /// A shelf, as a route names it.

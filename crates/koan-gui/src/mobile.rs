@@ -41,6 +41,8 @@ pub struct PhoneShell {
     /// Settings' panes, made on first showing and kept, as the desktop keeps
     /// its Settings window's.
     settings: Option<Entity<crate::settings::SettingsWindow>>,
+    /// The search sheet over the tab showing, while it is open.
+    search: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -88,8 +90,31 @@ impl PhoneShell {
             library: None,
             downloads: None,
             settings: None,
+            search: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Settings' model and panes, made on first showing and kept, as the
+    /// desktop keeps its Settings window's.
+    fn settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::settings::SettingsWindow> {
+        self.settings
+            .get_or_insert_with(|| {
+                cx.new(|cx| {
+                    let mut settings = crate::settings::SettingsWindow::new(
+                        crate::settings::Tab::General,
+                        window,
+                        cx,
+                    );
+                    settings.as_screen();
+                    settings
+                })
+            })
+            .clone()
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -118,19 +143,40 @@ impl PhoneShell {
                     .cached(full())
                     .into_any_element()
             }
-            Route::Settings => self
-                .settings
-                .get_or_insert_with(|| {
-                    cx.new(|cx| {
-                        crate::settings::SettingsWindow::new(
-                            crate::settings::Tab::General,
-                            window,
-                            cx,
-                        )
-                    })
-                })
-                .clone()
-                .into_any_element(),
+            Route::Settings => {
+                let settings = self.settings(window, cx);
+                let tabs = settings.read(cx).tabs(cx);
+                let nav = self.nav.clone();
+                crate::components::ScrollArea::new(
+                    "settings-sections",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(tabs.into_iter().map(|tab| {
+                            let (nav, settings) = (nav.clone(), settings.clone());
+                            crate::components::NavRow::new(
+                                SharedString::from(format!("settings-{}", tab.title())),
+                                tab.title().to_lowercase(),
+                            )
+                            .icon(tab.icon())
+                            .on_click(move |_, window, cx| {
+                                settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                                nav.update(cx, |nav, cx| {
+                                    if nav.go(Route::SettingsSection(tab)) {
+                                        cx.notify();
+                                    }
+                                });
+                            })
+                        })),
+                )
+                .into_any_element()
+            }
+            Route::SettingsSection(tab) => {
+                let settings = self.settings(window, cx);
+                // Back and forward land here too: the pane follows the route.
+                settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                settings.cached(full()).into_any_element()
+            }
             route if LibraryStage::draws(route) => match &self.library {
                 Some(library) => library.clone().cached(full()).into_any_element(),
                 None => div().size_full().into_any_element(),
@@ -147,6 +193,7 @@ impl PhoneShell {
             Route::Queue => Some("queue"),
             Route::Library => Some("library"),
             Route::Settings => Some("settings"),
+            Route::SettingsSection(tab) => Some(tab.title()),
             Route::History => Some("history"),
             Route::Downloads => Some("downloads"),
             _ => None,
@@ -167,21 +214,49 @@ impl PhoneShell {
             )
     }
 
+    /// The search sheet over the tab showing, holding the keyboard. Search
+    /// is a tab of the bar's that opens it rather than a place of its own,
+    /// so what was showing stays under it.
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.is_some() {
+            return;
+        }
+        let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
+            return;
+        };
+        let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
+        window.focus(&bar.focus_handle(cx), cx);
+        let dismissed = cx.subscribe(&bar, |this, _, _: &crate::search::bar::Dismissed, cx| {
+            this.search = None;
+            cx.notify();
+        });
+        self.search = Some((bar, dismissed));
+        cx.notify();
+    }
+
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let showing = self.nav.read(cx).tab();
-        TABS.iter()
-            .enumerate()
-            .fold(TabStrip::new(), |strip, (ix, &(root, title, icon))| {
-                let nav = self.nav.clone();
-                strip.tab(icon, title, ix == showing, move |_, _, cx| {
-                    nav.update(cx, |nav, cx| {
-                        let chosen = nav.switch(ix, root);
-                        if chosen == Chosen::Moved || nav.at_root() {
-                            cx.notify();
-                        }
-                    });
-                })
-            })
+        let strip =
+            TABS.iter()
+                .enumerate()
+                .fold(TabStrip::new(), |strip, (ix, &(root, title, icon))| {
+                    let nav = self.nav.clone();
+                    strip.tab(icon, title, ix == showing, move |_, _, cx| {
+                        nav.update(cx, |nav, cx| {
+                            let chosen = nav.switch(ix, root);
+                            if chosen == Chosen::Moved || nav.at_root() {
+                                cx.notify();
+                            }
+                        });
+                    })
+                });
+        let shell = cx.entity();
+        strip.tab(
+            Icon::Search,
+            "search",
+            self.search.is_some(),
+            move |_, window, cx| shell.update(cx, |shell, cx| shell.open_search(window, cx)),
+        )
     }
 }
 
@@ -225,5 +300,10 @@ impl Render for PhoneShell {
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
+            .children(
+                self.search
+                    .as_ref()
+                    .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
+            )
     }
 }
