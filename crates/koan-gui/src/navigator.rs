@@ -36,6 +36,8 @@ pub enum Route {
     Library,
     /// The phone's list of playlists, a section of its Library tab.
     Playlists,
+    /// The phone's Search tab: the field, and the results under it.
+    SearchTab,
     /// The phone's Settings tab: its sections.
     Settings,
     /// A section of Settings, as a phone's screen.

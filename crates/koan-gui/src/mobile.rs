@@ -27,10 +27,11 @@ pub fn phone() -> bool {
 }
 
 /// The tabs in the order the bar shows them, each with its first page.
-const TABS: [(Route, &str, Icon); 3] = [
+const TABS: [(Route, &str, Icon); 4] = [
     (Route::Queue, "queue", Icon::QueueSection),
     (Route::Library, "library", Icon::Library),
     (Route::Settings, "settings", Icon::Settings),
+    (Route::SearchTab, "search", Icon::Search),
 ];
 
 /// The phone's shell, for what opens a window on a desktop (Settings, EQ, a
@@ -80,6 +81,14 @@ pub fn open_eq(device: Option<String>, cx: &mut App) -> bool {
     on_shell(cx, |shell, window, cx| shell.go_eq(device, window, cx))
 }
 
+/// The Search tab's first page: the field, and what it finds under it, as
+/// the iOS app's.
+struct SearchPage {
+    field: Entity<crate::components::field::FieldState>,
+    results: Entity<crate::library::shelf::ShelfPage>,
+    _typed: Subscription,
+}
+
 pub struct PhoneShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
@@ -103,8 +112,9 @@ pub struct PhoneShell {
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
     /// EQ's model and page, made on first showing and kept.
     eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
-    /// The search sheet over the tab showing, while it is open.
-    search: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
+    /// The Search tab's field and the results under it, made once the
+    /// library has loaded.
+    search: Option<SearchPage>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -193,6 +203,59 @@ impl PhoneShell {
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             _subscriptions: subscriptions,
         }
+    }
+
+    fn search_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = Paint::of(window, cx);
+        if self.search.is_none()
+            && let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib())
+        {
+            let field = cx.new(|cx| {
+                crate::components::field::FieldState::new(window, cx)
+                    .placeholder("albums, artists, tracks")
+            });
+            let search = lib.search.clone();
+            let typed = cx.subscribe(
+                &field,
+                move |_, field, event: &crate::components::field::InputEvent, cx| {
+                    if matches!(event, crate::components::field::InputEvent::Change) {
+                        let text = field.read(cx).value().to_string();
+                        search.update(cx, |search, cx| search.set_query(&text, cx));
+                    }
+                },
+            );
+            let results = cx.new(|cx| crate::library::shelf::ShelfPage::results(lib, window, cx));
+            self.search = Some(SearchPage {
+                field,
+                results,
+                _typed: typed,
+            });
+        }
+        let Some(page) = &self.search else {
+            return div().size_full().into_any_element();
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px(p.space(crate::theme::Space::L))
+                    .py(p.space(crate::theme::Space::M))
+                    .child(
+                        crate::components::FilterField::new(&page.field)
+                            .label("search")
+                            .fill(),
+                    ),
+            )
+            .child(
+                div().flex_1().min_h_0().child(
+                    page.results
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                ),
+            )
+            .into_any_element()
     }
 
     /// A row that opens `route` on the tab showing.
@@ -320,6 +383,7 @@ impl PhoneShell {
         match route {
             Route::Queue => self.queue.clone().cached(full()).into_any_element(),
             Route::Library => self.sections(cx),
+            Route::SearchTab => self.search_page(window, cx),
             Route::Playlists => self.playlists(cx),
             Route::Downloads => {
                 let nav = self.nav.clone();
@@ -435,7 +499,6 @@ impl PhoneShell {
         cx: &mut Context<Self>,
     ) {
         self.now_playing = None;
-        self.search = None;
         let at = TABS
             .iter()
             .position(|(root, ..)| *root == Route::Settings)
@@ -515,49 +578,21 @@ impl PhoneShell {
         cx.notify();
     }
 
-    /// The search sheet over the tab showing, holding the keyboard. Search
-    /// is a tab of the bar's that opens it rather than a place of its own,
-    /// so what was showing stays under it.
-    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.search.is_some() {
-            return;
-        }
-        let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) else {
-            return;
-        };
-        let bar = cx.new(|cx| crate::search::bar::SearchBar::new(lib, window, cx));
-        window.focus(&bar.focus_handle(cx), cx);
-        let dismissed = cx.subscribe(&bar, |this, _, _: &crate::search::bar::Dismissed, cx| {
-            this.search = None;
-            cx.notify();
-        });
-        self.search = Some((bar, dismissed));
-        cx.notify();
-    }
-
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let showing = self.nav.read(cx).tab();
-        let strip =
-            TABS.iter()
-                .enumerate()
-                .fold(TabStrip::new(), |strip, (ix, &(root, title, icon))| {
-                    let nav = self.nav.clone();
-                    strip.tab(icon, title, ix == showing, move |_, _, cx| {
-                        nav.update(cx, |nav, cx| {
-                            let chosen = nav.switch(ix, root);
-                            if chosen == Chosen::Moved || nav.at_root() {
-                                cx.notify();
-                            }
-                        });
-                    })
-                });
-        let shell = cx.entity();
-        strip.tab(
-            Icon::Search,
-            "search",
-            self.search.is_some(),
-            move |_, window, cx| shell.update(cx, |shell, cx| shell.open_search(window, cx)),
-        )
+        TABS.iter()
+            .enumerate()
+            .fold(TabStrip::new(), |strip, (ix, &(root, title, icon))| {
+                let nav = self.nav.clone();
+                strip.tab(icon, title, ix == showing, move |_, _, cx| {
+                    nav.update(cx, |nav, cx| {
+                        let chosen = nav.switch(ix, root);
+                        if chosen == Chosen::Moved || nav.at_root() {
+                            cx.notify();
+                        }
+                    });
+                })
+            })
     }
 }
 
@@ -654,11 +689,6 @@ impl Render for PhoneShell {
                 self.info
                     .as_ref()
                     .map(|(_, info)| ask::layered(Layer::Sheet, info.clone())),
-            )
-            .children(
-                self.search
-                    .as_ref()
-                    .map(|(bar, _)| ask::layered(Layer::Sheet, bar.clone())),
             )
             .into_any_element()
     }

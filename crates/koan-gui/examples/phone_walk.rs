@@ -127,6 +127,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("history", Route::History),
         page("downloads", Route::Downloads),
         page("playlists", Route::Playlists),
+        page("search", Route::SearchTab),
         page("settings", Route::Settings),
         page(
             "settings-playback",
