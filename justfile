@@ -521,7 +521,7 @@ kit-ios shot="":
     cp crates/koan-kit/ios/Info.plist "$app/Info.plist"
     codesign --force --sign - "$app"
     device=$(xcrun simctl list devices available -j \
-        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and "iPhone" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
+        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" "$app"
@@ -812,7 +812,7 @@ ios-invite-sheet: (ios-ffi "iphonesimulator") ios-project
     rm -rf "$out" && mkdir -p "$out"
     cleanup=()
     trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
-    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and "iPhone" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
     [ -n "$phone" ] || { echo "Needs an iPhone simulator." >&2; exit 1; }
     url=$(just _demo-server "" "$out")
     cleanup+=("just _demo-server-stop '$out'")

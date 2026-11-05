@@ -79,6 +79,7 @@ mod tabs;
 mod tile;
 mod toggle;
 mod toolbar;
+mod touch;
 mod transport_control;
 mod viewer;
 mod window;
@@ -177,6 +178,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
+pub use touch::KoanLongPress;
 pub use transport_control::TransportControl;
 pub use viewer::Viewer;
 pub use window::{
