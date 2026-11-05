@@ -1,0 +1,1 @@
+- **Server settings switch back to signing in.** Choosing Connects to a server after looking at Shares its library shows the sign-in form at once, rather than after leaving the pane.
