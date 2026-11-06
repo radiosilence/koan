@@ -193,7 +193,13 @@ impl RenderOnce for SlideUp {
                 - insets.top
                 - insets.bottom
                 - Look::of(window, cx).space(Space::L) * 2.;
-            div().flex().flex_col().max_h(room).child(self.child)
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .max_h(room)
+                .child(self.child)
         } else {
             div().size_full().child(self.child)
         };
