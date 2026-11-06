@@ -120,6 +120,8 @@ impl Render for DragPreview {
 }
 
 pub struct QueueView {
+    /// A finger swiping a row away: the row and how far it has gone.
+    swipe: Option<(usize, Pixels)>,
     queue: Entity<Queue>,
     focus: FocusHandle,
     list: RowListState,
@@ -242,6 +244,7 @@ impl QueueView {
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
+            swipe: None,
             dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
@@ -831,7 +834,53 @@ impl QueueView {
         };
         let view = cx.entity();
         let list = self.list.clone();
+        let swiped = self.swipe.filter(|(at, _)| *at == row).map(|(_, dx)| dx);
+        let touch = p.look.touch;
         row_frame
+            // Under touch a row swiped toward the leading edge follows the
+            // finger, fading, and is taken out of the queue once let go past
+            // a quarter of the width, as iOS lists remove a row.
+            .when_some(swiped, |frame, dx| {
+                frame
+                    .relative()
+                    .left(dx)
+                    .opacity((1.0 + f32::from(dx) / 240.0).clamp(0.2, 1.0))
+            })
+            .when(touch, |frame| {
+                frame.on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
+                    if event.source != ScrollSource::Touch {
+                        return;
+                    }
+                    let delta = event.delta.pixel_delta(Pixels::from(16.));
+                    match event.touch_phase {
+                        koan_kit::app::platform::TouchPhase::Started => {
+                            // A pan along the list is the list's to scroll.
+                            if delta.x == Pixels::ZERO || delta.y != Pixels::ZERO {
+                                return;
+                            }
+                            this.swipe = Some((row, delta.x.min(Pixels::ZERO)));
+                        }
+                        koan_kit::app::platform::TouchPhase::Moved => {
+                            let Some((at, dx)) = this.swipe.filter(|(at, _)| *at == row) else {
+                                return;
+                            };
+                            this.swipe = Some((at, (dx + delta.x).min(Pixels::ZERO)));
+                        }
+                        _ => {
+                            let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row)
+                            else {
+                                return;
+                            };
+                            if dx < -window.viewport_size().width / 4.0 {
+                                let ids = this.acting_on(row, cx);
+                                this.remove(ids, cx);
+                            }
+                        }
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+            })
             .selected(selected)
             .cursor(cursor)
             .spot(&self.spot)

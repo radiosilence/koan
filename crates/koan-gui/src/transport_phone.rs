@@ -155,9 +155,31 @@ impl Transport {
                         command(cx, "next", |e| e.next())
                     }),
             )
-            // The bar opens Now Playing; its buttons keep their own taps.
+            // The bar opens Now Playing, by a tap or pushed up by a finger,
+            // as iOS players open; its buttons keep their own taps.
             .when(has_entry, |bar| {
                 bar.on_click(cx.listener(|_, _, _, cx| cx.emit(Expand)))
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                        if event.source != ScrollSource::Touch {
+                            return;
+                        }
+                        let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
+                        match event.touch_phase {
+                            koan_kit::app::platform::TouchPhase::Started => this.lift = Some(dy),
+                            koan_kit::app::platform::TouchPhase::Moved => {
+                                let Some(lift) = this.lift else { return };
+                                let lift = lift + dy;
+                                if lift < -Pixels::from(24.) {
+                                    this.lift = None;
+                                    cx.emit(Expand);
+                                } else {
+                                    this.lift = Some(lift);
+                                }
+                            }
+                            _ => this.lift = None,
+                        }
+                        cx.stop_propagation();
+                    }))
             })
             .into_any_element()
     }

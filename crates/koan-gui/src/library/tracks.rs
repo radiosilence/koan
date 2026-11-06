@@ -62,6 +62,8 @@ pub struct TrackBrowser {
     request: u64,
     _load: Option<Task<()>>,
     scroll: UniformListScrollHandle,
+    /// The header's height on a phone, where the list scrolls it away.
+    header_height: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
     /// Where the cursor was laid out, for the menu key and the scroll.
@@ -174,6 +176,7 @@ impl TrackBrowser {
             request: 0,
             _load: None,
             scroll: UniformListScrollHandle::new(),
+            header_height: Default::default(),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
@@ -587,6 +590,21 @@ impl Render for TrackBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's list scrolls its header away with the rows, as the iOS
+        // app's does.
+        let phone = crate::mobile::phone() && !held;
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default()
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let entity = cx.entity_id();
+        let (inline_header, away_header) = if phone {
+            (None, Some(header))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -615,6 +633,7 @@ impl Render for TrackBrowser {
                 }),
             )
             .track_scroll(&self.scroll)
+            .pt(lead)
             .size_full()
             .map(|list| {
                 crate::components::spoken_list("tracks-list", "tracks")
@@ -640,17 +659,26 @@ impl Render for TrackBrowser {
             .flex()
             .flex_col()
             .typeset(p, Type::Body, p.ink)
-            .when(!held, |d| d.child(header))
+            .children(inline_header)
             .child(
                 div()
                     .id("track-list")
+                    .overflow_hidden()
                     .flex_1()
                     .min_h_0()
                     .pt(p.look.spaced(10.0))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(crate::components::list_scrollbar(&self.scroll)),
+                    .child(crate::components::list_scrollbar(&self.scroll))
+                    .children(away_header.map(|header| {
+                        crate::components::scrolls_away(
+                            header,
+                            scrolled,
+                            self.header_height.clone(),
+                            entity,
+                        )
+                    })),
             )
     }
 }

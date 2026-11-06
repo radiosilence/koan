@@ -53,6 +53,8 @@ pub struct ArtistBrowser {
     request: u64,
     _load: Option<Task<()>>,
     scroll: crate::components::UniformListScrollHandle,
+    /// The header's height on a phone, where the list scrolls it away.
+    header_height: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
     /// What the list's context menu acts on: the row last right-clicked.
@@ -154,6 +156,7 @@ impl ArtistBrowser {
             request: 0,
             _load: None,
             scroll: crate::components::UniformListScrollHandle::new(),
+            header_height: Default::default(),
             selection: Selection::default(),
             pick: None,
             menu: None,
@@ -456,6 +459,21 @@ impl Render for ArtistBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's list scrolls its header away with the rows, as the iOS
+        // app's does.
+        let phone = crate::mobile::phone() && !held;
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default()
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let entity = cx.entity_id();
+        let (inline_header, away_header) = if phone {
+            (None, Some(header))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -478,6 +496,7 @@ impl Render for ArtistBrowser {
                 }),
             )
             .track_scroll(&self.scroll)
+            .pt(lead)
             .size_full()
             .map(|list| {
                 crate::components::spoken_list("artists-list", "artists")
@@ -504,16 +523,25 @@ impl Render for ArtistBrowser {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .when(!held, |d| d.child(header))
+        .children(inline_header)
         .child(
             div()
                 .id("artist-list")
+                .overflow_hidden()
                 .flex_1()
                 .min_h_0()
                 .pt(p.look.spaced(10.0))
                 .relative()
                 .child(body)
-                .child(crate::components::list_scrollbar(&self.scroll)),
+                .child(crate::components::list_scrollbar(&self.scroll))
+                .children(away_header.map(|header| {
+                    crate::components::scrolls_away(
+                        header,
+                        scrolled,
+                        self.header_height.clone(),
+                        entity,
+                    )
+                })),
         )
     }
 }

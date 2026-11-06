@@ -233,7 +233,7 @@ impl RenderOnce for ToolbarGroup {
         }
         div()
             .flex_shrink_1()
-            // Under touch the row is a page's own, and grows to its width.
+            // A filling group grows to its row's width under touch.
             .when(touch && self.fills, |row| row.flex_1())
             .min_w_0()
             .flex()

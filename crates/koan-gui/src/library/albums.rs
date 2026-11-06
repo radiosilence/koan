@@ -100,6 +100,8 @@ pub struct AlbumGrid {
     scroll: UniformListScrollHandle,
     /// The list's width as last laid out; nothing is drawn in it until known.
     width: Rc<Cell<Option<Pixels>>>,
+    /// The header's height on a phone, where the grid scrolls it away.
+    header_height: Rc<Cell<Option<Pixels>>>,
     /// The window's scale factor as of the last frame, for the device size
     /// sleeves are decoded at.
     scale: Cell<f32>,
@@ -218,6 +220,7 @@ impl AlbumGrid {
             _load: None,
             scroll: UniformListScrollHandle::new(),
             width: Rc::new(Cell::new(None)),
+            header_height: Rc::new(Cell::new(None)),
             scale: Cell::new(window.scale_factor()),
             grid: None,
             heading: Rc::default(),
@@ -932,6 +935,20 @@ impl Render for AlbumGrid {
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's grid scrolls its header away with the tiles, as the iOS
+        // app's does: held above them it would keep a fifth of the screen.
+        let phone = crate::mobile::phone() && !held;
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default()
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let (inline_header, away_header) = if phone {
+            (None, Some(header))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = match self.grid {
             _ if held => div().into_any_element(),
             _ if self.loaded.is_none() => chrome::failed_state(
@@ -955,7 +972,7 @@ impl Render for AlbumGrid {
                 }),
             )
             .track_scroll(&self.scroll)
-            .pt(grid.margin)
+            .pt(grid.margin + lead)
             .pb(grid.margin)
             .size_full()
             .map(|list| {
@@ -985,16 +1002,25 @@ impl Render for AlbumGrid {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .when(!held, |d| d.child(header))
+        .children(inline_header)
         .child(
             div()
                 .id("album-grid")
                 .relative()
                 .flex_1()
                 .min_h_0()
+                .overflow_hidden()
                 .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                 .child(measure)
                 .child(body)
+                .children(away_header.map(|header| {
+                    crate::components::scrolls_away(
+                        header,
+                        scrolled,
+                        self.header_height.clone(),
+                        entity,
+                    )
+                }))
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                 .child(crate::components::list_scrollbar(&self.scroll)),
         )
