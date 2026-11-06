@@ -118,6 +118,7 @@ impl RenderOnce for TextField {
                 field
                     .px(look.space(Space::M))
                     .py(look.space(Space::S))
+                    .min_h(look.target())
                     .bg(look.palette.surface.hsla())
             })
             .when(self.disabled, |field| {

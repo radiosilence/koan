@@ -183,6 +183,9 @@ impl RenderOnce for Heart {
             .flex()
             .items_center()
             .justify_center()
+            // A finger's target, the glyph centred in it.
+            .min_w(look.target())
+            .min_h(look.target())
             .when(self.on_click.is_some(), |d| {
                 d.cursor_pointer()
                     .tooltip(move |window, cx| super::Tooltip::view(tip.clone(), window, cx))

@@ -729,8 +729,26 @@ impl TrackList for ShelfPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
-                let ids = self.row_tracks();
                 let item = Playable::Track(track);
+                // A finger's tap goes to the track on its record's page, as
+                // the search box's choice does: a shelf mixes kinds, and its
+                // rows are not a list to play through.
+                if cx.global::<crate::theme::KoanTheme>().touch && !self.selection.is_active() {
+                    let album = self
+                        .summary
+                        .as_ref()
+                        .and_then(|s| s.tracks.iter().find(|t| t.id == track))
+                        .and_then(|t| t.album_id);
+                    if let Some(album) = album {
+                        self.lib.nav.update(cx, |nav, cx| {
+                            nav.pick = Some((album, track));
+                            nav.open(Page::Album(album), cx);
+                            cx.notify();
+                        });
+                    }
+                    return;
+                }
+                let ids = self.row_tracks();
                 let order = self.order();
                 let m = event.modifiers();
                 self.place(item, m.shift, &order);

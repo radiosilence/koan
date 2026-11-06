@@ -356,7 +356,7 @@ impl ArtistBrowser {
                 },
             )
             .title(name)
-            .figure(HEART, heart)
+            .figure(if p.look.touch { 44.0 } else { HEART }, heart)
             .figure(
                 COUNT,
                 chrome::count(artist.album_count.max(0) as u64, "album", "albums"),

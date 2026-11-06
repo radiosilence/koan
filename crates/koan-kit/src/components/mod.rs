@@ -149,7 +149,9 @@ pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
-pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, title_text};
+pub use page::{
+    Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, head as page_head, title_text,
+};
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use panel::TOOLTIPS_DRAWN;

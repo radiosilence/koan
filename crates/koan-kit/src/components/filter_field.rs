@@ -152,7 +152,7 @@ impl RenderOnce for FilterField {
                     // In the toolbar, a button's height to click, glyph and
                     // margins included, not the text's line alone.
                     d.w(super::ToolbarMetrics::FIELD * look.scale.size)
-                        .min_h(super::ToolbarMetrics::FIELD_HIT)
+                        .min_h(super::ToolbarMetrics::FIELD_HIT.max(look.target()))
                         .flex_shrink(1.)
                         .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }

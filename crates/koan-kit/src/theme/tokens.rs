@@ -142,7 +142,13 @@ pub const TOOLBAR_BUTTON: Pixels = px(36.0);
 
 /// What the type is drawn at against the scale's points, as on the Mac:
 /// Geist Mono at 15 points stands as tall as a system 13-point body at 12.9.
-pub const MAC_FIT: f32 = 0.86;
+/// A phone draws the points as they are, as the iOS app does: its body is
+/// 17 points, and 12.9 reads as fine print.
+pub const MAC_FIT: f32 = if cfg!(any(target_os = "ios", target_os = "android")) {
+    1.0
+} else {
+    0.86
+};
 
 /// The text size steps, in percent.
 pub const TEXT_SIZES: std::ops::RangeInclusive<u32> = 80..=130;

@@ -223,6 +223,8 @@ impl QueueView {
         // The list calls this as it scrolls, with its own state held, so the
         // handler reads the queue and never the list.
         let list = RowListState::new();
+        // On a phone the heading scrolls away with the rows.
+        list.set_lead(crate::mobile::phone(), 0, RowKind::Text);
         let weak = cx.weak_entity();
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
@@ -1418,7 +1420,11 @@ pub(crate) fn track(
     // A phone's row is the title and the length: the heart and the format
     // are the menu's and the record's, as on iOS.
     .when(!p.look.touch, |row| {
-        row.figure(HEART, heart(item, &extras, look)).figure(
+        row.figure(
+            if look.p.look.touch { 44.0 } else { HEART },
+            heart(item, &extras, look),
+        )
+        .figure(
             CODEC,
             div()
                 .text_role(TypeRole::Fine, &p.look)
@@ -1935,18 +1941,36 @@ impl Render for QueueView {
                 let dest = this.drop_at.unwrap_or(count);
                 this.drop_library(&dragged.as_library(), dest, cx);
             }))
-            .child(Page::new(self.header(cx)).body(if count == 0 {
-                EmptyState::new(Icon::QueueSection, "queue is empty")
-                    .detail("Find something to play from albums or artists.")
+            .child({
+                let phone = crate::mobile::phone() && count > 0;
+                if phone {
+                    Page::bare()
+                } else {
+                    Page::new(self.header(cx))
+                }
+                .body(if count == 0 {
+                    EmptyState::new(Icon::QueueSection, "queue is empty")
+                        .detail("Find something to play from albums or artists.")
+                        .into_any_element()
+                } else {
+                    let rows = view.clone();
+                    let head = view.clone();
+                    RowList::new(&self.list, move |row, window, cx| {
+                        rows.update(cx, |this, cx| this.render_row(row, &p, window, cx))
+                    })
+                    .when(phone, |list| {
+                        list.lead(move |window, cx| {
+                            let look = crate::theme::Look::of(window, cx);
+                            head.update(cx, |this, cx| {
+                                crate::components::page_head(this.header(cx), &look)
+                                    .into_any_element()
+                            })
+                        })
+                    })
+                    .named("queue")
                     .into_any_element()
-            } else {
-                let view = view.clone();
-                RowList::new(&self.list, move |row, window, cx| {
-                    view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
                 })
-                .named("queue")
-                .into_any_element()
-            }))
+            })
             .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
                 move |menu, window, cx| row_menu(menu, &view, window, cx)

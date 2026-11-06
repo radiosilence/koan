@@ -1,0 +1,1 @@
+- **kōan GPUI feels more like a phone.** Text at the iOS app's sizes, finger-sized hearts and fields, a tap on a record opens it rather than replacing the queue, a track tapped in search results opens its record, and the queue's heading scrolls away with it.

@@ -14,8 +14,11 @@ use super::{RowKind, RowMetrics};
 pub use gpui::ListOffset as RowOffset;
 
 /// The list's place and measurements, kept by the page across frames.
+///
+/// The list may lead with one item before its rows, a page's header that
+/// scrolls with them (`RowList::lead`); row indices count the rows alone.
 #[derive(Clone)]
-pub struct RowListState(ListState);
+pub struct RowListState(ListState, std::rc::Rc<std::cell::Cell<usize>>);
 
 impl Default for RowListState {
     fn default() -> Self {
@@ -26,22 +29,49 @@ impl Default for RowListState {
 impl RowListState {
     pub fn new() -> Self {
         // How far past the screen rows are made ahead of a scroll.
-        Self(ListState::new(0, ListAlignment::Top, px(400.)))
+        Self(
+            ListState::new(0, ListAlignment::Top, px(400.)),
+            Default::default(),
+        )
+    }
+
+    /// How many items lead the rows: one with a header, none without.
+    fn lead(&self) -> usize {
+        self.1.get()
+    }
+
+    /// Whether the list leads with a header. Rows are re-measured.
+    pub fn set_lead(&self, lead: bool, count: usize, kind: RowKind) {
+        if self.lead() != lead as usize {
+            self.1.set(lead as usize);
+            self.reset(count, kind);
+        }
     }
 
     /// `count` rows, none measured, each guessed at as `kind`. The place is
     /// kept as far as the new rows reach.
     pub fn reset(&self, count: usize, kind: RowKind) {
         self.0
-            .reset_with_uniform_height(count, RowMetrics::estimate(kind));
+            .reset_with_uniform_height(count + self.lead(), RowMetrics::estimate(kind));
     }
 
+    /// The row at the top; within the leading header, the first row.
     pub fn top(&self) -> RowOffset {
-        self.0.logical_scroll_top()
+        let top = self.0.logical_scroll_top();
+        match top.item_ix.checked_sub(self.lead()) {
+            Some(item_ix) => RowOffset { item_ix, ..top },
+            None => RowOffset::default(),
+        }
     }
 
     pub fn scroll_to(&self, at: RowOffset) {
-        self.0.scroll_to(at);
+        if at == RowOffset::default() {
+            return self.scroll_to_top();
+        }
+        self.0.scroll_to(RowOffset {
+            item_ix: at.item_ix + self.lead(),
+            ..at
+        });
     }
 
     pub fn scroll_to_top(&self) {
@@ -50,29 +80,34 @@ impl RowListState {
 
     /// Scrolls as little as shows row `ix` whole.
     pub fn reveal(&self, ix: usize) {
-        self.0.scroll_to_reveal_item(ix);
+        self.0.scroll_to_reveal_item(ix + self.lead());
     }
 
     /// Scrolls the neighbour of row `ix` a screen reader is heading for on
     /// screen, since only rows drawn are in the accessibility tree
     /// (`reveal_around_list`).
     pub fn reveal_around(&self, ix: usize) {
-        super::lists::reveal_around_list(&self.0, ix);
+        super::lists::reveal_around_list(&self.0, ix + self.lead());
     }
 
     /// Where row `ix` was laid out last frame, in the window: for a row
     /// past the viewport's edge, outside it. `None` for a row the list has
     /// not laid out.
     pub fn row_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
-        self.0.bounds_for_item(ix)
+        self.0.bounds_for_item(ix + self.lead())
     }
 
     /// Called as the list scrolls, with the first row on screen. The list's
     /// own state is held while it runs, so it reads the page, not the list.
     pub fn on_scroll(&self, f: impl Fn(usize, &mut Window, &mut App) + 'static) {
+        let lead = self.1.clone();
         self.0
             .set_scroll_handler(move |event: &ListScrollEvent, window, cx| {
-                f(event.visible_range.start, window, cx)
+                f(
+                    event.visible_range.start.saturating_sub(lead.get()),
+                    window,
+                    cx,
+                )
             });
     }
 }
@@ -84,8 +119,12 @@ type MakeRow = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
 pub struct RowList {
     state: RowListState,
     row: MakeRow,
+    lead: Option<MakeLead>,
     name: Option<SharedString>,
 }
+
+/// Makes the item leading the rows.
+type MakeLead = Box<dyn FnMut(&mut Window, &mut App) -> AnyElement>;
 
 impl RowList {
     /// `row` makes row `ix` as it comes on screen.
@@ -96,8 +135,17 @@ impl RowList {
         Self {
             state: state.clone(),
             row: Box::new(row),
+            lead: None,
             name: None,
         }
+    }
+
+    /// An item before the rows that scrolls with them: a page's header, on a
+    /// phone, where a header held above the list leaves it too little of the
+    /// screen. The state must have been told (`RowListState::set_lead`).
+    pub fn lead(mut self, lead: impl FnMut(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        self.lead = Some(Box::new(lead));
+        self
     }
 
     /// What the list is of, for a screen reader: "queue", a playlist's name.
@@ -112,7 +160,18 @@ impl RenderOnce for RowList {
         super::accessible(div().id("row-list"), gpui::Role::List, self.name)
             .relative()
             .size_full()
-            .child(list(self.state.0.clone(), self.row).size_full())
+            .child({
+                let (mut row, mut lead) = (self.row, self.lead);
+                let leads = self.state.lead();
+                list(self.state.0.clone(), move |ix, window, cx| {
+                    match (ix.checked_sub(leads), lead.as_mut()) {
+                        (None, Some(lead)) => lead(window, cx),
+                        (None, None) => div().into_any_element(),
+                        (Some(ix), _) => row(ix, window, cx),
+                    }
+                })
+                .size_full()
+            })
             .child(Scrollbar::vertical(&self.state.0))
     }
 }

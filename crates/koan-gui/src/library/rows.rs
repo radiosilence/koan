@@ -297,7 +297,7 @@ pub fn track_row<V: TrackList>(
             .id(("row-availability", key))
             .picked(state.selected),
         )
-        .figure(20.0, heart)
+        .figure(if p.look.touch { 44.0 } else { 20.0 }, heart)
         // A phone's row leaves the format to its record, as on iOS, and its
         // length takes no more than its digits.
         .when(!p.look.touch, |row| {
