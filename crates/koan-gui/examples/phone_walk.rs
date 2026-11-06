@@ -249,16 +249,25 @@ fn swipe_back(
     // its end, at a display's rate, as a frame loop would.
     // The harness runs a simulated clock: it is stepped as a display would
     // step it, and the settle's landing timer fires on it.
+    // The release hands the GPU its curve in a frame or two; after that,
+    // through the middle of the settle, nothing may be drawn.
     let mut asked = 0;
-    for _ in 0..25 {
+    let mut start = 0;
+    for step in 0..25 {
         cx.advance_clock(Duration::from_millis(8));
-        asked += cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
+        let frames = cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
+        if step < 4 {
+            start += frames;
+        } else {
+            asked += frames;
+        }
         cx.run_until_parked();
     }
+    println!("swipe back: {start} frames to hand the GPU its curve");
     cx.advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
     let landed = cx.update(|cx| shell.read(cx).route(cx));
-    println!("swipe back: {asked} frames asked for while it settled; landed on {landed:?}");
+    println!("swipe back: {asked} frames asked for mid-settle; landed on {landed:?}");
     if asked > 0 {
         return Err(format!("the swipe back's settle asked for {asked} frames").into());
     }
