@@ -77,7 +77,7 @@ impl NavRow {
 
     /// How many times something has arrived at the place (music queued or
     /// added to a playlist from a menu): each new arrival seen while the
-    /// row is drawn answers as a drop does.
+    /// row is drawn glows the row's ground and lets it settle.
     pub fn arrivals(mut self, count: u64) -> Self {
         self.arrivals = Some(count);
         self
@@ -199,8 +199,10 @@ impl RenderOnce for NavRow {
         for accept in self.accepts {
             base = accept(base, answers.clone(), accent);
         }
+        // An arrival glows the row's ground, seen from across the window;
+        // a drop's sweep is under the pointer and needs less.
         if let Some(count) = self.arrivals {
-            answers.follow(count, super::Answer::Sweep, accent, window, cx);
+            answers.follow(count, super::Answer::Lift, accent, window, cx);
         }
         let ink = look.palette.ink.hsla();
         let name = self.label.clone();

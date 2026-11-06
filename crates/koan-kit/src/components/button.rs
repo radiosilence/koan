@@ -67,17 +67,20 @@ impl ButtonKind {
         }
     }
 
-    /// How a press is answered: a ring off a glyph, the ground lifting in
-    /// an outlined button, nothing for the kinds that read as words.
-    fn answer(self) -> Option<super::Answer> {
+    /// How a press is answered: a ring off a glyph, the ground lifting
+    /// under anything with a word or a ground. Every kind answers, so no
+    /// press goes unacknowledged.
+    fn answer(self) -> super::Answer {
         match self {
             ButtonKind::Icon | ButtonKind::IconOutlined | ButtonKind::Toolbar => {
-                Some(super::Answer::Ring)
+                super::Answer::Ring
             }
-            ButtonKind::Prominent | ButtonKind::Bordered => Some(super::Answer::Lift),
-            ButtonKind::Standard | ButtonKind::Compact | ButtonKind::Link | ButtonKind::Text => {
-                None
-            }
+            ButtonKind::Prominent
+            | ButtonKind::Bordered
+            | ButtonKind::Standard
+            | ButtonKind::Compact
+            | ButtonKind::Link
+            | ButtonKind::Text => super::Answer::Lift,
         }
     }
 
@@ -295,7 +298,7 @@ impl RenderOnce for Button {
         // its word is lifted instead, under the word, never ringed through it.
         let worded = !glyph_only && self.label.is_some();
         let answer = match kind.answer() {
-            Some(super::Answer::Ring) if worded => Some(super::Answer::Lift),
+            super::Answer::Ring if worded => super::Answer::Lift,
             answer => answer,
         };
         debug_assert!(
@@ -359,7 +362,7 @@ impl RenderOnce for Button {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     // A glyph that morphs answers as its state lands.
-                    if let Some(answer) = answer.filter(|_| !morphing) {
+                    if !morphing {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
@@ -424,7 +427,7 @@ impl RenderOnce for Button {
         let underline = kind == ButtonKind::Link;
         // A ring leaves a glyph alone, not the hit area around it; a lift
         // fills the button under its content, over its fills.
-        let ring_answer = answer == Some(super::Answer::Ring);
+        let ring_answer = answer == super::Answer::Ring;
         let answered = answers.layer(window, cx);
         let (inner_answer, outer_answer) = if ring_answer {
             (answered, None)
