@@ -28,11 +28,6 @@ use crate::theme::Hsla;
 /// The record grid, koan-kit's: every tile the same size, nothing measured.
 pub type Grid = TileGrid;
 
-/// What a record's sleeve flies under, from its tile to its page's header.
-pub fn sleeve_key(album: i64) -> crate::components::FlightKey {
-    crate::components::FlightKey("sleeve", album as u64)
-}
-
 /// Which part of a tile was clicked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -458,23 +453,10 @@ impl<V: TileHost> Render for TileView<V> {
                 let Some(part) = part else { return };
                 cx.stop_propagation();
                 let modifiers = e.modifiers();
-                // A tap that opens the record: its sleeve flies from here to
-                // the page's header, if the page comes.
-                if !picks && matches!(part, Part::Sleeve | Part::Title) {
-                    let side = this.state.side;
-                    crate::components::flight::depart(
-                        sleeve_key(id),
-                        &crate::components::CoverArt::from(this.state.sleeve.clone()),
-                        Some(Bounds::new(this.origin.get(), Size::new(side, side))),
-                        Motion::SETTLE,
-                        crate::components::Ease::QuickOut,
-                        cx,
-                    );
-                }
                 host.update(cx, |host, cx| host.clicked(id, part, modifiers, window, cx))
                     .ok();
             }))
-            .child(crate::components::FlightAnchor::source(sleeve_key(id), art))
+            .child(art)
             .child(title)
             .child(credit)
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))

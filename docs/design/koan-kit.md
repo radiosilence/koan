@@ -324,10 +324,6 @@ A sheet, a question or the command bar comes up with its veil fading in under it
 
 The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
-### Flights (UIKit's shared-element transitions)
-
-`flight::{FlightAnchor, FlightKey, depart, recall, drive, land, overlay}`: a picture that moves between pages, as a record's sleeve grows from its tile into its page's header and the mini player's sleeve into Now Playing's art. Each end is a `FlightAnchor` around the picture under one `FlightKey`, a `source` and a `destination`; each measures its window bounds as it is laid out. `depart` sets a flight going from a tap's bounds when the destination's page opens, and gives up if the destination is not drawn within half a second; `recall` sends the destination back to its source, which, unless it is `lasting` (the mini player), must be drawn during the flight to be flown to. While one is in the air both ends draw hidden and `overlay`, which each shell mounts over its pages and under its sheets, draws the picture between them as a shader quad (`FLIGHT`): the two ends' rectangles are uniforms and the progress between them a track the GPU reckons at each present, so nothing is laid out while it flies. On its own clock the flight is one track, handed over once both ends are known, and lands by a timer; a finger writes the track as it moves (`drive`, the swipe back) and hands the GPU the rest of the way as it lets go (`release`). The ends are taken where they will rest: a shell sliding its pages says how far each stands from its place (`page_offsets`) and the anchors' measures are taken back by as much. Under Reduce Motion, and where the renderer draws no shaders, nothing flies.
-
 ### DenseTable (Mac: the EQ's band table)
 
 `table_list(id, count, rows)`: a virtualised list of `TableRow`s, made a screenful at a time, for a table too long to build whole (a library's organise plan).

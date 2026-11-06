@@ -27,7 +27,7 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, NOW_PLAYING, ShowInfo};
+pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {

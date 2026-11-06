@@ -841,8 +841,6 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
-            // A sleeve flying from a tile into its record's page.
-            .child(crate::components::flight::overlay())
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))

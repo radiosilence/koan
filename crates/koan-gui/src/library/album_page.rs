@@ -442,11 +442,7 @@ impl AlbumPage {
                                     )
                                 }
                             })
-                            .child(crate::components::FlightAnchor::destination(
-                                super::tile::sleeve_key(self.album_id),
-                                CoverArt::from(sleeve.clone()),
-                                Cover::new(CoverArt::from(sleeve), side),
-                            )),
+                            .child(Cover::new(CoverArt::from(sleeve), side)),
                     )
                     .detail(details),
             )
