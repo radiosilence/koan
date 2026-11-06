@@ -28,7 +28,24 @@ impl Root {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The status bar's text in the colour that reads on the app's own
+        // appearance, which may differ from the system's.
+        #[cfg(target_os = "ios")]
+        {
+            use std::sync::atomic::{AtomicU8, Ordering};
+            static SET: AtomicU8 = AtomicU8::new(u8::MAX);
+            let dark = crate::theme::Look::of(window, cx).dark;
+            if SET.swap(dark as u8, Ordering::Relaxed) != dark as u8 {
+                gpui_platform::set_status_bar_style(if dark {
+                    gpui_platform::StatusBarContentStyle::Light
+                } else {
+                    gpui_platform::StatusBarContentStyle::Dark
+                });
+            }
+        }
+        #[cfg(not(target_os = "ios"))]
+        let _ = window;
         div()
             .id("root")
             .key_context(CONTEXT)
