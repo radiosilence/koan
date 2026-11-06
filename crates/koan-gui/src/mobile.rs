@@ -846,12 +846,15 @@ impl Render for PhoneShell {
                             .left(p.space(crate::theme::Space::M))
                             .right(p.space(crate::theme::Space::M))
                             .bottom(p.space(crate::theme::Space::S))
-                            .px(p.space(crate::theme::Space::S))
-                            .py(p.space(crate::theme::Space::Xs))
-                            .bg(p.look.palette.surface.hsla())
-                            .border(p.look.hairline)
-                            .border_color(p.rule)
-                            .child(activity.clone())
+                            .child(crate::components::Rise::in_place(
+                                div()
+                                    .px(p.space(crate::theme::Space::S))
+                                    .py(p.space(crate::theme::Space::Xs))
+                                    .bg(p.look.palette.surface.hsla())
+                                    .border(p.look.hairline)
+                                    .border_color(p.rule)
+                                    .child(activity.clone()),
+                            ))
                     })),
             )
             // The foot: the mini player over the tabs on one surface, each
