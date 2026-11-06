@@ -447,61 +447,81 @@ impl Transport {
         // fifth of the screen, as the iOS app's does; short of that it goes
         // back. A pan the lyrics can still scroll is theirs.
         let close_at = viewport.height * 0.2;
-        let offset = self.pull.or_else(|| {
-            let (at, since, closes) = self.released?;
-            if closes {
-                return Some(at);
-            }
-            let t = since.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
-            if t >= 1.0 {
-                self.released = None;
-                return None;
-            }
-            window.request_animation_frame();
-            Some(at * (1.0 - crate::theme::Motion::quick_out(t)))
-        });
-        div()
+        // The page is a layer the GPU offsets while a finger holds it or it
+        // eases back; nothing is drawn as it moves.
+        let layered = self.pull.is_some() || self.released.is_some();
+        let page = div()
             .id("now-playing-page")
             .size_full()
-            .when_some(offset, |page, by| page.relative().top(by))
-            .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+            .on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
                 if event.source != ScrollSource::Touch {
                     return;
                 }
                 let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
+                let down = |by: Pixels| Point::new(Pixels::ZERO, by.max(Pixels::ZERO));
                 match event.touch_phase {
                     koan_kit::app::platform::TouchPhase::Started => {
-                        if this.released.is_some_and(|(_, _, closes)| closes) {
+                        if this.released == Some(true) {
                             return;
                         }
-                        this.released = None;
-                        this.pull = Some(dy.max(Pixels::ZERO))
+                        this.returning = None;
+                        let at = dy.max(Pixels::ZERO);
+                        this.pulled.follow(down(at), window);
+                        this.pull = Some(at);
+                        if this.released.take().is_none() {
+                            cx.notify();
+                        }
                     }
                     koan_kit::app::platform::TouchPhase::Moved => match this.pull {
-                        Some(by) => this.pull = Some((by + dy).max(Pixels::ZERO)),
+                        Some(by) => {
+                            let at = (by + dy).max(Pixels::ZERO);
+                            this.pulled.follow(down(at), window);
+                            this.pull = Some(at);
+                        }
                         // A fling's coasting after the release decided.
                         None => return,
                     },
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
-                        let closes = at > close_at;
-                        this.released = Some((at, std::time::Instant::now(), closes));
-                        if closes {
+                        if at > close_at {
+                            this.pulled.follow(down(at), window);
+                            this.released = Some(true);
                             cx.emit(Collapse);
+                        } else {
+                            this.ease_back(window, cx);
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Cancelled => {
-                        if let Some(at) = this.pull.take() {
-                            this.released = Some((at, std::time::Instant::now(), false));
+                        if this.pull.take().is_some() {
+                            this.ease_back(window, cx);
                         }
                     }
                 }
                 cx.stop_propagation();
-                cx.notify();
             }))
             .clear_of_system(crate::components::Clear::System, window)
-            .child(page)
-            .into_any_element()
+            .child(page);
+        if layered {
+            self.pulled.layer(page).into_any_element()
+        } else {
+            page.into_any_element()
+        }
+    }
+
+    /// A pull let go short of closing: the page eases back up on the GPU,
+    /// and its layer is let go once it is in place.
+    fn ease_back(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.released = Some(false);
+        let length = self.pulled.settle(Point::default(), window, cx);
+        self.returning = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(length).await;
+            this.update(cx, |this, cx| {
+                this.released = None;
+                this.returning = None;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 }

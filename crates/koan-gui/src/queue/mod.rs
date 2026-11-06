@@ -127,9 +127,12 @@ impl Render for DragPreview {
 pub struct QueueView {
     /// A finger swiping a row away: the row and how far it has gone.
     swipe: Option<(usize, Pixels)>,
-    /// A swipe let go short of removing its row, easing back: the row,
-    /// where it was let go and when.
-    unswipe: Option<(usize, Pixels, std::time::Instant)>,
+    /// A swipe let go short of removing its row, easing back: the row, and
+    /// the timer that lets its layer go once it is in place.
+    unswipe: Option<(usize, Task<()>)>,
+    /// The swiped row's offset, which the GPU composes the row and its bin
+    /// at: held by the finger, eased back on a short release.
+    swiped: crate::components::Follow,
     queue: Entity<Queue>,
     focus: FocusHandle,
     list: RowListState,
@@ -254,6 +257,7 @@ impl QueueView {
             menu_row: None,
             swipe: None,
             unswipe: None,
+            swiped: crate::components::Follow::new(),
             dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
@@ -850,20 +854,8 @@ impl QueueView {
         };
         let view = cx.entity();
         let list = self.list.clone();
-        let swiped = self
-            .swipe
-            .filter(|(at, _)| *at == row)
-            .map(|(_, dx)| dx)
-            .or_else(|| {
-                let (_, from, since) = self.unswipe.filter(|(at, ..)| *at == row)?;
-                let t = since.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
-                if t >= 1.0 {
-                    self.unswipe = None;
-                    return None;
-                }
-                window.request_animation_frame();
-                Some(from * (1.0 - crate::theme::Motion::quick_out(t)))
-            });
+        let swiped = self.swipe.is_some_and(|(at, _)| at == row)
+            || self.unswipe.as_ref().is_some_and(|(at, _)| *at == row);
         let touch = p.look.touch;
         let bad = p.bad;
         let on_bad = p.look.palette.bg.hsla();
@@ -949,26 +941,29 @@ impl QueueView {
         // queue once let go past a quarter of the width, as iOS lists remove
         // a row. The swipe is heard by the row's place, which stays put, so
         // the end of a fling still reaches it once the row has slid away.
-        let dx = swiped.unwrap_or(Pixels::ZERO);
+        // The row and its bin are layers the GPU offsets while a finger
+        // holds the row or it eases back, mounted only then.
+        let place = if swiped {
+            crate::components::SwipeAction::new(
+                &self.swiped,
+                frame,
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(bad)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(KoanIcon::new(Icon::Remove).color(on_bad)),
+            )
+            .into_any_element()
+        } else {
+            frame
+        };
         div()
             .relative()
             .overflow_hidden()
-            .when(dx < Pixels::ZERO, |place| {
-                place.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .right_0()
-                        .w(-dx)
-                        .bg(bad)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(KoanIcon::new(Icon::Remove).color(on_bad)),
-                )
-            })
-            .child(div().relative().left(dx).child(frame))
+            .child(place)
             .on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
                 if event.source != ScrollSource::Touch {
                     return;
@@ -981,7 +976,9 @@ impl QueueView {
                             return;
                         }
                         this.unswipe = None;
-                        this.swipe = Some((row, delta.x.min(Pixels::ZERO)));
+                        let dx = delta.x.min(Pixels::ZERO);
+                        this.swiped.follow(Point::new(dx, Pixels::ZERO), window);
+                        this.swipe = Some((row, dx));
                     }
                     koan_kit::app::platform::TouchPhase::Moved => {
                         let Some((at, dx)) = this.swipe.filter(|(at, _)| *at == row) else {
@@ -996,7 +993,10 @@ impl QueueView {
                         if (dx < threshold) != (to < threshold) {
                             cx.perform_haptic(HapticFeedback::Light);
                         }
+                        this.swiped.follow(Point::new(to, Pixels::ZERO), window);
                         this.swipe = Some((at, to));
+                        cx.stop_propagation();
+                        return;
                     }
                     _ => {
                         let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row) else {
@@ -1006,7 +1006,18 @@ impl QueueView {
                             let ids = this.acting_on(row, cx);
                             this.remove(ids, cx);
                         } else {
-                            this.unswipe = Some((row, dx, std::time::Instant::now()));
+                            let length = this.swiped.settle(Point::default(), window, cx);
+                            let back = cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(length).await;
+                                this.update(cx, |this, cx| {
+                                    if this.unswipe.as_ref().is_some_and(|(at, _)| *at == row) {
+                                        this.unswipe = None;
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                            });
+                            this.unswipe = Some((row, back));
                         }
                     }
                 }

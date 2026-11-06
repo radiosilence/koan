@@ -43,6 +43,9 @@ const HEIGHT: f32 = 874.0;
 enum Step {
     Page(Route),
     NowPlaying,
+    /// A page swiped back to the page under it: pictured part way, and
+    /// the settle after the release counted for the frames it asks for.
+    SwipeBack(Route),
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -101,11 +104,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         }
         let page = matches!(step, Step::Page(_));
+        if let Step::SwipeBack(route) = step {
+            swipe_back(&mut cx, window, &shell, route, &out)?;
+            continue;
+        }
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
             })?,
+            Step::SwipeBack(_) => unreachable!(),
         }
         for dark in [true, false] {
             cx.update_window(window, |_, window, cx| {
@@ -185,11 +193,78 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {
         steps.push(page("album", Route::Album(album)));
     }
+    steps.push(("swipe-back".into(), Step::SwipeBack(Route::Albums)));
     if let Some(artist) = tracks.iter().find_map(|t| t.artist_id) {
         steps.push(page("artist", Route::Artist(artist)));
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
     Ok(steps)
+}
+
+/// Goes from the library to `route`, swipes it part way back for a picture
+/// of the page under it uncovered, lets go, and counts the frames the
+/// window is asked for while the release settles: none, since the GPU
+/// moves the pages, until the move lands and the page under is laid out.
+fn swipe_back(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    shell: &Entity<PhoneShell>,
+    route: Route,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    use koan_kit::raw::{BackGestureEvent, BackGesturePhase};
+    cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Library, cx)));
+    settle(cx, window)?;
+    cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx)));
+    settle(cx, window)?;
+    let gesture = |cx: &mut HeadlessAppContext, phase, progress| {
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::BackGesture(BackGestureEvent {
+                    phase,
+                    start_position: point(px(0.), px(HEIGHT / 2.)),
+                    progress,
+                }),
+                cx,
+            );
+        })
+    };
+    gesture(cx, BackGesturePhase::Started, 0.0)?;
+    gesture(cx, BackGesturePhase::Progressed, 0.45)?;
+    for dark in [true, false] {
+        cx.update_window(window, |_, window, cx| {
+            theme::pin_appearance(Some(dark), window, cx)
+        })?;
+        cx.run_until_parked();
+        let file = out.join(format!(
+            "phone-swipe-back-{}.png",
+            if dark { "dark" } else { "light" }
+        ));
+        cx.capture_screenshot(window)?.save(&file)?;
+    }
+    gesture(cx, BackGesturePhase::Committed, 0.45)?;
+    cx.run_until_parked();
+    cx.capture_screenshot(window)?;
+    // The settle runs a quarter of a second; ask for frames a little past
+    // its end, at a display's rate, as a frame loop would.
+    let started = std::time::Instant::now();
+    let mut asked = 0;
+    while started.elapsed() < Duration::from_millis(200) {
+        std::thread::sleep(Duration::from_millis(8));
+        asked += cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
+        cx.run_until_parked();
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    cx.run_until_parked();
+    let landed = cx.update(|cx| shell.read(cx).route(cx));
+    println!("swipe back: {asked} frames asked for while it settled; landed on {landed:?}");
+    if asked > 0 {
+        return Err(format!("the swipe back's settle asked for {asked} frames").into());
+    }
+    if landed != Route::Library {
+        return Err(format!("the swipe back landed on {landed:?}").into());
+    }
+    Ok(())
 }
 
 /// How far a page is scrolled for its second picture: its first rows under
