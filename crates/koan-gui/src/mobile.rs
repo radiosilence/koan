@@ -541,14 +541,19 @@ impl PhoneShell {
     /// to, and the name of a page that has no header of its own.
     fn bar(&self, route: Route, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let nav = self.nav.read(cx);
-        // Named only where the page has no heading of its own: the queue,
-        // the listings and the records head themselves.
+        // Named where the page has no heading of its own, or where its heading
+        // scrolls away with its rows.
         let title = match route {
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
             Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
+            // A browser's heading scrolls away with its rows: the bar keeps
+            // its name, as the iOS app's does.
+            Route::Albums => Some("albums"),
+            Route::Artists => Some("artists"),
+            Route::Tracks => Some("tracks"),
             _ => None,
         };
         // The page's own controls: the queue's, a library page's filter and
