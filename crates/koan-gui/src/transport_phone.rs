@@ -60,7 +60,7 @@ impl Transport {
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
         // The playhead's line glides on the GPU from the engine's last anchor,
         // as the seek bar does: no frame is drawn between the anchors.
-        let anchor = cx.global::<Mirror>().playhead.read(cx);
+        let anchor = *cx.global::<Mirror>().playhead.read(cx);
         let share = if now.duration_ms > 0 {
             let at = anchor.at(std::time::Instant::now(), now.duration_ms);
             self.mini_glide.set(
