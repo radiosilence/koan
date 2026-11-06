@@ -563,7 +563,9 @@ impl Render for AlbumPage {
                 if crate::mobile::phone() {
                     let mut items = vec![self.header(p, grid, window, cx).into_any_element()];
                     items.extend((0..self.lines.len()).map(|i| self.line(p, i, lead_width, cx)));
-                    crate::components::ScrollArea::items("album-page", items).into_any_element()
+                    crate::components::ScrollArea::items("album-page", items)
+                        .under_bar()
+                        .into_any_element()
                 } else {
                     div()
                         .size_full()

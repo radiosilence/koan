@@ -23,6 +23,7 @@ pub struct ScrollArea {
     reveal: Option<usize>,
     follow: Option<super::CursorSpot>,
     shrinks: bool,
+    under_bar: bool,
 }
 
 enum Content {
@@ -39,6 +40,7 @@ impl ScrollArea {
             reveal: None,
             follow: None,
             shrinks: false,
+            under_bar: false,
         }
     }
 
@@ -51,6 +53,7 @@ impl ScrollArea {
             reveal: None,
             follow: None,
             shrinks: false,
+            under_bar: false,
         }
     }
 
@@ -60,6 +63,15 @@ impl ScrollArea {
     /// clipped by it.
     pub fn shrinks(mut self) -> Self {
         self.shrinks = true;
+        self
+    }
+
+    /// A page that scrolls under a phone's bar: its content starts the bar's
+    /// height down (`bar_inset`), so at rest nothing is under the bar, and
+    /// rises under it as it scrolls. Not for a sheet, a menu or a panel,
+    /// which the bar is never over.
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
         self
     }
 
@@ -101,9 +113,15 @@ impl RenderOnce for ScrollArea {
         let typing = window
             .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
             .clone();
+        let under_bar = if self.under_bar {
+            super::bar_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
         let scrolled = div()
             .id(self.id)
             .size_full()
+            .pt(under_bar)
             .when(self.shrinks, |d| d.flex_1().min_h_0())
             .overflow_y_scroll()
             .track_scroll(&handle);
@@ -120,8 +138,10 @@ impl RenderOnce for ScrollArea {
                     }
                     followed.update(cx, |f, _| *f = moves);
                     let offset = handle.offset();
-                    let by = if at.top() < area.top() {
-                        area.top() - at.top()
+                    // Clear of the bar the content scrolls under.
+                    let top = area.top() + under_bar;
+                    let by = if at.top() < top {
+                        top - at.top()
                     } else if at.bottom() > area.bottom() {
                         area.bottom() - at.bottom()
                     } else {
@@ -207,6 +227,6 @@ impl RenderOnce for ScrollArea {
             })
             .children(follow)
             .child(clear_of_keyboard)
-            .child(Scrollbar::vertical(&handle))
+            .child(Scrollbar::vertical(&handle).when(self.under_bar, Scrollbar::under_bar))
     }
 }

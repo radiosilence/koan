@@ -6,6 +6,7 @@
 //! frame.
 
 use super::Scrollbar;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::{RowKind, RowMetrics};
@@ -121,6 +122,7 @@ pub struct RowList {
     row: MakeRow,
     lead: Option<MakeLead>,
     name: Option<SharedString>,
+    under_bar: bool,
 }
 
 /// Makes the item leading the rows.
@@ -137,6 +139,7 @@ impl RowList {
             row: Box::new(row),
             lead: None,
             name: None,
+            under_bar: false,
         }
     }
 
@@ -148,6 +151,14 @@ impl RowList {
         self
     }
 
+    /// A page's list that scrolls under a phone's bar: its leading item
+    /// starts the bar's height down (`bar_inset`) and rises under the bar as
+    /// it scrolls. The state must lead (`RowListState::set_lead`).
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
+        self
+    }
+
     /// What the list is of, for a screen reader: "queue", a playlist's name.
     pub fn named(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
@@ -156,7 +167,12 @@ impl RowList {
 }
 
 impl RenderOnce for RowList {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let under_bar = if self.under_bar {
+            super::bar_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
         super::accessible(div().id("row-list"), gpui::Role::List, self.name)
             .relative()
             .size_full()
@@ -165,13 +181,16 @@ impl RenderOnce for RowList {
                 let leads = self.state.lead();
                 list(self.state.0.clone(), move |ix, window, cx| {
                     match (ix.checked_sub(leads), lead.as_mut()) {
-                        (None, Some(lead)) => lead(window, cx),
-                        (None, None) => div().into_any_element(),
+                        (None, Some(lead)) => div()
+                            .pt(under_bar)
+                            .child(lead(window, cx))
+                            .into_any_element(),
+                        (None, None) => div().pt(under_bar).into_any_element(),
                         (Some(ix), _) => row(ix, window, cx),
                     }
                 })
                 .size_full()
             })
-            .child(Scrollbar::vertical(&self.state.0))
+            .child(Scrollbar::vertical(&self.state.0).when(self.under_bar, Scrollbar::under_bar))
     }
 }

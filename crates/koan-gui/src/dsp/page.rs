@@ -501,6 +501,7 @@ impl Render for EqBody {
                 .child(content)
                 .child(foot),
         )
+        .under_bar()
     }
 }
 

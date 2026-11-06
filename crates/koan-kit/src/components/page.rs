@@ -578,10 +578,17 @@ impl Page {
 impl RenderOnce for Page {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // A header held above the body sits clear of a phone's bar; a bare
+        // page's body scrolls under it by its own lights.
+        let under_bar = match self.header {
+            Some(_) => super::bar_inset(cx),
+            None => Pixels::ZERO,
+        };
         div()
             .size_full()
             .flex()
             .flex_col()
+            .pt(under_bar)
             .text_role(TypeRole::Body, &look)
             .text_color(look.palette.ink.hsla())
             .children(self.header.map(|header| head(header, &look).flex_none()))

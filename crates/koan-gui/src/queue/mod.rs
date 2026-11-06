@@ -2177,7 +2177,7 @@ impl Render for QueueView {
                         rows.update(cx, |this, cx| this.render_row(row, &p, window, cx))
                     })
                     .when(phone, |list| {
-                        list.lead(move |window, cx| {
+                        list.under_bar().lead(move |window, cx| {
                             let look = crate::theme::Look::of(window, cx);
                             head.update(cx, |this, cx| {
                                 crate::components::page_head(this.header(cx), &look)

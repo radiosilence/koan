@@ -134,7 +134,7 @@ pub use form::{
 };
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
-pub use insets::{Clear, KoanInsets, system_insets};
+pub use insets::{Clear, KoanFrosted, KoanInsets, bar_inset, set_bar_inset, system_insets};
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;

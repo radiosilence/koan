@@ -116,13 +116,22 @@ const LINGER: Duration = Duration::from_millis(800);
 /// size of what scrolls.
 pub struct Scrollbar<S: ScrollSource> {
     source: S,
+    under_bar: bool,
 }
 
 impl<S: ScrollSource> Scrollbar<S> {
     pub fn vertical(source: &S) -> Self {
         Self {
             source: source.clone(),
+            under_bar: false,
         }
+    }
+
+    /// Over content that scrolls under a phone's bar: the track starts
+    /// below the bar (`bar_inset`).
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
+        self
     }
 }
 
@@ -231,8 +240,13 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
         });
         let touch = Look::of(window, cx).touch;
         let edge = if touch { FINGER_EDGE } else { EDGE };
+        let below = if self.under_bar {
+            super::bar_inset(cx)
+        } else {
+            px(0.0)
+        };
         let track = Bounds::from_corners(
-            point(bounds.right() - edge, bounds.top() + INSET),
+            point(bounds.right() - edge, bounds.top() + below + INSET),
             point(bounds.right(), bounds.bottom() - INSET),
         );
         let max = self.source.max_offset();

@@ -1284,7 +1284,7 @@ impl Render for PlaylistPage {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
             })
             .when(phone, |list| {
-                list.lead(move |window, cx| {
+                list.under_bar().lead(move |window, cx| {
                     let look = crate::theme::Look::of(window, cx);
                     head.update(cx, |this, cx| {
                         let p = Paint::of(window, cx);

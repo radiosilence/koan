@@ -112,6 +112,9 @@ pub struct ShelfPage {
     /// The search's results page: the summary is the sidebar search's
     /// answer, read as it is typed, rather than read here.
     follows_search: bool,
+    /// Under a field of its own (a phone's Search tab) rather than at the
+    /// top of the page, where a phone's bar is over it.
+    below_field: bool,
     /// The search's answer the page shows.
     adopted: Option<Rc<crate::search::Results>>,
     summary: Option<Rc<ShelfSummary>>,
@@ -199,6 +202,7 @@ impl ShelfPage {
             spot: Default::default(),
             keyed: false,
             grid: None,
+            below_field: false,
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -217,6 +221,13 @@ impl ShelfPage {
             }));
         this.adopt(&search, cx);
         this
+    }
+
+    /// Drawn under a search field of its own rather than at the top of the
+    /// page: it leaves no room for a phone's bar.
+    pub fn below_field(mut self) -> Self {
+        self.below_field = true;
+        self
     }
 
     fn adopt(&mut self, search: &Entity<crate::search::Search>, cx: &mut Context<Self>) {
@@ -927,7 +938,10 @@ impl Render for ShelfPage {
             let rows = self.rows(p, &s, window, cx);
             collection = collection.section(CollectionSection::rows(tracks, rows));
         }
-        let collection = collection.header(header).follow(&self.spot);
+        let collection = collection
+            .header(header)
+            .follow(&self.spot)
+            .when(!self.below_field, Collection::under_bar);
 
         actions::list_menu(
             super::keys::keyed(

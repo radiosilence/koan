@@ -459,8 +459,15 @@ impl Render for ArtistBrowser {
         // A phone's list scrolls its header away with the rows, as the iOS
         // app's does.
         let phone = crate::mobile::phone() && !held;
+        // The header starts below the phone's bar, which the list scrolls
+        // under.
+        let above = if phone {
+            crate::components::bar_inset(cx) + p.look.spaced(10.0)
+        } else {
+            Pixels::ZERO
+        };
         let lead = if phone {
-            self.header_height.get().unwrap_or_default()
+            self.header_height.get().unwrap_or_default() + above
         } else {
             Pixels::ZERO
         };
@@ -527,14 +534,17 @@ impl Render for ArtistBrowser {
                 .overflow_hidden()
                 .flex_1()
                 .min_h_0()
-                .pt(p.look.spaced(10.0))
+                .when(!phone, |d| d.pt(p.look.spaced(10.0)))
                 .relative()
                 .child(body)
-                .child(crate::components::list_scrollbar(&self.scroll))
+                .child(
+                    crate::components::Scrollbar::vertical(&self.scroll)
+                        .when(phone, crate::components::Scrollbar::under_bar),
+                )
                 .children(away_header.map(|header| {
                     crate::components::scrolls_away(
                         header,
-                        scrolled,
+                        scrolled + above,
                         self.header_height.clone(),
                         entity,
                     )

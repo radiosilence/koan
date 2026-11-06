@@ -11,7 +11,7 @@ use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
-    Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
+    Clear, KoanFrosted, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
 };
 use crate::library::{self, stage::LibraryStage};
 use crate::navigator::{Navigator, Route};
@@ -239,7 +239,8 @@ impl PhoneShell {
                     }
                 },
             );
-            let results = cx.new(|cx| crate::library::shelf::ShelfPage::results(lib, window, cx));
+            let results = cx
+                .new(|cx| crate::library::shelf::ShelfPage::results(lib, window, cx).below_field());
             self.search = Some(SearchPage {
                 field,
                 results,
@@ -259,6 +260,7 @@ impl PhoneShell {
             .flex_col()
             .child(
                 div()
+                    .mt(crate::components::bar_inset(cx))
                     .px(p.space(crate::theme::Space::L))
                     .py(p.space(crate::theme::Space::M))
                     .child(
@@ -336,6 +338,7 @@ impl PhoneShell {
                     Route::Downloads,
                 )),
         )
+        .under_bar()
         .into_any_element()
     }
 
@@ -365,6 +368,7 @@ impl PhoneShell {
                         })
                 })),
         )
+        .under_bar()
         .into_any_element()
     }
 
@@ -517,6 +521,7 @@ impl PhoneShell {
                             })
                         })),
                 )
+                .under_bar()
                 .into_any_element()
             }
             Route::Eq => match &self.eq {
@@ -543,16 +548,11 @@ impl PhoneShell {
     /// as a page slides in or is swiped back: `root` when the page is its
     /// tab's first, `live` for the page in front, whose controls are the
     /// ones shown (the page under a swipe draws its name and back alone).
-    fn bar(
-        &self,
-        route: Route,
-        root: bool,
-        live: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn bar(&self, route: Route, root: bool, live: bool, cx: &mut Context<Self>) -> Toolbar {
         // Named where the page has no heading of its own, or where its heading
         // scrolls away with its rows.
         let title = match route {
+            Route::SearchTab => Some("search"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
             Route::Eq => Some("EQ"),
@@ -582,12 +582,7 @@ impl PhoneShell {
         } else {
             library_controls
         };
-        // A tab's first page that heads itself, with no controls of its own,
-        // has nothing for a bar to say.
-        if root && title.is_none() && controls.is_none() {
-            return None;
-        }
-        let bar = Toolbar::new()
+        Toolbar::new()
             .flush()
             .when(!root, |bar| {
                 bar.leading(
@@ -602,8 +597,7 @@ impl PhoneShell {
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
             )
-            .when_some(controls, |bar, controls: AnyView| bar.trailing(controls));
-        Some(bar.into_any_element())
+            .when_some(controls, |bar, controls: AnyView| bar.trailing(controls))
     }
 
     /// Settings' tab, on `tab`'s screen or its list of sections.
@@ -774,9 +768,15 @@ impl Render for PhoneShell {
             .global::<crate::library::activity::ActivityHandle>()
             .0
             .clone();
-        // The page clears the status bar and the notch; the foot's surface
-        // runs on under the home indicator, as the iOS app's bar does.
+        // The page runs up under the status bar and the bar over it, which
+        // are frosted; the foot's surface runs on under the home indicator,
+        // as the iOS app's bar does.
         let insets = crate::components::system_insets(Clear::System, window);
+        crate::components::set_bar_inset(
+            insets.top + crate::components::ToolbarMetrics::HEIGHT,
+            window,
+            cx,
+        );
         let width = window.viewport_size().width - insets.left - insets.right;
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
@@ -786,11 +786,22 @@ impl Render for PhoneShell {
             let behind_root = nav.history_ix() == 1;
             let bar = self.bar(behind, behind_root, false, cx);
             let page = self.under(behind, window, cx);
-            Some((progress, with_bar(bar, page)))
+            Some((progress, under_bar(bar, page, None, insets.top, &p)))
         });
         let stage = {
             let root = self.nav.read(cx).at_root();
-            with_bar(self.bar(route, root, true, cx), stage)
+            // What is wrong with the server and the output still opening
+            // hang under the page in front's bar.
+            let notices = div()
+                .child(self.banner.clone())
+                .child(self.output_wait.clone());
+            under_bar(
+                self.bar(route, root, true, cx),
+                stage,
+                Some(notices),
+                insets.top,
+                &p,
+            )
         };
         div()
             .key_context(crate::platform::actions::CONTEXT)
@@ -825,11 +836,8 @@ impl Render for PhoneShell {
             .flex()
             .flex_col()
             .text_color(p.ink)
-            .pt(insets.top)
             .pl(insets.left)
             .pr(insets.right)
-            .child(self.banner.clone())
-            .child(self.output_wait.clone())
             .child(
                 div()
                     .id("stage")
@@ -941,13 +949,39 @@ impl Render for PhoneShell {
     }
 }
 
-/// A page under its bar, the two moving as one.
-fn with_bar(bar: Option<AnyElement>, page: AnyElement) -> AnyElement {
+/// A page under its bar, the two moving as one: the page fills the screen
+/// to its top and scrolls under the bar, which is frosted and reaches up
+/// under the status bar (`status`). The page leaves the bar's room at its
+/// top (`bar_inset`), so at rest nothing is under it. `notices` hang under
+/// the bar, over the page.
+fn under_bar(
+    bar: Toolbar,
+    page: AnyElement,
+    notices: Option<Div>,
+    status: Pixels,
+    p: &Paint,
+) -> AnyElement {
     div()
+        .relative()
         .size_full()
-        .flex()
-        .flex_col()
-        .children(bar)
-        .child(div().flex_1().min_h_0().child(page))
+        .child(page)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("phone-bar")
+                        .occlude()
+                        .frosted(&p.look)
+                        .pt(status)
+                        .child(bar),
+                )
+                .children(notices),
+        )
         .into_any_element()
 }
