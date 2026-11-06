@@ -585,7 +585,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     // lit while it has one.
     let eq = |entry: MenuEntry, id: String, on: bool| {
         entry.lit_action(Icon::Filters, "eq for this output", on, move |_, _, cx| {
-            crate::dsp::window::open(Some(id.clone()), cx);
+            crate::settings::open_eq(Some(id.clone()), cx);
         })
     };
     let preset = |o: &koan_runtime::OutputInfo| match (&o.preset, o.unsaved) {
@@ -733,7 +733,7 @@ fn output_icon(kind: &str) -> Icon {
 
 /// The output's EQ: none, or each preset, the one it was set from ticked. A
 /// preset changed since is listed twice, as edited, ticked, and as saved,
-/// which goes back to it. Edit… opens the EQ window on the device.
+/// which goes back to it. Edit… opens EQ on the device, in Settings.
 fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
     let choose = |label: String, chosen: bool, preset: Option<String>| {
         let device = eq.device.clone();
@@ -774,7 +774,7 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
     let device = eq.device.clone();
     menu.separator().item(
         MenuEntry::new("Edit…")
-            .on_click(move |_, _, cx| crate::dsp::window::open(Some(device.clone()), cx)),
+            .on_click(move |_, _, cx| crate::settings::open_eq(Some(device.clone()), cx)),
     )
 }
 

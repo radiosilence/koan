@@ -240,7 +240,10 @@ type as large as the system's. The
 kōan theme draws its own icon set, thin square-ended lines; the system look
 always draws its icons, which are Apple's SF Symbols. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is
-koan's mint, in either theme. **Theme tint**, shown in the kōan theme while
+koan's mint, in either theme. On, they come from the record playing, except
+while a record's page shows, which wears its own sleeve. In the desktop app an
+artist's page wears the artist's photo when there is one; Now Playing always
+wears the playing record. **Theme tint**, shown in the kōan theme while
 colours come from the record, sets `wash_tint`: at 100 the wash is darkened in
 dark mode, or lightened in light, far enough that `muted` text over it keeps its
 contrast; lower lets more of the sleeve's own colour through, and 0 none of the

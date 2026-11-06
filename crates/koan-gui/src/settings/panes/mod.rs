@@ -6,7 +6,6 @@ pub mod account;
 mod appearance;
 mod cache;
 pub mod devices;
-mod eq;
 mod general;
 pub mod integrations;
 mod keys;
@@ -93,7 +92,12 @@ impl Pane {
                 None => cx.new(|cx| library::LibraryPane::new(ctx, cx)).into(),
             },
             Tab::Playback => cx.new(|cx| playback::PlaybackPane::new(ctx, cx)).into(),
-            Tab::Eq => cx.new(|cx| eq::EqPane::new(ctx, cx)).into(),
+            // The EQ page itself, on the model every EQ page shares.
+            Tab::Eq => {
+                let dsp = crate::dsp::model(cx);
+                cx.new(|cx| crate::dsp::EqPage::new(dsp, None, window, cx))
+                    .into()
+            }
             Tab::Devices => cx
                 .new(|cx| devices::DevicesPane::new(ctx, window, cx))
                 .into(),

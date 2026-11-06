@@ -121,8 +121,9 @@ pub struct PhoneShell {
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
-    /// EQ's model and page, made on first showing and kept.
-    eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
+    /// The shell's watch on Settings' EQ page while it shows: the shell
+    /// draws its sheets over everything.
+    eq_watch: Option<(EntityId, Subscription)>,
     /// The Search tab's field and the results under it, made once the
     /// library has loaded.
     search: Option<SearchPage>,
@@ -207,7 +208,7 @@ impl PhoneShell {
             downloads: None,
             settings: None,
             search: None,
-            eq: None,
+            eq_watch: None,
             info: None,
             back_swipe: None,
             settling: None,
@@ -524,10 +525,6 @@ impl PhoneShell {
                 .under_bar()
                 .into_any_element()
             }
-            Route::Eq => match &self.eq {
-                Some((_, page)) => page.clone().cached(full()).into_any_element(),
-                None => div().size_full().into_any_element(),
-            },
             Route::SettingsSection(tab) => {
                 let settings = self.settings(window, cx);
                 // Back and forward land here too: the pane follows the route.
@@ -555,7 +552,6 @@ impl PhoneShell {
             Route::SearchTab => Some("search"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
-            Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
             // A browser's heading scrolls away with its rows: the bar keeps
@@ -632,21 +628,42 @@ impl PhoneShell {
         }
     }
 
-    /// EQ's screen on the tab showing.
-    fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.now_playing = None;
-        match &self.eq {
-            Some((_, page)) => page.update(cx, |p, cx| p.show(device, cx)),
-            None => {
-                let dsp = crate::dsp::Dsp::new(crate::engine::engine(cx), cx);
-                let page = cx.new(|cx| crate::dsp::EqPage::new(dsp.clone(), device, window, cx));
-                self.eq = Some((dsp, page));
-            }
+    /// EQ's screen, Settings' EQ section, showing `device` or the output in
+    /// use.
+    pub fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_settings(Some(crate::settings::Tab::Eq), window, cx);
+        if let Some(page) = self.eq_page(cx) {
+            page.update(cx, |page, cx| page.show(device, cx));
         }
-        self.nav.update(cx, |nav, cx| {
-            nav.go(Route::Eq);
-            cx.notify();
-        });
+    }
+
+    /// EQ's page, while it is Settings' section: for tools that open its
+    /// sheets.
+    pub fn eq_page(&self, cx: &App) -> Option<Entity<crate::dsp::EqPage>> {
+        self.settings.as_ref()?.read(cx).eq_page()
+    }
+
+    /// EQ's sheets and questions, drawn over everything while its section
+    /// shows; the shell watches the page so that they come and go with it.
+    fn eq_overlay(
+        &mut self,
+        route: Route,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        let page = (route == Route::SettingsSection(crate::settings::Tab::Eq)
+            && self.now_playing.is_none())
+        .then(|| self.eq_page(cx))
+        .flatten();
+        let Some(page) = page else {
+            self.eq_watch = None;
+            return (None, None);
+        };
+        if self.eq_watch.as_ref().map(|(id, _)| *id) != Some(page.entity_id()) {
+            let watch = cx.observe(&page, |_, _, cx| cx.notify());
+            self.eq_watch = Some((page.entity_id(), watch));
+        }
+        crate::dsp::EqPage::overlay(&page, window, cx)
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that
@@ -727,6 +744,9 @@ impl Render for PhoneShell {
         } else if self.closing.is_some() {
             window.request_animation_frame();
         }
+        // Now Playing is about the playing record, whatever page it covers:
+        // the window wears that record's colours until it has gone down.
+        crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
             let wash = cx.global::<crate::root::WindowWash>().0.clone();
             div().absolute().inset_0().occlude().child(
@@ -751,6 +771,7 @@ impl Render for PhoneShell {
         let swipe = self.swipe(window, cx);
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
+        let (eq_sheets, eq_questions) = self.eq_overlay(route, window, cx);
         let wanted = self
             .library
             .as_ref()
@@ -955,6 +976,8 @@ impl Render for PhoneShell {
                     })),
             )
             .children(now_playing)
+            .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
+            .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))

@@ -114,7 +114,7 @@ impl RenderOnce for Rise {
             return self.child;
         }
         if Look::of(window, cx).touch && !self.in_place {
-            return SlideUp::new(self.child).into_any_element();
+            return SlideUp::new(self.child).fits().into_any_element();
         }
         let step = Look::of(window, cx).space(Space::S);
         let device = f32::from(step) * window.scale_factor();
@@ -133,6 +133,7 @@ impl RenderOnce for Rise {
 pub struct SlideUp {
     child: AnyElement,
     leaving: bool,
+    fits: bool,
 }
 
 impl SlideUp {
@@ -140,10 +141,18 @@ impl SlideUp {
         Self {
             child: child.into_any_element(),
             leaving: false,
+            fits: false,
         }
     }
 
     /// Going back down, over `Motion::SETTLE`; the owner lets it go after.
+    /// A sheet's panel rather than a screen: as tall as its content, up to
+    /// the room above the keyboard and the system's insets.
+    pub fn fits(mut self) -> Self {
+        self.fits = true;
+        self
+    }
+
     pub fn leaving(mut self, leaving: bool) -> Self {
         self.leaving = leaving;
         self
@@ -175,7 +184,26 @@ impl RenderOnce for SlideUp {
             animated.to(2, height, Motion::SETTLE, Ease::InOut);
             state.update(cx, |state, _| state.1 = true);
         }
-        AnimatedLayer::new(&animated, div().size_full().child(self.child)).into_any_element()
+        // A sheet's panel takes no more than the room above the keyboard and
+        // the system's insets, a step in, shrinking its body to scroll; Now
+        // Playing takes the whole screen.
+        let inner = if self.fits {
+            let insets = super::system_insets(super::Clear::Keyboard, window);
+            let room = window.viewport_size().height
+                - insets.top
+                - insets.bottom
+                - Look::of(window, cx).space(Space::L) * 2.;
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .max_h(room)
+                .child(self.child)
+        } else {
+            div().size_full().child(self.child)
+        };
+        AnimatedLayer::new(&animated, inner).into_any_element()
     }
 }
 
