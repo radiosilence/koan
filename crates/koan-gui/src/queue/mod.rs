@@ -1334,15 +1334,11 @@ pub(crate) fn heading(
         look,
     )
     .into_any_element();
-    // A phone's heading names the record in `title_small`, as the iOS
-    // app's does, its credit and figures in `fine` under it.
+    // A phone's heading, beside a larger sleeve, has its credit in `fine`
+    // with the figures under it.
     let touch = p.look.touch;
     row.lead_exact(RowMetrics::heading_sleeve(&p.look), sleeve)
-        .title(if touch {
-            names(vec![album], TypeRole::TitleSmall, p.ink, p)
-        } else {
-            names(vec![album], TypeRole::Body, p.strong, p)
-        })
+        .title(names(vec![album], TypeRole::Body, p.strong, p))
         .line(names(
             credit(parts, artist, "artist", look),
             if touch {
