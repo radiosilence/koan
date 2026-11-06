@@ -201,6 +201,7 @@ impl RenderOnce for Heart {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     answers.start(answer(!on, icons), accent, cx);
+                    cx.perform_haptic(gpui::HapticFeedback::Light);
                     handler(event, window, cx)
                 });
                 answers_click(d, press.clone()).on_click(move |event, window, cx| {

@@ -150,6 +150,7 @@ impl RenderOnce for Toggle {
                 } else if !checked {
                     answers.start(Answer::Ring, accent, cx);
                 }
+                cx.perform_haptic(gpui::HapticFeedback::Selection);
                 on_change(&!checked, window, cx)
             });
             row = answers_click(row, flip.clone())

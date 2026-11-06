@@ -864,7 +864,14 @@ impl QueueView {
                             let Some((at, dx)) = this.swipe.filter(|(at, _)| *at == row) else {
                                 return;
                             };
-                            this.swipe = Some((at, (dx + delta.x).min(Pixels::ZERO)));
+                            let to = (dx + delta.x).min(Pixels::ZERO);
+                            // Felt as the swipe passes the point where letting
+                            // go removes the row, either way.
+                            let threshold = -window.viewport_size().width / 4.0;
+                            if (dx < threshold) != (to < threshold) {
+                                cx.perform_haptic(HapticFeedback::Light);
+                            }
+                            this.swipe = Some((at, to));
                         }
                         _ => {
                             let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row)
