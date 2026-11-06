@@ -1,0 +1,1 @@
+- **The window wears the page's colours.** In the kōan GUI app, on the desktop and the phone, a record's page eases the wash and the accent to its sleeve, as the Apple apps do, and an artist's page to their photo when they have one; leaving the page eases back to the playing record's. Now Playing keeps the playing record's.

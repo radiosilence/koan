@@ -727,6 +727,9 @@ impl Render for PhoneShell {
         } else if self.closing.is_some() {
             window.request_animation_frame();
         }
+        // Now Playing is about the playing record, whatever page it covers:
+        // the window wears that record's colours until it has gone down.
+        crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
             let wash = cx.global::<crate::root::WindowWash>().0.clone();
             div().absolute().inset_0().occlude().child(
