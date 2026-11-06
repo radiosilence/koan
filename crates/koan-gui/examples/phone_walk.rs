@@ -247,14 +247,15 @@ fn swipe_back(
     cx.capture_screenshot(window)?;
     // The settle runs a quarter of a second; ask for frames a little past
     // its end, at a display's rate, as a frame loop would.
-    let started = std::time::Instant::now();
+    // The harness runs a simulated clock: it is stepped as a display would
+    // step it, and the settle's landing timer fires on it.
     let mut asked = 0;
-    while started.elapsed() < Duration::from_millis(200) {
-        std::thread::sleep(Duration::from_millis(8));
+    for _ in 0..25 {
+        cx.advance_clock(Duration::from_millis(8));
         asked += cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
         cx.run_until_parked();
     }
-    std::thread::sleep(Duration::from_millis(150));
+    cx.advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
     let landed = cx.update(|cx| shell.read(cx).route(cx));
     println!("swipe back: {asked} frames asked for while it settled; landed on {landed:?}");
