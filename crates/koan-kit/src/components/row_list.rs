@@ -123,6 +123,7 @@ pub struct RowList {
     lead: Option<MakeLead>,
     name: Option<SharedString>,
     under_bar: bool,
+    under_foot: bool,
 }
 
 /// Makes the item leading the rows.
@@ -140,6 +141,7 @@ impl RowList {
             lead: None,
             name: None,
             under_bar: false,
+            under_foot: false,
         }
     }
 
@@ -151,11 +153,20 @@ impl RowList {
         self
     }
 
-    /// A page's list that scrolls under a phone's bar: its leading item
-    /// starts the bar's height down (`bar_inset`) and rises under the bar as
-    /// it scrolls. The state must lead (`RowListState::set_lead`).
+    /// A page's list that scrolls under a phone's bar and its foot: its
+    /// leading item starts the bar's height down (`bar_inset`), its last row
+    /// ends the foot's height up (`foot_inset`), and the rows pass under both
+    /// as it scrolls. The state must lead (`RowListState::set_lead`).
     pub fn under_bar(mut self) -> Self {
         self.under_bar = true;
+        self.under_foot = true;
+        self
+    }
+
+    /// A list under a header that holds it clear of the bar: its rows pass
+    /// under the phone's foot alone (`foot_inset`).
+    pub fn under_foot(mut self) -> Self {
+        self.under_foot = true;
         self
     }
 
@@ -170,6 +181,11 @@ impl RenderOnce for RowList {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let under_bar = if self.under_bar {
             super::bar_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
+        let under_foot = if self.under_foot {
+            super::foot_inset(cx)
         } else {
             Pixels::ZERO
         };
@@ -190,7 +206,14 @@ impl RenderOnce for RowList {
                     }
                 })
                 .size_full()
+                // A list lays its rows out over its bottom padding as it
+                // scrolls, and ends its last row above it.
+                .pb(under_foot)
             })
-            .child(Scrollbar::vertical(&self.state.0).when(self.under_bar, Scrollbar::under_bar))
+            .child(
+                Scrollbar::vertical(&self.state.0)
+                    .when(self.under_bar, Scrollbar::under_bar)
+                    .when(self.under_foot, Scrollbar::under_foot),
+            )
     }
 }

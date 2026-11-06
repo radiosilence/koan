@@ -107,6 +107,7 @@ pub struct Collection {
     empty: Option<EmptyState>,
     follow: Option<super::CursorSpot>,
     under_bar: bool,
+    under_foot: bool,
 }
 
 impl Collection {
@@ -119,12 +120,21 @@ impl Collection {
             empty: None,
             follow: None,
             under_bar: false,
+            under_foot: false,
         }
     }
 
-    /// A page that scrolls under a phone's bar (`ScrollArea::under_bar`).
+    /// A page that scrolls under a phone's bar and its foot
+    /// (`ScrollArea::under_bar`).
     pub fn under_bar(mut self) -> Self {
         self.under_bar = true;
+        self
+    }
+
+    /// A page held clear of a phone's bar that scrolls under its foot alone
+    /// (`ScrollArea::under_foot`).
+    pub fn under_foot(mut self) -> Self {
+        self.under_foot = true;
         self
     }
 
@@ -246,7 +256,8 @@ impl RenderOnce for Collection {
                 ),
                 _ => {
                     let area = ScrollArea::items(self.id, lines)
-                        .when(self.under_bar, ScrollArea::under_bar);
+                        .when(self.under_bar, ScrollArea::under_bar)
+                        .when(self.under_foot, ScrollArea::under_foot);
                     d.child(match &self.follow {
                         Some(spot) => area.follow(spot),
                         None => area,

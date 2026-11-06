@@ -1180,7 +1180,10 @@ impl Render for ArtistPage {
                     view.update(cx, |this, cx| this.item(ix, window, cx))
                         .unwrap_or_else(|_| div().into_any_element())
                 })
-                .size_full(),
+                .size_full()
+                // Rows are laid out over the bottom padding as the list
+                // scrolls: the last ends clear of a phone's foot.
+                .pb(crate::components::foot_inset(cx)),
             );
 
         self.keyed = self.focus.is_focused(window);

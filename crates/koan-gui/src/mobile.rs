@@ -768,15 +768,12 @@ impl Render for PhoneShell {
             .global::<crate::library::activity::ActivityHandle>()
             .0
             .clone();
-        // The page runs up under the status bar and the bar over it, which
-        // are frosted; the foot's surface runs on under the home indicator,
-        // as the iOS app's bar does.
+        // The page fills the screen, top to foot. Over it, frosted: at the
+        // top the status bar, the bar and the notices under it; at the foot
+        // the mini player, the tabs and the home indicator. Each measures
+        // itself into the room pages leave for it (`bar_inset`,
+        // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
-        crate::components::set_bar_inset(
-            insets.top + crate::components::ToolbarMetrics::HEIGHT,
-            window,
-            cx,
-        );
         let width = window.viewport_size().width - insets.left - insets.right;
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
@@ -786,7 +783,7 @@ impl Render for PhoneShell {
             let behind_root = nav.history_ix() == 1;
             let bar = self.bar(behind, behind_root, false, cx);
             let page = self.under(behind, window, cx);
-            Some((progress, under_bar(bar, page, None, insets.top, &p)))
+            Some((progress, under_bar(bar, page, None, false, insets.top, &p)))
         });
         let stage = {
             let root = self.nav.read(cx).at_root();
@@ -799,6 +796,7 @@ impl Render for PhoneShell {
                 self.bar(route, root, true, cx),
                 stage,
                 Some(notices),
+                true,
                 insets.top,
                 &p,
             )
@@ -833,8 +831,6 @@ impl Render for PhoneShell {
             }))
             .relative()
             .size_full()
-            .flex()
-            .flex_col()
             .text_color(p.ink)
             .pl(insets.left)
             .pr(insets.right)
@@ -843,8 +839,7 @@ impl Render for PhoneShell {
                     .id("stage")
                     .role(a11y::Role::Main)
                     .relative()
-                    .flex_1()
-                    .min_h_0()
+                    .size_full()
                     .map(|d| match under {
                         None => d.child(stage),
                         Some((progress, under)) => d
@@ -884,7 +879,9 @@ impl Render for PhoneShell {
                             .absolute()
                             .left(p.space(crate::theme::Space::M))
                             .right(p.space(crate::theme::Space::M))
-                            .bottom(p.space(crate::theme::Space::S))
+                            .bottom(
+                                crate::components::foot_inset(cx) + p.space(crate::theme::Space::S),
+                            )
                             .child(crate::components::Rise::in_place(
                                 div()
                                     .px(p.space(crate::theme::Space::S))
@@ -896,13 +893,22 @@ impl Render for PhoneShell {
                             ))
                     })),
             )
-            // The foot: the mini player over the tabs on the ground, each
-            // under a rule, as the iOS app's bar.
+            // The foot over the page: the mini player over the tabs, each
+            // under a rule, frosted as the iOS app's bar and running on under
+            // the home indicator.
             .child(
                 div()
-                    .flex_shrink_0()
-                    .bg(p.look.palette.bg.hsla())
+                    .id("phone-foot")
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .occlude()
+                    .frosted(&p.look)
+                    .border_t(p.look.hairline)
+                    .border_color(p.rule)
                     .pb(insets.bottom)
+                    .child(crate::components::foot_probe())
                     .child(
                         self.transport.clone().cached(
                             StyleRefinement::default()
@@ -950,14 +956,15 @@ impl Render for PhoneShell {
 }
 
 /// A page under its bar, the two moving as one: the page fills the screen
-/// to its top and scrolls under the bar, which is frosted and reaches up
-/// under the status bar (`status`). The page leaves the bar's room at its
-/// top (`bar_inset`), so at rest nothing is under it. `notices` hang under
-/// the bar, over the page.
+/// and scrolls under the bar, which is frosted and reaches up under the
+/// status bar (`status`). `notices` hang under the bar, frosted with it. The
+/// page leaves the room they take at its top (`bar_inset`), so at rest
+/// nothing is under them; the page in front (`live`) measures it.
 fn under_bar(
     bar: Toolbar,
     page: AnyElement,
     notices: Option<Div>,
+    live: bool,
     status: Pixels,
     p: &Paint,
 ) -> AnyElement {
@@ -967,20 +974,18 @@ fn under_bar(
         .child(page)
         .child(
             div()
+                .id("phone-bar")
                 .absolute()
                 .top_0()
                 .left_0()
                 .right_0()
                 .flex()
                 .flex_col()
-                .child(
-                    div()
-                        .id("phone-bar")
-                        .occlude()
-                        .frosted(&p.look)
-                        .pt(status)
-                        .child(bar),
-                )
+                .occlude()
+                .frosted(&p.look)
+                .pt(status)
+                .when(live, |d| d.child(crate::components::bar_probe()))
+                .child(bar)
                 .children(notices),
         )
         .into_any_element()

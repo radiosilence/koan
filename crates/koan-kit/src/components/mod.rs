@@ -134,7 +134,10 @@ pub use form::{
 };
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
-pub use insets::{Clear, KoanFrosted, KoanInsets, bar_inset, set_bar_inset, system_insets};
+pub use insets::{
+    Clear, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe, set_bar_inset,
+    set_foot_inset, system_insets,
+};
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
@@ -142,7 +145,7 @@ pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
-    scrolls_away, spoken_list, uniform_list, width_probe,
+    rows_under_foot, scrolls_away, spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};

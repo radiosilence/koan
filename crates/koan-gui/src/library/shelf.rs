@@ -941,7 +941,8 @@ impl Render for ShelfPage {
         let collection = collection
             .header(header)
             .follow(&self.spot)
-            .when(!self.below_field, Collection::under_bar);
+            .when(!self.below_field, Collection::under_bar)
+            .when(self.below_field, Collection::under_foot);
 
         actions::list_menu(
             super::keys::keyed(

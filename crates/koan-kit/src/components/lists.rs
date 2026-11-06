@@ -9,7 +9,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    Div, ElementId, EntityId, InteractiveElement, IntoElement, ParentElement, Pixels, Point,
+    App, Div, ElementId, EntityId, InteractiveElement, IntoElement, ParentElement, Pixels, Point,
     SharedString, Stateful, Styled, canvas, div, px,
 };
 
@@ -97,6 +97,18 @@ pub fn offset_down(y: Pixels) -> Point<Pixels> {
 /// An element filling its parent that keeps the parent's width in `width`,
 /// and redraws `owner` when it changes: a page laying out a grid or a list
 /// by the width it is given.
+/// How many blank rows `row` high a uniform list adds after its last, on
+/// a page that scrolls under a phone's foot: a uniform list draws rows only
+/// inside its padding, so room left as padding would show nothing under the
+/// foot as the rows pass it. Zero on the desktop.
+pub fn rows_under_foot(row: Pixels, cx: &App) -> usize {
+    let foot = super::foot_inset(cx);
+    if foot <= Pixels::ZERO || row <= Pixels::ZERO {
+        return 0;
+    }
+    (foot / row).ceil() as usize
+}
+
 /// A page's header over a virtual list that scrolls it away with the rows:
 /// drawn at the list's scroll `offset` over the room the list leaves above
 /// its first row, which is `height` once measured (`owner` is told).

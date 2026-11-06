@@ -87,13 +87,16 @@ impl RenderOnce for SelectionBar {
         });
         // A phone's bar, as the iOS app's: the count and "done" along its
         // top, the verbs sharing the width under them, each a thumb's target.
+        // Its ground runs on under the phone's foot, which is drawn over the
+        // page, and its controls sit above it.
         if look.touch {
             return div()
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::S))
                 .px(RowMetrics::page_margin(&look))
-                .py(look.space(Space::S))
+                .pt(look.space(Space::S))
+                .pb(look.space(Space::S) + super::foot_inset(cx))
                 .border_t(look.hairline)
                 .border_color(look.palette.rule.hsla())
                 .bg(look.palette.bg.hsla())

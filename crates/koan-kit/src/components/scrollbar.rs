@@ -117,6 +117,7 @@ const LINGER: Duration = Duration::from_millis(800);
 pub struct Scrollbar<S: ScrollSource> {
     source: S,
     under_bar: bool,
+    under_foot: bool,
 }
 
 impl<S: ScrollSource> Scrollbar<S> {
@@ -124,13 +125,22 @@ impl<S: ScrollSource> Scrollbar<S> {
         Self {
             source: source.clone(),
             under_bar: false,
+            under_foot: false,
         }
     }
 
-    /// Over content that scrolls under a phone's bar: the track starts
-    /// below the bar (`bar_inset`).
+    /// Over content that scrolls under a phone's bar and its foot: the
+    /// track runs between them (`bar_inset`, `foot_inset`).
     pub fn under_bar(mut self) -> Self {
         self.under_bar = true;
+        self.under_foot = true;
+        self
+    }
+
+    /// Over content that scrolls under a phone's foot alone: the track ends
+    /// above it (`foot_inset`).
+    pub fn under_foot(mut self) -> Self {
+        self.under_foot = true;
         self
     }
 }
@@ -245,9 +255,14 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
         } else {
             px(0.0)
         };
+        let above = if self.under_foot {
+            super::foot_inset(cx)
+        } else {
+            px(0.0)
+        };
         let track = Bounds::from_corners(
             point(bounds.right() - edge, bounds.top() + below + INSET),
-            point(bounds.right(), bounds.bottom() - INSET),
+            point(bounds.right(), bounds.bottom() - above - INSET),
         );
         let max = self.source.max_offset();
         let offset = -self.source.offset().y;

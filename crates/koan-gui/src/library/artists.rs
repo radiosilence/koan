@@ -493,7 +493,8 @@ impl Render for ArtistBrowser {
         } else {
             crate::components::uniform_list(
                 "artists",
-                self.artists.len(),
+                // Blank rows after the last pass under a phone's foot.
+                self.artists.len() + crate::components::rows_under_foot(rows::height(p), cx),
                 cx.processor(|this, range: Range<usize>, window, cx| {
                     let p = Paint::of(window, cx);
                     range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()

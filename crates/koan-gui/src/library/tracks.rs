@@ -626,7 +626,8 @@ impl Render for TrackBrowser {
             // is the listing's length from the first page.
             uniform_list(
                 "tracks",
-                self.total as usize,
+                // Blank rows after the last pass under a phone's foot.
+                self.total as usize + crate::components::rows_under_foot(rows::art_height(p), cx),
                 // Builds rows only: uniform_list also calls it to measure a
                 // row, so the cover requests happen once a frame in `render`.
                 cx.processor(move |this, range: Range<usize>, window, cx| {

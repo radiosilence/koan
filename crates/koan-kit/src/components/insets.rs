@@ -5,7 +5,7 @@
 //! inset change redraws the window, so an element reading these in its
 //! render follows rotation and the keyboard.
 
-use gpui::{App, Edges, Global, Pixels, Styled, Window, px};
+use gpui::{App, Edges, Global, IntoElement, Pixels, Styled, Window, canvas, px};
 
 use crate::theme::Look;
 
@@ -41,30 +41,95 @@ pub trait KoanInsets: Styled + Sized {
 
 impl<E: Styled> KoanInsets for E {}
 
-/// How far a phone's bar reaches down over the page from the window's top:
-/// the status bar and the bar itself, which the page scrolls under. Set by
-/// the phone's shell; absent, and so zero, on the desktop.
+/// What a phone's shell draws over its pages, which run the full height of
+/// the window under it: at the top the status bar, the bar and any notices
+/// under it; at the foot the mini player, the tabs and the home indicator.
+/// Set by the phone's shell as it measures them; absent, and so zero, on the
+/// desktop.
 #[derive(Clone, Copy, Default, PartialEq)]
-struct BarInset(Pixels);
+struct PageInsets {
+    top: Pixels,
+    bottom: Pixels,
+}
 
-impl Global for BarInset {}
+impl Global for PageInsets {}
+
+fn page_insets(cx: &App) -> PageInsets {
+    cx.try_global::<PageInsets>().copied().unwrap_or_default()
+}
 
 /// The room a page leaves at its top for the bar drawn over it (zero on the
 /// desktop): the first row of a page that scrolls under the bar starts this
 /// far down inside its scroll, and a page that does not scroll is held this
 /// far down.
 pub fn bar_inset(cx: &App) -> Pixels {
-    cx.try_global::<BarInset>().map_or(px(0.), |inset| inset.0)
+    page_insets(cx).top
+}
+
+/// The room a page leaves at its end for the foot drawn over it (zero on
+/// the desktop): the last row of a page that scrolls under the foot ends
+/// this far up from the end of its scroll, and what sits at a page's foot
+/// in flow is held this far up.
+pub fn foot_inset(cx: &App) -> Pixels {
+    page_insets(cx).bottom
 }
 
 /// Sets `bar_inset`. A change draws every view again, cached ones included,
 /// since each page reads the inset in its own render.
 pub fn set_bar_inset(inset: Pixels, window: &mut Window, cx: &mut App) {
-    if bar_inset(cx) == inset {
+    let insets = page_insets(cx);
+    set_page_insets(
+        PageInsets {
+            top: inset,
+            ..insets
+        },
+        window,
+        cx,
+    );
+}
+
+/// Sets `foot_inset`, as `set_bar_inset` does.
+pub fn set_foot_inset(inset: Pixels, window: &mut Window, cx: &mut App) {
+    let insets = page_insets(cx);
+    set_page_insets(
+        PageInsets {
+            bottom: inset,
+            ..insets
+        },
+        window,
+        cx,
+    );
+}
+
+fn set_page_insets(insets: PageInsets, window: &mut Window, cx: &mut App) {
+    if page_insets(cx) == insets {
         return;
     }
-    cx.set_global(BarInset(inset));
+    cx.set_global(insets);
+    // Usually called while the window draws, when a refresh is not taken.
     window.on_next_frame(|window, _| window.refresh());
+}
+
+/// An element filling its parent that keeps `bar_inset` at the parent's
+/// height: in what a phone's shell draws over the top of its pages.
+pub fn bar_probe() -> impl IntoElement {
+    canvas(
+        |bounds, window, cx| set_bar_inset(bounds.size.height, window, cx),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// An element filling its parent that keeps `foot_inset` at the parent's
+/// height: in what a phone's shell draws over the foot of its pages.
+pub fn foot_probe() -> impl IntoElement {
+    canvas(
+        |bounds, window, cx| set_foot_inset(bounds.size.height, window, cx),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
 }
 
 /// How much a frosted ground blurs what lies under it.
