@@ -102,9 +102,9 @@ pub fn offset_down(y: Pixels) -> Point<Pixels> {
 /// its parent's bottom, which clips it, so the blank rows come to exactly
 /// the foot's height. Room left as padding would not do: a uniform list
 /// draws rows only inside its padding, and nothing would pass under the
-/// foot. Zero on the desktop.
-pub fn rows_under_foot(row: Pixels, cx: &App) -> (usize, Pixels) {
-    let foot = super::foot_inset(cx);
+/// foot. Zero where nothing is drawn over the page's foot.
+pub fn rows_under_foot(row: Pixels, window: &gpui::Window, cx: &App) -> (usize, Pixels) {
+    let foot = super::foot_inset(window, cx);
     if foot <= Pixels::ZERO || row <= Pixels::ZERO {
         return (0, Pixels::ZERO);
     }

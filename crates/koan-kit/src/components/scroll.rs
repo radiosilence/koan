@@ -126,12 +126,12 @@ impl RenderOnce for ScrollArea {
             .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
             .clone();
         let under_bar = if self.under_bar {
-            super::bar_inset(cx)
+            super::bar_inset(window, cx)
         } else {
             Pixels::ZERO
         };
         let under_foot = if self.under_foot {
-            super::foot_inset(cx)
+            super::foot_inset(window, cx)
         } else {
             Pixels::ZERO
         };

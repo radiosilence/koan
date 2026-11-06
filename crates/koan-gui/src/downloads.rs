@@ -223,20 +223,32 @@ impl Render for DownloadsPage {
             .filter(|t| matches!(t.state, TransferState::Done | TransferState::Failed))
             .count();
         let header = self.header(settled, cx);
-        let body = if transfers.is_empty() {
-            EmptyState::new(Icon::Downloads, "nothing downloading")
-                .detail("Tracks fetched from your server appear here while they arrive.")
-                .into_any_element()
+        // The heading scrolls away with the transfers, which pass under the
+        // toolbar.
+        let (page, body) = if transfers.is_empty() {
+            (
+                Page::new(header),
+                EmptyState::new(Icon::Downloads, "nothing downloading")
+                    .detail("Tracks fetched from your server appear here while they arrive.")
+                    .into_any_element(),
+            )
         } else {
-            let rows: Vec<AnyElement> = transfers
-                .iter()
-                .enumerate()
-                .map(|(index, t)| self.row(index, t, &p, window, cx))
-                .collect();
-            ScrollArea::items("downloads", rows)
-                .under_foot()
-                .follow(&self.spot)
-                .into_any_element()
+            let rows: Vec<AnyElement> =
+                std::iter::once(crate::components::page_head(header, &p.look).into_any_element())
+                    .chain(
+                        transfers
+                            .iter()
+                            .enumerate()
+                            .map(|(index, t)| self.row(index, t, &p, window, cx)),
+                    )
+                    .collect();
+            (
+                Page::bare(),
+                ScrollArea::items("downloads", rows)
+                    .under_bar()
+                    .follow(&self.spot)
+                    .into_any_element(),
+            )
         };
         crate::library::keys::keyed(
             div()
@@ -245,7 +257,7 @@ impl Render for DownloadsPage {
                 .size_full(),
             cx,
         )
-        .child(Page::new(header).body(body))
+        .child(page.body(body))
     }
 }
 

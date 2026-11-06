@@ -1302,9 +1302,7 @@ impl Render for Transport {
             .items_center()
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
-            .bg(p.bg)
-            .border_t(p.look.hairline)
-            .border_color(p.rule)
+            // No ground: the shell draws it over the pages, on their frost.
             // The width the bar was laid out at, for the next frame to fit
             // the trailing group to.
             .child(crate::components::width_probe(

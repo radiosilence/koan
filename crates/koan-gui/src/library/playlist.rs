@@ -170,10 +170,10 @@ impl PlaylistPage {
             disc_records: HashSet::new(),
             longest: 4,
             faces: Vec::new(),
-            // On a phone the header scrolls away with the rows.
+            // The header scrolls away with the rows.
             list: {
                 let list = RowListState::new();
-                list.set_lead(crate::mobile::phone(), 0, RowKind::Text);
+                list.set_lead(true, 0, RowKind::Text);
                 list
             },
             selected: HashSet::new(),
@@ -1266,9 +1266,10 @@ impl Render for PlaylistPage {
         let count = self.rows.len();
         let fillable = self.fillable();
         let view = cx.entity();
-        // On a phone the header scrolls away with the rows, as the queue's.
-        let phone = crate::mobile::phone() && count > 0;
-        let header = (!phone).then(|| self.header(&p, window, cx));
+        // The header scrolls away with the rows, as the queue's, and they
+        // pass under the toolbar.
+        let away = count > 0;
+        let header = (!away).then(|| self.header(&p, window, cx));
         let body = if count == 0 {
             EmptyState::new(Icon::Playlist, "nothing in this playlist")
                 .detail(if fillable {
@@ -1283,7 +1284,7 @@ impl Render for PlaylistPage {
             RowList::new(&self.list, move |row, window, cx| {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
             })
-            .when(phone, |list| {
+            .when(away, |list| {
                 list.under_bar().lead(move |window, cx| {
                     let look = crate::theme::Look::of(window, cx);
                     head.update(cx, |this, cx| {
@@ -1293,6 +1294,7 @@ impl Render for PlaylistPage {
                     })
                 })
             })
+            .follow(&self.spot)
             .named(self.name())
             .into_any_element()
         };

@@ -96,7 +96,7 @@ impl RenderOnce for SelectionBar {
                 .gap(look.space(Space::S))
                 .px(RowMetrics::page_margin(&look))
                 .pt(look.space(Space::S))
-                .pb(look.space(Space::S) + super::foot_inset(cx))
+                .pb(look.space(Space::S) + super::foot_inset(window, cx))
                 .border_t(look.hairline)
                 .border_color(look.palette.rule.hsla())
                 .bg(look.palette.bg.hsla())
@@ -124,12 +124,15 @@ impl RenderOnce for SelectionBar {
                 )
                 .into_any_element();
         }
+        // Its ground runs on under the transport, which is drawn over the
+        // page, and its controls sit above it.
         div()
             .flex()
             .items_center()
             .justify_between()
             .px(RowMetrics::page_margin(&look))
-            .py(look.space(Space::M))
+            .pt(look.space(Space::M))
+            .pb(look.space(Space::M) + super::foot_inset(window, cx))
             .border_t(look.hairline)
             .border_color(look.palette.rule.hsla())
             .bg(look.palette.bg.hsla())

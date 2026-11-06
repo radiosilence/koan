@@ -3,18 +3,15 @@
 //! where the record numbers by disc.
 
 use std::cell::Cell;
-use std::ops::Range;
 use std::rc::Rc;
 
 use koan_kit::app::*;
 use koan_runtime::{Album, Track};
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, Reveal, RowPart, RowState, TrackList};
+use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
@@ -90,7 +87,6 @@ pub struct AlbumPage {
     /// server can, where a local one lands within a frame or two.
     slow: bool,
     _slow: Option<Task<()>>,
-    scroll: UniformListScrollHandle,
     /// The keyboard's place among the tracks.
     cursor: crate::components::ListCursor,
     /// Where the cursor was laid out, for the menu key and the scroll.
@@ -148,7 +144,6 @@ impl AlbumPage {
             _load: None,
             slow: false,
             _slow: None,
-            scroll: UniformListScrollHandle::new(),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
@@ -288,22 +283,12 @@ impl AlbumPage {
         let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
-                // A heading to a screen reader, carrying the reveal on to the
-                // tracks below it as their rows do.
-                let scroll = self.scroll.clone();
-                let count = self.lines.len();
-                let list_view = cx.entity_id();
+                // A heading to a screen reader.
                 return div()
                     .id(("disc", i))
                     .role(a11y::Role::Heading)
                     .aria_label(title.clone())
                     .aria_level(3)
-                    .when(p.a11y, |d| {
-                        d.on_a11y_action(a11y::AccessibleAction::ScrollIntoView, move |_, _, cx| {
-                            Reveal::Uniform(scroll.clone(), i, count).run();
-                            cx.notify(list_view);
-                        })
-                    })
                     .w_full()
                     .h(height)
                     .flex()
@@ -340,9 +325,8 @@ impl AlbumPage {
             note: None,
             cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
             place: Some((index, self.tracks.len())),
-            reveal: p
-                .a11y
-                .then(|| Reveal::Uniform(self.scroll.clone(), i, self.lines.len())),
+            // Every line is laid out: a reader reaches each without a scroll.
+            reveal: None,
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -560,49 +544,18 @@ impl Render for AlbumPage {
             (Some(width), None) if self.album.is_some() => {
                 let grid = Grid::for_width(width, &p.look.scale);
                 let lead_width = rows::lead_width(p, self.tracks.len(), window);
-                // A phone's page scrolls whole, the header with the tracks, as
-                // the iOS app's does: a header held above the list would leave
-                // the tracks a sliver of the screen. A record's tracks are few
-                // enough to lay out at once.
-                if crate::mobile::phone() {
-                    let mut items = vec![self.header(p, grid, window, cx).into_any_element()];
-                    items.extend((0..self.lines.len()).map(|i| self.line(p, i, lead_width, cx)));
-                    crate::components::ScrollArea::items("album-page", items)
-                        .under_bar()
-                        .into_any_element()
-                } else {
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .child(self.header(p, grid, window, cx))
-                        .child(
-                            crate::components::spoken_list("album-track-list", "tracks")
-                                .relative()
-                                .flex_1()
-                                .min_h_0()
-                                .child(
-                                    uniform_list(
-                                        "album-tracks",
-                                        self.lines.len(),
-                                        cx.processor(
-                                            move |this, range: Range<usize>, window, cx| {
-                                                let p = Paint::of(window, cx);
-                                                range
-                                                    .map(|i| this.line(&p, i, lead_width, cx))
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        ),
-                                    )
-                                    .track_scroll(&self.scroll)
-                                    .pb(grid.margin)
-                                    .size_full(),
-                                )
-                                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                                .child(crate::components::list_scrollbar(&self.scroll)),
-                        )
-                        .into_any_element()
-                }
+                // The page scrolls whole, the header with the tracks, as the
+                // iOS app's does, and passes under the toolbar: a header held
+                // above the list would cut the tracks off at its edge, and on
+                // a phone leave them a sliver of the screen. A record's tracks
+                // are few enough to lay out at once.
+                let mut items = vec![self.header(p, grid, window, cx).into_any_element()];
+                items.extend((0..self.lines.len()).map(|i| self.line(p, i, lead_width, cx)));
+                items.push(div().h(grid.margin).into_any_element());
+                crate::components::ScrollArea::items("album-page", items)
+                    .under_bar()
+                    .follow(&self.spot)
+                    .into_any_element()
             }
             // Still reading: nothing at first, since a local record lands
             // within a frame or two; the spinner once it has not.
@@ -674,16 +627,10 @@ impl super::keys::KeyedList for AlbumPage {
         self.selection.click(order[ix], false, &order);
     }
 
-    /// The line the track is drawn on, past the disc headings above it.
-    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
-        let line = self
-            .lines
-            .iter()
-            .position(|l| matches!(l, Line::Track { index, .. } if *index == ix));
-        if let Some(line) = line {
-            self.scroll
-                .scroll_to_item(line, crate::components::ScrollStrategy::Nearest);
-        }
+    /// The page's scroll follows the cursor to its row once it is laid out
+    /// (`ScrollArea::follow`), clear of the toolbar and the transport.
+    fn reveal(&mut self, _: usize, _: &mut Context<Self>) {
+        self.spot.moved();
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {

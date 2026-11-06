@@ -12,7 +12,7 @@ use koan_kit::app::*;
 use crate::components::flight;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
-    Clear, KoanFrosted, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
+    Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
 };
 use crate::library::{self, stage::LibraryStage};
 use crate::navigator::{Navigator, Route};
@@ -264,7 +264,7 @@ impl PhoneShell {
             .flex_col()
             .child(
                 div()
-                    .mt(crate::components::bar_inset(cx))
+                    .mt(crate::components::bar_inset(window, cx))
                     .px(p.space(crate::theme::Space::L))
                     .py(p.space(crate::theme::Space::M))
                     .child(
@@ -815,6 +815,7 @@ impl Render for PhoneShell {
         });
         let swipe = self.swipe(window, cx);
         let route = self.nav.read(cx).current();
+        crate::components::page_shown(route, window, cx);
         let stage = self.stage(route, window, cx);
         let wanted = self
             .library
@@ -855,7 +856,7 @@ impl Render for PhoneShell {
             let behind_root = nav.history_ix() == 1;
             let bar = self.bar(behind, behind_root, false, cx);
             let page = self.under(behind, window, cx);
-            Some((progress, under_bar(bar, page, None, false, insets.top, &p)))
+            Some((progress, under_bar(bar, page, None, false, insets.top)))
         });
         let stage = {
             let root = self.nav.read(cx).at_root();
@@ -870,7 +871,6 @@ impl Render for PhoneShell {
                 Some(notices),
                 true,
                 insets.top,
-                &p,
             )
         };
         div()
@@ -973,7 +973,8 @@ impl Render for PhoneShell {
                             .left(p.space(crate::theme::Space::M))
                             .right(p.space(crate::theme::Space::M))
                             .bottom(
-                                crate::components::foot_inset(cx) + p.space(crate::theme::Space::S),
+                                crate::components::foot_inset(window, cx)
+                                    + p.space(crate::theme::Space::S),
                             )
                             .child(crate::components::Rise::in_place(
                                 div()
@@ -997,8 +998,8 @@ impl Render for PhoneShell {
                     .left_0()
                     .right_0()
                     .occlude()
-                    .frosted(&p.look)
                     .pb(insets.bottom)
+                    .child(crate::components::Frost::foot())
                     .child(crate::components::foot_probe())
                     .child(
                         self.transport.clone().cached(
@@ -1059,7 +1060,6 @@ fn under_bar(
     notices: Option<Div>,
     live: bool,
     status: Pixels,
-    p: &Paint,
 ) -> AnyElement {
     div()
         .relative()
@@ -1075,8 +1075,8 @@ fn under_bar(
                 .flex()
                 .flex_col()
                 .occlude()
-                .frosted(&p.look)
                 .pt(status)
+                .child(crate::components::Frost::bar())
                 .when(live, |d| d.child(crate::components::bar_probe()))
                 .child(bar)
                 .children(notices),

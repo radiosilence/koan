@@ -233,8 +233,8 @@ impl QueueView {
         // The list calls this as it scrolls, with its own state held, so the
         // handler reads the queue and never the list.
         let list = RowListState::new();
-        // On a phone the heading scrolls away with the rows.
-        list.set_lead(crate::mobile::phone(), 0, RowKind::Text);
+        // The heading scrolls away with the rows.
+        list.set_lead(true, 0, RowKind::Text);
         let weak = cx.weak_entity();
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
@@ -2160,8 +2160,10 @@ impl Render for QueueView {
                 this.drop_library(&dragged.as_library(), dest, cx);
             }))
             .child({
-                let phone = crate::mobile::phone() && count > 0;
-                if phone {
+                // The heading scrolls away with the rows, which pass under
+                // the toolbar.
+                let away = count > 0;
+                if away {
                     Page::bare()
                 } else {
                     Page::new(self.header(cx))
@@ -2176,7 +2178,7 @@ impl Render for QueueView {
                     RowList::new(&self.list, move |row, window, cx| {
                         rows.update(cx, |this, cx| this.render_row(row, &p, window, cx))
                     })
-                    .when(phone, |list| {
+                    .when(away, |list| {
                         list.under_bar().lead(move |window, cx| {
                             let look = crate::theme::Look::of(window, cx);
                             head.update(cx, |this, cx| {
@@ -2185,6 +2187,7 @@ impl Render for QueueView {
                             })
                         })
                     })
+                    .follow(&self.spot)
                     .named("queue")
                     .into_any_element()
                 })

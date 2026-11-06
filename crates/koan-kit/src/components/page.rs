@@ -581,7 +581,7 @@ impl RenderOnce for Page {
         // A header held above the body sits clear of a phone's bar; a bare
         // page's body scrolls under it by its own lights.
         let under_bar = match self.header {
-            Some(_) => super::bar_inset(cx),
+            Some(_) => super::bar_inset(window, cx),
             None => Pixels::ZERO,
         };
         div()
