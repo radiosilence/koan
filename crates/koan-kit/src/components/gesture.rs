@@ -57,7 +57,10 @@ impl Heading {
             Heading::Right => (1.0, 0.0),
             Heading::Up => (0.0, -1.0),
             Heading::Down => (0.0, 1.0),
-            Heading::UpRight => (0.7071, -0.7071),
+            Heading::UpRight => (
+                std::f32::consts::FRAC_1_SQRT_2,
+                -std::f32::consts::FRAC_1_SQRT_2,
+            ),
         }
     }
 }
