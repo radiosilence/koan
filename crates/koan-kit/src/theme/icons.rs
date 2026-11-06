@@ -143,7 +143,7 @@ fn render(glyph: &Glyph, units: u32, layer: Layer) -> String {
 
 /// The SVG of `icon` beside type of `points`, every layer, and the stroke
 /// it was written at: what a gesture rasterises to move.
-pub(crate) fn svg(icon: Icon, points: f32) -> (String, u32) {
+pub(crate) fn source(icon: Icon, points: f32) -> (String, u32) {
     let units = stroke_units(points);
     (render(icon.glyph(), units, Layer::All), units)
 }

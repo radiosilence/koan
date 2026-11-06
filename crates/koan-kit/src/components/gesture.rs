@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::*;
+use gpui::{App, Global, RenderImage};
 
 use super::ShaderProgram;
 use crate::theme::Icon;
@@ -210,7 +210,7 @@ impl Global for Rasters {}
 /// image the program samples: the sprite's own SVG, so its strokes match
 /// the icon it stands in for.
 pub fn raster(icon: Icon, points: f32, side: f32, cx: &mut App) -> Option<Arc<RenderImage>> {
-    let (svg, units) = crate::theme::icons::svg(icon, points);
+    let (svg, units) = crate::theme::icons::source(icon, points);
     let key = (icon, units, side.round() as u32);
     if let Some(image) = cx.try_global::<Rasters>().and_then(|r| r.0.get(&key)) {
         return Some(image.clone());
