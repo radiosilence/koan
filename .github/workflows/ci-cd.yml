@@ -171,7 +171,7 @@ jobs:
             touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
             # The web UI's stylesheets and scripts: their sources, everything
             # Tailwind reads class names from, and the tools.
-            touches '^crates/koan-server/|^site/src/theme\.css$|^mise\.toml$|^justfile$|^\.github/' || web=false
+            touches '^crates/koan-server/|^package\.json$|^aube-lock\.yaml$|^\.npmrc$|^scripts/styles-deps\.sh$|^mise\.toml$|^justfile$|^\.github/' || web=false
             touches '^deploy/|^\.github/' || package=false
             # The image is the Linux binaries in a runtime layer. The Rust
             # jobs already check the code, so a pull request builds them and
@@ -342,12 +342,18 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     timeout-minutes: 10
+    # The theme the stylesheets import comes from GitHub Packages.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          install_args: just github:tailwindlabs/tailwindcss
+          install_args: just github:tailwindlabs/tailwindcss aube
       - run: just css
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Compiled stylesheets match their sources
         run: git diff --exit-code crates/koan-server/assets
 

@@ -9,7 +9,7 @@
 @source "../src/share.rs";
 @source "../templates/share";
 @source "../scripts/share.ts";
-@import "../../../site/src/theme.css";
+@import "@radiosilence/theme";
 @import "./controls.css";
 
 @theme {
