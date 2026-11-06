@@ -615,15 +615,19 @@ impl PhoneShell {
                 .flex()
                 .flex_col()
                 .child(bar)
-                .children(row.map(|row| {
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .min_h(crate::components::ToolbarMetrics::HEIGHT)
-                        .px(crate::components::RowMetrics::page_margin(&look))
-                        .child(row)
-                }))
+                // The page under a swipe keeps its filter row's room, so
+                // nothing moves as the swipe lands and the row is drawn.
+                .when(filters && (row.is_some() || !live), |bar| {
+                    bar.child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .min_h(crate::components::ToolbarMetrics::HEIGHT)
+                            .px(crate::components::RowMetrics::page_margin(&look))
+                            .children(row),
+                    )
+                })
                 .into_any_element(),
         )
     }
