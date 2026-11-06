@@ -107,7 +107,7 @@ const INSET: Pixels = px(3.0);
 const EDGE: Pixels = px(11.0);
 /// The edge a finger takes the thumb by while it shows, as iOS lets a
 /// scroll indicator be held to scrub a long list.
-const FINGER_EDGE: Pixels = px(32.0);
+const FINGER_EDGE: Pixels = px(44.0);
 const MIN_LENGTH: Pixels = px(32.0);
 /// How long the bar stays after the content stops or the pointer leaves.
 const LINGER: Duration = Duration::from_millis(800);

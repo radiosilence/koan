@@ -129,6 +129,12 @@ impl Navigator {
         self.history[self.cursor]
     }
 
+    /// The route a step back would show: what a phone's swipe back draws
+    /// under the page as it goes.
+    pub fn behind(&self) -> Option<Route> {
+        self.cursor.checked_sub(1).map(|ix| self.history[ix])
+    }
+
     pub fn can_go_back(&self) -> bool {
         self.cursor > 0
     }
