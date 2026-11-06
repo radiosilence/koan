@@ -111,6 +111,8 @@ pub struct PhoneShell {
     /// A swipe let go: from how far it had gone, when, and whether it goes
     /// back or returns. The rest of the way eases on.
     settling: Option<(f32, std::time::Instant, bool)>,
+    /// The tab and page last drawn, so a move forward is seen and slid in.
+    seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
@@ -207,6 +209,7 @@ impl PhoneShell {
             info: None,
             back_swipe: None,
             settling: None,
+            seen: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
@@ -387,6 +390,20 @@ impl PhoneShell {
     /// How far a swipe back stands, while one is under way or easing to
     /// its end; going back once it reaches it.
     fn swipe(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<f32> {
+        // A move forward within a tab is the swipe back run the other way:
+        // the new page comes in from the trailing edge over the one left.
+        let nav = self.nav.read(cx);
+        let now = (nav.tab(), nav.current());
+        if let Some(was) = self.seen
+            && was.0 == now.0
+            && was.1 != now.1
+            && nav.behind() == Some(was.1)
+            && self.back_swipe.is_none()
+            && self.settling.is_none()
+        {
+            self.settling = Some((1.0, std::time::Instant::now(), false));
+        }
+        self.seen = Some(now);
         if let Some(progress) = self.back_swipe {
             return Some(progress);
         }
@@ -427,6 +444,17 @@ impl PhoneShell {
             };
         }
         self.stage(route, window, cx)
+    }
+
+    /// Back by the bar's button: the page slides away as a swipe back's
+    /// release does, and the move happens as it lands.
+    fn animate_back(&mut self, cx: &mut Context<Self>) {
+        if self.nav.read(cx).at_root() || self.settling.is_some() {
+            return;
+        }
+        self.back_swipe = None;
+        self.settling = Some((0.0, std::time::Instant::now(), true));
+        cx.notify();
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -540,7 +568,7 @@ impl PhoneShell {
             .when(!nav.at_root(), |bar| {
                 bar.leading(
                     ToolbarButton::new("back", Icon::Back, "back")
-                        .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.animate_back(cx))),
                 )
             })
             .principal(
