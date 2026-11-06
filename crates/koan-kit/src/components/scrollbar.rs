@@ -105,6 +105,9 @@ const WIDE: Pixels = px(5.0);
 const INSET: Pixels = px(3.0);
 /// The edge that answers the pointer: the wide thumb and its insets.
 const EDGE: Pixels = px(11.0);
+/// The edge a finger takes the thumb by while it shows, as iOS lets a
+/// scroll indicator be held to scrub a long list.
+const FINGER_EDGE: Pixels = px(32.0);
 const MIN_LENGTH: Pixels = px(32.0);
 /// How long the bar stays after the content stops or the pointer leaves.
 const LINGER: Duration = Duration::from_millis(800);
@@ -226,8 +229,10 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             });
             (bar.clone(), bar)
         });
+        let touch = Look::of(window, cx).touch;
+        let edge = if touch { FINGER_EDGE } else { EDGE };
         let track = Bounds::from_corners(
-            point(bounds.right() - EDGE, bounds.top() + INSET),
+            point(bounds.right() - edge, bounds.top() + INSET),
             point(bounds.right(), bounds.bottom() - INSET),
         );
         let max = self.source.max_offset();
@@ -269,9 +274,16 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             point(bounds.right() - INSET - width, top),
             size(width, length),
         );
+        // Under touch the edge is held only while the thumb shows, so taps
+        // on the rows beside it reach them at rest.
+        let takes = !touch || {
+            let b = bar.borrow();
+            b.shown || b.grab.is_some()
+        };
         Prepaint {
             // The content behind still takes the wheel and the trackpad.
-            hitbox: Some(window.insert_hitbox(track, HitboxBehavior::BlockMouseExceptScroll)),
+            hitbox: takes
+                .then(|| window.insert_hitbox(track, HitboxBehavior::BlockMouseExceptScroll)),
             thumb: Some(thumb),
             track,
             bar,
@@ -334,6 +346,22 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             }
             cx.notify(view);
         });
+
+        // A finger on the showing thumb's edge drags it rather than
+        // scrolling the list, arriving as the pointer's press below.
+        if look.touch {
+            let held = hitbox.clone();
+            window.on_mouse_event(move |event: &TouchDragEvent, phase, window, _| {
+                if phase == DispatchPhase::Bubble
+                    && event.phase == TouchPhase::Started
+                    && !window.default_prevented()
+                    && held.is_hovered(window)
+                {
+                    window.prevent_default();
+                    window.carry_touch_drag_as_pointer();
+                }
+            });
+        }
 
         // A press on the thumb takes it where it was pressed; on the edge
         // beside it, brings the thumb's middle there and takes it.

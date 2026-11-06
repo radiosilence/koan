@@ -111,6 +111,49 @@ impl RenderOnce for Rise {
     }
 }
 
+/// A screen coming up from the foot of the window, as a phone's full-screen
+/// player does from its mini player: the whole height, easing out, on the
+/// GPU. Opaque throughout; Reduce Motion shows it at once.
+#[derive(IntoElement)]
+pub struct SlideUp {
+    child: AnyElement,
+}
+
+impl SlideUp {
+    pub fn new(child: impl IntoElement) -> Self {
+        Self {
+            child: child.into_any_element(),
+        }
+    }
+}
+
+impl RenderOnce for SlideUp {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if !moves(cx) {
+            return self.child;
+        }
+        let height = f32::from(window.viewport_size().height) * window.scale_factor();
+        let animated = window
+            .use_keyed_state("slide-up", cx, |_, _| {
+                let animated = Animated::new();
+                standing(&animated);
+                animated.segment(
+                    2,
+                    height,
+                    0.0,
+                    Animated::now(),
+                    Motion::SETTLE * 2,
+                    Ease::QuickOut,
+                    Repeat::Once,
+                );
+                animated
+            })
+            .read(cx)
+            .clone();
+        AnimatedLayer::new(&animated, div().size_full().child(self.child)).into_any_element()
+    }
+}
+
 /// Something put away, fading out where it stood. Its owner keeps what it
 /// drew beside this, draws it through `draw` in the place it stood until
 /// it has run, `LENGTH` after it started, and lets it go then.
