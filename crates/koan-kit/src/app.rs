@@ -19,8 +19,8 @@ pub use gpui::{
     ExternalPaths, FocusHandle, Focusable, Global, HapticFeedback, IntoElement, KeyBinding,
     KeyContext, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels, Point, QuitMode,
-    ReadGlobal, Render, RenderOnce, ScrollEvent, ScrollSource, SharedString, Size, Stateful,
-    StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowBounds,
+    ReadGlobal, Render, RenderOnce, ScrollEvent, ScrollHandle, ScrollSource, SharedString, Size,
+    Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowBounds,
     WindowHandle, WindowId, WindowVisibility, actions, div, relative,
 };
 

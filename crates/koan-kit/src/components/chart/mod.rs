@@ -441,7 +441,8 @@ pub struct Chart {
     series: Vec<Series>,
     rules: Vec<Rule>,
     points: Vec<ChartPoint>,
-    height: Pixels,
+    /// The plot's height with its x labels; none fills the container.
+    height: Option<Pixels>,
     legend: Option<Legend>,
     gutter: Option<Pixels>,
     on_press: Option<Handler>,
@@ -459,7 +460,7 @@ impl Chart {
             series: Vec::new(),
             rules: Vec::new(),
             points: Vec::new(),
-            height: px(220.0),
+            height: Some(px(220.0)),
             legend: None,
             gutter: None,
             on_press: None,
@@ -489,7 +490,15 @@ impl Chart {
 
     /// The plot's height with its x labels; it is as wide as its container.
     pub fn height(mut self, height: Pixels) -> Self {
-        self.height = height;
+        self.height = Some(height);
+        self
+    }
+
+    /// As tall as its container leaves it, legend included: a chart in a
+    /// frame that folds or a pane that grows. The container's height must
+    /// be definite.
+    pub fn fill(mut self) -> Self {
+        self.height = None;
         self
     }
 
@@ -740,17 +749,23 @@ impl RenderOnce for Chart {
                 }
             },
         )
-        .w_full()
-        .h(self.height);
+        .w_full();
+        let plot = match self.height {
+            Some(height) => plot.h(height),
+            None => plot.flex_1().min_h_0(),
+        };
+        let fills = self.height.is_none();
         div()
             .flex()
             .flex_col()
             .w_full()
+            .when(fills, |d| d.flex_1().min_h_0().h_full())
             .gap(look.space(Space::M))
             .child(
                 div()
                     .relative()
                     .w_full()
+                    .when(fills, |d| d.flex().flex_col().flex_1().min_h_0())
                     .child(plot)
                     .when(interactive, |d| d.koan_touch_drag(&look)),
             )

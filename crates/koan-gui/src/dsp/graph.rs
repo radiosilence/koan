@@ -150,6 +150,11 @@ pub struct Graph {
     flat_note: Option<SharedString>,
     shown: Shown,
     height: Pixels,
+    /// The chart takes the height its frame leaves, rather than `height`.
+    fills: bool,
+    /// The curves alone, with no legend, switch or brushes: a frame folded
+    /// small.
+    compact: bool,
     editing: Option<Editing>,
     pub brush: DspBrush,
     edit: Edit,
@@ -195,6 +200,8 @@ impl Graph {
             parts: Vec::new(),
             flat_note: None,
             height: px(220.0),
+            fills: false,
+            compact: false,
             editing: None,
             brush: DspBrush::Narrow,
             edit: Edit::Idle,
@@ -237,6 +244,20 @@ impl Graph {
     pub fn height(mut self, height: Pixels) -> Self {
         self.height = height;
         self
+    }
+
+    /// The chart as tall as its frame leaves it, so a frame that folds
+    /// carries the curves with it.
+    pub fn fills(mut self) -> Self {
+        self.fills = true;
+        self
+    }
+
+    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
+        if self.compact != compact {
+            self.compact = compact;
+            cx.notify();
+        }
     }
 
     /// A response read as the `Dsp` stood at `stamp`. While an edit is under
@@ -602,18 +623,22 @@ impl Render for Graph {
             }
         });
         let stride = if hi - lo > 30.0 { 10.0 } else { 6.0 };
-        let mut chart = Chart::new(
+        let chart = Chart::new(
             "eq-graph",
             Axis::log(HZ.0, HZ.1).format(hz_label),
             Axis::linear(lo, hi)
                 .ticks(Ticks::Every(stride))
                 .format(|db| format!("{}", db.round() as i64).replace('-', "−")),
         )
-        .height(self.height)
         .series(series)
         .rules(rules)
         .points(points)
         .report_points(self.places.clone());
+        let mut chart = if self.fills {
+            chart.fill()
+        } else {
+            chart.height(self.height)
+        };
         if editable {
             let this = cx.weak_entity();
             let press = this.clone();
@@ -634,12 +659,14 @@ impl Render for Graph {
                 });
         }
 
+        let compact = self.compact;
         div()
             .flex()
             .flex_col()
             .w_full()
+            .when(self.fills, |d| d.h_full())
             .gap(look.space(Space::M))
-            .when(measured, |d| {
+            .when(measured && !compact, |d| {
                 d.child(
                     Segmented::new(
                         "graph-shown",
@@ -661,8 +688,9 @@ impl Render for Graph {
             .child(
                 div()
                     .relative()
+                    .when(self.fills, |d| d.flex().flex_col().flex_1().min_h_0())
                     .child(chart)
-                    .children(self.flat_note.clone().map(|note| {
+                    .children(self.flat_note.clone().filter(|_| !compact).map(|note| {
                         div()
                             .absolute()
                             .top(look.space(Space::Xl))
@@ -675,10 +703,11 @@ impl Render for Graph {
                             .child(label(note))
                     })),
             )
-            .child(self.legend(&response, &look))
-            .when(self.curve_index().is_some() && showing_eq, |d| {
-                d.child(self.brushes(cx))
-            })
+            .when(!compact, |d| d.child(self.legend(&response, &look)))
+            .when(
+                self.curve_index().is_some() && showing_eq && !compact,
+                |d| d.child(self.brushes(cx)),
+            )
     }
 }
 

@@ -1,0 +1,1 @@
+- **The EQ editor's graph makes room on a phone.** A profile's graph folds to a quarter of its height once its bands scroll and opens again at the top, and folds away while the keyboard is up so the field being edited stays in view; the EQ screen's graph no longer leaves a gutter wider than its labels.
