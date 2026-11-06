@@ -112,7 +112,15 @@ impl RenderOnce for Picker {
         .aria_expanded(is_open)
         .relative()
         .flex()
-        .flex_none()
+        // On a phone it gives way to the row's edge, cutting what is chosen
+        // short inside its box rather than running past the margin.
+        .map(|d| {
+            if look.touch {
+                d.flex_shrink().min_w_0()
+            } else {
+                d.flex_none()
+            }
+        })
         .items_center()
         .gap(look.space(Space::Xs))
         // The theme's bordered button, as a form's dropdown is.
@@ -130,7 +138,7 @@ impl RenderOnce for Picker {
                 .border(look.hairline)
                 .border_color(look.palette.muted.hsla()),
         )
-        .child(div().whitespace_nowrap().child(shown))
+        .child(div().min_w_0().truncate().child(shown))
         .child(
             KoanIcon::new(Icon::Choose)
                 .role(TypeRole::Control)

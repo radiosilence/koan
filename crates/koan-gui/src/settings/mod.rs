@@ -435,7 +435,15 @@ impl SettingsWindow {
     pub fn tabs(&self, cx: &App) -> Vec<Tab> {
         let connection = &self.ctx.connection.read(cx).0;
         let signed = self.account(cx).is_some();
-        let mut tabs = vec![Tab::General, Tab::Library, Tab::Server];
+        // A phone has no General pane, as the iOS app has none: kept running
+        // with the window closed, opening at login and updating itself are a
+        // desktop app's. Nor a Library pane: a phone keeps no folders to
+        // scan, and its library is the server's.
+        let mut tabs = if crate::mobile::phone() {
+            vec![Tab::Server]
+        } else {
+            vec![Tab::General, Tab::Library, Tab::Server]
+        };
         if signed
             && (offers(connection, panes::people::EXTENSION)
                 || offers(connection, panes::account::PASSWORDS)

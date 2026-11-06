@@ -257,7 +257,8 @@ impl Render for AppearancePane {
                 })
                 .into_any_element(),
         ];
-        if record_colours {
+        // A phone's shell has no sidebar or toolbar ground to wash or not.
+        if record_colours && !crate::mobile::phone() {
             colour_rows.push(
                 Toggle::new("wash-window", "Wash the whole window", wash_window)
                     .on_change({
@@ -271,6 +272,8 @@ impl Render for AppearancePane {
                     })
                     .into_any_element(),
             );
+        }
+        if record_colours {
             // The tint, then how the wash moves while music plays.
             for (which, value) in [
                 (Held::Tint, wash_tint),

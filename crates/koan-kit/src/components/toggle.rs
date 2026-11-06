@@ -159,8 +159,12 @@ impl RenderOnce for Toggle {
             .gap(look.space(Space::M))
             // The Mac toggle's hit height; the whole row takes the click.
             .min_h(look.spaced(24.0).max(look.target()))
+            // A label longer than the row wraps, so the box stays on the
+            // row's trailing edge.
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.palette.ink.hsla())
                     .child(self.label),
