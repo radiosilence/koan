@@ -956,7 +956,10 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
             .ok();
     };
 
-    // The grid: a line at each tick, and the axes' labels.
+    // The grid: a line at each tick, and the axes' labels. A label is left
+    // out where it would run into the one before, as on a phone's narrow
+    // graph, where each is also kept inside the plot's width.
+    let mut labelled_to: Option<Pixels> = None;
     for hz in HZ_TICKS {
         let x = plot.origin.x + px(x_of(hz, w));
         window.paint_quad(fill(
@@ -966,11 +969,40 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
             ),
             rule.opacity(0.5),
         ));
+        let tick = hz_label(hz);
+        let width = window
+            .text_system()
+            .shape_line(
+                tick.clone().into(),
+                font_size,
+                &[TextRun {
+                    len: tick.len(),
+                    font: mono.clone(),
+                    color: text,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            )
+            .width;
+        let centred = f32::from(x - width / 2.0);
+        let left = Pixels::from(if look.touch {
+            centred
+                .min(f32::from(plot.origin.x + plot.size.width - width))
+                .max(f32::from(plot.origin.x))
+        } else {
+            centred
+        });
+        if labelled_to.is_some_and(|to| left < to + look.space(Space::S)) {
+            continue;
+        }
+        labelled_to = Some(left + width);
         label_at(
-            hz_label(hz),
-            point(x - px(20.0), plot.origin.y + plot.size.height + px(2.0)),
-            TextAlign::Center,
-            px(40.0),
+            tick,
+            point(left, plot.origin.y + plot.size.height + px(2.0)),
+            TextAlign::Left,
+            width + look.hairline,
             window,
             cx,
         );

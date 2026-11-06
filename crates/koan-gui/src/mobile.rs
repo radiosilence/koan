@@ -121,8 +121,13 @@ pub struct PhoneShell {
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
-    /// EQ's model and page, made on first showing and kept.
-    eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
+    /// EQ's model and page, made on first showing and kept, and the
+    /// shell's watch on the page, whose sheets it draws over everything.
+    eq: Option<(
+        Entity<crate::dsp::Dsp>,
+        Entity<crate::dsp::EqPage>,
+        Subscription,
+    )>,
     /// The Search tab's field and the results under it, made once the
     /// library has loaded.
     search: Option<SearchPage>,
@@ -525,7 +530,7 @@ impl PhoneShell {
                 .into_any_element()
             }
             Route::Eq => match &self.eq {
-                Some((_, page)) => page.clone().cached(full()).into_any_element(),
+                Some((_, page, _)) => page.clone().cached(full()).into_any_element(),
                 None => div().size_full().into_any_element(),
             },
             Route::SettingsSection(tab) => {
@@ -633,20 +638,26 @@ impl PhoneShell {
     }
 
     /// EQ's screen on the tab showing.
-    fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.now_playing = None;
         match &self.eq {
-            Some((_, page)) => page.update(cx, |p, cx| p.show(device, cx)),
+            Some((_, page, _)) => page.update(cx, |p, cx| p.show(device, cx)),
             None => {
                 let dsp = crate::dsp::Dsp::new(crate::engine::engine(cx), cx);
                 let page = cx.new(|cx| crate::dsp::EqPage::new(dsp.clone(), device, window, cx));
-                self.eq = Some((dsp, page));
+                let watch = cx.observe(&page, |_, _, cx| cx.notify());
+                self.eq = Some((dsp, page, watch));
             }
         }
         self.nav.update(cx, |nav, cx| {
             nav.go(Route::Eq);
             cx.notify();
         });
+    }
+
+    /// EQ's page, once it has been shown: for tools that open its sheets.
+    pub fn eq_page(&self) -> Option<Entity<crate::dsp::EqPage>> {
+        self.eq.as_ref().map(|(_, page, _)| page.clone())
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that
@@ -751,6 +762,13 @@ impl Render for PhoneShell {
         let swipe = self.swipe(window, cx);
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
+        // EQ's sheets and questions over everything while its page shows.
+        let (eq_sheets, eq_questions) = match &self.eq {
+            Some((_, page, _)) if route == Route::Eq && self.now_playing.is_none() => {
+                crate::dsp::EqPage::overlay(page, window, cx)
+            }
+            _ => (None, None),
+        };
         let wanted = self
             .library
             .as_ref()
@@ -941,6 +959,8 @@ impl Render for PhoneShell {
                     })),
             )
             .children(now_playing)
+            .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
+            .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))

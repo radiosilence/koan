@@ -20,6 +20,11 @@
 //! sets for a run.
 //! KOAN_CONFIG_DIR=… cargo run --release -p koan-gui --example eq -- --measure
 //!
+//! `--phone` draws EQ as a phone shows it instead: the phone shell at an
+//! iPhone mini's size, under touch, on its EQ page, with `--profile` and
+//! `--sheet` over it as on the desktop, and `--end` scrolled to the page's
+//! end.
+//!
 //! `--measure` opens Warm's page offscreen, drags its third band's handle
 //! across the graph in 600 steps, each delivered to the window as a mouse
 //! move, and prints how long each step took on the main thread: the move's
@@ -40,6 +45,9 @@ use koan_kit::raw::{HeadlessAppContext, WindowBounds, WindowOptions, px, size};
 const WIDTH: f32 = 900.0;
 const HEIGHT: f32 = 1100.0;
 const DEVICE: &str = "Desk DAC";
+/// An iPhone 13 mini, in points: the narrowest phone kōan runs on.
+const PHONE_W: f32 = 375.0;
+const PHONE_H: f32 = 812.0;
 
 /// An AutoEQ result as Equalizer APO text: what a correction looks like.
 const HD600: &str = "Preamp: -6.2 dB
@@ -155,6 +163,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let window_mode = args.iter().any(|a| a == "--window");
     let measure = args.iter().any(|a| a == "--measure");
+    let phone = args.iter().any(|a| a == "--phone");
+    let end = args.iter().any(|a| a == "--end");
     let after = |flag: &str| {
         args.iter()
             .position(|a| a == flag)
@@ -173,6 +183,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     unsafe {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
+        if phone {
+            std::env::set_var("KOAN_GUI_PHONE", "1");
+        }
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
     seed(&engine)?;
@@ -215,7 +228,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     cx.update(|cx| {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         theme::init(cx);
+        theme::KoanTheme::set_touch(phone, cx);
         koan_gui::app::install(&engine, cx);
+        if phone {
+            koan_gui::library::bind_keys(cx);
+        }
     });
     let dsp = cx.update(|cx| Dsp::new(engine.clone(), cx));
     if sheet.as_deref() == Some("role") {
@@ -233,68 +250,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     if measure {
         return drag(&mut cx, dsp);
     }
+    if phone {
+        return phone_shots(&mut cx, &dsp, profile, sheet, end, &out);
+    }
     let mut shots = Vec::new();
     for dark in [true, false] {
         let (dsp, profile, sheet) = (dsp.clone(), profile.clone(), sheet.clone());
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |window, cx| {
             let page = cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
-            if let Some(name) = profile {
-                let sheets = page.read(cx).sheets.clone();
-                let view = cx.new(|cx| {
-                    ProfilePage::new(
-                        dsp.clone(),
-                        sheets.clone(),
-                        name,
-                        Some(DEVICE.into()),
-                        window,
-                        cx,
-                    )
-                });
-                sheets.update(cx, |s, cx| s.view(view, cx));
-            }
-            let sheets = page.read(cx).sheets.clone();
-            let view: Option<koan_kit::app::AnyView> = match sheet.as_deref() {
-                Some("manage") => Some(
-                    cx.new(|cx| {
-                        koan_gui::dsp::manage::ManageEq::new(
-                            dsp.clone(),
-                            sheets.clone(),
-                            Some(DEVICE.into()),
-                            window,
-                            cx,
-                        )
-                    })
-                    .into(),
-                ),
-                Some("autoeq") => Some(
-                    cx.new(|cx| {
-                        koan_gui::dsp::flows::AutoEqSearch::new(
-                            dsp.clone(),
-                            sheets.clone(),
-                            "HD 600".into(),
-                            window,
-                            cx,
-                        )
-                    })
-                    .into(),
-                ),
-                Some("measure") => Some(
-                    cx.new(|cx| {
-                        koan_gui::dsp::flows::MeasurementFlow::new(
-                            dsp.clone(),
-                            sheets.clone(),
-                            "HD 600".into(),
-                            window,
-                            cx,
-                        )
-                    })
-                    .into(),
-                ),
-                _ => None,
-            };
-            if let Some(view) = view {
-                sheets.update(cx, |s, cx| s.view(view, cx));
-            }
+            open_sheets(&page, &dsp, profile, sheet.as_deref(), window, cx);
             koan_kit::components::host(page, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
@@ -312,6 +276,138 @@ fn main() -> Result<(), Box<dyn Error>> {
     sheet.save(&out)?;
     println!("{out}");
     Ok(())
+}
+
+/// The phone's EQ: the phone shell at an iPhone mini's size, under touch, on
+/// EQ's page, with `profile`'s page and the sheet `sheet` names over it; at
+/// the page's end with `end`. Dark and light side by side into `out`.
+fn phone_shots(
+    cx: &mut HeadlessAppContext,
+    dsp: &koan_kit::app::Entity<Dsp>,
+    profile: Option<String>,
+    sheet: Option<String>,
+    end: bool,
+    out: &str,
+) -> Result<(), Box<dyn Error>> {
+    use koan_gui::mobile::PhoneShell;
+    use koan_gui::root::WindowRoot;
+    use koan_kit::app::{Modifiers, ScrollEvent};
+    use koan_kit::raw::{PlatformInput, ScrollDelta, ScrollSource, TouchPhase, point};
+    let mut shell = None;
+    let window = cx.open_window(size(px(PHONE_W), px(PHONE_H)), |window, cx| {
+        let made = cx.new(|cx| PhoneShell::new(window, cx));
+        shell = Some(made.clone());
+        let root = cx.new(|cx| WindowRoot::new(made, window, cx));
+        koan_kit::components::host(root, window, cx)
+    })?;
+    let window: koan_kit::app::AnyWindowHandle = window.into();
+    let shell = shell.ok_or("the shell was not made")?;
+    cx.allow_parking();
+    settle(cx, window)?;
+    cx.update_window(window, |_, window, cx| {
+        shell.update(cx, |s, cx| s.go_eq(Some(DEVICE.into()), window, cx));
+        if let Some(page) = shell.read(cx).eq_page() {
+            open_sheets(&page, dsp, profile, sheet.as_deref(), window, cx);
+        }
+    })?;
+    settle(cx, window)?;
+    if end {
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::Scroll(ScrollEvent {
+                    position: point(px(PHONE_W / 2.), px(PHONE_H / 2.)),
+                    delta: ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                    source: ScrollSource::Pointer,
+                }),
+                cx,
+            );
+        })?;
+    }
+    let mut shots = Vec::new();
+    for dark in [true, false] {
+        cx.update_window(window, |_, window, cx| {
+            theme::pin_appearance(Some(dark), window, cx)
+        })?;
+        settle(cx, window)?;
+        shots.push(cx.capture_screenshot(window)?);
+    }
+    let (w, h) = (shots[0].width(), shots[0].height());
+    let mut sheet = image::RgbaImage::new(w * 2, h);
+    for (index, shot) in shots.iter().enumerate() {
+        image::imageops::replace(&mut sheet, shot, (index as u32 * w) as i64, 0);
+    }
+    sheet.save(out)?;
+    println!("{out}");
+    Ok(())
+}
+
+/// Opens `profile`'s page, then the sheet `sheet` names, over `page`.
+fn open_sheets(
+    page: &koan_kit::app::Entity<EqPage>,
+    dsp: &koan_kit::app::Entity<Dsp>,
+    profile: Option<String>,
+    sheet: Option<&str>,
+    window: &mut koan_kit::app::Window,
+    cx: &mut koan_kit::app::App,
+) {
+    let sheets = page.read(cx).sheets.clone();
+    if let Some(name) = profile {
+        let view = cx.new(|cx| {
+            ProfilePage::new(
+                dsp.clone(),
+                sheets.clone(),
+                name,
+                Some(DEVICE.into()),
+                window,
+                cx,
+            )
+        });
+        sheets.update(cx, |s, cx| s.view(view, cx));
+    }
+    let view: Option<koan_kit::app::AnyView> = match sheet {
+        Some("manage") => Some(
+            cx.new(|cx| {
+                koan_gui::dsp::manage::ManageEq::new(
+                    dsp.clone(),
+                    sheets.clone(),
+                    Some(DEVICE.into()),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        ),
+        Some("autoeq") => Some(
+            cx.new(|cx| {
+                koan_gui::dsp::flows::AutoEqSearch::new(
+                    dsp.clone(),
+                    sheets.clone(),
+                    "HD 600".into(),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        ),
+        Some("measure") => Some(
+            cx.new(|cx| {
+                koan_gui::dsp::flows::MeasurementFlow::new(
+                    dsp.clone(),
+                    sheets.clone(),
+                    "HD 600".into(),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        ),
+        _ => None,
+    };
+    if let Some(view) = view {
+        sheets.update(cx, |s, cx| s.view(view, cx));
+    }
 }
 
 fn drag(
