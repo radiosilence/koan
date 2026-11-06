@@ -111,6 +111,8 @@ pub struct PhoneShell {
     /// A swipe let go: from how far it had gone, when, and whether it goes
     /// back or returns. The rest of the way eases on.
     settling: Option<(f32, std::time::Instant, bool)>,
+    /// Now Playing going back down, since when.
+    closing: Option<std::time::Instant>,
     /// The tab and page last drawn, so a move forward is seen and slid in.
     seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
@@ -209,6 +211,7 @@ impl PhoneShell {
             info: None,
             back_swipe: None,
             settling: None,
+            closing: None,
             seen: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
@@ -658,7 +661,7 @@ impl PhoneShell {
             full.update(cx, |full, cx| full.set_feed(feed, cx));
         }
         let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
-            this.now_playing = None;
+            this.closing.get_or_insert_with(std::time::Instant::now);
             cx.notify();
         });
         // The title asks for the track's details, over the page Now Playing
@@ -670,6 +673,7 @@ impl PhoneShell {
             }
             cx.notify();
         });
+        self.closing = None;
         self.now_playing = Some((full, closed, info));
         cx.notify();
     }
@@ -694,20 +698,38 @@ impl PhoneShell {
 impl Render for PhoneShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        // Now Playing in place of the tabs, so the window's wash of the
-        // playing record runs behind it, as the iOS app's bleed does; the
-        // tabs keep their places under it.
-        if let Some((full, ..)) = &self.now_playing {
-            return div()
-                .key_context(crate::platform::actions::CONTEXT)
-                .relative()
-                .size_full()
-                .text_color(p.ink)
-                .child(full.clone().cached(StyleRefinement::default().size_full()))
-                .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
-                .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
-                .into_any_element();
+        // Now Playing over the page, on a wash of its own as the iOS app's
+        // bleed is, coming up from the foot and going back down to it.
+        if self
+            .closing
+            .is_some_and(|at| at.elapsed() >= crate::theme::Motion::SETTLE)
+        {
+            self.closing = None;
+            self.now_playing = None;
+        } else if self.closing.is_some() {
+            window.request_animation_frame();
         }
+        let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
+            let wash = cx.global::<crate::root::WindowWash>().0.clone();
+            div().absolute().inset_0().occlude().child(
+                crate::components::SlideUp::new(
+                    div()
+                        .relative()
+                        .size_full()
+                        .map(|d| match wash {
+                            Some(wash) => d.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(wash.cached(StyleRefinement::default().size_full())),
+                            ),
+                            None => d.bg(p.bg),
+                        })
+                        .child(full.clone().cached(StyleRefinement::default().size_full())),
+                )
+                .leaving(self.closing.is_some()),
+            )
+        });
         let swipe = self.swipe(window, cx);
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
@@ -743,6 +765,10 @@ impl Render for PhoneShell {
             // The swipe from the edge: the page follows the finger, and goes
             // back only once the platform says the swipe went far enough.
             .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, _, cx| {
+                // Now Playing covers the page: the page underneath stays put.
+                if this.now_playing.is_some() {
+                    return;
+                }
                 let now = std::time::Instant::now();
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
@@ -850,6 +876,7 @@ impl Render for PhoneShell {
                             .child(self.tabs(cx)),
                     ),
             )
+            .children(now_playing)
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))

@@ -318,8 +318,34 @@ impl Transport {
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse))),
                 ),
             )
-            .child(div().flex_1().min_h_0().child(stage))
-            .children(titles)
+            // The art and the lyrics, a new record's sleeve and a new track's
+            // names fade in over what they replace rather than snapping.
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(crate::components::FadeIn::new(
+                        ElementId::NamedInteger(
+                            if self.lyrics_shown {
+                                "np-lyrics"
+                            } else {
+                                "np-art"
+                            }
+                            .into(),
+                            entry.and_then(|e| e.album_id).unwrap_or(0) as u64,
+                        ),
+                        div().size_full().child(stage),
+                    )),
+            )
+            .children(titles.map(|titles| {
+                crate::components::FadeIn::new(
+                    ElementId::NamedInteger(
+                        "np-titles".into(),
+                        entry.and_then(|e| e.track_id).unwrap_or(0) as u64,
+                    ),
+                    titles,
+                )
+            }))
             .child(
                 self.seek.clone().cached(
                     StyleRefinement::default()
@@ -371,10 +397,23 @@ impl Transport {
         // fifth of the screen, as the iOS app's does; short of that it goes
         // back. A pan the lyrics can still scroll is theirs.
         let close_at = viewport.height * 0.2;
+        let offset = self.pull.or_else(|| {
+            let (at, since, closes) = self.released?;
+            if closes {
+                return Some(at);
+            }
+            let t = since.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
+            if t >= 1.0 {
+                self.released = None;
+                return None;
+            }
+            window.request_animation_frame();
+            Some(at * (1.0 - crate::theme::Motion::quick_out(t)))
+        });
         div()
             .id("now-playing-page")
             .size_full()
-            .when_some(self.pull, |page, by| page.relative().top(by))
+            .when_some(offset, |page, by| page.relative().top(by))
             .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
                 if event.source != ScrollSource::Touch {
                     return;
@@ -382,6 +421,10 @@ impl Transport {
                 let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
                 match event.touch_phase {
                     koan_kit::app::platform::TouchPhase::Started => {
+                        if this.released.is_some_and(|(_, _, closes)| closes) {
+                            return;
+                        }
+                        this.released = None;
                         this.pull = Some(dy.max(Pixels::ZERO))
                     }
                     koan_kit::app::platform::TouchPhase::Moved => match this.pull {
@@ -391,11 +434,18 @@ impl Transport {
                     },
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
-                        if by + dy > close_at {
+                        let at = (by + dy).max(Pixels::ZERO);
+                        let closes = at > close_at;
+                        this.released = Some((at, std::time::Instant::now(), closes));
+                        if closes {
                             cx.emit(Collapse);
                         }
                     }
-                    koan_kit::app::platform::TouchPhase::Cancelled => this.pull = None,
+                    koan_kit::app::platform::TouchPhase::Cancelled => {
+                        if let Some(at) = this.pull.take() {
+                            this.released = Some((at, std::time::Instant::now(), false));
+                        }
+                    }
                 }
                 cx.stop_propagation();
                 cx.notify();

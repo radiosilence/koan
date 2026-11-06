@@ -81,6 +81,9 @@ pub struct Transport {
     mini_glide: crate::components::Glide,
     /// How far Now Playing has been pulled down by a finger, while it is.
     pull: Option<Pixels>,
+    /// A pull let go: where, when, and whether it closes Now Playing (held
+    /// there while the screen goes down) or eases back up.
+    released: Option<(Pixels, std::time::Instant, bool)>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -254,6 +257,7 @@ impl Transport {
             lyrics: None,
             mini_glide: crate::components::Glide::new(),
             pull: None,
+            released: None,
         };
         this.reload_eq(cx);
         this

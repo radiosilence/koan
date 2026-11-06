@@ -88,6 +88,13 @@ pub struct WindowRoot {
 #[derive(Default)]
 pub struct ShownRecord(pub Option<i64>);
 
+/// The window's wash, for a phone's screen over the page (Now Playing) to
+/// draw behind itself, as the page's ground does; `None` with less
+/// transparency asked for.
+pub struct WindowWash(pub Option<Entity<Wash>>);
+
+impl Global for WindowWash {}
+
 impl Global for ShownRecord {}
 
 impl WindowRoot {
@@ -100,7 +107,12 @@ impl WindowRoot {
         let shown = playback.clone();
         let prism = Prism::new();
         let mut root = Self {
-            wash: cx.new(|_| Wash::new()),
+            wash: {
+                let wash = cx.new(|_| Wash::new());
+                let shared = (!KoanTheme::opaque(cx)).then(|| wash.clone());
+                cx.set_global(WindowWash(shared));
+                wash
+            },
             content: content.into(),
             album: None,
             record_colours,

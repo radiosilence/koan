@@ -6,8 +6,31 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::Handler;
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use super::{AnimatedLayer, Ease, Handler};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Motion, Space, Tone, TypeRole, label};
+
+/// The width of a bar's gliding rule, in points at 100 %.
+const BAR_RULE: f32 = 28.0;
+
+/// A bar's rule: its offset track, the bar's width last laid out, and the
+/// tab it last stood under with its offset.
+struct BarRule {
+    animated: super::Animated,
+    width: std::rc::Rc<std::cell::Cell<Pixels>>,
+    at: Option<(usize, f32)>,
+}
+
+impl Default for BarRule {
+    fn default() -> Self {
+        let animated = super::Animated::new();
+        super::layer::standing(&animated);
+        Self {
+            animated,
+            width: Default::default(),
+            at: None,
+        }
+    }
+}
 
 /// The tabs, centred: each its glyph over its label in `fine`, lowercase,
 /// `muted`, and the chosen one in the accent and underlined. The glyph only
@@ -61,7 +84,49 @@ impl RenderOnce for TabStrip {
         let look = Look::of(window, cx);
         let prism = crate::theme::KoanTheme::prism_gradient(cx);
         let bar = self.bar;
+        // A bar's one rule, gliding to the chosen tab on the GPU rather than
+        // each tab drawing its own: the tabs share the bar's width, which the
+        // last frame measured.
+        let glide = bar.then(|| {
+            let chosen = self.tabs.iter().position(|t| t.3).unwrap_or(0);
+            let count = self.tabs.len().max(1);
+            let state = window.use_keyed_state("tab-bar-rule", cx, |_, _| BarRule::default());
+            let rule = look.spaced(BAR_RULE);
+            let scale = window.scale_factor();
+            let (animated, width) = {
+                let state = state.read(cx);
+                (state.animated.clone(), state.width.clone())
+            };
+            let tab = width.get() / count as f32;
+            let target = f32::from(tab * chosen as f32 + (tab - rule) / 2.0) * scale;
+            let moved = state.update(cx, |state, _| {
+                let was = state.at.replace((chosen, target));
+                was.map(|(tab, _)| tab != chosen)
+            });
+            match moved {
+                Some(true) => animated.to(1, target, Motion::SETTLE, Ease::QuickOut),
+                _ => animated.hold(1, target),
+            }
+            let measure = canvas(
+                move |bounds, _, _| width.set(bounds.size.width),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0();
+            div().absolute().inset_0().child(measure).child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .bottom(px(8.0))
+                    .child(AnimatedLayer::new(
+                        &animated,
+                        div().w(rule).h(look.hairline * 2.).bg(look.accent.hsla()),
+                    )),
+            )
+        });
         div()
+            .relative()
+            .children(glide)
             .flex()
             .justify_center()
             .when(bar, |strip| strip.w_full().min_h(px(49.0)).items_center())
@@ -100,13 +165,13 @@ impl RenderOnce for TabStrip {
                             .relative()
                             .pb(px(5.0))
                             .border_b(look.hairline)
-                            .border_color(
-                                look.accent.hsla().opacity(if chosen && prism.is_none() {
+                            .border_color(look.accent.hsla().opacity(
+                                if chosen && prism.is_none() && !bar {
                                     1.0
                                 } else {
                                     0.0
-                                }),
-                            )
+                                },
+                            ))
                             .child(title)
                             // While the rainbow is drawn, the chosen tab's
                             // rule is the palette, a little heavier.

@@ -173,7 +173,16 @@ impl RenderOnce for FormRow {
             .child(
                 div()
                     .flex_none()
-                    .w(look.spaced(if self.compact { COMPACT_LABELS } else { LABELS }))
+                    // A phone's row is too narrow for the desktop's label
+                    // column: the label takes its own width, at most half
+                    // the row, and the control the rest.
+                    .map(|label| {
+                        if look.touch {
+                            label.max_w(relative(0.5))
+                        } else {
+                            label.w(look.spaced(if self.compact { COMPACT_LABELS } else { LABELS }))
+                        }
+                    })
                     .pr(look.space(Space::M))
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.palette.ink.hsla())

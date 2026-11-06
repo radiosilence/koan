@@ -117,13 +117,21 @@ impl RenderOnce for Rise {
 #[derive(IntoElement)]
 pub struct SlideUp {
     child: AnyElement,
+    leaving: bool,
 }
 
 impl SlideUp {
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
+            leaving: false,
         }
+    }
+
+    /// Going back down, over `Motion::SETTLE`; the owner lets it go after.
+    pub fn leaving(mut self, leaving: bool) -> Self {
+        self.leaving = leaving;
+        self
     }
 }
 
@@ -133,23 +141,25 @@ impl RenderOnce for SlideUp {
             return self.child;
         }
         let height = f32::from(window.viewport_size().height) * window.scale_factor();
-        let animated = window
-            .use_keyed_state("slide-up", cx, |_, _| {
-                let animated = Animated::new();
-                standing(&animated);
-                animated.segment(
-                    2,
-                    height,
-                    0.0,
-                    Animated::now(),
-                    Motion::SETTLE * 2,
-                    Ease::QuickOut,
-                    Repeat::Once,
-                );
-                animated
-            })
-            .read(cx)
-            .clone();
+        let state = window.use_keyed_state("slide-up", cx, |_, _| {
+            let animated = Animated::new();
+            standing(&animated);
+            animated.segment(
+                2,
+                height,
+                0.0,
+                Animated::now(),
+                Motion::SETTLE * 2,
+                Ease::QuickOut,
+                Repeat::Once,
+            );
+            (animated, false)
+        });
+        let (animated, left) = state.read(cx).clone();
+        if self.leaving && !left {
+            animated.to(2, height, Motion::SETTLE, Ease::InOut);
+            state.update(cx, |state, _| state.1 = true);
+        }
         AnimatedLayer::new(&animated, div().size_full().child(self.child)).into_any_element()
     }
 }
