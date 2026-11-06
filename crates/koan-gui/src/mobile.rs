@@ -893,9 +893,9 @@ impl Render for PhoneShell {
                             ))
                     })),
             )
-            // The foot over the page: the mini player over the tabs, each
-            // under a rule, frosted as the iOS app's bar and running on under
-            // the home indicator.
+            // The foot over the page: the mini player, its playhead along the
+            // foot's edge, over the tabs under a rule; frosted as the iOS
+            // app's bar and running on under the home indicator.
             .child(
                 div()
                     .id("phone-foot")
@@ -905,8 +905,6 @@ impl Render for PhoneShell {
                     .right_0()
                     .occlude()
                     .frosted(&p.look)
-                    .border_t(p.look.hairline)
-                    .border_color(p.rule)
                     .pb(insets.bottom)
                     .child(crate::components::foot_probe())
                     .child(

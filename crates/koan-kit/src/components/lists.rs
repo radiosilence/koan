@@ -97,16 +97,19 @@ pub fn offset_down(y: Pixels) -> Point<Pixels> {
 /// An element filling its parent that keeps the parent's width in `width`,
 /// and redraws `owner` when it changes: a page laying out a grid or a list
 /// by the width it is given.
-/// How many blank rows `row` high a uniform list adds after its last, on
-/// a page that scrolls under a phone's foot: a uniform list draws rows only
-/// inside its padding, so room left as padding would show nothing under the
-/// foot as the rows pass it. Zero on the desktop.
-pub fn rows_under_foot(row: Pixels, cx: &App) -> usize {
+/// How a uniform list of rows `row` high leaves a phone's foot room at its
+/// end: the blank rows it adds after its last, and how far it reaches below
+/// its parent's bottom, which clips it, so the blank rows come to exactly
+/// the foot's height. Room left as padding would not do: a uniform list
+/// draws rows only inside its padding, and nothing would pass under the
+/// foot. Zero on the desktop.
+pub fn rows_under_foot(row: Pixels, cx: &App) -> (usize, Pixels) {
     let foot = super::foot_inset(cx);
     if foot <= Pixels::ZERO || row <= Pixels::ZERO {
-        return 0;
+        return (0, Pixels::ZERO);
     }
-    (foot / row).ceil() as usize
+    let rows = (foot / row).ceil() as usize;
+    (rows, row * rows as f32 - foot)
 }
 
 /// A page's header over a virtual list that scrolls it away with the rows:

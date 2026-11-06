@@ -491,10 +491,11 @@ impl Render for ArtistBrowser {
             chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
                 .into_any_element()
         } else {
+            let under_foot = crate::components::rows_under_foot(rows::height(p), cx);
             crate::components::uniform_list(
                 "artists",
                 // Blank rows after the last pass under a phone's foot.
-                self.artists.len() + crate::components::rows_under_foot(rows::height(p), cx),
+                self.artists.len() + under_foot.0,
                 cx.processor(|this, range: Range<usize>, window, cx| {
                     let p = Paint::of(window, cx);
                     range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()
@@ -506,6 +507,15 @@ impl Render for ArtistBrowser {
             .map(|list| {
                 crate::components::spoken_list("artists-list", "artists")
                     .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .when(under_foot.1 > Pixels::ZERO, |d| {
+                        d.absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom(-under_foot.1)
+                    })
                     .child(list)
             })
             .into_any_element()

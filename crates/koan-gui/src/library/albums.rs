@@ -968,7 +968,7 @@ impl Render for AlbumGrid {
             Some(grid) => uniform_list(
                 "albums",
                 // Blank rows after the last pass under a phone's foot.
-                grid.rows(count) + crate::components::rows_under_foot(grid.row, cx),
+                grid.rows(count) + crate::components::rows_under_foot(grid.row, cx).0,
                 // Builds rows only: uniform_list calls it to measure a row as
                 // well as to lay out the visible ones, so anything done once
                 // a frame happens in `render`.
@@ -981,8 +981,14 @@ impl Render for AlbumGrid {
             .pb(grid.margin)
             .size_full()
             .map(|list| {
+                let below = crate::components::rows_under_foot(grid.row, cx).1;
                 crate::components::spoken_list("albums-list", "albums")
                     .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .when(below > Pixels::ZERO, |d| {
+                        d.absolute().top_0().left_0().right_0().bottom(-below)
+                    })
                     .child(list)
             })
             .into_any_element(),

@@ -622,12 +622,13 @@ impl Render for TrackBrowser {
             chrome::empty_state(crate::theme::Icon::Track, empty_title, empty_detail)
                 .into_any_element()
         } else {
+            let under_foot = crate::components::rows_under_foot(rows::art_height(p), cx);
             // Rows past what has arrived are drawn empty, so the scroll bar
             // is the listing's length from the first page.
             uniform_list(
                 "tracks",
                 // Blank rows after the last pass under a phone's foot.
-                self.total as usize + crate::components::rows_under_foot(rows::art_height(p), cx),
+                self.total as usize + under_foot.0,
                 // Builds rows only: uniform_list also calls it to measure a
                 // row, so the cover requests happen once a frame in `render`.
                 cx.processor(move |this, range: Range<usize>, window, cx| {
@@ -643,6 +644,15 @@ impl Render for TrackBrowser {
             .map(|list| {
                 crate::components::spoken_list("tracks-list", "tracks")
                     .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .when(under_foot.1 > Pixels::ZERO, |d| {
+                        d.absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom(-under_foot.1)
+                    })
                     .child(list)
             })
             .into_any_element()
