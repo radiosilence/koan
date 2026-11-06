@@ -212,7 +212,9 @@ pub fn track_row<V: TrackList>(
     }
 
     let heart = crate::components::Heart::new(("row-heart", key), state.favourite)
-        .when(!state.favourite, |d| {
+        // A pointer finds an empty heart by hovering the row; a phone has no
+        // hover, so there the outline always shows, as in the iOS app.
+        .when(!state.favourite && !p.look.touch, |d| {
             d.invisible().group_hover(ROW_GROUP, |s| s.visible())
         })
         .on_click(click(RowPart::Heart));

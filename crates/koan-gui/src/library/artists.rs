@@ -305,7 +305,7 @@ impl ArtistBrowser {
         };
         let view = cx.weak_entity();
         let heart = crate::components::Heart::new(("artist-heart", id as u64), favourite)
-            .when(!favourite, |d| {
+            .when(!favourite && !p.look.touch, |d| {
                 d.invisible().group_hover(ROW_GROUP, |s| s.visible())
             })
             .on_click(cx.listener(move |this, _, _, cx| {

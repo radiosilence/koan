@@ -1453,7 +1453,7 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
     slot.child(
         crate::components::Heart::new(look.id("heart", 0), favourite)
             .role(TypeRole::Fine)
-            .when(!favourite, |d| {
+            .when(!favourite && !look.p.look.touch, |d| {
                 // The row's own group, which `TableRow` names for every row.
                 d.invisible()
                     .group_hover(crate::components::ROW_GROUP, |s| s.visible())
