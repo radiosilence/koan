@@ -56,6 +56,8 @@ pub struct Transport {
     /// The library's favourites, for the playing track's heart, once the
     /// library has loaded.
     feed: Option<(Entity<crate::library::feed::Feed>, Subscription)>,
+    /// What the library acts through, for Now Playing's menu of the track.
+    lib: Option<crate::library::Lib>,
     /// The bar's width as last laid out, which decides what of the trailing
     /// group it has room for.
     width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
@@ -81,6 +83,11 @@ pub struct Transport {
     mini_glide: crate::components::Glide,
     /// How far Now Playing has been pulled down by a finger, while it is.
     pull: Option<Pixels>,
+    /// A pull let go: where, when, and whether it closes Now Playing (held
+    /// there while the screen goes down) or eases back up.
+    released: Option<(Pixels, std::time::Instant, bool)>,
+    /// How far a finger has pushed the mini player up, while it does.
+    lift: Option<Pixels>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -242,6 +249,7 @@ impl Transport {
             menus: MenuSlot::default(),
             cover: CoverArt::Missing,
             feed: None,
+            lib: None,
             width: Default::default(),
             scale: 2.0,
             eq: None,
@@ -254,6 +262,8 @@ impl Transport {
             lyrics: None,
             mini_glide: crate::components::Glide::new(),
             pull: None,
+            released: None,
+            lift: None,
         };
         this.reload_eq(cx);
         this
@@ -394,6 +404,11 @@ impl Transport {
 
     /// The playing track's heart reads and toggles the library's
     /// favourites, and follows them as they change elsewhere.
+    /// The library, for Now Playing's menu of the playing track.
+    pub fn set_lib(&mut self, lib: crate::library::Lib) {
+        self.lib = Some(lib);
+    }
+
     pub fn set_feed(&mut self, feed: Entity<crate::library::feed::Feed>, cx: &mut Context<Self>) {
         let observed = cx.observe(&feed, |_, _, cx| cx.notify());
         self.feed = Some((feed, observed));
@@ -775,7 +790,8 @@ fn text_button(
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    let (base, color) = crate::components::hover_tint(label, p.muted, p.ink, window, cx);
+    let rest = if p.look.touch { p.ink } else { p.muted };
+    let (base, color) = crate::components::hover_tint(label, rest, p.ink, window, cx);
     let child = if p.look.icons {
         KoanIcon::new(icon)
             .points(TransportMetrics::trailing_icon(&p.look))

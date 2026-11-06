@@ -393,7 +393,17 @@ impl AlbumPage {
                 rest.push(super::format::duration(Some(total)));
             }
             if !rest.is_empty() {
-                details = details.child(format!(" · {}", rest.join(" · ")));
+                // A phone's narrow header gives the facts a line under the
+                // credit, as the iOS app's does.
+                details = if crate::mobile::phone() {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(details)
+                        .child(div().child(rest.join(" · ")))
+                } else {
+                    details.child(format!(" · {}", rest.join(" · ")))
+                };
             }
         }
         let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
@@ -553,7 +563,9 @@ impl Render for AlbumPage {
                 if crate::mobile::phone() {
                     let mut items = vec![self.header(p, grid, window, cx).into_any_element()];
                     items.extend((0..self.lines.len()).map(|i| self.line(p, i, lead_width, cx)));
-                    crate::components::ScrollArea::items("album-page", items).into_any_element()
+                    crate::components::ScrollArea::items("album-page", items)
+                        .under_bar()
+                        .into_any_element()
                 } else {
                     div()
                         .size_full()

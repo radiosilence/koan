@@ -11,7 +11,7 @@ use crate::components::{Form, FormSection, form_buttons, form_item, form_note, f
 
 /// A pane's page: the system's `Form`.
 pub fn page(id: &'static str, look: &Look, sections: Vec<AnyElement>) -> ScrollArea {
-    Form::new(id).sections(sections).build(look)
+    Form::new(id).sections(sections).build(look).under_bar()
 }
 
 /// A section: the system's `FormSection`.

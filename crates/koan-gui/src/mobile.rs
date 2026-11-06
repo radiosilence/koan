@@ -11,7 +11,7 @@ use koan_kit::app::*;
 
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
-    Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
+    Clear, KoanFrosted, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
 };
 use crate::library::{self, stage::LibraryStage};
 use crate::navigator::{Navigator, Route};
@@ -108,6 +108,13 @@ pub struct PhoneShell {
     /// How far a swipe from the edge has gone toward going back, while one is
     /// under way.
     back_swipe: Option<f32>,
+    /// A swipe let go: from how far it had gone, when, and whether it goes
+    /// back or returns. The rest of the way eases on.
+    settling: Option<(f32, std::time::Instant, bool)>,
+    /// Now Playing going back down, since when.
+    closing: Option<std::time::Instant>,
+    /// The tab and page last drawn, so a move forward is seen and slid in.
+    seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
@@ -203,6 +210,9 @@ impl PhoneShell {
             eq: None,
             info: None,
             back_swipe: None,
+            settling: None,
+            closing: None,
+            seen: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
@@ -229,7 +239,8 @@ impl PhoneShell {
                     }
                 },
             );
-            let results = cx.new(|cx| crate::library::shelf::ShelfPage::results(lib, window, cx));
+            let results = cx
+                .new(|cx| crate::library::shelf::ShelfPage::results(lib, window, cx).below_field());
             self.search = Some(SearchPage {
                 field,
                 results,
@@ -249,6 +260,7 @@ impl PhoneShell {
             .flex_col()
             .child(
                 div()
+                    .mt(crate::components::bar_inset(cx))
                     .px(p.space(crate::theme::Space::L))
                     .py(p.space(crate::theme::Space::M))
                     .child(
@@ -326,6 +338,7 @@ impl PhoneShell {
                     Route::Downloads,
                 )),
         )
+        .under_bar()
         .into_any_element()
     }
 
@@ -355,6 +368,7 @@ impl PhoneShell {
                         })
                 })),
         )
+        .under_bar()
         .into_any_element()
     }
 
@@ -380,6 +394,76 @@ impl PhoneShell {
             .clone()
     }
 
+    /// How far a swipe back stands, while one is under way or easing to
+    /// its end; going back once it reaches it.
+    fn swipe(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<f32> {
+        // A move forward within a tab is the swipe back run the other way:
+        // the new page comes in from the trailing edge over the one left.
+        let nav = self.nav.read(cx);
+        let now = (nav.tab(), nav.current());
+        if let Some(was) = self.seen
+            && was.0 == now.0
+            && was.1 != now.1
+            && nav.behind() == Some(was.1)
+            && self.back_swipe.is_none()
+            && self.settling.is_none()
+        {
+            self.settling = Some((1.0, std::time::Instant::now(), false));
+        }
+        self.seen = Some(now);
+        if let Some(progress) = self.back_swipe {
+            return Some(progress);
+        }
+        let (from, started, back) = self.settling?;
+        let t = started.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
+        let to = if back { 1.0 } else { 0.0 };
+        if t >= 1.0 {
+            self.settling = None;
+            if back {
+                self.back(cx);
+            } else if let Some(library) = &self.library {
+                library.update(cx, |library, _| library.drop_under());
+            }
+            return None;
+        }
+        window.request_animation_frame();
+        Some(from + (to - from) * crate::theme::Motion::quick_out(t))
+    }
+
+    /// The page under a swipe back: the library's made ahead and kept to be
+    /// the page, the shell's own drawn as they are.
+    fn under(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let full = || StyleRefinement::default().size_full();
+        if LibraryStage::draws(route) {
+            let view = self
+                .library
+                .as_ref()
+                .and_then(|library| library.update(cx, |l, cx| l.under(route, window, cx)));
+            return match view {
+                Some(view) => view.cached(full()).into_any_element(),
+                None => div().into_any_element(),
+            };
+        }
+        if route == Route::Downloads {
+            return match &self.downloads {
+                Some(page) => page.clone().cached(full()).into_any_element(),
+                None => div().into_any_element(),
+            };
+        }
+        self.stage(route, window, cx)
+    }
+
+    /// Back by the bar's button: the page slides away as a swipe back's
+    /// release does, and the move happens as it lands.
+    fn animate_back(&mut self, cx: &mut Context<Self>) {
+        if self.nav.read(cx).at_root() || self.settling.is_some() {
+            return;
+        }
+        self.back_swipe = None;
+        self.settling = Some((0.0, std::time::Instant::now(), true));
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.back() {
@@ -390,7 +474,7 @@ impl PhoneShell {
 
     fn stage(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let full = || StyleRefinement::default().size_full();
-        if route != Route::Downloads {
+        if self.nav.read(cx).current() != Route::Downloads {
             self.downloads = None;
         }
         match route {
@@ -437,6 +521,7 @@ impl PhoneShell {
                             })
                         })),
                 )
+                .under_bar()
                 .into_any_element()
             }
             Route::Eq => match &self.eq {
@@ -459,39 +544,50 @@ impl PhoneShell {
 
     /// The bar over the page: back while the tab has somewhere to go back
     /// to, and the name of a page that has no header of its own.
-    fn bar(&self, route: Route, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let nav = self.nav.read(cx);
-        // Named only where the page has no heading of its own: the queue,
-        // the listings and the records head themselves.
+    /// A page's bar, drawn with its page so that it comes and goes with it
+    /// as a page slides in or is swiped back: `root` when the page is its
+    /// tab's first, `live` for the page in front, whose controls are the
+    /// ones shown (the page under a swipe draws its name and back alone).
+    fn bar(&self, route: Route, root: bool, live: bool, cx: &mut Context<Self>) -> Toolbar {
+        // Named where the page has no heading of its own, or where its heading
+        // scrolls away with its rows.
         let title = match route {
+            Route::SearchTab => Some("search"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
             Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
+            // A browser's heading scrolls away with its rows: the bar keeps
+            // its name, as the iOS app's does.
+            Route::Albums => Some("albums"),
+            Route::Artists => Some("artists"),
+            Route::Tracks => Some("tracks"),
             _ => None,
         };
         // The page's own controls: the queue's, a library page's filter and
         // sort.
-        let controls = if route == Route::Queue {
+        let library_controls = self
+            .library
+            .as_ref()
+            .filter(|_| live)
+            .filter(|library| LibraryStage::draws(route) && library.read(cx).has_controls(cx))
+            .and_then(|library| library.read(cx).toolbar());
+        // A browser's filter field is its list's, scrolling away under its
+        // heading; the bar holds its buttons, as every page's.
+        let controls: Option<AnyView> = if !live {
+            None
+        } else if route == Route::Queue {
             Some(self.queue_controls.clone().into())
         } else {
-            self.library
-                .as_ref()
-                .filter(|_| LibraryStage::draws(route))
-                .and_then(|library| library.read(cx).toolbar())
+            library_controls
         };
-        // A tab's first page that heads itself, with no controls of its own,
-        // has nothing for a bar to say.
-        if nav.at_root() && title.is_none() && controls.is_none() {
-            return None;
-        }
-        let bar = Toolbar::new()
+        Toolbar::new()
             .flush()
-            .when(!nav.at_root(), |bar| {
+            .when(!root, |bar| {
                 bar.leading(
                     ToolbarButton::new("back", Icon::Back, "back")
-                        .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.animate_back(cx))),
                 )
             })
             .principal(
@@ -501,8 +597,7 @@ impl PhoneShell {
                     .items_center()
                     .children(title.map(ToolbarTitle::new)),
             )
-            .when_some(controls, |bar, controls: AnyView| bar.trailing(controls));
-        Some(bar.into_any_element())
+            .when_some(controls, |bar, controls: AnyView| bar.trailing(controls))
     }
 
     /// Settings' tab, on `tab`'s screen or its list of sections.
@@ -578,10 +673,13 @@ impl PhoneShell {
         });
         if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
             let feed = lib.feed.clone();
-            full.update(cx, |full, cx| full.set_feed(feed, cx));
+            full.update(cx, |full, cx| {
+                full.set_feed(feed, cx);
+                full.set_lib(lib);
+            });
         }
         let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
-            this.now_playing = None;
+            this.closing.get_or_insert_with(std::time::Instant::now);
             cx.notify();
         });
         // The title asks for the track's details, over the page Now Playing
@@ -593,6 +691,7 @@ impl PhoneShell {
             }
             cx.notify();
         });
+        self.closing = None;
         self.now_playing = Some((full, closed, info));
         cx.notify();
     }
@@ -617,20 +716,39 @@ impl PhoneShell {
 impl Render for PhoneShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        // Now Playing in place of the tabs, so the window's wash of the
-        // playing record runs behind it, as the iOS app's bleed does; the
-        // tabs keep their places under it.
-        if let Some((full, ..)) = &self.now_playing {
-            return div()
-                .key_context(crate::platform::actions::CONTEXT)
-                .relative()
-                .size_full()
-                .text_color(p.ink)
-                .child(full.clone().cached(StyleRefinement::default().size_full()))
-                .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
-                .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
-                .into_any_element();
+        // Now Playing over the page, on a wash of its own as the iOS app's
+        // bleed is, coming up from the foot and going back down to it.
+        if self
+            .closing
+            .is_some_and(|at| at.elapsed() >= crate::theme::Motion::SETTLE)
+        {
+            self.closing = None;
+            self.now_playing = None;
+        } else if self.closing.is_some() {
+            window.request_animation_frame();
         }
+        let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
+            let wash = cx.global::<crate::root::WindowWash>().0.clone();
+            div().absolute().inset_0().occlude().child(
+                crate::components::SlideUp::new(
+                    div()
+                        .relative()
+                        .size_full()
+                        .map(|d| match wash {
+                            Some(wash) => d.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .child(wash.cached(StyleRefinement::default().size_full())),
+                            ),
+                            None => d.bg(p.bg),
+                        })
+                        .child(full.clone().cached(StyleRefinement::default().size_full())),
+                )
+                .leaving(self.closing.is_some()),
+            )
+        });
+        let swipe = self.swipe(window, cx);
         let route = self.nav.read(cx).current();
         let stage = self.stage(route, window, cx);
         let wanted = self
@@ -650,49 +768,123 @@ impl Render for PhoneShell {
             .global::<crate::library::activity::ActivityHandle>()
             .0
             .clone();
-        // The page clears the status bar and the notch; the foot's surface
-        // runs on under the home indicator, as the iOS app's bar does.
+        // The page fills the screen, top to foot. Over it, frosted: at the
+        // top the status bar, the bar and the notices under it; at the foot
+        // the mini player, the tabs and the home indicator. Each measures
+        // itself into the room pages leave for it (`bar_inset`,
+        // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
-        let swiped = self
-            .back_swipe
-            .map(|progress| window.viewport_size().width * progress);
+        let width = window.viewport_size().width - insets.left - insets.right;
+        // The page a swipe back uncovers, drawn under the one going, a third
+        // of its way behind and dimmed as UIKit's navigation does.
+        let under = swipe.and_then(|progress| {
+            let nav = self.nav.read(cx);
+            let behind = nav.behind()?;
+            let behind_root = nav.history_ix() == 1;
+            let bar = self.bar(behind, behind_root, false, cx);
+            let page = self.under(behind, window, cx);
+            Some((progress, under_bar(bar, page, None, false, insets.top, &p)))
+        });
+        let stage = {
+            let root = self.nav.read(cx).at_root();
+            // What is wrong with the server and the output still opening
+            // hang under the page in front's bar.
+            let notices = div()
+                .child(self.banner.clone())
+                .child(self.output_wait.clone());
+            under_bar(
+                self.bar(route, root, true, cx),
+                stage,
+                Some(notices),
+                true,
+                insets.top,
+                &p,
+            )
+        };
         div()
             .key_context(crate::platform::actions::CONTEXT)
             // The swipe from the edge: the page follows the finger, and goes
             // back only once the platform says the swipe went far enough.
             .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, _, cx| {
+                // Now Playing covers the page: the page underneath stays put.
+                if this.now_playing.is_some() {
+                    return;
+                }
+                let now = std::time::Instant::now();
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
+                        this.settling = None;
                         this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
                     }
                     BackGesturePhase::Committed => {
-                        this.back_swipe = None;
-                        this.back(cx);
+                        if let Some(from) = this.back_swipe.take() {
+                            this.settling = Some((from, now, true));
+                        }
                     }
-                    BackGesturePhase::Cancelled => this.back_swipe = None,
+                    BackGesturePhase::Cancelled => {
+                        if let Some(from) = this.back_swipe.take() {
+                            this.settling = Some((from, now, false));
+                        }
+                    }
                 }
                 cx.notify();
             }))
             .relative()
             .size_full()
-            .flex()
-            .flex_col()
             .text_color(p.ink)
-            .pt(insets.top)
             .pl(insets.left)
             .pr(insets.right)
-            .children(self.bar(route, cx))
-            .child(self.banner.clone())
-            .child(self.output_wait.clone())
             .child(
                 div()
                     .id("stage")
                     .role(a11y::Role::Main)
                     .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .when_some(swiped, |stage, by| stage.left(by))
-                    .child(stage)
+                    .size_full()
+                    .map(|d| match under {
+                        None => d.child(stage),
+                        // The pages are drawn over the window's wash, which
+                        // stays put: the page going sits over the uncovered
+                        // strip alone, a third of its way behind and dimmed
+                        // as UIKit's navigation does, so the two never
+                        // overlap and neither needs a ground of its own.
+                        Some((progress, under)) => d
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .left_0()
+                                    .w(width * progress)
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .bottom_0()
+                                            .w(width)
+                                            .left(-width * 0.3 * (1.0 - progress))
+                                            .child(under),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .bg(p.look.veil(0.25 * (1.0 - progress))),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(width)
+                                    .left(width * progress)
+                                    .overflow_hidden()
+                                    .border_l(p.look.hairline)
+                                    .border_color(p.rule)
+                                    .child(stage),
+                            ),
+                    })
                     // What the library is busy with, floating over the foot of
                     // every page while anything runs, as the iOS app has it:
                     // the sidebar foot that holds it on the desktop is gone.
@@ -701,22 +893,34 @@ impl Render for PhoneShell {
                             .absolute()
                             .left(p.space(crate::theme::Space::M))
                             .right(p.space(crate::theme::Space::M))
-                            .bottom(p.space(crate::theme::Space::S))
-                            .px(p.space(crate::theme::Space::S))
-                            .py(p.space(crate::theme::Space::Xs))
-                            .bg(p.look.palette.surface.hsla())
-                            .border(p.look.hairline)
-                            .border_color(p.rule)
-                            .child(activity.clone())
+                            .bottom(
+                                crate::components::foot_inset(cx) + p.space(crate::theme::Space::S),
+                            )
+                            .child(crate::components::Rise::in_place(
+                                div()
+                                    .px(p.space(crate::theme::Space::S))
+                                    .py(p.space(crate::theme::Space::Xs))
+                                    .bg(p.look.palette.surface.hsla())
+                                    .border(p.look.hairline)
+                                    .border_color(p.rule)
+                                    .child(activity.clone()),
+                            ))
                     })),
             )
-            // The foot: the mini player over the tabs on one surface, each
-            // under a rule, as the iOS app's bar.
+            // The foot over the page: the mini player, its playhead along the
+            // foot's edge, over the tabs under a rule; frosted as the iOS
+            // app's bar and running on under the home indicator.
             .child(
                 div()
-                    .flex_shrink_0()
-                    .bg(p.look.palette.surface.hsla())
+                    .id("phone-foot")
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .occlude()
+                    .frosted(&p.look)
                     .pb(insets.bottom)
+                    .child(crate::components::foot_probe())
                     .child(
                         self.transport.clone().cached(
                             StyleRefinement::default()
@@ -732,6 +936,25 @@ impl Render for PhoneShell {
                             .child(self.tabs(cx)),
                     ),
             )
+            // A tap on the status bar takes the page back to its top, as on
+            // iOS.
+            .child(
+                div()
+                    .id("status-bar-tap")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(insets.top)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav.update(cx, |nav, cx| {
+                            let route = nav.current();
+                            nav.choose(route);
+                            cx.notify();
+                        });
+                    })),
+            )
+            .children(now_playing)
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
@@ -742,4 +965,40 @@ impl Render for PhoneShell {
             )
             .into_any_element()
     }
+}
+
+/// A page under its bar, the two moving as one: the page fills the screen
+/// and scrolls under the bar, which is frosted and reaches up under the
+/// status bar (`status`). `notices` hang under the bar, frosted with it. The
+/// page leaves the room they take at its top (`bar_inset`), so at rest
+/// nothing is under them; the page in front (`live`) measures it.
+fn under_bar(
+    bar: Toolbar,
+    page: AnyElement,
+    notices: Option<Div>,
+    live: bool,
+    status: Pixels,
+    p: &Paint,
+) -> AnyElement {
+    div()
+        .relative()
+        .size_full()
+        .child(page)
+        .child(
+            div()
+                .id("phone-bar")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .flex()
+                .flex_col()
+                .occlude()
+                .frosted(&p.look)
+                .pt(status)
+                .when(live, |d| d.child(crate::components::bar_probe()))
+                .child(bar)
+                .children(notices),
+        )
+        .into_any_element()
 }

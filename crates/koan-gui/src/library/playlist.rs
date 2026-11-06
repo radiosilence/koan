@@ -41,16 +41,19 @@ struct Laid {
     items: Vec<QueueItem>,
     rows: Vec<Row>,
     disc_records: HashSet<i64>,
+    longest: usize,
 }
 
 fn lay_out(entries: Vec<PlaylistEntry>, grouped: bool) -> Laid {
     let items: Vec<QueueItem> = entries.into_iter().map(listed).collect();
     let rows = rows::build(&items, grouped);
     let disc_records = rows::disc_records(&items);
+    let longest = rows::longest(&items);
     Laid {
         items,
         rows,
         disc_records,
+        longest,
     }
 }
 
@@ -93,6 +96,7 @@ pub struct PlaylistPage {
     items: Vec<QueueItem>,
     rows: Vec<Row>,
     disc_records: HashSet<i64>,
+    longest: usize,
     /// Up to four records, whose sleeves make the header's.
     faces: Vec<i64>,
     list: RowListState,
@@ -164,8 +168,14 @@ impl PlaylistPage {
             items: Vec::new(),
             rows: Vec::new(),
             disc_records: HashSet::new(),
+            longest: 4,
             faces: Vec::new(),
-            list: RowListState::new(),
+            // On a phone the header scrolls away with the rows.
+            list: {
+                let list = RowListState::new();
+                list.set_lead(crate::mobile::phone(), 0, RowKind::Text);
+                list
+            },
             selected: HashSet::new(),
             anchor: None,
             drop_at: None,
@@ -232,6 +242,7 @@ impl PlaylistPage {
         self.items = laid.items;
         self.rows = laid.rows;
         self.disc_records = laid.disc_records;
+        self.longest = laid.longest;
         let present: HashSet<&str> = self
             .items
             .iter()
@@ -368,6 +379,7 @@ impl PlaylistPage {
             rows: rows::build(&self.items, grouped),
             items: std::mem::take(&mut self.items),
             disc_records: std::mem::take(&mut self.disc_records),
+            longest: self.longest,
         };
         self.set_laid(laid);
         cx.notify();
@@ -1007,6 +1019,7 @@ impl PlaylistPage {
                     row: &id,
                     picked: selected,
                     waiting: false,
+                    pick: None,
                 };
                 let frame = queue_rows::heading(
                     TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
@@ -1027,6 +1040,7 @@ impl PlaylistPage {
                     row: &id,
                     picked: selected,
                     waiting: false,
+                    pick: None,
                 };
                 let playing =
                     base.playlist_entry_id.is_some() && base.playlist_entry_id == self.playing;
@@ -1048,6 +1062,7 @@ impl PlaylistPage {
                         .album_id
                         .is_some_and(|a| self.disc_records.contains(&a)),
                     wide: !self.disc_records.is_empty(),
+                    longest: self.longest,
                 };
                 let frame = queue_rows::track(
                     TableRow::new(ElementId::Name(id.clone()), kind),
@@ -1251,7 +1266,9 @@ impl Render for PlaylistPage {
         let count = self.rows.len();
         let fillable = self.fillable();
         let view = cx.entity();
-        let header = self.header(&p, window, cx);
+        // On a phone the header scrolls away with the rows, as the queue's.
+        let phone = crate::mobile::phone() && count > 0;
+        let header = (!phone).then(|| self.header(&p, window, cx));
         let body = if count == 0 {
             EmptyState::new(Icon::Playlist, "nothing in this playlist")
                 .detail(if fillable {
@@ -1262,8 +1279,19 @@ impl Render for PlaylistPage {
                 .into_any_element()
         } else {
             let rows_view = view.clone();
+            let head = view.clone();
             RowList::new(&self.list, move |row, window, cx| {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
+            })
+            .when(phone, |list| {
+                list.under_bar().lead(move |window, cx| {
+                    let look = crate::theme::Look::of(window, cx);
+                    head.update(cx, |this, cx| {
+                        let p = Paint::of(window, cx);
+                        let header = this.header(&p, window, cx);
+                        crate::components::page_head(header, &look).into_any_element()
+                    })
+                })
             })
             .named(self.name())
             .into_any_element()
@@ -1334,7 +1362,13 @@ impl Render for PlaylistPage {
                 this.menu_row = None;
             }
         }))
-        .child(Page::new(header).body(body))
+        .child(
+            match header {
+                Some(header) => Page::new(header),
+                None => Page::bare(),
+            }
+            .body(body),
+        )
         .koan_context_menu_at("playlist-menu", Some(self.spot.clone()), window, cx, {
             let view = view.clone();
             move |menu, window, cx| row_menu(menu, &view, window, cx)

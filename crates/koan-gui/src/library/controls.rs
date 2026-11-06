@@ -63,6 +63,11 @@ impl ControlsSlot {
         cx.notify();
     }
 
+    /// Whether a page's controls are in the slot.
+    pub fn shows(&self) -> bool {
+        self.build.is_some()
+    }
+
     /// A page with no controls of its own.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         if self.build.take().is_some() {
@@ -78,6 +83,13 @@ impl Render for ControlsSlot {
         let controls = self.build.clone().map(|build| build(window, cx));
         // `min_w_0`, so a filter field among the controls can give up its
         // width in a narrow toolbar (koan-kit's `ToolbarGroup`).
-        div().flex().items_center().min_w_0().children(controls)
+        div()
+            .flex()
+            .items_center()
+            .min_w_0()
+            // A phone gives the controls a row of their own, the filter
+            // field taking what the buttons leave.
+            .when(crate::mobile::phone(), |d| d.flex_1())
+            .children(controls)
     }
 }

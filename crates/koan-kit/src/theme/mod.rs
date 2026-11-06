@@ -122,8 +122,8 @@ impl Default for KoanTheme {
 }
 
 const FACES: [&[u8]; 3] = [
+    include_bytes!("../../assets/fonts/GeistMono-Thin.ttf"),
     include_bytes!("../../assets/fonts/GeistMono-ExtraLight.ttf"),
-    include_bytes!("../../assets/fonts/GeistMono-Light.ttf"),
     include_bytes!("../../assets/fonts/GeistMono-Regular.ttf"),
 ];
 

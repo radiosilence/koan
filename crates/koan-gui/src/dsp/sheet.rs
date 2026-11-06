@@ -100,7 +100,7 @@ impl Sheets {
                     confirm_body(c, this.clone(), &look).into_any_element(),
                 ),
             };
-            scrim(("dsp-sheet", depth), &look)
+            scrim(("dsp-sheet", depth), &look, window)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(Rise::new(panel(name, &look).child(body)))
         });

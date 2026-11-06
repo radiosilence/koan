@@ -126,6 +126,7 @@ pub struct FormRow {
     value: Option<SharedString>,
     control: Option<AnyElement>,
     compact: bool,
+    stacked: bool,
 }
 
 impl FormRow {
@@ -149,7 +150,16 @@ impl FormRow {
             value: None,
             control: None,
             compact: false,
+            stacked: false,
         }
+    }
+
+    /// A control that wants the row's width, a slider or a text field: on a
+    /// phone it goes under the label, across the whole row, rather than
+    /// squeezed beside it.
+    pub fn stacked(mut self) -> Self {
+        self.stacked = true;
+        self
     }
 
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
@@ -166,6 +176,9 @@ impl FormRow {
 impl RenderOnce for FormRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        if look.touch {
+            return self.touch(&look).into_any_element();
+        }
         div()
             .flex()
             .items_center()
@@ -186,20 +199,68 @@ impl RenderOnce for FormRow {
                     .min_w_0()
                     .items_center()
                     .gap(look.space(Space::L))
-                    .children(self.value.map(|value| {
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_role(TypeRole::Control, &look)
-                            .text_color(look.palette.muted.hsla())
-                            .child(value)
-                    }))
+                    .children(self.value.map(|value| value_text(value, &look)))
                     .children(
                         self.control
                             .map(|control| super::field::labelled(self.label.clone(), control)),
                     ),
             )
+            .into_any_element()
     }
+}
+
+impl FormRow {
+    /// A phone's row, as its Settings lays one out: the label wrapping at the
+    /// leading edge and what the row holds on the trailing margin, every row's
+    /// control on the same edge. What does not fit beside the label moves under
+    /// it, still on that edge; a stacked row's control takes the row's width.
+    fn touch(self, look: &Look) -> Div {
+        let label = div()
+            .min_w_0()
+            .text_role(TypeRole::Body, look)
+            .text_color(look.palette.ink.hsla())
+            .child(self.label.clone());
+        let held = div()
+            .flex()
+            .min_w_0()
+            .max_w_full()
+            .items_center()
+            .gap(look.space(Space::M))
+            .children(self.value.map(|value| value_text(value, look)))
+            .children(
+                self.control
+                    .map(|control| super::field::labelled(self.label.clone(), control)),
+            );
+        if self.stacked {
+            return div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::S))
+                .py(look.space(Space::Xs))
+                .child(label.w_full())
+                .child(held.w_full().min_h(look.target()));
+        }
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(look.space(Space::M))
+            .gap_y(look.space(Space::S))
+            .min_h(look.spaced(ROW).max(look.target()))
+            .child(label.flex_grow(1.).max_w_full())
+            .child(held.justify_end().ml_auto())
+    }
+}
+
+/// A row's value: `control`, `muted`, cut short with an ellipsis rather than
+/// pushing past the row's end.
+fn value_text(value: SharedString, look: &Look) -> Div {
+    div()
+        .min_w_0()
+        .truncate()
+        .text_role(TypeRole::Control, look)
+        .text_color(look.palette.muted.hsla())
+        .child(value)
 }
 
 /// A section's heading: `fine`, `ink`, lowercase, with 16 points above.

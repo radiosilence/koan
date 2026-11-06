@@ -129,6 +129,12 @@ impl Navigator {
         self.history[self.cursor]
     }
 
+    /// The route a step back would show: what a phone's swipe back draws
+    /// under the page as it goes.
+    pub fn behind(&self) -> Option<Route> {
+        self.cursor.checked_sub(1).map(|ix| self.history[ix])
+    }
+
     pub fn can_go_back(&self) -> bool {
         self.cursor > 0
     }
@@ -170,6 +176,11 @@ impl Navigator {
 
     /// Whether the page showing is its tab's first, which a phone's back
     /// gesture cannot leave.
+    /// How far into its tab's history the page showing is: 0 at the root.
+    pub fn history_ix(&self) -> usize {
+        self.cursor
+    }
+
     pub fn at_root(&self) -> bool {
         self.cursor == 0
     }

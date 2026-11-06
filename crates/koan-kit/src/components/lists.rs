@@ -9,8 +9,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    Div, ElementId, EntityId, InteractiveElement, IntoElement, Pixels, Point, SharedString,
-    Stateful, Styled, canvas, div, px,
+    App, Div, ElementId, EntityId, InteractiveElement, IntoElement, ParentElement, Pixels, Point,
+    SharedString, Stateful, Styled, canvas, div, px,
 };
 
 pub use gpui::{
@@ -97,6 +97,49 @@ pub fn offset_down(y: Pixels) -> Point<Pixels> {
 /// An element filling its parent that keeps the parent's width in `width`,
 /// and redraws `owner` when it changes: a page laying out a grid or a list
 /// by the width it is given.
+/// How a uniform list of rows `row` high leaves a phone's foot room at its
+/// end: the blank rows it adds after its last, and how far it reaches below
+/// its parent's bottom, which clips it, so the blank rows come to exactly
+/// the foot's height. Room left as padding would not do: a uniform list
+/// draws rows only inside its padding, and nothing would pass under the
+/// foot. Zero on the desktop.
+pub fn rows_under_foot(row: Pixels, cx: &App) -> (usize, Pixels) {
+    let foot = super::foot_inset(cx);
+    if foot <= Pixels::ZERO || row <= Pixels::ZERO {
+        return (0, Pixels::ZERO);
+    }
+    let rows = (foot / row).ceil() as usize;
+    (rows, row * rows as f32 - foot)
+}
+
+/// A page's header over a virtual list that scrolls it away with the rows:
+/// drawn at the list's scroll `offset` over the room the list leaves above
+/// its first row, which is `height` once measured (`owner` is told).
+pub fn scrolls_away(
+    header: impl IntoElement,
+    offset: Pixels,
+    height: Rc<Cell<Option<Pixels>>>,
+    owner: EntityId,
+) -> impl IntoElement {
+    let probe = canvas(
+        move |bounds, _, cx| {
+            if height.get() != Some(bounds.size.height) {
+                height.set(Some(bounds.size.height));
+                cx.notify(owner);
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full();
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top(offset)
+        .child(div().relative().child(probe).child(header))
+}
+
 pub fn width_probe(width: Rc<Cell<Option<Pixels>>>, owner: EntityId) -> impl IntoElement {
     canvas(
         move |bounds, _, cx| {

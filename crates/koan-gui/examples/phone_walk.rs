@@ -1,14 +1,16 @@
 //! Walks the phone shell headlessly at an iPhone's size, under touch, and
 //! saves a PNG of each page, dark and light: the tabs' first pages, the
-//! library's pages, a record, an artist, a playlist, a Settings section and
-//! Now Playing. Nothing is shown and nothing on the screen is read: GPUI's
+//! library's pages, a record, an artist, a playlist, each Settings section and
+//! Now Playing, and each page again scrolled part way, its rows under the
+//! bar, and to its end, its last row clear of the foot. Nothing is shown and nothing on the screen is read: GPUI's
 //! headless renderer draws it, as `walk` does for the desktop shell.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
 //! `KOAN_CONFIG_DIR`, whose library folders it scans first.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example phone_walk -- target/phone-walk
-//! `KOAN_WALK_PAGES=library,now-playing` walks only those.
+//! `KOAN_WALK_PAGES=library,now-playing` walks only those, and
+//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini.
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -17,14 +19,25 @@ use std::time::Duration;
 use koan_gui::mobile::PhoneShell;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, theme};
-use koan_kit::app::{AppContext, Entity};
+use koan_kit::app::{AppContext, Entity, Modifiers, ScrollEvent};
 use koan_runtime::KoanEngine;
-// GPUI's start-up and headless rendering, which only the app's entry and
-// tools reach.
-use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, px, size};
+// GPUI's start-up, headless rendering and synthetic input, which only the
+// app's entry and tools reach.
+use koan_kit::raw::{
+    AnyWindowHandle, HeadlessAppContext, PlatformInput, ScrollDelta, ScrollSource, TouchPhase,
+    point, px, size,
+};
 
 /// An iPhone 17 Pro, in points.
 const WIDTH: f32 = 402.0;
+
+/// The width walked: an iPhone 17 Pro's, or `KOAN_WALK_WIDTH`'s.
+fn width() -> f32 {
+    std::env::var("KOAN_WALK_WIDTH")
+        .ok()
+        .and_then(|w| w.parse().ok())
+        .unwrap_or(WIDTH)
+}
 const HEIGHT: f32 = 874.0;
 
 enum Step {
@@ -69,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut shell = None;
-    let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
+    let window = cx.open_window(size(px(width()), px(HEIGHT)), |window, cx| {
         let made = cx.new(|cx| PhoneShell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
@@ -87,6 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         {
             continue;
         }
+        let page = matches!(step, Step::Page(_));
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
@@ -103,6 +117,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if dark { "dark" } else { "light" }
             ));
             cx.capture_screenshot(window)?.save(&file)?;
+        }
+        if page {
+            scroll(&mut cx, window, SCROLLED)?;
+            settle(&mut cx, window)?;
+            let file = out.join(format!("phone-{name}-scrolled.png"));
+            cx.capture_screenshot(window)?.save(&file)?;
+            scroll(&mut cx, window, -SCROLLED)?;
+            // The far end, its last row clear of the foot.
+            scroll(&mut cx, window, TO_END)?;
+            settle(&mut cx, window)?;
+            let file = out.join(format!("phone-{name}-end.png"));
+            cx.capture_screenshot(window)?.save(&file)?;
+            scroll(&mut cx, window, -TO_END)?;
         }
     }
     println!("PNGs in {}", out.display());
@@ -129,11 +156,26 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("playlists", Route::Playlists),
         page("search", Route::SearchTab),
         page("settings", Route::Settings),
-        page(
-            "settings-playback",
-            Route::SettingsSection(koan_gui::settings::Tab::Playback),
-        ),
     ];
+    // Each Settings section a phone offers; those that need a signed-in
+    // server show what they show without one.
+    {
+        use koan_gui::settings::Tab;
+        for (name, tab) in [
+            ("server", Tab::Server),
+            ("account", Tab::Account),
+            ("people", Tab::People),
+            ("playback", Tab::Playback),
+            ("devices", Tab::Devices),
+            ("integrations", Tab::Integrations),
+            ("appearance", Tab::Appearance),
+        ] {
+            steps.push(page(
+                &format!("settings-{name}"),
+                Route::SettingsSection(tab),
+            ));
+        }
+    }
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
         block_on(engine.clone().pause())?;
@@ -148,6 +190,35 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
     Ok(steps)
+}
+
+/// How far a page is scrolled for its second picture: its first rows under
+/// the bar.
+const SCROLLED: f32 = 160.0;
+
+/// Further than any page runs, for its picture at the end.
+const TO_END: f32 = 1_000_000.0;
+
+/// Scrolls what is at the screen's middle down by `by` points, as a drag
+/// would.
+fn scroll(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    by: f32,
+) -> Result<(), Box<dyn Error>> {
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::Scroll(ScrollEvent {
+                position: point(px(width() / 2.), px(HEIGHT / 2.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-by))),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
+            }),
+            cx,
+        );
+    })?;
+    Ok(())
 }
 
 /// Lets what arrives from the background land: rows, covers, the accent.

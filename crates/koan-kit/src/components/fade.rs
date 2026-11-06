@@ -13,6 +13,7 @@
 //! holds, in a column as wide as the column, so the element lays out exactly
 //! as it would unwrapped.
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::layer::{AnimatedLayer, standing};
@@ -58,6 +59,7 @@ fn arrival(id: ElementId, reveal: bool, window: &mut Window, cx: &mut App) -> An
 pub struct FadeIn {
     id: ElementId,
     child: AnyElement,
+    fill: bool,
 }
 
 impl FadeIn {
@@ -66,25 +68,41 @@ impl FadeIn {
         Self {
             id: id.into(),
             child: child.into_any_element(),
+            fill: false,
         }
+    }
+
+    /// As large as what holds it, for content that fills its parent (a
+    /// pane, a centred sleeve) rather than sizing to itself.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
     }
 }
 
 impl RenderOnce for FadeIn {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let fill = self.fill;
+        let child = if fill {
+            div().size_full().child(self.child).into_any_element()
+        } else {
+            self.child
+        };
         if !KoanTheme::motion_allowed(cx) {
-            return self.child;
+            return child;
         }
         if SHADED {
             let animated = arrival(self.id, false, window, cx);
             return div()
                 .flex_none()
-                .child(AnimatedLayer::new(&animated, self.child))
+                .when(fill, |d| d.size_full())
+                .child(AnimatedLayer::new(&animated, child))
                 .into_any_element();
         }
         div()
             .flex_none()
-            .child(self.child)
+            .when(fill, |d| d.size_full())
+            .child(child)
             .with_animation(
                 self.id,
                 Animation::new(Motion::NORMAL).with_easing(Motion::quick_out),

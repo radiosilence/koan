@@ -120,7 +120,11 @@ pub fn menu(
                 .bg(look.palette.surface.hsla())
                 .text_color(look.palette.ink.hsla()),
             Trigger::Word => d
-                .text_color(look.text_color(Tone::Muted))
+                .text_color(if look.touch {
+                    look.palette.ink.hsla()
+                } else {
+                    look.text_color(Tone::Muted)
+                })
                 .hover(|d| d.text_color(look.palette.ink.hsla())),
         })
         .on_hover({
@@ -128,7 +132,9 @@ pub fn menu(
             move |hovered, _, cx| over.update(cx, |o, _| *o = *hovered)
         })
         .on_click(toggle)
-        .child(div().whitespace_nowrap().child(shown.into()))
+        // Narrower than what is chosen, it cuts it short inside its box.
+        .min_w_0()
+        .child(div().min_w_0().truncate().child(shown.into()))
         .when(trigger == Trigger::Field, |d| {
             d.child(
                 KoanIcon::new(Icon::Choose)
@@ -224,6 +230,7 @@ pub fn menu(
     });
     div()
         .relative()
+        .when(look.touch, |d| d.min_w_0())
         .child(control)
         .children(panel)
         .into_any_element()

@@ -1018,7 +1018,8 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                     anchored()
                         .position(at)
                         .snap_to_window_with_margin(px(8.))
-                        .child(menu),
+                        // Fading in a step below where it lands, on the GPU.
+                        .child(super::Rise::in_place(menu)),
                 )
                 .with_priority(1),
             );

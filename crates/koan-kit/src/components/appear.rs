@@ -86,12 +86,24 @@ impl RenderOnce for Veil {
 #[derive(IntoElement)]
 pub struct Rise {
     child: AnyElement,
+    in_place: bool,
 }
 
 impl Rise {
+    /// On a phone, where the scrim stands the panel on the window's foot,
+    /// it comes up from below the window instead, as an iOS sheet does.
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
+            in_place: false,
+        }
+    }
+
+    /// The small rise on every platform: a panel hung near the top.
+    pub fn in_place(child: impl IntoElement) -> Self {
+        Self {
+            child: child.into_any_element(),
+            in_place: true,
         }
     }
 }
@@ -101,6 +113,9 @@ impl RenderOnce for Rise {
         if !moves(cx) {
             return self.child;
         }
+        if Look::of(window, cx).touch && !self.in_place {
+            return SlideUp::new(self.child).into_any_element();
+        }
         let step = Look::of(window, cx).space(Space::S);
         let device = f32::from(step) * window.scale_factor();
         // Composed over a step more than the panel, so its foot is not cut
@@ -108,6 +123,59 @@ impl RenderOnce for Rise {
         AnimatedLayer::new(&entrance("rise", device, window, cx), self.child)
             .room_below(step)
             .into_any_element()
+    }
+}
+
+/// A screen coming up from the foot of the window, as a phone's full-screen
+/// player does from its mini player: the whole height, easing out, on the
+/// GPU. Opaque throughout; Reduce Motion shows it at once.
+#[derive(IntoElement)]
+pub struct SlideUp {
+    child: AnyElement,
+    leaving: bool,
+}
+
+impl SlideUp {
+    pub fn new(child: impl IntoElement) -> Self {
+        Self {
+            child: child.into_any_element(),
+            leaving: false,
+        }
+    }
+
+    /// Going back down, over `Motion::SETTLE`; the owner lets it go after.
+    pub fn leaving(mut self, leaving: bool) -> Self {
+        self.leaving = leaving;
+        self
+    }
+}
+
+impl RenderOnce for SlideUp {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if !moves(cx) {
+            return self.child;
+        }
+        let height = f32::from(window.viewport_size().height) * window.scale_factor();
+        let state = window.use_keyed_state("slide-up", cx, |_, _| {
+            let animated = Animated::new();
+            standing(&animated);
+            animated.segment(
+                2,
+                height,
+                0.0,
+                Animated::now(),
+                Motion::SETTLE * 2,
+                Ease::QuickOut,
+                Repeat::Once,
+            );
+            (animated, false)
+        });
+        let (animated, left) = state.read(cx).clone();
+        if self.leaving && !left {
+            animated.to(2, height, Motion::SETTLE, Ease::InOut);
+            state.update(cx, |state, _| state.1 = true);
+        }
+        AnimatedLayer::new(&animated, div().size_full().child(self.child)).into_any_element()
     }
 }
 

@@ -30,7 +30,8 @@ pub enum ButtonKind {
     Bordered,
     /// Underlined `muted` text: anything that goes somewhere.
     Link,
-    /// `muted` text in a bar, `ink` under the pointer.
+    /// `muted` text in a bar, `ink` under the pointer; `ink` at rest under
+    /// touch.
     Text,
     /// A transport glyph, no outline, a 44-point target.
     Icon,
@@ -242,6 +243,15 @@ impl RenderOnce for Button {
         // changes; fills are shader quads (`transition`). Both move on the
         // GPU.
         let color = match kind {
+            // Under touch nothing hovers: a text button in its default tone
+            // rests at the colour the pointer would bring it to.
+            ButtonKind::Text if look.touch => {
+                if tone == Tone::Muted {
+                    ink
+                } else {
+                    rest
+                }
+            }
             ButtonKind::Text => fade(child(&self.id, "hover"), hovered, rest, ink, window, cx),
             ButtonKind::Link => fade(
                 child(&self.id, "press"),

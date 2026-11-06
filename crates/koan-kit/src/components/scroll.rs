@@ -23,6 +23,8 @@ pub struct ScrollArea {
     reveal: Option<usize>,
     follow: Option<super::CursorSpot>,
     shrinks: bool,
+    under_bar: bool,
+    under_foot: bool,
 }
 
 enum Content {
@@ -39,6 +41,8 @@ impl ScrollArea {
             reveal: None,
             follow: None,
             shrinks: false,
+            under_bar: false,
+            under_foot: false,
         }
     }
 
@@ -51,6 +55,8 @@ impl ScrollArea {
             reveal: None,
             follow: None,
             shrinks: false,
+            under_bar: false,
+            under_foot: false,
         }
     }
 
@@ -60,6 +66,24 @@ impl ScrollArea {
     /// clipped by it.
     pub fn shrinks(mut self) -> Self {
         self.shrinks = true;
+        self
+    }
+
+    /// A page that scrolls under a phone's bar and its foot: its content
+    /// starts the bar's height down (`bar_inset`) and ends the foot's height
+    /// up from the end of the scroll (`foot_inset`), so at either end
+    /// nothing is under them, and passes under both as it scrolls. Not for a
+    /// sheet, a menu or a panel, which neither is ever over.
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
+        self.under_foot = true;
+        self
+    }
+
+    /// The body of a page whose header holds it clear of the bar: it passes
+    /// under the phone's foot alone (`foot_inset`).
+    pub fn under_foot(mut self) -> Self {
+        self.under_foot = true;
         self
     }
 
@@ -101,6 +125,20 @@ impl RenderOnce for ScrollArea {
         let typing = window
             .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
             .clone();
+        let under_bar = if self.under_bar {
+            super::bar_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
+        let under_foot = if self.under_foot {
+            super::foot_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
+        // The room for the bar and the foot is inside what scrolls, so the
+        // content passes under them rather than being clipped at their edges.
+        let spaced = under_bar > Pixels::ZERO || under_foot > Pixels::ZERO;
+        let spacer = |height: Pixels| (height > Pixels::ZERO).then(|| div().flex_none().h(height));
         let scrolled = div()
             .id(self.id)
             .size_full()
@@ -120,10 +158,13 @@ impl RenderOnce for ScrollArea {
                     }
                     followed.update(cx, |f, _| *f = moves);
                     let offset = handle.offset();
-                    let by = if at.top() < area.top() {
-                        area.top() - at.top()
-                    } else if at.bottom() > area.bottom() {
-                        area.bottom() - at.bottom()
+                    // Clear of the bar and the foot the content scrolls under.
+                    let top = area.top() + under_bar;
+                    let bottom = area.bottom() - under_foot;
+                    let by = if at.top() < top {
+                        top - at.top()
+                    } else if at.bottom() > bottom {
+                        bottom - at.bottom()
                     } else {
                         return;
                     };
@@ -196,17 +237,29 @@ impl RenderOnce for ScrollArea {
             .size_full()
             .when(self.shrinks, |d| d.flex_1().min_h_0().flex().flex_col())
             .child(match self.content {
-                Content::Column(column) => scrolled.child(*column),
+                Content::Column(column) if !spaced => scrolled.child(*column),
+                Content::Column(column) => scrolled
+                    .flex()
+                    .flex_col()
+                    .children(spacer(under_bar))
+                    .child(column.flex_none())
+                    .children(spacer(under_foot)),
                 // Each item at its own height: a column taller than the
                 // view scrolls, and no item (an empty spacer least of all)
                 // is shrunk to fit.
                 Content::Items(items) => scrolled
                     .flex()
                     .flex_col()
-                    .children(items.into_iter().map(|item| div().flex_none().child(item))),
+                    .children(spacer(under_bar))
+                    .children(items.into_iter().map(|item| div().flex_none().child(item)))
+                    .children(spacer(under_foot)),
             })
             .children(follow)
             .child(clear_of_keyboard)
-            .child(Scrollbar::vertical(&handle))
+            .child(
+                Scrollbar::vertical(&handle)
+                    .when(self.under_bar, Scrollbar::under_bar)
+                    .when(self.under_foot, Scrollbar::under_foot),
+            )
     }
 }

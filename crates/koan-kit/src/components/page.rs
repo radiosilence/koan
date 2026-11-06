@@ -528,7 +528,13 @@ impl RenderOnce for ShuffleButton {
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
                     .points(SHUFFLE_GLYPH * look.scale.size)
-                    .tone(crate::theme::Tone::Muted)
+                    .map(|i| {
+                        if look.touch && !disabled {
+                            i.color(ink)
+                        } else {
+                            i.tone(crate::theme::Tone::Muted)
+                        }
+                    })
                     .when(!disabled, |i| i.hover_color(group, ink)),
             )
             .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
@@ -572,23 +578,32 @@ impl Page {
 impl RenderOnce for Page {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let margin = RowMetrics::page_margin(&look);
+        // A header held above the body sits clear of a phone's bar; a bare
+        // page's body scrolls under it by its own lights.
+        let under_bar = match self.header {
+            Some(_) => super::bar_inset(cx),
+            None => Pixels::ZERO,
+        };
         div()
             .size_full()
             .flex()
             .flex_col()
+            .pt(under_bar)
             .text_role(TypeRole::Body, &look)
             .text_color(look.palette.ink.hsla())
-            .children(self.header.map(|header| {
-                div()
-                    .flex_none()
-                    .px(margin)
-                    .pt(RowMetrics::page_top(&look))
-                    .pb(RowMetrics::header_gap(&look))
-                    .child(header)
-            }))
+            .children(self.header.map(|header| head(header, &look).flex_none()))
             .child(div().relative().flex_1().min_h_0().children(self.body))
     }
+}
+
+/// A page's header at the page's margins: a `Page`'s own, or one a list
+/// scrolls with its rows (`RowList::lead`).
+pub fn head(header: PageHeader, look: &Look) -> Div {
+    div()
+        .px(RowMetrics::page_margin(look))
+        .pt(RowMetrics::page_top(look))
+        .pb(RowMetrics::header_gap(look))
+        .child(header)
 }
 
 #[cfg(test)]

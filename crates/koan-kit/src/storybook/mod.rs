@@ -14,6 +14,7 @@ mod playground;
 
 use std::sync::Arc;
 
+use crate::components::KoanFrosted;
 use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
@@ -1157,6 +1158,8 @@ impl StoryContent {
                         .badge(Badge::new("smart"))
                         .into_any_element(),
                     SectionHeading::new("Appears on").into_any_element(),
+                    SectionHeader::new("Frosted bar").into_any_element(),
+                    frosted_bar(look),
                 ]
             }
         }
@@ -1305,4 +1308,66 @@ fn sleeve_pixels() -> Vec<u8> {
         }
     }
     pixels
+}
+
+/// A phone's bar over a page that scrolls under it: colour fields scroll in
+/// a short box, and the bar laid over its top blurs and tints them. Scroll
+/// the box to see the frost; with less transparency asked for, the bar is
+/// opaque.
+fn frosted_bar(look: &Look) -> AnyElement {
+    const BAR: f32 = 48.0;
+    let fields = (0..12).map(|i| {
+        let hue = i as f32 / 12.0;
+        div()
+            .h(px(64.0))
+            .mx(px(16.0))
+            .mb(px(8.0))
+            .bg(linear_gradient(
+                135.,
+                linear_color_stop(hsla(hue, 0.75, 0.55, 1.0), 0.),
+                linear_color_stop(hsla((hue + 0.2) % 1.0, 0.75, 0.45, 1.0), 1.),
+            ))
+            .child(
+                div()
+                    .p(px(8.0))
+                    .text_color(hsla(0., 0., 1., 0.9))
+                    .child(format!("Record {:02}", i + 1)),
+            )
+    });
+    div()
+        .relative()
+        .w(px(360.0))
+        .h(px(280.0))
+        .overflow_hidden()
+        .border(look.hairline)
+        .border_color(look.palette.rule.hsla())
+        .child(
+            div()
+                .id("frost-demo-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .child(div().h(px(BAR + 8.0)))
+                .children(fields),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(BAR))
+                .frosted(look)
+                .child(
+                    Toolbar::new()
+                        .leading(ToolbarButton::new("frost-back", Icon::Back, "back"))
+                        .principal(
+                            div()
+                                .flex()
+                                .items_center()
+                                .child(ToolbarTitle::new("albums")),
+                        )
+                        .trailing(ToolbarButton::new("frost-sort", Icon::Sort, "sort")),
+                ),
+        )
+        .into_any_element()
 }

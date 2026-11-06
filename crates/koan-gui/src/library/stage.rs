@@ -2,6 +2,7 @@
 //! and a track's details over it.
 
 use koan_kit::app::*;
+use std::rc::Rc;
 
 use super::Lib;
 use super::albums::AlbumGrid;
@@ -11,7 +12,10 @@ pub struct LibraryStage {
     lib: Lib,
     /// The page on screen, built when the navigator arrives at it. Pages are
     /// rebuilt on each visit and put their scroll back from the navigator.
-    page: Option<(Page, AnyView)>,
+    page: Option<Made>,
+    /// The page a swipe back is uncovering, made as the swipe starts and
+    /// taken as the page once the swipe goes back, so it never draws blank.
+    under: Option<Made>,
     info: Option<(i64, Entity<super::info::TrackInfo>)>,
     /// The page's controls, for the window's toolbar.
     controls: Entity<super::controls::ControlsSlot>,
@@ -36,7 +40,8 @@ impl LibraryStage {
         let mut subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
             show_record(nav.read(cx).current(cx), cx);
             if !Self::draws(nav.read(cx).current(cx)) {
-                this.page = None;
+                // Kept for the shell's move to its own page to slide over.
+                this.under = this.page.take();
                 this.focus_on_arrival = false;
                 this.controls.update(cx, |c, cx| c.clear(cx));
             }
@@ -56,6 +61,7 @@ impl LibraryStage {
         Self {
             lib,
             page: None,
+            under: None,
             info: None,
             controls: cx.new(|_| super::controls::ControlsSlot::default()),
             page_focus: None,
@@ -76,7 +82,7 @@ impl LibraryStage {
     pub fn take_keyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.lib.nav.read(cx).current(cx);
         match (&self.page, &self.page_focus) {
-            (Some((page, _)), Some(focus)) if *page == current => {
+            (Some(made), Some(focus)) if made.page == current => {
                 self.focus_on_arrival = false;
                 window.focus(focus, cx);
             }
@@ -120,35 +126,87 @@ impl LibraryStage {
         Some(self.controls.clone().into())
     }
 
+    /// Whether the page showing has controls in the toolbar's slot.
+    pub fn has_controls(&self, cx: &App) -> bool {
+        self.controls.read(cx).shows()
+    }
+
+    /// The page a swipe back is uncovering, `page`, made now if it is not
+    /// already. Its controls reach the toolbar only once it is the page.
+    pub fn under(
+        &mut self,
+        page: Page,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyView> {
+        if self.under.as_ref().is_none_or(|made| made.page != page) {
+            self.under = self.make(page, window, cx);
+        }
+        self.under.as_ref().map(|made| made.view.clone())
+    }
+
+    /// The swipe let go short of going back: the page under it goes.
+    pub fn drop_under(&mut self) {
+        self.under = None;
+    }
+
     fn page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyView> {
         let current = self.lib.nav.read(cx).current(cx);
-        if let Some((page, view)) = &self.page
-            && *page == current
+        if let Some(made) = &self.page
+            && made.page == current
         {
-            return Some(view.clone());
+            return Some(made.view.clone());
         }
+        let made = match self.under.take() {
+            Some(made) if made.page == current => made,
+            _ => self.make(current, window, cx)?,
+        };
+        match &made.controls {
+            Some(show) => show(&self.controls, cx),
+            None => self.controls.update(cx, |s, cx| s.clear(cx)),
+        }
+        if std::mem::take(&mut self.focus_on_arrival) {
+            window.focus(&made.focus, cx);
+        }
+        self.page_focus = Some(made.focus.clone());
+        let view = made.view.clone();
+        // The page left stays made a moment, for a move to slide over it and
+        // a swipe back to find it.
+        self.under = self.page.replace(made);
+        Some(view)
+    }
+
+    /// `current`'s page, with where it takes the keyboard and how its
+    /// controls reach the toolbar.
+    fn make(&mut self, current: Page, window: &mut Window, cx: &mut Context<Self>) -> Option<Made> {
         let lib = self.lib.clone();
         let lib_browse = self.lib.browse.clone();
-        let slot = self.controls.clone();
         // Each page with where it takes the keyboard.
         fn held<T: Render + Focusable>(page: Entity<T>, cx: &App) -> (AnyView, FocusHandle) {
             let focus = page.focus_handle(cx);
             (page.into(), focus)
         }
+        let mut controls: Option<ShowControls> = None;
         let (view, focus): (AnyView, FocusHandle) = match current {
             Page::Albums => {
                 let page = cx.new(|cx| AlbumGrid::new(lib, window, cx));
                 let browse = lib_browse.clone();
-                slot.update(cx, |s, cx| {
-                    s.show_keyed(&page, AlbumGrid::controls, AlbumGrid::picking, &browse, cx)
-                });
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show_keyed(&shown, AlbumGrid::controls, AlbumGrid::picking, &browse, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::Artists => {
                 let page = cx.new(|cx| super::artists::ArtistBrowser::new(lib, window, cx));
-                slot.update(cx, |s, cx| {
-                    s.show(&page, super::artists::ArtistBrowser::controls, cx)
-                });
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show(&shown, super::artists::ArtistBrowser::controls, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::Album(id) => {
@@ -162,29 +220,38 @@ impl LibraryStage {
             Page::Tracks => {
                 let page = cx.new(|cx| super::tracks::TrackBrowser::new(lib, window, cx));
                 let browse = lib_browse.clone();
-                slot.update(cx, |s, cx| {
-                    s.show_keyed(
-                        &page,
-                        super::tracks::TrackBrowser::controls,
-                        super::tracks::TrackBrowser::picking,
-                        &browse,
-                        cx,
-                    )
-                });
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show_keyed(
+                            &shown,
+                            super::tracks::TrackBrowser::controls,
+                            super::tracks::TrackBrowser::picking,
+                            &browse,
+                            cx,
+                        )
+                    })
+                }));
                 held(page, cx)
             }
             Page::Playlist(id) => {
                 let page = cx.new(|cx| super::playlist::PlaylistPage::new(lib, id, window, cx));
-                slot.update(cx, |s, cx| {
-                    s.show(&page, super::playlist::PlaylistPage::controls, cx)
-                });
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show(&shown, super::playlist::PlaylistPage::controls, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::History => {
                 let page = cx.new(|cx| super::history::HistoryPage::new(lib, window, cx));
-                slot.update(cx, |s, cx| {
-                    s.show(&page, super::history::HistoryPage::controls, cx)
-                });
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show(&shown, super::history::HistoryPage::controls, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::Search => {
@@ -221,21 +288,24 @@ impl LibraryStage {
                 held(page, cx)
             }
         };
-        if super::shelf::shelf_of(current).is_some()
-            || matches!(
-                current,
-                Page::Album(_) | Page::Artist(_) | Page::Search | Page::Shelved(..)
-            )
-        {
-            slot.update(cx, |s, cx| s.clear(cx));
-        }
-        if std::mem::take(&mut self.focus_on_arrival) {
-            window.focus(&focus, cx);
-        }
-        self.page_focus = Some(focus);
-        self.page = Some((current, view.clone()));
-        Some(view)
+        Some(Made {
+            page: current,
+            view,
+            focus,
+            controls,
+        })
     }
+}
+
+/// Puts a page's controls in the toolbar's slot.
+type ShowControls = Rc<dyn Fn(&Entity<super::controls::ControlsSlot>, &mut App)>;
+
+/// A page made: the view, where it takes the keyboard, and its controls.
+struct Made {
+    page: Page,
+    view: AnyView,
+    focus: FocusHandle,
+    controls: Option<ShowControls>,
 }
 
 impl Render for LibraryStage {

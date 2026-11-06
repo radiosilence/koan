@@ -102,6 +102,12 @@ pub(crate) fn long_press(pressed: Pressed, lifted: Option<Lifted>) -> impl IntoE
                         // Claimed, and left to bubble: a draggable element under
                         // this one lifts its drag if the press then moves.
                         window.prevent_default();
+                        // The hold felt as it takes, as UIKit's context
+                        // menus answer.
+                        cx.perform_haptic(HapticFeedback::Medium);
+                        // The hold felt as it takes, as UIKit's context
+                        // menus answer.
+                        cx.perform_haptic(HapticFeedback::Medium);
                         pressed(event.start_position, window, cx);
                     }
                     (DispatchPhase::Bubble, TouchPhase::Moved) if cx.has_active_drag() => {

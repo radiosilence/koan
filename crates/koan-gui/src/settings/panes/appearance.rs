@@ -88,7 +88,7 @@ impl AppearancePane {
     }
 }
 
-/// The wash's sliders, each held while dragged and committed when let go.
+/// The wash's sliders, each shown as it is dragged and written when let go.
 #[derive(Clone, Copy)]
 enum Held {
     Tint,
@@ -146,6 +146,7 @@ fn held_row(which: Held, value: u32, entity: &Entity<AppearancePane>) -> AnyElem
     let (id, name, (low, high), max, step) = which.spec();
     let (moving, landing) = (entity.clone(), entity.clone());
     Row::new(which.label(value))
+        .stacked()
         .control(
             div().w_full().child(
                 Slider::new(id, value as f32 / max as f32)
@@ -159,6 +160,15 @@ fn held_row(which: Held, value: u32, entity: &Entity<AppearancePane>) -> AnyElem
                             let held = pane.held(which);
                             if *held != Some(to) {
                                 *held = Some(to);
+                                // The wash shows it as it is dragged; the
+                                // setting is written when let go.
+                                let theme = cx.global::<KoanTheme>();
+                                let (pace, turn) = (theme.wash_drift, theme.wash_turn);
+                                match which {
+                                    Held::Tint => KoanTheme::set_wash_tint(to, cx),
+                                    Held::Drift => KoanTheme::set_wash_drift(to, turn, cx),
+                                    Held::Turn => KoanTheme::set_wash_drift(pace, to, cx),
+                                }
                                 cx.notify();
                             }
                         })
@@ -207,6 +217,8 @@ impl Render for AppearancePane {
                     entity.update(cx, |pane, cx| {
                         if pane.text_size != Some(percent) {
                             pane.text_size = Some(percent);
+                            // Shown as it is dragged; written when let go.
+                            KoanTheme::set_text_size(percent, cx);
                             cx.notify();
                         }
                     })
@@ -227,6 +239,7 @@ impl Render for AppearancePane {
                 })
                 .into_any_element(),
             Row::new(format!("Text size {text_size}%"))
+                .stacked()
                 .control(div().w_full().child(size_slider))
                 .into_any_element(),
         ];
@@ -244,7 +257,8 @@ impl Render for AppearancePane {
                 })
                 .into_any_element(),
         ];
-        if record_colours {
+        // A phone's shell has no sidebar or toolbar ground to wash or not.
+        if record_colours && !crate::mobile::phone() {
             colour_rows.push(
                 Toggle::new("wash-window", "Wash the whole window", wash_window)
                     .on_change({
@@ -258,6 +272,8 @@ impl Render for AppearancePane {
                     })
                     .into_any_element(),
             );
+        }
+        if record_colours {
             // The tint, then how the wash moves while music plays.
             for (which, value) in [
                 (Held::Tint, wash_tint),

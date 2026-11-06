@@ -103,7 +103,32 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// panel hung near the top. The owner listens to it for a click outside the
 /// panel, which the panel stops. The dim fades in as it comes up; the owner
 /// draws its panel in a `Rise`.
-pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
+///
+/// On a phone the panel stands on the foot of the window instead, the
+/// width less a margin, clear of the home indicator and of the keyboard
+/// while it is up, as an iOS sheet does; its `Rise` brings it up from there.
+pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
+    if !look.touch {
+        return scrim_top(id, look);
+    }
+    let insets = super::system_insets(super::Clear::Keyboard, window);
+    div()
+        .id(id.into())
+        .absolute()
+        .inset_0()
+        .flex()
+        .justify_center()
+        .items_end()
+        .px(look.space(Space::S))
+        .pt(insets.top + look.space(Space::L))
+        .pb(insets.bottom + look.space(Space::S))
+        .occlude()
+        .child(Veil::new(look.veil(0.6)))
+}
+
+/// A scrim with the panel hung near the top on every platform: the search
+/// box's, whose results run down toward the keyboard.
+pub fn scrim_top(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
     div()
         .id(id.into())
         .absolute()
@@ -353,7 +378,7 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         }
     };
     let look = Look::of(window, cx);
-    let scrim = scrim("sheet", &look)
+    let scrim = scrim("sheet", &look, window)
         // The window's bare keys are bound outside `Ask`.
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
@@ -570,7 +595,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
     let focus = ask.focus.clone().filter(|_| live);
-    let scrim = scrim("ask", &look)
+    let scrim = scrim("ask", &look, window)
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
         .when(live, |d| {

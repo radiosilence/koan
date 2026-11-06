@@ -234,6 +234,7 @@ impl Render for DownloadsPage {
                 .map(|(index, t)| self.row(index, t, &p, window, cx))
                 .collect();
             ScrollArea::items("downloads", rows)
+                .under_foot()
                 .follow(&self.spot)
                 .into_any_element()
         };

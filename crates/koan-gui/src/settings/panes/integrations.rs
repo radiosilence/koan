@@ -274,6 +274,7 @@ impl IntegrationsPane {
                 let ready = !self.busy && !self.token.read(cx).value().trim().is_empty();
                 rows.push(
                     Row::new("User token")
+                        .stacked()
                         .control(div().w_full().child(TextField::new(&self.token)))
                         .into_any_element(),
                 );

@@ -100,6 +100,8 @@ pub struct AlbumGrid {
     scroll: UniformListScrollHandle,
     /// The list's width as last laid out; nothing is drawn in it until known.
     width: Rc<Cell<Option<Pixels>>>,
+    /// The header's height on a phone, where the grid scrolls it away.
+    header_height: Rc<Cell<Option<Pixels>>>,
     /// The window's scale factor as of the last frame, for the device size
     /// sleeves are decoded at.
     scale: Cell<f32>,
@@ -218,6 +220,7 @@ impl AlbumGrid {
             _load: None,
             scroll: UniformListScrollHandle::new(),
             width: Rc::new(Cell::new(None)),
+            header_height: Rc::new(Cell::new(None)),
             scale: Cell::new(window.scale_factor()),
             grid: None,
             heading: Rc::default(),
@@ -864,9 +867,7 @@ impl AlbumGrid {
 
     /// The grid's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::components::ToolbarGroup::new()
-            .child(self.search.clone())
-            .spacer()
+        chrome::browser_controls(&self.search)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::album_sort_button(&self.lib, cx))
             .children(chrome::reshuffle_button(&self.lib, cx))
@@ -931,6 +932,27 @@ impl Render for AlbumGrid {
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's grid scrolls its header away with the tiles, as the iOS
+        // app's does: held above them it would keep a fifth of the screen.
+        let phone = crate::mobile::phone() && !held;
+        // The header starts below the phone's bar, which the list scrolls
+        // under.
+        let above = if phone {
+            crate::components::bar_inset(cx)
+        } else {
+            Pixels::ZERO
+        };
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default() + above
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let (inline_header, away_header) = if phone {
+            (None, Some(chrome::with_filter(&self.search, p)))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = match self.grid {
             _ if held => div().into_any_element(),
             _ if self.loaded.is_none() => chrome::failed_state(
@@ -945,7 +967,8 @@ impl Render for AlbumGrid {
             }
             Some(grid) => uniform_list(
                 "albums",
-                grid.rows(count),
+                // Blank rows after the last pass under a phone's foot.
+                grid.rows(count) + crate::components::rows_under_foot(grid.row, cx).0,
                 // Builds rows only: uniform_list calls it to measure a row as
                 // well as to lay out the visible ones, so anything done once
                 // a frame happens in `render`.
@@ -954,12 +977,21 @@ impl Render for AlbumGrid {
                 }),
             )
             .track_scroll(&self.scroll)
-            .pt(grid.margin)
+            .pt(grid.margin + lead)
             .pb(grid.margin)
             .size_full()
             .map(|list| {
+                let below = crate::components::rows_under_foot(grid.row, cx).1;
                 crate::components::spoken_list("albums-list", "albums")
-                    .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .map(|d| {
+                        if below > Pixels::ZERO {
+                            d.absolute().top_0().left_0().right_0().bottom(-below)
+                        } else {
+                            d.size_full()
+                        }
+                    })
                     .child(list)
             })
             .into_any_element(),
@@ -984,18 +1016,30 @@ impl Render for AlbumGrid {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .when(!held, |d| d.child(header))
+        .children(inline_header)
         .child(
             div()
                 .id("album-grid")
                 .relative()
                 .flex_1()
                 .min_h_0()
+                .overflow_hidden()
                 .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                 .child(measure)
                 .child(body)
+                .children(away_header.map(|header| {
+                    crate::components::scrolls_away(
+                        header,
+                        scrolled + above,
+                        self.header_height.clone(),
+                        entity,
+                    )
+                }))
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                .child(crate::components::list_scrollbar(&self.scroll)),
+                .child(
+                    crate::components::Scrollbar::vertical(&self.scroll)
+                        .when(phone, crate::components::Scrollbar::under_bar),
+                ),
         )
         .when(self.selection.is_active(), |d| {
             d.child(chrome::selection_bar(
