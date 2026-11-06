@@ -27,6 +27,8 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .w(px(560.0))
     .max_w_full()
     .max_h(relative(0.85))
+    // Shrinks within what holds it, its body scrolling.
+    .min_h_0()
     .bg(look.palette.bg.hsla())
     .border(look.hairline)
     .border_color(look.palette.rule.hsla())
