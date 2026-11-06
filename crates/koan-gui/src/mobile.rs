@@ -907,6 +907,24 @@ impl Render for PhoneShell {
                             .child(self.tabs(cx)),
                     ),
             )
+            // A tap on the status bar takes the page back to its top, as on
+            // iOS.
+            .child(
+                div()
+                    .id("status-bar-tap")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(insets.top)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav.update(cx, |nav, cx| {
+                            let route = nav.current();
+                            nav.choose(route);
+                            cx.notify();
+                        });
+                    })),
+            )
             .children(now_playing)
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))

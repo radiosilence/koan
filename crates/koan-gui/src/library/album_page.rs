@@ -393,7 +393,17 @@ impl AlbumPage {
                 rest.push(super::format::duration(Some(total)));
             }
             if !rest.is_empty() {
-                details = details.child(format!(" · {}", rest.join(" · ")));
+                // A phone's narrow header gives the facts a line under the
+                // credit, as the iOS app's does.
+                details = if crate::mobile::phone() {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(details)
+                        .child(div().child(rest.join(" · ")))
+                } else {
+                    details.child(format!(" · {}", rest.join(" · ")))
+                };
             }
         }
         let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
