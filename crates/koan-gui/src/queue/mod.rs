@@ -857,61 +857,9 @@ impl QueueView {
                 Some(from * (1.0 - crate::theme::Motion::quick_out(t)))
             });
         let touch = p.look.touch;
-        row_frame
-            // Under touch a row swiped toward the leading edge follows the
-            // finger, fading, and is taken out of the queue once let go past
-            // a quarter of the width, as iOS lists remove a row.
-            .when_some(swiped, |frame, dx| {
-                frame
-                    .relative()
-                    .left(dx)
-                    .opacity((1.0 + f32::from(dx) / 240.0).clamp(0.2, 1.0))
-            })
-            .when(touch, |frame| {
-                frame.on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
-                    if event.source != ScrollSource::Touch {
-                        return;
-                    }
-                    let delta = event.delta.pixel_delta(Pixels::from(16.));
-                    match event.touch_phase {
-                        koan_kit::app::platform::TouchPhase::Started => {
-                            // A pan along the list is the list's to scroll.
-                            if delta.x == Pixels::ZERO || delta.y != Pixels::ZERO {
-                                return;
-                            }
-                            this.unswipe = None;
-                            this.swipe = Some((row, delta.x.min(Pixels::ZERO)));
-                        }
-                        koan_kit::app::platform::TouchPhase::Moved => {
-                            let Some((at, dx)) = this.swipe.filter(|(at, _)| *at == row) else {
-                                return;
-                            };
-                            let to = (dx + delta.x).min(Pixels::ZERO);
-                            // Felt as the swipe passes the point where letting
-                            // go removes the row, either way.
-                            let threshold = -window.viewport_size().width / 4.0;
-                            if (dx < threshold) != (to < threshold) {
-                                cx.perform_haptic(HapticFeedback::Light);
-                            }
-                            this.swipe = Some((at, to));
-                        }
-                        _ => {
-                            let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row)
-                            else {
-                                return;
-                            };
-                            if dx < -window.viewport_size().width / 4.0 {
-                                let ids = this.acting_on(row, cx);
-                                this.remove(ids, cx);
-                            } else {
-                                this.unswipe = Some((row, dx, std::time::Instant::now()));
-                            }
-                        }
-                    }
-                    cx.stop_propagation();
-                    cx.notify();
-                }))
-            })
+        let bad = p.bad;
+        let on_bad = p.look.palette.bg.hsla();
+        let frame = row_frame
             .selected(selected)
             .cursor(cursor)
             .spot(&self.spot)
@@ -983,6 +931,79 @@ impl QueueView {
             .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
                 this.drop_library(&dragged.as_library(), dest, cx);
+            }))
+            .into_any_element();
+        if !touch {
+            return frame;
+        }
+        // Under touch a row swiped toward the leading edge follows the finger
+        // over a bin that fills the room it leaves, and is taken out of the
+        // queue once let go past a quarter of the width, as iOS lists remove
+        // a row. The swipe is heard by the row's place, which stays put, so
+        // the end of a fling still reaches it once the row has slid away.
+        let dx = swiped.unwrap_or(Pixels::ZERO);
+        div()
+            .relative()
+            .overflow_hidden()
+            .when(dx < Pixels::ZERO, |place| {
+                place.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_0()
+                        .w(-dx)
+                        .bg(bad)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(KoanIcon::new(Icon::Remove).color(on_bad)),
+                )
+            })
+            .child(div().relative().left(dx).child(frame))
+            .on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
+                if event.source != ScrollSource::Touch {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(Pixels::from(16.));
+                match event.touch_phase {
+                    koan_kit::app::platform::TouchPhase::Started => {
+                        // A pan along the list is the list's to scroll.
+                        if delta.x == Pixels::ZERO || delta.y != Pixels::ZERO {
+                            return;
+                        }
+                        this.unswipe = None;
+                        this.swipe = Some((row, delta.x.min(Pixels::ZERO)));
+                    }
+                    koan_kit::app::platform::TouchPhase::Moved => {
+                        let Some((at, dx)) = this.swipe.filter(|(at, _)| *at == row) else {
+                            return;
+                        };
+                        let to = (dx + delta.x)
+                            .min(Pixels::ZERO)
+                            .max(-window.viewport_size().width);
+                        // Felt as the swipe passes the point where letting
+                        // go removes the row, either way.
+                        let threshold = -window.viewport_size().width / 4.0;
+                        if (dx < threshold) != (to < threshold) {
+                            cx.perform_haptic(HapticFeedback::Light);
+                        }
+                        this.swipe = Some((at, to));
+                    }
+                    _ => {
+                        let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row) else {
+                            return;
+                        };
+                        if dx < -window.viewport_size().width / 4.0 {
+                            let ids = this.acting_on(row, cx);
+                            this.remove(ids, cx);
+                        } else {
+                            this.unswipe = Some((row, dx, std::time::Instant::now()));
+                        }
+                    }
+                }
+                cx.stop_propagation();
+                cx.notify();
             }))
             .into_any_element()
     }
