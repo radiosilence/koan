@@ -22,6 +22,7 @@ use super::tokens::Paint;
 use crate::components::{
     AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
 };
+use crate::theme::{KoanStyled, TypeRole};
 
 /// A row of one line: the title alone.
 pub fn height(p: &Paint) -> Pixels {
@@ -299,16 +300,33 @@ pub fn track_row<V: TrackList>(
             .id(("row-availability", key))
             .picked(state.selected),
         )
-        .figure(if p.look.touch { 44.0 } else { 20.0 }, heart)
+        // A phone's heart takes a narrow column and reaches past it into the
+        // gaps either side for a thumb's target.
+        .figure(
+            if p.look.touch { 28.0 } else { 20.0 },
+            div().w_full().flex().justify_center().child(heart),
+        )
         // A phone's row leaves the format to its record, as on iOS, and its
-        // length takes no more than its digits.
+        // length, in `fine` at half the brightest text as the queue's, takes
+        // no more than its digits.
         .when(!p.look.touch, |row| {
             row.figure(110.0, div().children(format::quality(track)))
         })
-        .figure(
-            if p.look.touch { 44.0 } else { 64.0 },
-            format::duration(track.duration_ms),
-        )
+        .map(|row| {
+            let length = format::duration(track.duration_ms);
+            if p.look.touch {
+                let chars = length.len().max(5) as f32;
+                row.figure(
+                    chars * 0.6 * TypeRole::Fine.points() + 4.0,
+                    div()
+                        .text_role(TypeRole::Fine, &p.look)
+                        .text_color(p.strong.opacity(0.5))
+                        .child(length),
+                )
+            } else {
+                row.figure(64.0, length)
+            }
+        })
         .on_click(click(RowPart::Row))
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
         .on_mouse_down(MouseButton::Right, actions::mark(view, target))
