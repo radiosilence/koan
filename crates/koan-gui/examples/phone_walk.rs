@@ -2,7 +2,7 @@
 //! saves a PNG of each page, dark and light: the tabs' first pages, the
 //! library's pages, a record, an artist, a playlist, a Settings section and
 //! Now Playing, and each page again scrolled part way, its rows under the
-//! bar. Nothing is shown and nothing on the screen is read: GPUI's
+//! bar, and to its end, its last row clear of the foot. Nothing is shown and nothing on the screen is read: GPUI's
 //! headless renderer draws it, as `walk` does for the desktop shell.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
@@ -115,6 +115,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let file = out.join(format!("phone-{name}-scrolled.png"));
             cx.capture_screenshot(window)?.save(&file)?;
             scroll(&mut cx, window, -SCROLLED)?;
+            // The far end, its last row clear of the foot.
+            scroll(&mut cx, window, TO_END)?;
+            settle(&mut cx, window)?;
+            let file = out.join(format!("phone-{name}-end.png"));
+            cx.capture_screenshot(window)?.save(&file)?;
+            scroll(&mut cx, window, -TO_END)?;
         }
     }
     println!("PNGs in {}", out.display());
@@ -145,6 +151,10 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
             "settings-playback",
             Route::SettingsSection(koan_gui::settings::Tab::Playback),
         ),
+        page(
+            "settings-server",
+            Route::SettingsSection(koan_gui::settings::Tab::Server),
+        ),
     ];
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
@@ -165,6 +175,9 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
 /// How far a page is scrolled for its second picture: its first rows under
 /// the bar.
 const SCROLLED: f32 = 160.0;
+
+/// Further than any page runs, for its picture at the end.
+const TO_END: f32 = 1_000_000.0;
 
 /// Scrolls what is at the screen's middle down by `by` points, as a drag
 /// would.
