@@ -33,6 +33,16 @@ pub fn disc_records(items: &[QueueItem]) -> std::collections::HashSet<i64> {
         .collect()
 }
 
+/// How many characters the longest of the rows' lengths takes as a clock,
+/// for a length column as wide as the list needs and no wider.
+pub fn longest(items: &[QueueItem]) -> usize {
+    items
+        .iter()
+        .filter_map(|item| item.duration_ms)
+        .max()
+        .map_or(4, |ms| crate::time::clock(ms).len())
+}
+
 /// A track's place on its record: its number, or `disc.NN` on a record that
 /// numbers by disc.
 pub fn track_place(item: &QueueItem, by_disc: bool) -> String {

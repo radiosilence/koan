@@ -63,7 +63,10 @@ const AVAILABILITY: f32 = 14.0;
 const AVAILABILITY_WORD: f32 = 48.0;
 const HEART: f32 = 16.0;
 const CODEC: f32 = 48.0;
-const LENGTH: f32 = 44.0;
+/// One character of a length, Geist Mono's advance (0.6 em) at `meta`'s 13
+/// points, and the room the column keeps beside its widest clock.
+const DIGIT: f32 = 7.8;
+const LENGTH_PAD: f32 = 4.0;
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(CONTEXT);
@@ -796,6 +799,7 @@ impl QueueView {
                         .album_id
                         .is_some_and(|album| queue.disc_records.contains(&album)),
                     wide: !queue.disc_records.is_empty(),
+                    longest: queue.longest,
                 };
                 let frame = track(
                     TableRow::new(ElementId::Name(id.clone()), kind)
@@ -1268,6 +1272,9 @@ impl Look<'_> {
 pub(crate) struct Numbering {
     pub by_disc: bool,
     pub wide: bool,
+    /// The longest length in the list, in characters: the length column is
+    /// as wide as that clock.
+    pub longest: usize,
 }
 
 /// A track row's heart and transfer.
@@ -1509,7 +1516,7 @@ pub(crate) fn track(
         )
     })
     .figure(
-        LENGTH,
+        numbering.longest as f32 * DIGIT + LENGTH_PAD,
         div()
             .text_role(TypeRole::Meta, &p.look)
             .text_color(p.muted)

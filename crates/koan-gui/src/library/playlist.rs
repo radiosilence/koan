@@ -41,16 +41,19 @@ struct Laid {
     items: Vec<QueueItem>,
     rows: Vec<Row>,
     disc_records: HashSet<i64>,
+    longest: usize,
 }
 
 fn lay_out(entries: Vec<PlaylistEntry>, grouped: bool) -> Laid {
     let items: Vec<QueueItem> = entries.into_iter().map(listed).collect();
     let rows = rows::build(&items, grouped);
     let disc_records = rows::disc_records(&items);
+    let longest = rows::longest(&items);
     Laid {
         items,
         rows,
         disc_records,
+        longest,
     }
 }
 
@@ -93,6 +96,7 @@ pub struct PlaylistPage {
     items: Vec<QueueItem>,
     rows: Vec<Row>,
     disc_records: HashSet<i64>,
+    longest: usize,
     /// Up to four records, whose sleeves make the header's.
     faces: Vec<i64>,
     list: RowListState,
@@ -164,6 +168,7 @@ impl PlaylistPage {
             items: Vec::new(),
             rows: Vec::new(),
             disc_records: HashSet::new(),
+            longest: 4,
             faces: Vec::new(),
             list: RowListState::new(),
             selected: HashSet::new(),
@@ -232,6 +237,7 @@ impl PlaylistPage {
         self.items = laid.items;
         self.rows = laid.rows;
         self.disc_records = laid.disc_records;
+        self.longest = laid.longest;
         let present: HashSet<&str> = self
             .items
             .iter()
@@ -368,6 +374,7 @@ impl PlaylistPage {
             rows: rows::build(&self.items, grouped),
             items: std::mem::take(&mut self.items),
             disc_records: std::mem::take(&mut self.disc_records),
+            longest: self.longest,
         };
         self.set_laid(laid);
         cx.notify();
@@ -1048,6 +1055,7 @@ impl PlaylistPage {
                         .album_id
                         .is_some_and(|a| self.disc_records.contains(&a)),
                     wide: !self.disc_records.is_empty(),
+                    longest: self.longest,
                 };
                 let frame = queue_rows::track(
                     TableRow::new(ElementId::Name(id.clone()), kind),
