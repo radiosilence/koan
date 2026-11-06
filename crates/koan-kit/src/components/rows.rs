@@ -182,6 +182,9 @@ impl RenderOnce for NavRow {
             cx,
         );
         let on_click = self.on_click;
+        // Under touch a row that opens a page says so with a chevron at its
+        // end, as iOS lists do; a pointer reads it from the sidebar's place.
+        let pushes = look.touch && on_click.is_some() && self.trailing.is_none();
         let answers = super::Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
         let mut base = self.base;
@@ -263,6 +266,15 @@ impl RenderOnce for NavRow {
                     .text_color(look.palette.muted.hsla())
                     .child(figure)
             }))
+            .when(pushes, |row| {
+                row.child(
+                    div().ml_auto().flex_none().child(
+                        KoanIcon::new(Icon::Forward)
+                            .role(TypeRole::Meta)
+                            .tone(crate::theme::Tone::Muted),
+                    ),
+                )
+            })
             .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
                 answers_click(row, on_click.clone())
