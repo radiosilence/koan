@@ -774,7 +774,11 @@ impl ArtistPage {
         };
         let info = self.info.as_ref();
         let long = bio.len() > BIO_CLAMP;
+        // As wide as the page, up to a reading measure, so it wraps on a
+        // phone too.
         let mut text = div()
+            .w_full()
+            .min_w_0()
             .max_w(p.look.spaced(680.0))
             .typeset(p, Type::Control, p.muted)
             .child(bio.replace('\n', "\n\n"));
@@ -814,10 +818,12 @@ impl ArtistPage {
                 d.child(format!("photo: {credit}"))
             });
         div()
+            .w_full()
             .pb(RowMetrics::page_top(&p.look))
             .child(SectionHeading::new("about"))
             .child({
                 let body = div()
+                    .w_full()
                     .flex()
                     .flex_col()
                     .gap(p.space(Space::S))
