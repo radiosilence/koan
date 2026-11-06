@@ -68,9 +68,9 @@ pub fn set_bar_inset(inset: Pixels, window: &mut Window, cx: &mut App) {
 }
 
 /// How much a frosted ground blurs what lies under it.
-const FROST_BLUR: Pixels = px(24.);
+const FROST_BLUR: Pixels = px(14.);
 /// How much of the ground's colour a frosted ground lays over the blur.
-const FROST_TINT: f32 = 0.72;
+const FROST_TINT: f32 = 0.45;
 
 pub trait KoanFrosted: Styled + Sized {
     /// The ground of a bar the page scrolls under, as the system's bars
