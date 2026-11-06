@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.71.1
+
+### Changed
+
+- **EQ lives in Settings.** The desktop app's EQ is Settings' EQ tab rather than a window of its own; Playback → EQ… (⌥⌘E) and the transport's EQ menus open it there. On a phone it is the Settings tab's EQ screen, laid out for the width: pickers under their labels, the graph and its legend fitted to the screen, and its sheets over the bar and foot.
+- **The window wears the page's colours.** In the kōan GUI app, on the desktop and the phone, a record's page eases the wash and the accent to its sleeve, as the Apple apps do, and an artist's page to their photo when they have one; leaving the page eases back to the playing record's. Now Playing keeps the playing record's.
+
+### Internal
+
+- **The kōan GUI app on the iPhone.** The GPUI app runs on iOS with a phone's shell: four tabs each with its own history, a mini player opening Now Playing, Settings and EQ as screens, the library's sections as the iOS app lists them, and touch throughout (a tap plays, a hold opens the row's menu, sliders and handles drag by finger, nested lists scroll on their own, native text editing). Not yet released on iOS.
+- **Settings smoke test follows the Server pane's choice cards.** It chose the mode from the picker the cards replaced while nothing is chosen.
+- **kōan GPUI on a phone and TestFlight.** The GPUI app builds for a phone as "kōan GPUI" (`cc.blit.koan.gpui`) beside the SwiftUI app, and CI sends it to internal testers. On the phone it now follows the iOS app's shape: swipe from the edge to go back, words for tabs, a record's page that scrolls whole, dialogs that fit the screen, flings that coast in heavy lists, and the audio session's interruptions and route changes handled as the SwiftUI app handles them.
+- **The web UI, share pages and koan.rocks take their theme from `@radiosilence/theme`.** The tokens move out of `site/src/theme.css` into a package radiosilence's other web pages share, installed from GitHub Packages before each stylesheet build. The pages gain a `warn` colour, and text at the control size now carries its own line height.
+- **kōan GPUI feels like a phone.** Text and targets at the iOS app's sizes and weights (the display and title faces one step lighter on the desktop too, as SwiftUI draws them), pages that slide in and swipe back with the page beneath showing, Now Playing sliding up over the page, sheets from the foot, headings that scroll with their page, repeated flicks that carry a long list, swipe to remove from the queue, haptics, and no queue replaced by a stray tap.
+
 ## 0.71.0
 
 ### Added
