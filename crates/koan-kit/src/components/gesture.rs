@@ -258,7 +258,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     if (kind == 1) {
         glyph = kq_mask(image, tile, g - float2(0.0, 2.5 * bump));
         float reach = 9.0 * e;
-        float d = max(abs(g.y - 23.0) - 0.6, abs(g.x - 12.0) - reach);
+        float d = max(abs(g.y - 25.0) - 0.6, abs(g.x - 12.0) - reach);
         accent = clamp(-d * k + 0.5, 0.0, 1.0) * sin(pi * min(t * 1.3, 1.0));
     } else if (kind == 2) {
         glyph = kq_mask(image, tile, g + float2(0.0, 3.0 * bump));
@@ -316,7 +316,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     if (kind == 1) {
         glyph = kq_mask(tile, g - vec2<f32>(0.0, 2.5 * bump));
         let reach = 9.0 * e;
-        let d = max(abs(g.y - 23.0) - 0.6, abs(g.x - 12.0) - reach);
+        let d = max(abs(g.y - 25.0) - 0.6, abs(g.x - 12.0) - reach);
         accent = clamp(-d * k + 0.5, 0.0, 1.0) * sin(pi * min(t * 1.3, 1.0));
     } else if (kind == 2) {
         glyph = kq_mask(tile, g + vec2<f32>(0.0, 3.0 * bump));
