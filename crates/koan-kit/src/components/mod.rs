@@ -24,6 +24,7 @@ mod badge;
 mod banner;
 mod bars;
 mod button;
+pub mod chart;
 pub mod choice;
 mod collection;
 mod command_bar;
@@ -124,6 +125,10 @@ pub mod list_actions {
         PageUp, Pick, Right, ShowMenu, Up,
     };
 }
+pub use chart::{
+    Axis, Base, Chart, ChartDrag, ChartPoint, DataMotion, DragPhase, Legend, PointPlaces, Rule,
+    Series, Swatch, Ticks,
+};
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};

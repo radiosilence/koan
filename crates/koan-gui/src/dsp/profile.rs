@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
@@ -21,20 +22,59 @@ use super::page::thumb;
 use super::sheet::{Confirm, Sheets, body, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{
-    Badge, Button, ButtonKind, FormRow, SectionHeader, Segmented, TextField, Toggle,
+    Badge, Button, ButtonKind, Clear, FormRow, ScrollArea, SectionHeader, Segmented, TextField,
+    Toggle, system_insets,
 };
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{
+    Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, Tone, TypeRole, label,
+};
 
 /// A profile's sheet: its name and Done, the graph, which stays in view
 /// while the bands scroll under it, and the body, drawn by `ProfileBody` as
 /// a cached view so that a drag on the graph redraws the graph and this
 /// frame and nothing of the body.
+///
+/// On a phone the graph's frame folds to a quarter of its height once the
+/// body scrolls, and opens again at its top; while the keyboard is up it
+/// folds away, leaving the room to the field being edited. The fold is
+/// reflow, eased on the CPU over `Motion::SETTLE`.
 pub struct ProfilePage {
     body: Entity<ProfileBody>,
     graph: Entity<Graph>,
     sheets: Entity<Sheets>,
+    scroll: ScrollHandle,
+    /// The body scrolled from its top far enough to fold the graph.
+    scrolled: bool,
+    fold: Fold,
     _subscriptions: Vec<Subscription>,
 }
+
+/// The graph's frame easing from one height to another.
+#[derive(Clone, Copy)]
+struct Fold {
+    from: f32,
+    to: f32,
+    start: Instant,
+}
+
+impl Fold {
+    fn at(&self, now: Instant) -> (f32, bool) {
+        let t =
+            now.saturating_duration_since(self.start).as_secs_f32() / Motion::SETTLE.as_secs_f32();
+        if t >= 1.0 || self.from == self.to {
+            return (self.to, false);
+        }
+        (
+            self.from + (self.to - self.from) * Motion::quick_out(t),
+            true,
+        )
+    }
+}
+
+/// The folded frame's height, a quarter of the open one's.
+const GRAPH_FOLDED: f32 = GRAPH_H * 0.25;
+/// How far the body scrolls before the graph folds.
+const FOLD_AFTER: f32 = 8.0;
 
 impl ProfilePage {
     pub fn new(
@@ -47,11 +87,19 @@ impl ProfilePage {
     ) -> Self {
         let body = cx.new(|cx| ProfileBody::new(dsp, sheets.clone(), name, device, window, cx));
         let graph = body.read(cx).graph.clone();
+        let scroll = body.read(cx).scroll.clone();
         let subscriptions = vec![cx.observe(&body, |_, _, cx| cx.notify())];
         Self {
             body,
             graph,
             sheets,
+            scroll,
+            scrolled: false,
+            fold: Fold {
+                from: GRAPH_H,
+                to: GRAPH_H,
+                start: Instant::now(),
+            },
             _subscriptions: subscriptions,
         }
     }
@@ -83,8 +131,19 @@ impl Render for ProfilePage {
                 .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.close(me, cx)));
             head_data(name, vec![done.into_any_element()], &look).into_any_element()
         };
-        // A definite height, so the cached body has one to lay out in.
-        let height = window.viewport_size().height * 0.8;
+        // A definite height, so the cached body has one to lay out in; on
+        // a phone no taller than the sheet's panel may be over the keyboard.
+        let viewport = window.viewport_size().height;
+        let mut height = viewport * 0.8;
+        let mut keyboard = false;
+        if look.touch {
+            let clear = system_insets(Clear::Keyboard, window);
+            keyboard = clear.bottom > system_insets(Clear::System, window).bottom;
+            let room =
+                viewport - clear.top - clear.bottom - look.space(Space::L) - look.space(Space::S);
+            height = height.min(room * 0.85);
+        }
+        let frame = self.frame(look.touch, keyboard, window, cx);
         div()
             .flex()
             .flex_col()
@@ -92,14 +151,19 @@ impl Render for ProfilePage {
             .h(height)
             .child(head)
             .when(!curve, |d| {
+                // The frame's margins fold away with its last quarter.
+                let margin = look.space(Space::M) * (frame / GRAPH_FOLDED).min(1.0);
                 d.child(
                     div()
+                        .flex_none()
+                        .h(Pixels::from(frame) + margin * 2.0)
+                        .overflow_hidden()
                         .px(look.space(Space::L))
-                        .py(look.space(Space::M))
+                        .py(margin)
                         .border_b(look.hairline)
                         .border_color(look.palette.rule.hsla())
                         .child(
-                            div().h(Pixels::from(GRAPH_H)).child(
+                            div().h(Pixels::from(frame)).child(
                                 koan_kit::app::AnyView::from(self.graph.clone())
                                     // the bounds a cached view keeps between frames.
                                     .cached(StyleRefinement::default().size_full()),
@@ -114,11 +178,61 @@ impl Render for ProfilePage {
     }
 }
 
+impl ProfilePage {
+    /// The graph's frame's height now: open, folded once the body has
+    /// scrolled, or folded away under the keyboard, easing between them.
+    fn frame(
+        &mut self,
+        touch: bool,
+        keyboard: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        if !touch {
+            return GRAPH_H;
+        }
+        let down = -f32::from(self.scroll.offset().y);
+        // Folded only where the body would still scroll once the graph's
+        // room is given to it, so folding never brings it back to its top.
+        let room = f32::from(self.scroll.max_offset().y);
+        self.scrolled = if self.scrolled {
+            down > 0.5
+        } else {
+            down > FOLD_AFTER && room > GRAPH_H - GRAPH_FOLDED
+        };
+        let to = if keyboard {
+            0.0
+        } else if self.scrolled {
+            GRAPH_FOLDED
+        } else {
+            GRAPH_H
+        };
+        let now = Instant::now();
+        if to != self.fold.to {
+            let (from, _) = self.fold.at(now);
+            self.fold = Fold {
+                from: if KoanTheme::motion_allowed(cx) {
+                    from
+                } else {
+                    to
+                },
+                to,
+                start: now,
+            };
+            self.graph
+                .update(cx, |g, cx| g.set_compact(to < GRAPH_H, cx));
+        }
+        let (height, moving) = self.fold.at(now);
+        if moving {
+            window.request_animation_frame();
+        }
+        height
+    }
+}
+
 /// The graph's room at the top of the page: the chart, its legend and the
 /// brushes, held to one height so the graph can be cached.
 const GRAPH_H: f32 = 290.0;
-/// The curve drawn inside that frame, in points.
-const CURVE_H: f32 = 220.0;
 
 pub struct ProfileBody {
     dsp: Entity<Dsp>,
@@ -146,6 +260,8 @@ pub struct ProfileBody {
     channel: u16,
     more: bool,
     graph: Entity<Graph>,
+    /// The body's scroll, which the page folds the graph by.
+    scroll: ScrollHandle,
     fields: Fields,
     /// The graphic curve whose points are shown, by its index.
     curve: Option<usize>,
@@ -169,8 +285,7 @@ impl ProfileBody {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx
-            .new(|cx| Graph::new(Graph::flat_response(), window, cx).height(Pixels::from(CURVE_H)));
+        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).fills());
         let name_input = cx.new(|cx| InputState::new(window, cx).default_value(name.clone()));
         let subscriptions = vec![
             cx.observe(&dsp, |p: &mut Self, _, cx| p.load(cx)),
@@ -208,6 +323,7 @@ impl ProfileBody {
             channel: 0,
             more: false,
             graph,
+            scroll: ScrollHandle::new(),
             curve: None,
             name_input,
             window: window.window_handle(),
@@ -711,11 +827,21 @@ impl Render for ProfileBody {
                     .into_any_element(),
             );
         }
-        body("profile-body", &look)
-            .size_full()
-            .pt(look.space(Space::M))
-            .children(s)
-            .into_any_element()
+        // Scrolled by the kit's area, which keeps a field being typed in
+        // clear of the keyboard.
+        ScrollArea::new(
+            "profile-body",
+            div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::S))
+                .px(look.space(Space::L))
+                .pt(look.space(Space::M))
+                .pb(look.space(Space::L))
+                .children(s),
+        )
+        .handle(&self.scroll)
+        .into_any_element()
     }
 }
 

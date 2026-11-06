@@ -1,1 +1,0 @@
-- **EQ lives in Settings.** The desktop app's EQ is Settings' EQ tab rather than a window of its own; Playback → EQ… (⌥⌘E) and the transport's EQ menus open it there. On a phone it is the Settings tab's EQ screen, laid out for the width: pickers under their labels, the graph and its legend fitted to the screen, and its sheets over the bar and foot.
