@@ -983,11 +983,14 @@ impl Render for AlbumGrid {
             .map(|list| {
                 let below = crate::components::rows_under_foot(grid.row, cx).1;
                 crate::components::spoken_list("albums-list", "albums")
-                    .size_full()
                     // Reaching below the page so its blank rows come to the
                     // foot's height (`rows_under_foot`).
-                    .when(below > Pixels::ZERO, |d| {
-                        d.absolute().top_0().left_0().right_0().bottom(-below)
+                    .map(|d| {
+                        if below > Pixels::ZERO {
+                            d.absolute().top_0().left_0().right_0().bottom(-below)
+                        } else {
+                            d.size_full()
+                        }
                     })
                     .child(list)
             })

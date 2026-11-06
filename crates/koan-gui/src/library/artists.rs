@@ -506,15 +506,18 @@ impl Render for ArtistBrowser {
             .size_full()
             .map(|list| {
                 crate::components::spoken_list("artists-list", "artists")
-                    .size_full()
                     // Reaching below the page so its blank rows come to the
                     // foot's height (`rows_under_foot`).
-                    .when(under_foot.1 > Pixels::ZERO, |d| {
-                        d.absolute()
-                            .top_0()
-                            .left_0()
-                            .right_0()
-                            .bottom(-under_foot.1)
+                    .map(|d| {
+                        if under_foot.1 > Pixels::ZERO {
+                            d.absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom(-under_foot.1)
+                        } else {
+                            d.size_full()
+                        }
                     })
                     .child(list)
             })
