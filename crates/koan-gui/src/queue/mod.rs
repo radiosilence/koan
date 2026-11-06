@@ -17,8 +17,8 @@ use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use crate::components::{
     Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
     KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
-    RowListState, RowMetrics, RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
-    ToolbarSelection,
+    RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton, ToolbarGroup,
+    ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -56,6 +56,8 @@ pub const CONTEXT: &str = "Queue";
 /// word's room in the plain look), the place on the record (wider when a
 /// record in the queue numbers by disc), then the figures trailing.
 const MARK: f32 = 16.0;
+/// A phone's pick circle, while picking.
+const PICK: f32 = 36.0;
 const MARK_WORD: f32 = 56.0;
 const PLACE: f32 = 24.0;
 const PLACE_WIDE: f32 = 36.0;
@@ -693,7 +695,11 @@ impl QueueView {
         if row >= count {
             return div().into_any_element();
         }
-        let selected = self.is_selected(row, cx);
+        let ticked = self.is_selected(row, cx);
+        // While a phone picks, a pick is a filled circle at the row's
+        // leading edge, as the iOS app's, not a highlighted row.
+        let pick = (p.look.touch && self.picking).then_some(ticked);
+        let selected = ticked && pick.is_none();
         let cursor = self.focus.is_focused(window)
             && self.cursor.as_ref().and_then(|r| self.row_of(r, cx)) == Some(row);
         // The insertion line keeps the accent over a picked row.
@@ -770,6 +776,7 @@ impl QueueView {
                     row: &id,
                     picked: selected,
                     waiting: true,
+                    pick,
                 };
                 let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
@@ -792,6 +799,7 @@ impl QueueView {
                     row: &id,
                     picked: selected,
                     waiting: true,
+                    pick,
                 };
                 let item = &queue.items[ix];
                 let numbering = Numbering {
@@ -1279,6 +1287,9 @@ pub(crate) struct Look<'a> {
     /// Rows of the queue mark a track waiting to play; a playlist's rows
     /// are not waiting for anything.
     pub waiting: bool,
+    /// While picking on a phone, whether the row is ticked: drawn as a
+    /// circle, and its names are not links.
+    pub pick: Option<bool>,
 }
 
 impl Look<'_> {
@@ -1313,16 +1324,35 @@ fn link(
     route: Option<Route>,
     look: &Look,
 ) -> Stateful<Div> {
+    let route = route.filter(|_| look.pick.is_none());
     links::link(id, text, route, look.nav, look.p.ink)
 }
 
 fn credit(parts: &[CreditPart], fallback: &str, part: &str, look: &Look) -> Vec<AnyElement> {
+    let parts = if look.pick.is_some() { &[][..] } else { parts };
     links::credit(
         parts,
         fallback,
         |ix| look.id(part, ix),
         look.nav,
         look.p.ink,
+    )
+}
+
+/// A phone's pick, while picking: a circle at the row's leading edge, filled
+/// once ticked.
+fn picked_circle(row: TableRow, look: &Look) -> TableRow {
+    let Some(ticked) = look.pick else {
+        return row;
+    };
+    let p = look.p;
+    row.lead(
+        PICK,
+        div().flex().items_center().child(
+            KoanIcon::new(if ticked { Icon::Picked } else { Icon::Unpicked })
+                .role(TypeRole::Title)
+                .color(if ticked { p.accent_text } else { p.muted }),
+        ),
     )
 }
 
@@ -1358,7 +1388,8 @@ pub(crate) fn heading(
     // A phone's heading, beside a larger sleeve, has its credit in `fine`
     // with the figures under it.
     let touch = p.look.touch;
-    row.lead_exact(RowMetrics::heading_sleeve(&p.look), sleeve)
+    picked_circle(row, look)
+        .lead_exact(RowMetrics::heading_sleeve(&p.look), sleeve)
         .title(names(vec![album], TypeRole::Body, p.strong, p))
         .line(names(
             credit(parts, artist, "artist", look),
@@ -1523,6 +1554,7 @@ pub(crate) fn track(
     } else {
         row
     };
+    let row = picked_circle(row, look);
     let row = row.lead(if p.look.icons { MARK } else { MARK_WORD }, mark);
     let row = if grouped {
         row.lead(if numbering.wide { PLACE_WIDE } else { PLACE }, place)
@@ -1697,6 +1729,86 @@ impl QueueView {
         PageHeader::data(title).detail(detail)
     }
 
+    /// A phone's bar while picking, along the page's foot as the iOS app's:
+    /// how many are picked, adding them to a playlist, removing them, and
+    /// done.
+    fn pick_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let picked = self.selected.len();
+        let view = cx.entity();
+        let tracks: std::sync::Arc<[Playable]> = {
+            let queue = self.queue.read(cx);
+            self.selected_ids(cx)
+                .iter()
+                .filter_map(|id| queue.items.get(*queue.at.get(id)?)?.track_id)
+                .map(Playable::Track)
+                .collect()
+        };
+        let mut bar = SelectionBar::new(if picked == 0 {
+            "select items".to_owned()
+        } else {
+            format!("{picked} selected")
+        });
+        if let Some((lib, _)) = self.lib.as_ref().filter(|_| !tracks.is_empty()) {
+            let lib = lib.clone();
+            let playlists = lib.feed.read(cx).playlists.clone();
+            let end = view.clone();
+            bar = bar.element(crate::components::opens_panel(
+                "queue-pick-playlist",
+                crate::components::TextTrigger::new("queue-pick-playlist-trigger", "playlist"),
+                move |dismiss, _, _| {
+                    if playlists.is_empty() {
+                        return MenuPanel::new()
+                            .child(MenuRow::new("queue-pick-none", "no playlists").disabled(true))
+                            .into_any_element();
+                    }
+                    MenuPanel::new()
+                        .children(playlists.iter().enumerate().map(|(i, (id, name))| {
+                            let (lib, tracks, end, id) =
+                                (lib.clone(), tracks.clone(), end.clone(), *id);
+                            let dismiss = dismiss.clone();
+                            MenuRow::data(("queue-pick-pl", i), name.clone()).on_click(
+                                move |_, window, cx| {
+                                    actions::add_to_playlist(&lib, id, &tracks, cx);
+                                    end.update(cx, |this, cx| {
+                                        this.picking = false;
+                                        this.selected.clear();
+                                        cx.notify();
+                                    });
+                                    dismiss(window, cx);
+                                },
+                            )
+                        }))
+                        .into_any_element()
+                },
+            ));
+        }
+        let (remove, done) = (view.clone(), view);
+        bar.element(
+            crate::components::Button::new(
+                "queue-pick-remove",
+                crate::components::ButtonKind::Text,
+            )
+            .label("remove")
+            .disabled(picked == 0)
+            .on_click(move |_, _, cx| {
+                remove.update(cx, |this, cx| {
+                    let ids = this.selected_ids(cx);
+                    this.remove(ids, cx);
+                    this.picking = false;
+                    cx.notify();
+                })
+            }),
+        )
+        .on_done(move |_, _, cx| {
+            done.update(cx, |this, cx| {
+                this.picking = false;
+                this.selected.clear();
+                cx.notify();
+            })
+        })
+        .into_any_element()
+    }
+
     /// The queue's controls in the window's toolbar, the Mac's: while rows
     /// are picked, how many and what to do with them; then jump to playing,
     /// the dice, grouping, undo and redo, and the rest under ⋯.
@@ -1711,36 +1823,18 @@ impl QueueView {
         let touch = cx.global::<crate::theme::KoanTheme>().touch;
         let mut controls = ToolbarGroup::new();
         // Under touch, picking is a mode of its own, entered by Select and
-        // left by Done, as the iOS app's.
-        if touch && self.picking {
-            let (done, remove) = (view.clone(), view.clone());
-            return controls
-                .child(
-                    ToolbarSelection::new(format!("{picked} selected"))
-                        .action("queue-remove", "remove", move |_, _, cx| {
-                            remove.update(cx, |this, cx| {
-                                let ids = this.selected_ids(cx);
-                                this.remove(ids, cx);
-                            })
-                        })
-                        .action("queue-done", "done", move |_, _, cx| {
-                            done.update(cx, |this, cx| {
-                                this.picking = false;
-                                this.selected.clear();
-                                cx.notify();
-                            })
-                        }),
-                )
-                .into_any_element();
-        }
+        // left by it or by the bar's Done, as the iOS app's; the bar along
+        // the page's foot says what is picked and what to do with it.
         if touch {
             let pick = view.clone();
+            let picking = self.picking;
             controls = controls.child(
-                ToolbarButton::new("queue-select", Icon::Select, "select")
-                    .disabled(count == 0)
-                    .on_click(move |_, _, cx| {
+                IconToggle::new("queue-select", Icon::Select, "select", picking)
+                    .disabled(count == 0 && !picking)
+                    .on_change(move |on, _, cx| {
+                        let on = *on;
                         pick.update(cx, |this, cx| {
-                            this.picking = true;
+                            this.picking = on;
                             this.selected.clear();
                             cx.notify();
                         })
@@ -1801,21 +1895,16 @@ impl QueueView {
                     },
                 ),
             )
-            // Undo and redo are the keyboard's and the desktop's; a phone's
-            // header has no room for them, as the iOS app's has none.
-            .when(!touch, |controls| {
-                controls
-                    .child(
-                        ToolbarButton::new("queue-undo", Icon::Undo, "undo")
-                            .help(crate::platform::actions::help("undo", &Undo, cx))
-                            .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
-                    )
-                    .child(
-                        ToolbarButton::new("queue-redo", Icon::Redo, "redo")
-                            .help(crate::platform::actions::help("redo", &Redo, cx))
-                            .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
-                    )
-            })
+            .child(
+                ToolbarButton::new("queue-undo", Icon::Undo, "undo")
+                    .help(crate::platform::actions::help("undo", &Undo, cx))
+                    .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
+            )
+            .child(
+                ToolbarButton::new("queue-redo", Icon::Redo, "redo")
+                    .help(crate::platform::actions::help("redo", &Redo, cx))
+                    .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+            )
             .child(more(count, saveable))
             .into_any_element()
     }
@@ -2101,6 +2190,9 @@ impl Render for QueueView {
                     .named("queue")
                     .into_any_element()
                 })
+            })
+            .when(p.look.touch && self.picking, |page| {
+                page.child(self.pick_bar(cx))
             })
             .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
