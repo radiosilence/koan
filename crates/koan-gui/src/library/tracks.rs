@@ -518,10 +518,7 @@ impl TrackBrowser {
 
     /// The browser's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::components::ToolbarGroup::new()
-            .fills()
-            .child(self.search.clone())
-            .spacer()
+        chrome::browser_controls(&self.search)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::track_sort_button(&self.lib, cx))
             .into_any_element()
@@ -601,7 +598,7 @@ impl Render for TrackBrowser {
         let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
         let (inline_header, away_header) = if phone {
-            (None, Some(header))
+            (None, Some(chrome::with_filter(header, &self.search, p)))
         } else {
             ((!held).then_some(header), None)
         };

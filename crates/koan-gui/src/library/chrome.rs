@@ -188,6 +188,40 @@ impl Render for SearchField {
     }
 }
 
+/// A browser's controls in the window's toolbar: the filter field first, then
+/// what the caller adds. On a phone the field is the list's (`with_filter`)
+/// and the bar holds the buttons alone.
+pub fn browser_controls(search: &Entity<SearchField>) -> crate::components::ToolbarGroup {
+    if crate::mobile::phone() {
+        crate::components::ToolbarGroup::new()
+    } else {
+        crate::components::ToolbarGroup::new()
+            .fills()
+            .child(search.clone())
+            .spacer()
+    }
+}
+
+/// A phone browser's header with its filter field under it, scrolled away
+/// with the list as an iOS list's search field is.
+pub fn with_filter(
+    header: impl IntoElement,
+    search: &Entity<SearchField>,
+    p: &Paint,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .child(header)
+        .child(
+            div()
+                .px(crate::components::RowMetrics::page_margin(&p.look))
+                .pb(p.space(Space::M))
+                .child(search.clone()),
+        )
+        .into_any_element()
+}
+
 pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_album_sort();
     let browse = lib.browse.clone();

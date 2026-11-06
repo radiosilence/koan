@@ -548,7 +548,6 @@ impl PhoneShell {
         route: Route,
         root: bool,
         live: bool,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         // Named where the page has no heading of its own, or where its heading
@@ -574,23 +573,18 @@ impl PhoneShell {
             .filter(|_| live)
             .filter(|library| LibraryStage::draws(route) && library.read(cx).has_controls(cx))
             .and_then(|library| library.read(cx).toolbar());
-        // A browser's filter field and buttons take a row of their own under
-        // the bar, as the iOS app's filter row: in the bar beside the back
-        // button the field has room for a few letters. Buttons alone stay in
-        // the bar.
-        let filters = matches!(route, Route::Albums | Route::Artists | Route::Tracks);
-        let (controls, row): (Option<AnyView>, Option<AnyView>) = if !live {
-            (None, None)
+        // A browser's filter field is its list's, scrolling away under its
+        // heading; the bar holds its buttons, as every page's.
+        let controls: Option<AnyView> = if !live {
+            None
         } else if route == Route::Queue {
-            (Some(self.queue_controls.clone().into()), None)
-        } else if filters {
-            (None, library_controls)
+            Some(self.queue_controls.clone().into())
         } else {
-            (library_controls, None)
+            library_controls
         };
         // A tab's first page that heads itself, with no controls of its own,
         // has nothing for a bar to say.
-        if root && title.is_none() && controls.is_none() && row.is_none() {
+        if root && title.is_none() && controls.is_none() {
             return None;
         }
         let bar = Toolbar::new()
@@ -609,27 +603,7 @@ impl PhoneShell {
                     .children(title.map(ToolbarTitle::new)),
             )
             .when_some(controls, |bar, controls: AnyView| bar.trailing(controls));
-        let look = crate::theme::Look::of(window, cx);
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(bar)
-                // The page under a swipe keeps its filter row's room, so
-                // nothing moves as the swipe lands and the row is drawn.
-                .when(filters && (row.is_some() || !live), |bar| {
-                    bar.child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .min_h(crate::components::ToolbarMetrics::HEIGHT)
-                            .px(crate::components::RowMetrics::page_margin(&look))
-                            .children(row),
-                    )
-                })
-                .into_any_element(),
-        )
+        Some(bar.into_any_element())
     }
 
     /// Settings' tab, on `tab`'s screen or its list of sections.
@@ -810,13 +784,13 @@ impl Render for PhoneShell {
             let nav = self.nav.read(cx);
             let behind = nav.behind()?;
             let behind_root = nav.history_ix() == 1;
-            let bar = self.bar(behind, behind_root, false, window, cx);
+            let bar = self.bar(behind, behind_root, false, cx);
             let page = self.under(behind, window, cx);
             Some((progress, with_bar(bar, page)))
         });
         let stage = {
             let root = self.nav.read(cx).at_root();
-            with_bar(self.bar(route, root, true, window, cx), stage)
+            with_bar(self.bar(route, root, true, cx), stage)
         };
         div()
             .key_context(crate::platform::actions::CONTEXT)
