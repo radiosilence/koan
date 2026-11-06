@@ -1,0 +1,1 @@
+- **GPUI from gpui-fast.** The desktop app takes longbridge/gpui-fast's retained mode and scroll layers through koan's GPUI fork: views and list rows that did not change are reused rather than drawn again.
