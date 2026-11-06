@@ -689,6 +689,11 @@ impl PhoneShell {
         });
     }
 
+    /// The page in front; for tools that walk the pages headlessly.
+    pub fn route(&self, cx: &App) -> Route {
+        self.nav.read(cx).current()
+    }
+
     /// Opens Now Playing, as tapping the mini player does.
     pub fn open_now_playing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.now_playing.is_some() {
