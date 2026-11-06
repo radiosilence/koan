@@ -622,13 +622,20 @@ impl Glide {
 }
 
 /// What a series' image and tracks were last written from.
+/// A series' data as last written: x, y, and the lower edge of an area.
+type Source = (Arc<[f64]>, Arc<[f64]>, Option<Arc<[f64]>>);
+/// The grid as drawn: its layer, image, the ticks it holds, and its spans.
+type Grid = (Animated, Arc<RenderImage>, Vec<u64>, Span, Span);
+/// A draggable point at rest: its id, place in the window, and x and y ranges.
+type Target = (u64, Point<Pixels>, (f64, f64), (f64, f64));
+
 struct SeriesState {
     id: SharedString,
     animated: Animated,
     image: Option<Arc<RenderImage>>,
     keyframe: Keyframe,
     spans: (Span, Span, Span),
-    source: (Arc<[f64]>, Arc<[f64]>, Option<Arc<[f64]>>),
+    source: Source,
     /// The axes, spans and plot the tracks and lengths were written for.
     written: Option<(Glide, Glide, Span, Span)>,
     laid: Option<(Size<Pixels>, f32, Map, Map)>,
@@ -661,7 +668,7 @@ struct State {
     x: Option<Glide>,
     y: Option<Glide>,
     series: Vec<SeriesState>,
-    grid: Option<(Animated, Arc<RenderImage>, Vec<u64>, Span, Span)>,
+    grid: Option<Grid>,
     points: Vec<PointState>,
     labels: HashMap<(u8, u64), LabelState>,
     pressed: Option<Pressed>,
@@ -700,7 +707,7 @@ struct Frame {
     line_height: Pixels,
     hitbox: Option<Hitbox>,
     /// Each draggable point at rest, in the window, with its ranges.
-    targets: Vec<(u64, Point<Pixels>, (f64, f64), (f64, f64))>,
+    targets: Vec<Target>,
 }
 
 /// The axes and marks, owned, as prepaint takes them.
