@@ -37,7 +37,22 @@ pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
 const SLEEVE: f32 = 30.0;
 
+/// What the playing record's sleeve flies under, between the mini player
+/// and Now Playing.
+pub const NOW_PLAYING: crate::components::FlightKey =
+    crate::components::FlightKey("now-playing", 0);
+
 impl Transport {
+    /// The sleeve as last drawn.
+    pub fn cover(&self) -> CoverArt {
+        self.cover.clone()
+    }
+
+    /// Whether Now Playing shows the art rather than the lyrics.
+    pub fn shows_art(&self) -> bool {
+        !self.lyrics_shown
+    }
+
     /// Draws the transport as `form` from now on. The phone's forms follow
     /// the playhead themselves: the mini player's line and Now Playing's
     /// times.
@@ -106,7 +121,13 @@ impl Transport {
                         .glide(&self.mini_glide),
                 ),
             )
-            .child(Cover::new(self.cover.clone(), sleeve))
+            .child(
+                crate::components::FlightAnchor::source(
+                    NOW_PLAYING,
+                    Cover::new(self.cover.clone(), sleeve),
+                )
+                .lasting(),
+            )
             .child(
                 div()
                     .flex_1()
@@ -210,7 +231,11 @@ impl Transport {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Cover::new(self.cover.clone(), side))
+                .child(crate::components::FlightAnchor::destination(
+                    NOW_PLAYING,
+                    self.cover.clone(),
+                    Cover::new(self.cover.clone(), side),
+                ))
                 .into_any_element(),
         };
         let titles = entry.map(|e| {

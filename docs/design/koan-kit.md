@@ -324,6 +324,10 @@ A sheet, a question or the command bar comes up with its veil fading in under it
 
 The question host gives the keyboard back to whatever had it when it asked, once the question is answered or put away.
 
+### Flights (UIKit's shared-element transitions)
+
+`flight::{FlightAnchor, FlightKey, depart, recall, drive, land, overlay}`: a picture that moves between pages, as a record's sleeve grows from its tile into its page's header and the mini player's sleeve into Now Playing's art. Each end is a `FlightAnchor` around the picture under one `FlightKey`, a `source` and a `destination`; each measures its window bounds as it is laid out. `depart` sets a flight going from a tap's bounds when the destination's page opens, and gives up if the destination is not drawn within half a second; `recall` sends the destination back to its source, which, unless it is `lasting` (the mini player), must be drawn during the flight to be flown to. A flight runs on its own clock and curve, or follows its owner's progress through `drive`, as the phone's push and swipe back do, and `land` ends it. While one is in the air both ends draw hidden and `overlay`, which each shell mounts over its pages and under its sheets, draws the copy between them. The copy is placed on the CPU each frame, since its two ends may themselves be moving with their pages; the frames last as long as the flight. Under Reduce Motion nothing flies.
+
 ### DenseTable (Mac: the EQ's band table)
 
 `table_list(id, count, rows)`: a virtualised list of `TableRow`s, made a screenful at a time, for a table too long to build whole (a library's organise plan).

@@ -9,6 +9,7 @@
 
 use koan_kit::app::*;
 
+use crate::components::flight;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
     Clear, KoanFrosted, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
@@ -178,6 +179,9 @@ impl PhoneShell {
             // Playing would cover.
             cx.observe(&nav, |this, _, cx| {
                 this.now_playing = None;
+                if flight::flying(cx) == Some(transport::NOW_PLAYING) {
+                    flight::land(cx);
+                }
                 cx.notify();
             }),
             cx.subscribe_in(
@@ -412,6 +416,7 @@ impl PhoneShell {
         }
         self.seen = Some(now);
         if let Some(progress) = self.back_swipe {
+            self.fly(progress, true, cx);
             return Some(progress);
         }
         let (from, started, back) = self.settling?;
@@ -419,6 +424,9 @@ impl PhoneShell {
         let to = if back { 1.0 } else { 0.0 };
         if t >= 1.0 {
             self.settling = None;
+            if self.sleeve(cx).is_some() && flight::flying(cx) == self.sleeve(cx) {
+                flight::land(cx);
+            }
             if back {
                 self.back(cx);
             } else if let Some(library) = &self.library {
@@ -427,7 +435,29 @@ impl PhoneShell {
             return None;
         }
         window.request_animation_frame();
-        Some(from + (to - from) * crate::theme::Motion::quick_out(t))
+        let progress = from + (to - from) * crate::theme::Motion::quick_out(t);
+        self.fly(progress, back, cx);
+        Some(progress)
+    }
+
+    /// What the record page in front flies its sleeve under.
+    fn sleeve(&self, cx: &App) -> Option<crate::components::FlightKey> {
+        match self.nav.read(cx).current() {
+            Route::Album(id) => Some(library::tile::sleeve_key(id)),
+            _ => None,
+        }
+    }
+
+    /// A record's page sliding in or swiped back, `progress` of the way to
+    /// the page under it: its header's sleeve follows, between its tile on
+    /// that page and the header. Going back, the flight is set going from
+    /// the header, and lands on the tile if the page under draws it.
+    fn fly(&self, progress: f32, going_back: bool, cx: &mut App) {
+        let Some(key) = self.sleeve(cx) else { return };
+        if flight::flying(cx) != Some(key) && !(going_back && flight::recall(key, None, cx)) {
+            return;
+        }
+        flight::drive(1.0 - progress, cx);
     }
 
     /// The page under a swipe back: the library's made ahead and kept to be
@@ -678,7 +708,16 @@ impl PhoneShell {
                 full.set_lib(lib);
             });
         }
-        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
+        // Going down, the art shrinks back into the mini player's sleeve as
+        // Now Playing slides away.
+        let closed = cx.subscribe(&full, |this, full, _: &transport::Collapse, cx| {
+            if this.closing.is_none() && full.read(cx).shows_art() {
+                flight::recall(
+                    transport::NOW_PLAYING,
+                    Some((crate::theme::Motion::SETTLE, flight::Curve::InOut)),
+                    cx,
+                );
+            }
             this.closing.get_or_insert_with(std::time::Instant::now);
             cx.notify();
         });
@@ -691,6 +730,17 @@ impl PhoneShell {
             }
             cx.notify();
         });
+        // The mini player's sleeve grows into Now Playing's art as it slides
+        // up, on the slide's clock.
+        let art = self.transport.read(cx).cover();
+        flight::depart(
+            transport::NOW_PLAYING,
+            &art,
+            None,
+            crate::theme::Motion::SETTLE * 2,
+            flight::Curve::QuickOut,
+            cx,
+        );
         self.closing = None;
         self.now_playing = Some((full, closed, info));
         cx.notify();
@@ -955,6 +1005,8 @@ impl Render for PhoneShell {
                     })),
             )
             .children(now_playing)
+            // A sleeve flying between pages, over them and under any sheet.
+            .child(flight::overlay())
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
