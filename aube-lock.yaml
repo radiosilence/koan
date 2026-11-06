@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@radiosilence/theme':
+        specifier: 0.1.0
+        version: 0.1.0
+
+packages:
+
+  '@radiosilence/theme@0.1.0':
+    resolution: {gitHosted: true, integrity: sha512-bK064SfFlL0kx/sWtz8md/IEE3AdmR3hXhYnkFmDwJJ8mGZUQLSHsD2aMF2xjjDHpaSmi3mZOMHcPMGUXXmD+g==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.1.0/e5099485f3ccf8c00160da41291e31e7735b4e8c}
+
+snapshots:
+
+  '@radiosilence/theme@0.1.0': {}

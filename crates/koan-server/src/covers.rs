@@ -826,7 +826,7 @@ pub(crate) fn placeholder(size: u32) -> Bytes {
 
 fn draw_placeholder(size: u32) -> Bytes {
     // The dark appearance's `--surface` (#2a2a2a) and `--muted` (#919191),
-    // from site/src/theme.css.
+    // from the @radiosilence/theme package.
     const SURFACE: [f32; 3] = [42.0, 42.0, 42.0];
     const MUTED: [f32; 3] = [145.0, 145.0, 145.0];
     // `just icons` writes each glyph as absolute `M`/`L` polylines, which is

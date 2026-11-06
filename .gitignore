@@ -44,3 +44,7 @@ __pycache__/
 crates/koan-server/assets/ui.js
 crates/koan-server/assets/player.js
 crates/koan-server/assets/share.js
+
+# The stylesheets' npm packages, and the GitHub Packages token .npmrc reads
+node_modules/
+.npmrc.auth
