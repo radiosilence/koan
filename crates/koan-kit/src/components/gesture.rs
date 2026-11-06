@@ -89,6 +89,7 @@ impl Gesture {
             | Icon::OnDevice
             | Icon::CloudKept
             | Icon::Save
+            | Icon::Organize
             | Icon::Paste => Drop,
             Icon::Share | Icon::Export | Icon::Cloud | Icon::Airplay => Lift,
             Icon::Add
