@@ -174,7 +174,7 @@ impl Gesture {
     }
 
     /// The program's code for it.
-    pub(crate) fn code(self) -> f32 {
+    pub fn code(self) -> f32 {
         match self {
             Gesture::Drop => 1.0,
             Gesture::Lift => 2.0,
@@ -190,7 +190,7 @@ impl Gesture {
 
     /// Which way it goes, on the glyph's grid: a nudge's heading, a swing's
     /// turn (1 clockwise).
-    pub(crate) fn heading(self) -> (f32, f32) {
+    pub fn heading(self) -> (f32, f32) {
         match self {
             Gesture::Nudge(heading) => heading.vector(),
             Gesture::Swing(clockwise) => (if clockwise { 1.0 } else { -1.0 }, 0.0),
