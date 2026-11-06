@@ -585,7 +585,7 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     // lit while it has one.
     let eq = |entry: MenuEntry, id: String, on: bool| {
         entry.lit_action(Icon::Filters, "eq for this output", on, move |_, _, cx| {
-            crate::dsp::show(Some(id.clone()), cx);
+            crate::settings::open_eq(Some(id.clone()), cx);
         })
     };
     let preset = |o: &koan_runtime::OutputInfo| match (&o.preset, o.unsaved) {
@@ -774,7 +774,7 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
     let device = eq.device.clone();
     menu.separator().item(
         MenuEntry::new("Edit…")
-            .on_click(move |_, _, cx| crate::dsp::show(Some(device.clone()), cx)),
+            .on_click(move |_, _, cx| crate::settings::open_eq(Some(device.clone()), cx)),
     )
 }
 

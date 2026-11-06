@@ -297,6 +297,9 @@ pub struct SettingsWindow {
     ctx: Ctx,
     tab: Tab,
     pane: Pane,
+    /// The panes of the tabs left, kept as they were: a field typed in, a
+    /// sheet or confirmation open over EQ, survive a visit to another tab.
+    kept: std::collections::HashMap<Tab, Pane>,
     /// The server's accounts, for its admins: loading is what says the
     /// account is an admin's, and so whether there is a People tab at all.
     people: Option<Entity<panes::people::People>>,
@@ -374,6 +377,7 @@ impl SettingsWindow {
             ctx,
             tab,
             pane,
+            kept: std::collections::HashMap::new(),
             people: None,
             people_for: None,
             _people: None,
@@ -414,6 +418,9 @@ impl SettingsWindow {
             .map(|account| format!("{account} {url}"));
         if key != self.people_for {
             self.people_for = key.clone();
+            // The accounts' panes read who is signed in when made.
+            self.kept.remove(&Tab::People);
+            self.kept.remove(&Tab::Account);
             self.people = key.map(|_| {
                 let engine = self.ctx.model.read(cx).engine().clone();
                 cx.new(|cx| panes::people::People::new(engine, cx))
@@ -605,8 +612,13 @@ impl SettingsWindow {
     /// Makes the pane for `tab`. A tab switch swaps the page at once, and
     /// the page left goes with its fields.
     fn show(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
+        let pane = match self.kept.remove(&tab) {
+            Some(pane) => pane,
+            None => Pane::new(tab, &self.ctx, self.people.clone(), window, cx),
+        };
+        let left = std::mem::replace(&mut self.pane, pane);
+        self.kept.insert(self.tab, left);
         self.tab = tab;
-        self.pane = Pane::new(tab, &self.ctx, self.people.clone(), window, cx);
     }
 }
 
@@ -634,6 +646,13 @@ impl Render for SettingsWindow {
         let sheets = self.ctx.sheets.clone();
         let sheet = Sheets::render(&sheets, &look, window, cx);
         let fill = || StyleRefinement::default().size_full();
+        // EQ's sheets and questions cover the whole window, tab strip
+        // included, so nothing behind them can be chosen while one is up.
+        // On a phone the shell draws them.
+        let (eq_sheets, eq_questions) = match self.eq_page().filter(|_| !self.screen) {
+            Some(page) => crate::dsp::EqPage::overlay(&page, window, cx),
+            None => (None, None),
+        };
         div()
             .relative()
             .size_full()
@@ -652,6 +671,8 @@ impl Render for SettingsWindow {
             )
             .child(status)
             .children(sheet)
+            .children(eq_sheets)
+            .children(eq_questions)
     }
 }
 

@@ -91,16 +91,9 @@ impl EqPage {
 impl Render for EqPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
-        // On a phone the page is one of the shell's, under its bar and foot,
-        // and the shell draws the sheets over those (`overlay`).
-        let (sheets, prompts) = if look.touch {
-            (None, None)
-        } else {
-            (
-                Sheets::render(&self.sheets, window, cx),
-                prompts::render(&self.dsp, window, cx),
-            )
-        };
+        // The page's host draws its sheets over the whole of itself
+        // (`overlay`): Settings' window on the desktop, so the tab strip is
+        // covered too, and the phone's shell, over its bar and foot.
         let dsp = self.dsp.clone();
         let device = self.body.read(cx).device();
         div()
@@ -121,8 +114,6 @@ impl Render for EqPage {
                     // the bounds a cached view keeps between frames.
                     .cached(StyleRefinement::default().size_full()),
             )
-            .children(sheets)
-            .children(prompts)
     }
 }
 

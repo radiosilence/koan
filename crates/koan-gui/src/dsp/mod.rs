@@ -41,11 +41,5 @@ pub fn model(cx: &mut App) -> Entity<Dsp> {
 /// Answers Playback → EQ…. Call once the engine and the mirror are
 /// installed.
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &ShowEq, cx| show(None, cx));
-}
-
-/// Shows EQ for `device`, or for the output in use: Settings on its EQ
-/// pane, or on a phone the Settings tab's EQ screen.
-pub fn show(device: Option<String>, cx: &mut App) {
-    crate::settings::open_eq(device, cx);
+    cx.on_action(|_: &ShowEq, cx| crate::settings::open_eq(None, cx));
 }

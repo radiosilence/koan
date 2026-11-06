@@ -13,7 +13,7 @@
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- --sheet manage target/manage.png
 //! KOAN_APPEARANCE__TEXT_SIZE=130 KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- target/eq-130.png
 //!
-//! `--sheet` opens one of the EQ window's sheets over the page: `manage`
+//! `--sheet` opens one of the EQ page's sheets over it: `manage`
 //! (Manage EQ), `autoeq` (the AutoEQ search), `measure` (a measurement's
 //! import) or `role` (the question an import asks of what it made).
 //! The text size is the configuration's, which `KOAN_APPEARANCE__TEXT_SIZE`
@@ -218,7 +218,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         koan_kit::components::host(page, window, cx)
                     },
                 )
-                .expect("the EQ window opens");
+                .expect("the example's window opens");
                 cx.activate(true);
             });
         return Ok(());
