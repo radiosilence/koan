@@ -594,33 +594,38 @@ impl RenderOnce for FlightAnchor {
             .try_global::<Flights>()
             .is_some_and(|f| f.hides(key, end));
         let art = self.art.as_ref().and_then(Art::of);
-        div()
-            .relative()
-            .flex_none()
-            .child(div().when(hidden, |d| d.opacity(0.)).child(self.child))
-            .child(
-                canvas(
-                    move |bounds, window, cx| {
-                        let view = Some(window.current_view());
-                        let flights = cx.default_global::<Flights>();
-                        let frame = flights.frame;
-                        flights.record(
-                            key,
-                            end,
-                            Seen {
-                                bounds,
-                                frame,
-                                view,
-                                lasting,
-                                art,
-                            },
-                        );
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
+        // The anchor is a row, so the measured box takes its picture's own
+        // width rather than stretching across a stacked parent: a flight
+        // aimed at a stretched box would fly to the row's width and snap.
+        div().flex().flex_none().child(
+            div()
+                .relative()
+                .flex_none()
+                .child(div().when(hidden, |d| d.opacity(0.)).child(self.child))
+                .child(
+                    canvas(
+                        move |bounds, window, cx| {
+                            let view = Some(window.current_view());
+                            let flights = cx.default_global::<Flights>();
+                            let frame = flights.frame;
+                            flights.record(
+                                key,
+                                end,
+                                Seen {
+                                    bounds,
+                                    frame,
+                                    view,
+                                    lasting,
+                                    art,
+                                },
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                ),
+        )
     }
 }
 
