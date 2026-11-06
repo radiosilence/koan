@@ -43,7 +43,7 @@ const HEIGHT: f32 = 874.0;
 enum Step {
     Page(Route),
     NowPlaying,
-    /// A page swiped back to the browser under it: pictured part way, and
+    /// A page swiped back to the page under it: pictured part way, and
     /// the settle after the release counted for the frames it asks for.
     SwipeBack(Route),
 }
@@ -192,8 +192,8 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {
         steps.push(page("album", Route::Album(album)));
-        steps.push(("swipe-back".into(), Step::SwipeBack(Route::Album(album))));
     }
+    steps.push(("swipe-back".into(), Step::SwipeBack(Route::Albums)));
     if let Some(artist) = tracks.iter().find_map(|t| t.artist_id) {
         steps.push(page("artist", Route::Artist(artist)));
     }
@@ -201,7 +201,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     Ok(steps)
 }
 
-/// Goes from the albums to `route`, swipes it part way back for a picture
+/// Goes from the library to `route`, swipes it part way back for a picture
 /// of the page under it uncovered, lets go, and counts the frames the
 /// window is asked for while the release settles: none, since the GPU
 /// moves the pages, until the move lands and the page under is laid out.
@@ -213,7 +213,7 @@ fn swipe_back(
     out: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
     use koan_kit::raw::{BackGestureEvent, BackGesturePhase};
-    cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Albums, cx)));
+    cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Library, cx)));
     settle(cx, window)?;
     cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx)));
     settle(cx, window)?;
@@ -261,7 +261,7 @@ fn swipe_back(
     if asked > 0 {
         return Err(format!("the swipe back's settle asked for {asked} frames").into());
     }
-    if landed != Route::Albums {
+    if landed != Route::Library {
         return Err(format!("the swipe back landed on {landed:?}").into());
     }
     Ok(())
