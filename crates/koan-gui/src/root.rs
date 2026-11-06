@@ -5,8 +5,8 @@
 //! The root also follows the playing record: its sleeve, fetched and decoded
 //! off the main thread, sets the accent and the wash, and the wash drifts
 //! while something plays. While a record's page shows, its sleeve does so in
-//! the playing record's place, and while an artist's page shows, their photo
-//! if they have one (`ShownRecord`), as the Apple apps' room does.
+//! the playing record's place, as in the Apple apps' room, and while an
+//! artist's page shows, their photo if they have one (`ShownRecord`).
 //!
 //! While the rainbow is drawn (`crate::rainbow`) the root also lays its
 //! prism out: a layer between the wash and the page, the beat's pulse at the
