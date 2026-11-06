@@ -126,6 +126,11 @@ impl LibraryStage {
         Some(self.controls.clone().into())
     }
 
+    /// Whether the page showing has controls in the toolbar's slot.
+    pub fn has_controls(&self, cx: &App) -> bool {
+        self.controls.read(cx).shows()
+    }
+
     /// The page a swipe back is uncovering, `page`, made now if it is not
     /// already. Its controls reach the toolbar only once it is the page.
     pub fn under(

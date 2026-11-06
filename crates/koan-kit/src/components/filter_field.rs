@@ -180,10 +180,18 @@ impl RenderOnce for FilterField {
                     // when the page column is narrow.
                     // In the toolbar, a button's height to click, glyph and
                     // margins included, not the text's line alone.
-                    d.w(super::ToolbarMetrics::FIELD * look.scale.size)
-                        .min_h(super::ToolbarMetrics::FIELD_HIT.max(look.target()))
-                        .flex_shrink(1.)
-                        .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
+                    d.map(|d| {
+                        // Under touch the field has a row to itself and takes
+                        // what the buttons beside it leave.
+                        if look.touch {
+                            d.flex_1()
+                        } else {
+                            d.w(super::ToolbarMetrics::FIELD * look.scale.size)
+                        }
+                    })
+                    .min_h(super::ToolbarMetrics::FIELD_HIT.max(look.target()))
+                    .flex_shrink(1.)
+                    .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }
             })
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {

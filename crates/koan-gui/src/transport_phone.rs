@@ -5,6 +5,7 @@
 //! the seek bar, the controls).
 
 use super::*;
+use crate::components::KoanContextMenu as _;
 use crate::components::KoanInsets as _;
 
 /// What the transport is drawn as.
@@ -126,6 +127,13 @@ impl Transport {
                             .truncate()
                             .child(detail)
                     })),
+            )
+            // Where the music plays, a thumb away on every page, as on iOS.
+            .child(
+                div()
+                    .id("mini-devices")
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(self.control_button(&p, window, cx)),
             )
             .child(
                 Button::icon_only(
@@ -251,6 +259,26 @@ impl Transport {
                         }),
                 )
                 .children(heart)
+                // The track's menu, as the rows' hold opens it: its record,
+                // its artist, a playlist, the queue.
+                .children(e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
+                    let album = e.album_id;
+                    div()
+                        .koan_menu_on_press("np-more", window, cx, move |m, window, cx| {
+                            crate::library::actions::menu(
+                                m,
+                                &lib,
+                                std::sync::Arc::from([crate::library::drag::Playable::Track(
+                                    track,
+                                )]),
+                                album,
+                                None,
+                                window,
+                                cx,
+                            )
+                        })
+                        .child(Button::icon_only("np-more-button", Icon::More, "more"))
+                }))
         });
         let play_pause = Button::icon_outlined(
             "np-full-play-pause",
@@ -321,10 +349,8 @@ impl Transport {
             // The art and the lyrics, a new record's sleeve and a new track's
             // names fade in over what they replace rather than snapping.
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(crate::components::FadeIn::new(
+                div().flex_1().min_h_0().child(
+                    crate::components::FadeIn::new(
                         ElementId::NamedInteger(
                             if self.lyrics_shown {
                                 "np-lyrics"
@@ -334,8 +360,10 @@ impl Transport {
                             .into(),
                             entry.and_then(|e| e.album_id).unwrap_or(0) as u64,
                         ),
-                        div().size_full().child(stage),
-                    )),
+                        stage,
+                    )
+                    .fill(),
+                ),
             )
             .children(titles.map(|titles| {
                 crate::components::FadeIn::new(

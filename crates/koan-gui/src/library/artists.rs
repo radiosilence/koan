@@ -420,6 +420,7 @@ impl ArtistBrowser {
     /// The browser's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
+            .fills()
             .child(self.search.clone())
             .spacer()
             .child(chrome::filter_button(&self.filters, &self.lib, cx))

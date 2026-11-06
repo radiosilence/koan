@@ -539,7 +539,7 @@ impl PhoneShell {
 
     /// The bar over the page: back while the tab has somewhere to go back
     /// to, and the name of a page that has no header of its own.
-    fn bar(&self, route: Route, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn bar(&self, route: Route, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let nav = self.nav.read(cx);
         // Named only where the page has no heading of its own: the queue,
         // the listings and the records head themselves.
@@ -553,17 +553,26 @@ impl PhoneShell {
         };
         // The page's own controls: the queue's, a library page's filter and
         // sort.
-        let controls = if route == Route::Queue {
-            Some(self.queue_controls.clone().into())
+        let library_controls = self
+            .library
+            .as_ref()
+            .filter(|library| LibraryStage::draws(route) && library.read(cx).has_controls(cx))
+            .and_then(|library| library.read(cx).toolbar());
+        // A browser's filter field and buttons take a row of their own under
+        // the bar, as the iOS app's filter row: in the bar beside the back
+        // button the field has room for a few letters. Buttons alone stay in
+        // the bar.
+        let filters = matches!(route, Route::Albums | Route::Artists | Route::Tracks);
+        let (controls, row): (Option<AnyView>, Option<AnyView>) = if route == Route::Queue {
+            (Some(self.queue_controls.clone().into()), None)
+        } else if filters {
+            (None, library_controls)
         } else {
-            self.library
-                .as_ref()
-                .filter(|_| LibraryStage::draws(route))
-                .and_then(|library| library.read(cx).toolbar())
+            (library_controls, None)
         };
         // A tab's first page that heads itself, with no controls of its own,
         // has nothing for a bar to say.
-        if nav.at_root() && title.is_none() && controls.is_none() {
+        if nav.at_root() && title.is_none() && controls.is_none() && row.is_none() {
             return None;
         }
         let bar = Toolbar::new()
@@ -582,7 +591,23 @@ impl PhoneShell {
                     .children(title.map(ToolbarTitle::new)),
             )
             .when_some(controls, |bar, controls: AnyView| bar.trailing(controls));
-        Some(bar.into_any_element())
+        let look = crate::theme::Look::of(window, cx);
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(bar)
+                .children(row.map(|row| {
+                    div()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .min_h(crate::components::ToolbarMetrics::HEIGHT)
+                        .px(crate::components::RowMetrics::page_margin(&look))
+                        .child(row)
+                }))
+                .into_any_element(),
+        )
     }
 
     /// Settings' tab, on `tab`'s screen or its list of sections.
@@ -658,7 +683,10 @@ impl PhoneShell {
         });
         if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
             let feed = lib.feed.clone();
-            full.update(cx, |full, cx| full.set_feed(feed, cx));
+            full.update(cx, |full, cx| {
+                full.set_feed(feed, cx);
+                full.set_lib(lib);
+            });
         }
         let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
             this.closing.get_or_insert_with(std::time::Instant::now);
@@ -796,7 +824,7 @@ impl Render for PhoneShell {
             .pt(insets.top)
             .pl(insets.left)
             .pr(insets.right)
-            .children(self.bar(route, cx))
+            .children(self.bar(route, window, cx))
             .child(self.banner.clone())
             .child(self.output_wait.clone())
             .child(

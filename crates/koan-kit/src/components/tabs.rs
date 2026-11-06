@@ -6,30 +6,20 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{AnimatedLayer, Ease, Handler};
+use super::Handler;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Motion, Space, Tone, TypeRole, label};
 
 /// The width of a bar's gliding rule, in points at 100 %.
 const BAR_RULE: f32 = 28.0;
 
-/// A bar's rule: its offset track, the bar's width last laid out, and the
-/// tab it last stood under with its offset.
+/// A bar's rule: the tab it moves from and to, since when, whether it has
+/// been placed.
+#[derive(Default)]
 struct BarRule {
-    animated: super::Animated,
-    width: std::rc::Rc<std::cell::Cell<Pixels>>,
-    at: Option<(usize, f32)>,
-}
-
-impl Default for BarRule {
-    fn default() -> Self {
-        let animated = super::Animated::new();
-        super::layer::standing(&animated);
-        Self {
-            animated,
-            width: Default::default(),
-            at: None,
-        }
-    }
+    from: f32,
+    to: f32,
+    since: Option<std::time::Instant>,
+    placed: bool,
 }
 
 /// The tabs, centred: each its glyph over its label in `fine`, lowercase,
@@ -84,44 +74,60 @@ impl RenderOnce for TabStrip {
         let look = Look::of(window, cx);
         let prism = crate::theme::KoanTheme::prism_gradient(cx);
         let bar = self.bar;
-        // A bar's one rule, gliding to the chosen tab on the GPU rather than
-        // each tab drawing its own: the tabs share the bar's width, which the
-        // last frame measured.
+        // A bar's one rule, gliding to the chosen tab rather than each tab
+        // drawing its own: the tabs share the bar's width. A move of a few
+        // points for a moment, laid out.
         let glide = bar.then(|| {
-            let chosen = self.tabs.iter().position(|t| t.3).unwrap_or(0);
-            let count = self.tabs.len().max(1);
+            let chosen = self.tabs.iter().position(|t| t.3).unwrap_or(0) as f32;
+            let count = self.tabs.len().max(1) as f32;
             let state = window.use_keyed_state("tab-bar-rule", cx, |_, _| BarRule::default());
-            let rule = look.spaced(BAR_RULE);
-            let scale = window.scale_factor();
-            let (animated, width) = {
-                let state = state.read(cx);
-                (state.animated.clone(), state.width.clone())
-            };
-            let tab = width.get() / count as f32;
-            let target = f32::from(tab * chosen as f32 + (tab - rule) / 2.0) * scale;
-            let moved = state.update(cx, |state, _| {
-                let was = state.at.replace((chosen, target));
-                was.map(|(tab, _)| tab != chosen)
+            let reduce = !crate::theme::KoanTheme::motion_allowed(cx);
+            let (x, moving) = state.update(cx, |rule, _| {
+                let now = std::time::Instant::now();
+                let at = |rule: &BarRule| {
+                    let t = rule.since.map_or(1.0, |since| {
+                        now.duration_since(since).as_secs_f32() / Motion::SETTLE.as_secs_f32()
+                    });
+                    if t >= 1.0 {
+                        rule.to
+                    } else {
+                        rule.from + (rule.to - rule.from) * Motion::quick_out(t)
+                    }
+                };
+                if rule.to != chosen {
+                    rule.from = if rule.since.is_none() && rule.placed {
+                        rule.to
+                    } else {
+                        at(rule)
+                    };
+                    rule.to = chosen;
+                    rule.since = (rule.placed && !reduce).then_some(now);
+                }
+                rule.placed = true;
+                let x = at(rule);
+                let moving = rule
+                    .since
+                    .is_some_and(|since| now.duration_since(since) < Motion::SETTLE);
+                if !moving {
+                    rule.since = None;
+                }
+                (x, moving)
             });
-            match moved {
-                Some(true) => animated.to(1, target, Motion::SETTLE, Ease::QuickOut),
-                _ => animated.hold(1, target),
+            if moving {
+                window.request_animation_frame();
             }
-            let measure = canvas(
-                move |bounds, _, _| width.set(bounds.size.width),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0();
-            div().absolute().inset_0().child(measure).child(
+            // The bar spans the window between the system's side insets.
+            let insets = super::system_insets(super::Clear::System, window);
+            let tab = (window.viewport_size().width - insets.left - insets.right) / count;
+            let rule = look.spaced(BAR_RULE);
+            div().absolute().inset_0().child(
                 div()
                     .absolute()
-                    .left_0()
                     .bottom(px(8.0))
-                    .child(AnimatedLayer::new(
-                        &animated,
-                        div().w(rule).h(look.hairline * 2.).bg(look.accent.hsla()),
-                    )),
+                    .left(tab * x + (tab - rule) / 2.0)
+                    .w(rule)
+                    .h(look.hairline * 2.)
+                    .bg(look.accent.hsla()),
             )
         });
         div()
