@@ -1,7 +1,8 @@
 //! Walks the phone shell headlessly at an iPhone's size, under touch, and
 //! saves a PNG of each page, dark and light: the tabs' first pages, the
 //! library's pages, a record, an artist, a playlist, a Settings section and
-//! Now Playing. Nothing is shown and nothing on the screen is read: GPUI's
+//! Now Playing, and each page again scrolled part way, its rows under the
+//! bar. Nothing is shown and nothing on the screen is read: GPUI's
 //! headless renderer draws it, as `walk` does for the desktop shell.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
@@ -17,11 +18,14 @@ use std::time::Duration;
 use koan_gui::mobile::PhoneShell;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, theme};
-use koan_kit::app::{AppContext, Entity};
+use koan_kit::app::{AppContext, Entity, Modifiers, ScrollEvent};
 use koan_runtime::KoanEngine;
-// GPUI's start-up and headless rendering, which only the app's entry and
-// tools reach.
-use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, px, size};
+// GPUI's start-up, headless rendering and synthetic input, which only the
+// app's entry and tools reach.
+use koan_kit::raw::{
+    AnyWindowHandle, HeadlessAppContext, PlatformInput, ScrollDelta, ScrollSource, TouchPhase,
+    point, px, size,
+};
 
 /// An iPhone 17 Pro, in points.
 const WIDTH: f32 = 402.0;
@@ -87,6 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         {
             continue;
         }
+        let page = matches!(step, Step::Page(_));
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
@@ -103,6 +108,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if dark { "dark" } else { "light" }
             ));
             cx.capture_screenshot(window)?.save(&file)?;
+        }
+        if page {
+            scroll(&mut cx, window, SCROLLED)?;
+            settle(&mut cx, window)?;
+            let file = out.join(format!("phone-{name}-scrolled.png"));
+            cx.capture_screenshot(window)?.save(&file)?;
+            scroll(&mut cx, window, -SCROLLED)?;
         }
     }
     println!("PNGs in {}", out.display());
@@ -148,6 +160,32 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
     Ok(steps)
+}
+
+/// How far a page is scrolled for its second picture: its first rows under
+/// the bar.
+const SCROLLED: f32 = 160.0;
+
+/// Scrolls what is at the screen's middle down by `by` points, as a drag
+/// would.
+fn scroll(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    by: f32,
+) -> Result<(), Box<dyn Error>> {
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::Scroll(ScrollEvent {
+                position: point(px(WIDTH / 2.), px(HEIGHT / 2.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-by))),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
+            }),
+            cx,
+        );
+    })?;
+    Ok(())
 }
 
 /// Lets what arrives from the background land: rows, covers, the accent.
