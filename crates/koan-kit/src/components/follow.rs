@@ -289,7 +289,10 @@ impl Push {
     /// The progress easing from where it stands to `to`; how long that
     /// takes.
     pub fn settle(&self, to: f32, cx: &App) -> Duration {
-        let length = settle_length(cx);
+        self.settle_over(to, settle_length(cx))
+    }
+
+    fn settle_over(&self, to: f32, length: Duration) -> Duration {
         self.0.to(0, to, length, Ease::QuickOut);
         length
     }
@@ -299,6 +302,12 @@ impl Push {
     pub fn enter(&self, cx: &App) -> Duration {
         self.0.hold(0, 1.0);
         self.settle(0.0, cx)
+    }
+
+    #[cfg(test)]
+    fn enter_over(&self, length: Duration) -> Duration {
+        self.0.hold(0, 1.0);
+        self.settle_over(0.0, length)
     }
 
     /// Where the progress stands now.
@@ -323,30 +332,34 @@ impl Push {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Animated, Duration, Motion, Push};
 
-    #[gpui::test]
-    fn a_push_follows_then_settles_where_it_was_sent(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let push = Push::new();
-            push.follow(0.4);
-            assert!((push.at() - 0.4).abs() < 1e-4);
-            let length = push.settle(1.0, cx);
-            // Settling starts from where the finger left it.
-            assert!(push.at() < 0.6, "{}", push.at());
-            let landed = Animated::now() + length + Duration::from_millis(1);
-            assert!((push.0.at(0, landed) - 1.0).abs() < 1e-4);
-        });
+    #[test]
+    fn a_push_follows_then_settles_where_it_was_sent() {
+        let push = Push::new();
+        push.follow(0.4);
+        assert!((push.at() - 0.4).abs() < 1e-4);
+        let length = push.settle_over(1.0, Motion::SETTLE);
+        // Settling starts from where the finger left it.
+        assert!(push.at() < 0.6, "{}", push.at());
+        let landed = Animated::now() + length + Duration::from_millis(1);
+        assert!((push.0.at(0, landed) - 1.0).abs() < 1e-4);
     }
 
-    #[gpui::test]
-    fn a_pushed_page_enters_from_the_trailing_edge(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let push = Push::new();
-            let length = push.enter(cx);
-            assert!(push.at() > 0.9, "{}", push.at());
-            let landed = Animated::now() + length + Duration::from_millis(1);
-            assert!(push.0.at(0, landed).abs() < 1e-4);
-        });
+    #[test]
+    fn a_pushed_page_enters_from_the_trailing_edge() {
+        let push = Push::new();
+        let length = push.enter_over(Motion::SETTLE);
+        assert!(push.at() > 0.9, "{}", push.at());
+        let landed = Animated::now() + length + Duration::from_millis(1);
+        assert!(push.0.at(0, landed).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_release_under_reduce_motion_lands_at_once() {
+        let push = Push::new();
+        push.follow(0.7);
+        push.settle_over(1.0, Duration::ZERO);
+        assert!((push.at() - 1.0).abs() < 1e-4);
     }
 }
