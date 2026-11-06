@@ -297,9 +297,18 @@ impl RenderOnce for Button {
         // A press is answered by a ring off a glyph alone; a button showing
         // its word is lifted instead, under the word, never ringed through it.
         let worded = !glyph_only && self.label.is_some();
-        let answer = match kind.answer() {
-            super::Answer::Ring if worded => super::Answer::Lift,
-            answer => answer,
+        // A glyph showing answers by moving as its verb means, in place of
+        // the ring or the lift; one that morphs answers as its state lands.
+        let answer = match self
+            .icon
+            .filter(|_| show_glyph)
+            .and_then(super::Gesture::of)
+        {
+            Some(gesture) => super::Answer::Gesture(gesture),
+            None => match kind.answer() {
+                super::Answer::Ring if worded => super::Answer::Lift,
+                answer => answer,
+            },
         };
         debug_assert!(
             !glyph_only || self.help.is_some() || self.label.is_some(),
@@ -414,6 +423,7 @@ impl RenderOnce for Button {
             cx,
         );
         let glyph = self.icon.filter(|_| show_glyph).map(|icon| {
+            let moved = answers.gesture_layer(icon, look.points(role), color, window, cx);
             div()
                 .relative()
                 .child(
@@ -422,6 +432,7 @@ impl RenderOnce for Button {
                         .child(KoanIcon::new(icon).role(role).color(color)),
                 )
                 .children(drawn)
+                .children(moved)
         });
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
