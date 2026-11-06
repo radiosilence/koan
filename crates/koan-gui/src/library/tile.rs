@@ -465,7 +465,7 @@ impl<V: TileHost> Render for TileView<V> {
                     crate::components::flight::depart(
                         sleeve_key(id),
                         &crate::components::CoverArt::from(this.state.sleeve.clone()),
-                        Some(Bounds::new(this.origin.get(), size(side, side))),
+                        Some(Bounds::new(this.origin.get(), Size::new(side, side))),
                         Motion::SETTLE,
                         crate::components::Ease::QuickOut,
                         cx,
