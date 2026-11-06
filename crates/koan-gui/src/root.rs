@@ -4,7 +4,9 @@
 //!
 //! The root also follows the playing record: its sleeve, fetched and decoded
 //! off the main thread, sets the accent and the wash, and the wash drifts
-//! while something plays.
+//! while something plays. While a record's page shows, its sleeve does so in
+//! the playing record's place, as in the Apple apps' room, and while an
+//! artist's page shows, their photo if they have one (`ShownRecord`).
 //!
 //! While the rainbow is drawn (`crate::rainbow`) the root also lays its
 //! prism out: a layer between the wash and the page, the beat's pulse at the
@@ -40,8 +42,14 @@ const MIRROR_BALL_RIGHT: f32 = 18.0;
 pub struct WindowRoot {
     wash: Entity<Wash>,
     content: AnyView,
-    /// The record whose sleeve the wash and accent show.
-    album: Option<i64>,
+    /// The record or artist whose picture the wash and accent show.
+    source: Option<Shown>,
+    /// The artist whose page shows and who turned out to have no photo to
+    /// fetch: the playing record's colours stand in until the page is left
+    /// or the photo is found.
+    no_photo: Option<i64>,
+    /// `ShownRecord::photos` as last seen.
+    photos: u64,
     /// "Colours from the record" and the theme tint, as last applied.
     record_colours: bool,
     /// Less transparency asked for: the window's ground in place of the wash.
@@ -82,11 +90,93 @@ pub struct WindowRoot {
     _levels: [Option<Subscription>; 2],
 }
 
-/// The record a page is showing, whose colours the window takes over the
-/// playing record's while it shows: the accent and the wash ease to it and
-/// back, as they do when the record playing changes.
+/// What a page shows whose colours the window takes in place of the playing
+/// record's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shown {
+    /// A record's page: its sleeve.
+    Record(i64),
+    /// An artist's page: their photo, while they have one.
+    Artist(i64),
+}
+
+/// The page showing, whose colours the window wears over the playing
+/// record's while it shows: the accent and the wash ease to them and back,
+/// as they do when the record playing changes. Now Playing over the page
+/// is about the playing record alone, so while it is open the page's
+/// colours wait.
 #[derive(Default)]
-pub struct ShownRecord(pub Option<i64>);
+pub struct ShownRecord {
+    pub page: Option<Shown>,
+    pub now_playing: bool,
+    /// Moved each time an artist's photo is found, so a window fetches
+    /// again even when it was already asking for that artist.
+    photos: u64,
+}
+
+impl ShownRecord {
+    /// The page showing is `page`, from the route.
+    pub fn show(page: Option<Shown>, cx: &mut App) {
+        let now = cx.try_global::<Self>();
+        if now.map(|s| s.page) != Some(page) {
+            let now_playing = now.is_some_and(|s| s.now_playing);
+            let photos = now.map_or(0, |s| s.photos);
+            cx.set_global(Self {
+                page,
+                now_playing,
+                photos,
+            });
+        }
+    }
+
+    /// Now Playing came over the page, or went.
+    pub fn now_playing(open: bool, cx: &mut App) {
+        let now = cx.try_global::<Self>();
+        if now.map(|s| s.now_playing) != Some(open) {
+            let page = now.and_then(|s| s.page);
+            let photos = now.map_or(0, |s| s.photos);
+            cx.set_global(Self {
+                page,
+                now_playing: open,
+                photos,
+            });
+        }
+    }
+
+    /// The artist's photo became known while their page shows: the windows
+    /// ask for it again, having taken the playing record's colours meanwhile.
+    pub fn photo_found(artist: i64, cx: &mut App) {
+        if let Some(now) = cx.try_global::<Self>()
+            && now.page == Some(Shown::Artist(artist))
+        {
+            let again = Self {
+                page: now.page,
+                now_playing: now.now_playing,
+                photos: now.photos + 1,
+            };
+            cx.set_global(again);
+        }
+    }
+}
+
+/// Whose colours the window wears: the page's while it shows a record, or
+/// an artist with a photo, and Now Playing is not over it; otherwise the
+/// playing record's. Nothing with "Colours from the record" off.
+fn wearing(
+    shown: Option<&ShownRecord>,
+    playing: Option<i64>,
+    record_colours: bool,
+    no_photo: Option<i64>,
+) -> Option<Shown> {
+    if !record_colours {
+        return None;
+    }
+    shown
+        .filter(|s| !s.now_playing)
+        .and_then(|s| s.page)
+        .filter(|page| !matches!(page, Shown::Artist(id) if Some(*id) == no_photo))
+        .or(playing.map(Shown::Record))
+}
 
 /// The window's wash, for a phone's screen over the page (Now Playing) to
 /// draw behind itself, as the page's ground does; `None` with less
@@ -114,7 +204,9 @@ impl WindowRoot {
                 wash
             },
             content: content.into(),
-            album: None,
+            source: None,
+            no_photo: None,
+            photos: 0,
             record_colours,
             opaque: KoanTheme::opaque(cx),
             wash_tint,
@@ -138,7 +230,15 @@ impl WindowRoot {
             viewport: window.viewport_size(),
             scale: window.scale_factor(),
             _subscriptions: vec![
-                cx.observe_global::<ShownRecord>(move |this, cx| this.follow(&shown, false, cx)),
+                // Another page, Now Playing over it or away, or an artist's
+                // photo found: a photo missing before is asked for again.
+                cx.observe_global::<ShownRecord>(move |this, cx| {
+                    this.no_photo = None;
+                    let photos = cx.global::<ShownRecord>().photos;
+                    let found = photos != this.photos;
+                    this.photos = photos;
+                    this.follow(&shown, found, cx)
+                }),
                 theme::follow_appearance(window, cx),
                 cx.observe(&playback, |this, playback, cx| {
                     this.follow(&playback, false, cx)
@@ -288,19 +388,24 @@ impl WindowRoot {
         }
     }
 
-    /// Follows the record playing; `again` fetches its sleeve even when it
-    /// is the one shown, as after "Colours from the record" is switched.
+    /// Follows the record playing, or the page showing (`ShownRecord`);
+    /// `again` fetches the picture even when it is the one shown, as after
+    /// "Colours from the record" is switched.
     fn follow(&mut self, playback: &Entity<Playback>, again: bool, cx: &mut Context<Self>) {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
         let playing_album = now.entry.as_ref().and_then(|entry| entry.album_id);
-        let shown = cx.try_global::<ShownRecord>().and_then(|s| s.0);
         if playing != self.playing {
             self.playing = playing;
             self.feed_prism(cx);
         }
         // Off, there is no wash and the accent is mint, as with no record.
-        let album = shown.or(playing_album).filter(|_| self.record_colours);
+        let source = wearing(
+            cx.try_global::<ShownRecord>(),
+            playing_album,
+            self.record_colours,
+            self.no_photo,
+        );
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
         // The rainbow paints over the record: its sheen in the wash, its
         // accent its own. The record's is fetched again once it goes.
@@ -325,7 +430,7 @@ impl WindowRoot {
             // changes; a change to what plays leaves it be.
             if !self.rainbow || again {
                 self.rainbow = true;
-                self.album = None;
+                self.source = None;
                 self.fetching = None;
                 let sheen = crate::rainbow::Rainbow::sheen(cx);
                 self.wash.update(cx, |wash, cx| wash.set_sleeve(sheen, cx));
@@ -334,24 +439,28 @@ impl WindowRoot {
         }
         self.rainbow = false;
         self.swept = None;
-        if album == self.album && !again {
+        if source == self.source && !again {
             return;
         }
-        self.album = album;
-        let Some(album) = album else {
+        self.source = source;
+        let Some(source) = source else {
             self.fetching = None;
             self.wash.update(cx, |wash, cx| wash.set_sleeve(None, cx));
             KoanTheme::set_accent(Accent::of(None), true, cx);
             return;
         };
-        let fetch = engine(cx).album_cover_art(album, Some(SAMPLE));
+        let engine = engine(cx);
         let background = cx.background_executor().clone();
         self.fetching = Some(cx.spawn(async move |this, cx| {
             let decoded: Result<Option<(Option<Sleeve>, Accent)>, ()> = background
                 .spawn(async move {
                     // `Err` only when the fetch failed, which is worth asking
                     // again; no art, or art that will not decode, is `Ok(None)`.
-                    let Some(art) = fetch.await.map_err(|_| ())? else {
+                    let fetched = match source {
+                        Shown::Record(id) => engine.album_cover_art(id, Some(SAMPLE)).await,
+                        Shown::Artist(id) => engine.artist_image(id).await,
+                    };
+                    let Some(art) = fetched.map_err(|_| ())? else {
                         return Ok(None);
                     };
                     let Ok(image) = ::image::load_from_memory(&art.data) else {
@@ -373,13 +482,23 @@ impl WindowRoot {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                // An artist with no photo to be had, yet: the playing
+                // record's colours stand in, as on any other page.
+                if let Shown::Artist(id) = source
+                    && !matches!(decoded, Ok(Some(_)))
+                {
+                    this.no_photo = Some(id);
+                    let playback = cx.global::<Mirror>().playback.clone();
+                    this.follow(&playback, false, cx);
+                    return;
+                }
                 // A record with no sleeve, or one that will not decode or
                 // could not be fetched, takes the wash off and gives mint, as
                 // no record does. Only a failed fetch is worth trying again:
                 // forgetting the record has it asked for at the next change to
                 // what is playing.
                 if decoded.is_err() {
-                    this.album = None;
+                    this.source = None;
                 }
                 let (sleeve, accent) = decoded.ok().flatten().unwrap_or((None, Accent::of(None)));
                 this.wash.update(cx, |wash, cx| wash.set_sleeve(sleeve, cx));
@@ -455,5 +574,76 @@ impl Render for WindowRoot {
                     )
             })
             .child(crate::levels::paint(cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(page: Option<Shown>, now_playing: bool) -> ShownRecord {
+        ShownRecord {
+            page,
+            now_playing,
+            photos: 0,
+        }
+    }
+
+    #[test]
+    fn a_record_page_wears_its_own_sleeve() {
+        let shown = page(Some(Shown::Record(7)), false);
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, None),
+            Some(Shown::Record(7))
+        );
+        // With nothing playing too.
+        assert_eq!(
+            wearing(Some(&shown), None, true, None),
+            Some(Shown::Record(7))
+        );
+    }
+
+    #[test]
+    fn any_other_page_wears_the_playing_record() {
+        let shown = page(None, false);
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, None),
+            Some(Shown::Record(3))
+        );
+        assert_eq!(wearing(None, Some(3), true, None), Some(Shown::Record(3)));
+        assert_eq!(wearing(Some(&shown), None, true, None), None);
+    }
+
+    #[test]
+    fn now_playing_over_a_page_wears_the_playing_record() {
+        let shown = page(Some(Shown::Record(7)), true);
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, None),
+            Some(Shown::Record(3))
+        );
+    }
+
+    #[test]
+    fn an_artist_wears_their_photo_until_it_proves_missing() {
+        let shown = page(Some(Shown::Artist(5)), false);
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, None),
+            Some(Shown::Artist(5))
+        );
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, Some(5)),
+            Some(Shown::Record(3))
+        );
+        // Another artist's missing photo says nothing of this one's.
+        assert_eq!(
+            wearing(Some(&shown), Some(3), true, Some(9)),
+            Some(Shown::Artist(5))
+        );
+    }
+
+    #[test]
+    fn colours_from_the_record_off_wears_nothing() {
+        let shown = page(Some(Shown::Record(7)), false);
+        assert_eq!(wearing(Some(&shown), Some(3), false, None), None);
     }
 }

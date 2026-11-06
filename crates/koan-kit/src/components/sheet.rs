@@ -27,6 +27,8 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .w(px(560.0))
     .max_w_full()
     .max_h(relative(0.85))
+    // Shrinks within what holds it, its body scrolling.
+    .min_h_0()
     .bg(look.palette.bg.hsla())
     .border(look.hairline)
     .border_color(look.palette.rule.hsla())
@@ -74,13 +76,23 @@ pub fn head_data(
         .py(look.space(Space::M))
         .border_b(look.hairline)
         .border_color(look.palette.rule.hsla())
+        // A title too long for a phone's sheet beside its actions wraps;
+        // the actions keep their width.
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .text_role(TypeRole::Title, look)
                 .text_color(look.palette.strong.hsla())
                 .child(title.into()),
         )
-        .child(div().flex().gap(look.space(Space::M)).children(actions))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .gap(look.space(Space::M))
+                .children(actions),
+        )
 }
 
 /// A sheet's scrolling body.

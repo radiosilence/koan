@@ -9,7 +9,6 @@
 
 use koan_kit::app::*;
 
-use crate::components::flight;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
     Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
@@ -122,8 +121,9 @@ pub struct PhoneShell {
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
-    /// EQ's model and page, made on first showing and kept.
-    eq: Option<(Entity<crate::dsp::Dsp>, Entity<crate::dsp::EqPage>)>,
+    /// The shell's watch on Settings' EQ page while it shows: the shell
+    /// draws its sheets over everything.
+    eq_watch: Option<(EntityId, Subscription)>,
     /// The Search tab's field and the results under it, made once the
     /// library has loaded.
     search: Option<SearchPage>,
@@ -179,9 +179,6 @@ impl PhoneShell {
             // Playing would cover.
             cx.observe(&nav, |this, _, cx| {
                 this.now_playing = None;
-                if flight::flying(cx) == Some(transport::NOW_PLAYING) {
-                    flight::land(cx);
-                }
                 cx.notify();
             }),
             cx.subscribe_in(
@@ -211,7 +208,7 @@ impl PhoneShell {
             downloads: None,
             settings: None,
             search: None,
-            eq: None,
+            eq_watch: None,
             info: None,
             back_swipe: None,
             settling: None,
@@ -434,37 +431,6 @@ impl PhoneShell {
         Some(from + (to - from) * crate::theme::Motion::quick_out(t))
     }
 
-    /// What the record page in front flies its sleeve under.
-    fn sleeve(&self, cx: &App) -> Option<crate::components::FlightKey> {
-        match self.nav.read(cx).current() {
-            Route::Album(id) => Some(library::tile::sleeve_key(id)),
-            _ => None,
-        }
-    }
-
-    /// The record page's sleeve let go, eased to `to` (0 its tile, 1 the
-    /// header) as the page settles.
-    fn release_sleeve(&self, to: f32, cx: &mut App) {
-        if self.sleeve(cx).is_some() && flight::flying(cx) == self.sleeve(cx) {
-            flight::release(
-                to,
-                crate::theme::Motion::SETTLE,
-                crate::components::Ease::QuickOut,
-                cx,
-            );
-        }
-    }
-
-    /// A record's page swiped `progress` of the way back: its header's
-    /// sleeve follows the finger toward its tile on the page under it,
-    /// landing there if that page draws it.
-    fn fly_back(&self, progress: f32, cx: &mut App) {
-        let Some(key) = self.sleeve(cx) else { return };
-        if flight::flying(cx) == Some(key) || flight::recall(key, None, cx) {
-            flight::drive(1.0 - progress, cx);
-        }
-    }
-
     /// The page under a swipe back: the library's made ahead and kept to be
     /// the page, the shell's own drawn as they are.
     fn under(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -496,16 +462,6 @@ impl PhoneShell {
         }
         self.back_swipe = None;
         self.settling = Some((0.0, std::time::Instant::now(), true));
-        if let Some(key) = self.sleeve(cx) {
-            flight::recall(
-                key,
-                Some((
-                    crate::theme::Motion::SETTLE,
-                    crate::components::Ease::QuickOut,
-                )),
-                cx,
-            );
-        }
         cx.notify();
     }
 
@@ -569,10 +525,6 @@ impl PhoneShell {
                 .under_bar()
                 .into_any_element()
             }
-            Route::Eq => match &self.eq {
-                Some((_, page)) => page.clone().cached(full()).into_any_element(),
-                None => div().size_full().into_any_element(),
-            },
             Route::SettingsSection(tab) => {
                 let settings = self.settings(window, cx);
                 // Back and forward land here too: the pane follows the route.
@@ -600,7 +552,6 @@ impl PhoneShell {
             Route::SearchTab => Some("search"),
             Route::Library => Some("library"),
             Route::Playlists => Some("playlists"),
-            Route::Eq => Some("EQ"),
             Route::Settings => Some("settings"),
             Route::SettingsSection(tab) => Some(tab.title()),
             // A browser's heading scrolls away with its rows: the bar keeps
@@ -677,21 +628,42 @@ impl PhoneShell {
         }
     }
 
-    /// EQ's screen on the tab showing.
-    fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.now_playing = None;
-        match &self.eq {
-            Some((_, page)) => page.update(cx, |p, cx| p.show(device, cx)),
-            None => {
-                let dsp = crate::dsp::Dsp::new(crate::engine::engine(cx), cx);
-                let page = cx.new(|cx| crate::dsp::EqPage::new(dsp.clone(), device, window, cx));
-                self.eq = Some((dsp, page));
-            }
+    /// EQ's screen, Settings' EQ section, showing `device` or the output in
+    /// use.
+    pub fn go_eq(&mut self, device: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_settings(Some(crate::settings::Tab::Eq), window, cx);
+        if let Some(page) = self.eq_page(cx) {
+            page.update(cx, |page, cx| page.show(device, cx));
         }
-        self.nav.update(cx, |nav, cx| {
-            nav.go(Route::Eq);
-            cx.notify();
-        });
+    }
+
+    /// EQ's page, while it is Settings' section: for tools that open its
+    /// sheets.
+    pub fn eq_page(&self, cx: &App) -> Option<Entity<crate::dsp::EqPage>> {
+        self.settings.as_ref()?.read(cx).eq_page()
+    }
+
+    /// EQ's sheets and questions, drawn over everything while its section
+    /// shows; the shell watches the page so that they come and go with it.
+    fn eq_overlay(
+        &mut self,
+        route: Route,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        let page = (route == Route::SettingsSection(crate::settings::Tab::Eq)
+            && self.now_playing.is_none())
+        .then(|| self.eq_page(cx))
+        .flatten();
+        let Some(page) = page else {
+            self.eq_watch = None;
+            return (None, None);
+        };
+        if self.eq_watch.as_ref().map(|(id, _)| *id) != Some(page.entity_id()) {
+            let watch = cx.observe(&page, |_, _, cx| cx.notify());
+            self.eq_watch = Some((page.entity_id(), watch));
+        }
+        crate::dsp::EqPage::overlay(&page, window, cx)
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that
@@ -723,16 +695,7 @@ impl PhoneShell {
                 full.set_lib(lib);
             });
         }
-        // Going down, the art shrinks back into the mini player's sleeve as
-        // Now Playing slides away.
-        let closed = cx.subscribe(&full, |this, full, _: &transport::Collapse, cx| {
-            if this.closing.is_none() && full.read(cx).shows_art() {
-                flight::recall(
-                    transport::NOW_PLAYING,
-                    Some((crate::theme::Motion::SETTLE, crate::components::Ease::InOut)),
-                    cx,
-                );
-            }
+        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
             this.closing.get_or_insert_with(std::time::Instant::now);
             cx.notify();
         });
@@ -745,17 +708,6 @@ impl PhoneShell {
             }
             cx.notify();
         });
-        // The mini player's sleeve grows into Now Playing's art as it slides
-        // up, on the slide's clock.
-        let art = self.transport.read(cx).cover();
-        flight::depart(
-            transport::NOW_PLAYING,
-            &art,
-            None,
-            crate::theme::Motion::SETTLE * 2,
-            crate::components::Ease::QuickOut,
-            cx,
-        );
         self.closing = None;
         self.now_playing = Some((full, closed, info));
         cx.notify();
@@ -792,6 +744,9 @@ impl Render for PhoneShell {
         } else if self.closing.is_some() {
             window.request_animation_frame();
         }
+        // Now Playing is about the playing record, whatever page it covers:
+        // the window wears that record's colours until it has gone down.
+        crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
             let wash = cx.global::<crate::root::WindowWash>().0.clone();
             div().absolute().inset_0().occlude().child(
@@ -817,6 +772,7 @@ impl Render for PhoneShell {
         let route = self.nav.read(cx).current();
         crate::components::page_shown(route, window, cx);
         let stage = self.stage(route, window, cx);
+        let (eq_sheets, eq_questions) = self.eq_overlay(route, window, cx);
         let wanted = self
             .library
             .as_ref()
@@ -841,13 +797,6 @@ impl Render for PhoneShell {
         // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
         let width = window.viewport_size().width - insets.left - insets.right;
-        // A flight between a record's tile and its header runs between
-        // where the two will rest: the page under stands a third of its
-        // way behind, the page in front `progress` of the way off.
-        let (behind, off) = swipe.map_or((Pixels::ZERO, Pixels::ZERO), |progress| {
-            (-width * 0.3 * (1.0 - progress), width * progress)
-        });
-        flight::page_offsets(behind, off, cx);
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
         let under = swipe.and_then(|progress| {
@@ -886,23 +835,16 @@ impl Render for PhoneShell {
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
                         this.settling = None;
-                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress);
-                        if let Some(progress) = this.back_swipe {
-                            this.fly_back(progress, cx);
-                        }
+                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
                     }
-                    // Let go, the sleeve is handed the rest of the way on the
-                    // page's curve: to its tile, or back to the header.
                     BackGesturePhase::Committed => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, true));
-                            this.release_sleeve(0.0, cx);
                         }
                     }
                     BackGesturePhase::Cancelled => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, false));
-                            this.release_sleeve(1.0, cx);
                         }
                     }
                 }
@@ -1035,8 +977,8 @@ impl Render for PhoneShell {
                     })),
             )
             .children(now_playing)
-            // A sleeve flying between pages, over them and under any sheet.
-            .child(flight::overlay())
+            .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
+            .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))

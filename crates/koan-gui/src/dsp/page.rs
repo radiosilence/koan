@@ -63,6 +63,24 @@ impl EqPage {
         self.body.update(cx, |b, cx| b.show(device, cx));
     }
 
+    /// The sheets and import questions over `page`, for a shell that draws
+    /// over its pages to draw over everything, as a phone's does: its sheet
+    /// layer, then its question layer.
+    pub fn overlay(
+        page: &Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        let (sheets, dsp) = {
+            let page = page.read(cx);
+            (page.sheets.clone(), page.dsp.clone())
+        };
+        (
+            Sheets::render(&sheets, window, cx),
+            prompts::render(&dsp, window, cx),
+        )
+    }
+
     /// Opens the file picker for a stage's Import…; what it makes goes into
     /// that stage once its role is answered.
     pub fn import(dsp: Entity<Dsp>, into: Option<Placement>, cx: &mut App) {
@@ -73,8 +91,9 @@ impl EqPage {
 impl Render for EqPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let sheets = Sheets::render(&self.sheets, window, cx);
-        let prompts = prompts::render(&self.dsp, window, cx);
+        // The page's host draws its sheets over the whole of itself
+        // (`overlay`): Settings' window on the desktop, so the tab strip is
+        // covered too, and the phone's shell, over its bar and foot.
         let dsp = self.dsp.clone();
         let device = self.body.read(cx).device();
         div()
@@ -95,8 +114,6 @@ impl Render for EqPage {
                     // the bounds a cached view keeps between frames.
                     .cached(StyleRefinement::default().size_full()),
             )
-            .children(sheets)
-            .children(prompts)
     }
 }
 
@@ -495,6 +512,10 @@ impl Render for EqBody {
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::L))
+                // The page's width, at most the column's: narrower content,
+                // a phone's, wraps and cuts to it rather than running off.
+                .w_full()
+                .min_w_0()
                 .max_w(look.sized(720.0))
                 .mx_auto()
                 .p(look.space(Space::Xl))
@@ -608,26 +629,38 @@ impl EqBody {
             p => p.to_owned(),
         };
 
+        // On a phone a picker goes under its label, across the row, its
+        // choice cut at the row's end.
+        let picker = |control: AnyElement| {
+            div()
+                .flex()
+                .flex_col()
+                .when(look.touch, |d| d.w_full().overflow_hidden())
+                .min_w_0()
+                .child(control)
+        };
         let mut rows: Vec<AnyElement> = vec![
             FormRow::new("Device")
-                .control(menu(
+                .stacked()
+                .control(picker(menu(
                     "eq-device",
                     shown_device,
                     Trigger::Field,
                     device_items,
                     window,
                     cx,
-                ))
+                )))
                 .into_any_element(),
             FormRow::new("Preset")
-                .control(menu(
+                .stacked()
+                .control(picker(menu(
                     "eq-preset",
                     preset_shown,
                     Trigger::Field,
                     preset_items,
                     window,
                     cx,
-                ))
+                )))
                 .into_any_element(),
             {
                 let (dsp, device) = (self.dsp.clone(), device.to_owned());
@@ -667,9 +700,11 @@ impl EqBody {
                 };
             rows.push(
                 FormRow::data(format!("{} {preset}", label("Changed since")))
+                    .stacked()
                     .control(
                         div()
                             .flex()
+                            .flex_wrap()
                             .gap(look.space(Space::M))
                             .child(
                                 Button::new("preset-save", ButtonKind::Bordered)

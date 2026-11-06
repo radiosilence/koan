@@ -49,14 +49,7 @@ impl LibraryStage {
         })];
         // Gone with its window (closed, the app kept running): no record's
         // page shows, and the windows left follow the playing record.
-        subscriptions.push(cx.on_release(|_, cx| {
-            if cx
-                .try_global::<crate::root::ShownRecord>()
-                .is_some_and(|s| s.0.is_some())
-            {
-                cx.set_global(crate::root::ShownRecord(None));
-            }
-        }));
+        subscriptions.push(cx.on_release(|_, cx| crate::root::ShownRecord::show(None, cx)));
         show_record(lib.nav.read(cx).current(cx), cx);
         Self {
             lib,
@@ -345,18 +338,15 @@ impl Render for LibraryStage {
 }
 
 /// The window takes a record's colours while its page is the one showing,
-/// and the playing record's otherwise: decided by the route, so it follows
-/// back, forward and every other way the page changes.
+/// an artist's photo while theirs is, and the playing record's otherwise:
+/// decided by the route, so it follows back, forward and every other way the
+/// page changes.
 fn show_record(route: Page, cx: &mut App) {
+    use crate::root::{Shown, ShownRecord};
     let shown = match route {
-        Page::Album(id) => Some(id),
+        Page::Album(id) => Some(Shown::Record(id)),
+        Page::Artist(id) => Some(Shown::Artist(id)),
         _ => None,
     };
-    if cx
-        .try_global::<crate::root::ShownRecord>()
-        .and_then(|s| s.0)
-        != shown
-    {
-        cx.set_global(crate::root::ShownRecord(shown));
-    }
+    ShownRecord::show(shown, cx);
 }

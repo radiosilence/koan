@@ -42,7 +42,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     crate::levels::install(cx);
     crate::platform::dock::follow(engine, cx);
     settings::install(engine.clone(), cx);
-    crate::dsp::window::init(cx);
+    crate::dsp::init(cx);
     // Reads the mirror set up above.
     crate::library::activity::init(cx);
     // Invites and pairing links opened from outside: Settings answers them.

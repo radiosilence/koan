@@ -36,7 +36,6 @@ mod empty;
 mod fade;
 pub mod field;
 mod filter_field;
-pub mod flight;
 pub mod focus_trap;
 mod form;
 mod guide;
@@ -129,7 +128,6 @@ pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
 pub use filter_field::{FilterButton, FilterField};
-pub use flight::{FlightAnchor, FlightKey};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,

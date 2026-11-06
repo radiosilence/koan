@@ -249,6 +249,9 @@ impl ArtistPage {
                     if fetched.has_image && !had_photo {
                         let art = Art::Artist(this.artist_id);
                         this.lib.covers.update(cx, |c, _| c.photo_found(art));
+                        // The window wears the photo too, easing over from
+                        // the playing record's colours.
+                        crate::root::ShownRecord::photo_found(this.artist_id, cx);
                     }
                     this.bio_arriving |= fetched.bio.is_some() && !had_bio && drawn;
                     if this.photo_arriving || this.bio_arriving {
