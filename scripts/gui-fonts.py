@@ -2,8 +2,9 @@
 """Cut koan-gui's Geist Mono faces from the variable font the site ships.
 
 GPUI matches a font by choosing among a family's faces, so a variable font
-gives it the default instance alone. The theme's type roles use weights 200
-(display), 300 (titles) and 400 (everything else); each is instanced from
+gives it the default instance alone. The theme's type roles use weights 100
+(display), 200 (titles) and 400 (everything else), the faces SwiftUI draws
+for the Swift theme's ultraLight and light; each is instanced from
 site/public/geist-mono.woff2, the file the Mac app bundles, into
 crates/koan-kit/assets/fonts as a static TrueType face. The outputs are
 checked in, so a build needs no Python.
@@ -19,13 +20,13 @@ from fontTools.varLib import instancer
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "site/public/geist-mono.woff2"
 OUT = ROOT / "crates/koan-kit/assets/fonts"
-WEIGHTS = {200: "ExtraLight", 300: "Light", 400: "Regular"}
+WEIGHTS = {100: "Thin", 200: "ExtraLight", 400: "Regular"}
 
 for weight, style in WEIGHTS.items():
     font = TTFont(SOURCE)
     face = instancer.instantiateVariableFont(font, {"wght": weight}, updateFontNames=True)
     face.flavor = None
-    # One typographic family, so each text system finds the three faces as
+    # One typographic family, so each text system finds the faces as
     # weights of "Geist Mono" rather than as three families.
     names = face["name"]
     names.removeNames(nameID=16)

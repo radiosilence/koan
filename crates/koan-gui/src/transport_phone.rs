@@ -35,7 +35,7 @@ impl EventEmitter<ShowInfo> for Transport {}
 /// theme's size.
 pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
-const SLEEVE: f32 = 36.0;
+const SLEEVE: f32 = 30.0;
 
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow

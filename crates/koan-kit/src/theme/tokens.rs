@@ -245,8 +245,8 @@ impl TypeRole {
 
     pub fn weight(self) -> FontWeight {
         match self {
-            TypeRole::Display => FontWeight::EXTRA_LIGHT,
-            TypeRole::Title | TypeRole::TitleSmall => FontWeight::LIGHT,
+            TypeRole::Display => FontWeight::THIN,
+            TypeRole::Title | TypeRole::TitleSmall => FontWeight::EXTRA_LIGHT,
             _ => FontWeight::NORMAL,
         }
     }

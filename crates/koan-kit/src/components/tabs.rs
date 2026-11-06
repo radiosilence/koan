@@ -12,6 +12,9 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Motion, Space, Tone, TypeRo
 /// The width of a bar's gliding rule, in points at 100 %.
 const BAR_RULE: f32 = 28.0;
 
+/// A phone's tab bar's height, the iOS tab bar's.
+const BAR_HEIGHT: f32 = 49.0;
+
 /// A bar's rule: the tab it moves from and to, since when, whether it has
 /// been placed.
 #[derive(Default)]
@@ -120,10 +123,12 @@ impl RenderOnce for TabStrip {
             let insets = super::system_insets(super::Clear::System, window);
             let tab = (window.viewport_size().width - insets.left - insets.right) / count;
             let rule = look.spaced(BAR_RULE);
+            // Just under the label, which sits in the middle of the bar.
+            let under = px(BAR_HEIGHT / 2.0) + look.line_height(TypeRole::Fine) / 2.0 + px(2.0);
             div().absolute().inset_0().child(
                 div()
                     .absolute()
-                    .bottom(px(8.0))
+                    .top(under)
                     .left(tab * x + (tab - rule) / 2.0)
                     .w(rule)
                     .h(look.hairline * 2.)
@@ -135,7 +140,7 @@ impl RenderOnce for TabStrip {
             .children(glide)
             .flex()
             .justify_center()
-            .when(bar, |strip| strip.w_full().min_h(px(49.0)).items_center())
+            .when(bar, |strip| strip.w_full().h(px(BAR_HEIGHT)).items_center())
             .when(!bar, |strip| {
                 strip
                     .gap(look.space(Space::L))

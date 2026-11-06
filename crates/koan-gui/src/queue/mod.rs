@@ -63,9 +63,9 @@ const AVAILABILITY: f32 = 14.0;
 const AVAILABILITY_WORD: f32 = 48.0;
 const HEART: f32 = 16.0;
 const CODEC: f32 = 48.0;
-/// One character of a length, Geist Mono's advance (0.6 em) at `meta`'s 13
-/// points, and the room the column keeps beside its widest clock.
-const DIGIT: f32 = 7.8;
+/// Geist Mono's advance, in ems: a length's characters are this wide at
+/// its role's size. And the room the column keeps beside its widest clock.
+const ADVANCE: f32 = 0.6;
 const LENGTH_PAD: f32 = 4.0;
 
 pub fn bindings() -> Vec<KeyBinding> {
@@ -1334,11 +1334,22 @@ pub(crate) fn heading(
         look,
     )
     .into_any_element();
+    // A phone's heading names the record in `title_small`, as the iOS
+    // app's does, its credit and figures in `fine` under it.
+    let touch = p.look.touch;
     row.lead_exact(RowMetrics::heading_sleeve(&p.look), sleeve)
-        .title(names(vec![album], TypeRole::Body, p.strong, p))
+        .title(if touch {
+            names(vec![album], TypeRole::TitleSmall, p.ink, p)
+        } else {
+            names(vec![album], TypeRole::Body, p.strong, p)
+        })
         .line(names(
             credit(parts, artist, "artist", look),
-            TypeRole::Meta,
+            if touch {
+                TypeRole::Fine
+            } else {
+                TypeRole::Meta
+            },
             p.muted,
             p,
         ))
@@ -1360,11 +1371,31 @@ pub(crate) fn track(
         EntryStatus::Playing => p.accent_text,
         EntryStatus::Played => p.muted,
         EntryStatus::Failed => p.bad,
+        // A phone's titles are the brightest text, as the iOS app's, and
+        // the figures beside them the wash's own colour at a quarter and a
+        // half, so the marks among them read as they do there.
+        EntryStatus::Queued | EntryStatus::Downloading | EntryStatus::PriorityPending
+            if p.look.touch =>
+        {
+            p.strong
+        }
         EntryStatus::Queued | EntryStatus::Downloading | EntryStatus::PriorityPending => p.ink,
+    };
+    let played = item.status == EntryStatus::Played;
+    let length_role = if p.look.touch {
+        TypeRole::Fine
+    } else {
+        TypeRole::Meta
+    };
+    let (place_color, length_color) = if p.look.touch {
+        let step = if played { 0.5 } else { 1.0 };
+        (p.strong.opacity(0.25 * step), p.strong.opacity(0.5 * step))
+    } else {
+        (p.muted, p.muted)
     };
     let place = div()
         .text_role(TypeRole::Meta, &p.look)
-        .text_color(if playing { p.accent_text } else { p.muted })
+        .text_color(if playing { p.accent_text } else { place_color })
         .child(rows::track_place(item, numbering.by_disc));
     // A grouped row names its artists only where they differ from the
     // record's; a row standing alone names its artist and record.
@@ -1516,10 +1547,10 @@ pub(crate) fn track(
         )
     })
     .figure(
-        numbering.longest as f32 * DIGIT + LENGTH_PAD,
+        numbering.longest as f32 * ADVANCE * length_role.points() + LENGTH_PAD,
         div()
-            .text_role(TypeRole::Meta, &p.look)
-            .text_color(p.muted)
+            .text_role(length_role, &p.look)
+            .text_color(length_color)
             .child(item.duration_ms.map(crate::time::clock).unwrap_or_default()),
     )
 }

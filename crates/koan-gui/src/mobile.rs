@@ -890,12 +890,12 @@ impl Render for PhoneShell {
                             ))
                     })),
             )
-            // The foot: the mini player over the tabs on one surface, each
+            // The foot: the mini player over the tabs on the ground, each
             // under a rule, as the iOS app's bar.
             .child(
                 div()
                     .flex_shrink_0()
-                    .bg(p.look.palette.surface.hsla())
+                    .bg(p.look.palette.bg.hsla())
                     .pb(insets.bottom)
                     .child(
                         self.transport.clone().cached(
