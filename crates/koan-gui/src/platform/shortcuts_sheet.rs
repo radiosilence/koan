@@ -168,7 +168,7 @@ impl Render for ShortcutsSheet {
                         &look,
                     )),
             );
-        sheet::scrim("shortcuts-scrim", &look).child(Rise::new(panel))
+        sheet::scrim("shortcuts-scrim", &look, window).child(Rise::new(panel))
     }
 }
 

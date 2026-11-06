@@ -879,6 +879,30 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
         cx: &mut App,
         build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
     ) -> Self {
+        self.koan_menu(id, spot, false, window, cx, build)
+    }
+
+    /// The same menu opened by a primary press too: a "more" button's.
+    fn koan_menu_on_press(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.koan_menu(id, None, true, window, cx, build)
+    }
+
+    #[doc(hidden)]
+    fn koan_menu(
+        self,
+        id: impl Into<ElementId>,
+        spot: Option<super::CursorSpot>,
+        primary: bool,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
         let state = window.use_keyed_state(id.into(), cx, |_, _| Open::default());
         let shown = state
             .read(cx)
@@ -943,9 +967,15 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
         });
         let lifting = state.clone();
         let touch = Look::of(window, cx).touch;
+        let by_press = open.clone();
         let mut this = self.on_mouse_down(MouseButton::Right, move |event, window, cx| {
             open(event.position, window, cx)
         });
+        if primary {
+            this = this.on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                by_press(event.position, window, cx)
+            });
+        }
         // A touch screen's secondary press: held, where it went down.
         if touch {
             this = this.child(super::touch::long_press(
@@ -988,7 +1018,8 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                     anchored()
                         .position(at)
                         .snap_to_window_with_margin(px(8.))
-                        .child(menu),
+                        // Fading in a step below where it lands, on the GPU.
+                        .child(super::Rise::in_place(menu)),
                 )
                 .with_priority(1),
             );

@@ -193,15 +193,20 @@ impl<V: TileHost> TileView<V> {
         if x < 0.0 || y < 0.0 || x > side {
             return None;
         }
+        let look = crate::theme::Look::of(window, cx);
         if y < side {
             let shown = !self.state.selecting;
             return Some(if shown && TileArt::on_heart(self.state.side, x, y) {
                 Part::Heart
+            } else if look.touch && shown {
+                // A finger opens the record wherever it taps, as on iOS:
+                // playing it replaces the queue, which no stray tap should
+                // do. The record's page and the tile's menu play it.
+                Part::Title
             } else {
                 Part::Sleeve
             });
         }
-        let look = crate::theme::Look::of(window, cx);
         let (title, credit) = TileGrid::caption_lines(&look, self.state.side);
         if title.contains(&y) {
             return Some(Part::Title);

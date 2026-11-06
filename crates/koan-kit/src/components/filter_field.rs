@@ -115,13 +115,59 @@ impl RenderOnce for FilterField {
         let fading = cleared.read(cx).animated.clone();
         let (on_escape, on_mark) = (cleared.clone(), cleared.clone());
         let hover = look.palette.ink.hsla();
-        div()
+        // Under touch a toolbar's field, focused, opens out to the toolbar's
+        // width over the buttons beside it, easing from where it stood, as
+        // an iOS search bar does; it eases back once it lets the keyboard go.
+        // Where it stood is kept while it stands there.
+        let rest = window.use_keyed_state(
+            ElementId::from(("filter-rest", self.input.entity_id().as_u64())),
+            cx,
+            |_, _| None::<Bounds<Pixels>>,
+        );
+        let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
+        let opens = look.touch && !self.fill;
+        let open = if opens {
+            super::ease(
+                ElementId::from(("filter-open", self.input.entity_id().as_u64())),
+                focused,
+                Motion::SETTLE,
+                window,
+                cx,
+            )
+        } else {
+            0.0
+        };
+        let stood = rest.read(cx).filter(|_| open > 0.0);
+        // The whole control keeps the keyboard under touch: its clear mark
+        // and glyph are the field's, not somewhere else to tap.
+        let keeps = self.input.clone();
+        let standing = (open <= 0.0).then(|| rest.clone());
+        let measure = canvas(
+            move |bounds, _, cx| {
+                if keeps.read(cx).keeps != Some(bounds) {
+                    keeps.update(cx, |state, _| state.keeps = Some(bounds));
+                }
+                if let Some(rest) = &standing
+                    && *rest.read(cx) != Some(bounds)
+                {
+                    rest.update(cx, |rest, _| *rest = Some(bounds));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let field = div()
             .id("filter-field")
             .map(|d| {
                 #[cfg(test)]
                 let d = d.debug_selector(|| "filter".into());
                 d
             })
+            .relative()
+            .child(measure)
             .flex()
             .items_center()
             .cursor_text()
@@ -134,10 +180,18 @@ impl RenderOnce for FilterField {
                     // when the page column is narrow.
                     // In the toolbar, a button's height to click, glyph and
                     // margins included, not the text's line alone.
-                    d.w(super::ToolbarMetrics::FIELD * look.scale.size)
-                        .min_h(super::ToolbarMetrics::FIELD_HIT)
-                        .flex_shrink(1.)
-                        .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
+                    d.map(|d| {
+                        // Under touch the field has a row to itself and takes
+                        // what the buttons beside it leave.
+                        if look.touch {
+                            d.flex_1()
+                        } else {
+                            d.w(super::ToolbarMetrics::FIELD * look.scale.size)
+                        }
+                    })
+                    .min_h(super::ToolbarMetrics::FIELD_HIT.max(look.target()))
+                    .flex_shrink(1.)
+                    .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
                 }
             })
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -207,7 +261,37 @@ impl RenderOnce for FilterField {
                             clearing.update(cx, |input, cx| input.focus(window, cx));
                         }),
                 )
-            })
+            });
+        let Some(stood) = stood else {
+            return field.into_any_element();
+        };
+        // Opening: where it stood holds its place in the row, and the field
+        // is drawn over the toolbar from there toward the window's margins,
+        // on the ground so the buttons under it do not show through.
+        let margin =
+            super::system_insets(super::Clear::System, window).left + super::ToolbarMetrics::INSET;
+        let wide = window.viewport_size().width - margin * 2.;
+        let left = stood.left() + (margin - stood.left()) * open;
+        let width = stood.size.width + (wide - stood.size.width) * open;
+        div()
+            .flex_shrink(1.)
+            .min_w(super::ToolbarMetrics::FIELD_MIN * look.scale.size)
+            .w(stood.size.width)
+            .h(stood.size.height)
+            .child(
+                deferred(
+                    anchored().position(point(left, stood.top())).child(
+                        field
+                            .w(width)
+                            .min_w(width)
+                            .h(stood.size.height)
+                            .px(super::ToolbarMetrics::INSET * open)
+                            .bg(look.palette.bg.hsla()),
+                    ),
+                )
+                .with_priority(1),
+            )
+            .into_any_element()
     }
 }
 

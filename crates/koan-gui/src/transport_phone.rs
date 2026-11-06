@@ -5,6 +5,7 @@
 //! the seek bar, the controls).
 
 use super::*;
+use crate::components::KoanContextMenu as _;
 use crate::components::KoanInsets as _;
 
 /// What the transport is drawn as.
@@ -34,9 +35,7 @@ impl EventEmitter<ShowInfo> for Transport {}
 /// theme's size.
 pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
-const SLEEVE: f32 = 36.0;
-/// The playhead's line along the mini player's top.
-const LINE: f32 = 2.0;
+const SLEEVE: f32 = 30.0;
 
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow
@@ -60,9 +59,21 @@ impl Transport {
         self.cover = covers::art(entry.and_then(|e| e.album_id), sleeve, self.scale, cx);
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
-        let playhead = cx.global::<Mirror>().playhead.read(cx).position_ms;
+        // The playhead's line glides on the GPU from the engine's last anchor,
+        // as the seek bar does: no frame is drawn between the anchors.
+        let anchor = *cx.global::<Mirror>().playhead.read(cx);
         let share = if now.duration_ms > 0 {
-            (playhead as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
+            let at = anchor.at(std::time::Instant::now(), now.duration_ms);
+            self.mini_glide.set(
+                (anchor.position_ms as f64 / now.duration_ms as f64) as f32,
+                if anchor.playing {
+                    1000.0 / now.duration_ms as f32
+                } else {
+                    0.0
+                },
+                anchor.at,
+            );
+            (at as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -88,18 +99,12 @@ impl Transport {
             .gap(p.space(Space::M))
             .pl(p.space(Space::L))
             .pr(p.space(Space::S))
-            .bg(p.bg)
-            .border_t(p.look.hairline)
-            .border_color(p.rule)
             // The playhead, along the top: where the track is, at a glance.
             .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .h(p.look.spaced(LINE))
-                    .w(relative(share))
-                    .bg(p.look.accent.hsla()),
+                div().absolute().top_0().left_0().right_0().child(
+                    crate::components::ProgressBar::new("mini-playhead", Some(share))
+                        .glide(&self.mini_glide),
+                ),
             )
             .child(Cover::new(self.cover.clone(), sleeve))
             .child(
@@ -123,6 +128,13 @@ impl Transport {
                             .child(detail)
                     })),
             )
+            // Where the music plays, a thumb away on every page, as on iOS.
+            .child(
+                div()
+                    .id("mini-devices")
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(self.control_button(&p, window, cx)),
+            )
             .child(
                 Button::icon_only(
                     "mini-play-pause",
@@ -143,9 +155,31 @@ impl Transport {
                         command(cx, "next", |e| e.next())
                     }),
             )
-            // The bar opens Now Playing; its buttons keep their own taps.
+            // The bar opens Now Playing, by a tap or pushed up by a finger,
+            // as iOS players open; its buttons keep their own taps.
             .when(has_entry, |bar| {
                 bar.on_click(cx.listener(|_, _, _, cx| cx.emit(Expand)))
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                        if event.source != ScrollSource::Touch {
+                            return;
+                        }
+                        let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
+                        match event.touch_phase {
+                            koan_kit::app::platform::TouchPhase::Started => this.lift = Some(dy),
+                            koan_kit::app::platform::TouchPhase::Moved => {
+                                let Some(lift) = this.lift else { return };
+                                let lift = lift + dy;
+                                if lift < -Pixels::from(24.) {
+                                    this.lift = None;
+                                    cx.emit(Expand);
+                                } else {
+                                    this.lift = Some(lift);
+                                }
+                            }
+                            _ => this.lift = None,
+                        }
+                        cx.stop_propagation();
+                    }))
             })
             .into_any_element()
     }
@@ -247,6 +281,26 @@ impl Transport {
                         }),
                 )
                 .children(heart)
+                // The track's menu, as the rows' hold opens it: its record,
+                // its artist, a playlist, the queue.
+                .children(e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
+                    let album = e.album_id;
+                    div()
+                        .koan_menu_on_press("np-more", window, cx, move |m, window, cx| {
+                            crate::library::actions::menu(
+                                m,
+                                &lib,
+                                std::sync::Arc::from([crate::library::drag::Playable::Track(
+                                    track,
+                                )]),
+                                album,
+                                None,
+                                window,
+                                cx,
+                            )
+                        })
+                        .child(Button::icon_only("np-more-button", Icon::More, "more"))
+                }))
         });
         let play_pause = Button::icon_outlined(
             "np-full-play-pause",
@@ -314,8 +368,34 @@ impl Transport {
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse))),
                 ),
             )
-            .child(div().flex_1().min_h_0().child(stage))
-            .children(titles)
+            // The art and the lyrics, a new record's sleeve and a new track's
+            // names fade in over what they replace rather than snapping.
+            .child(
+                div().flex_1().min_h_0().child(
+                    crate::components::FadeIn::new(
+                        ElementId::NamedInteger(
+                            if self.lyrics_shown {
+                                "np-lyrics"
+                            } else {
+                                "np-art"
+                            }
+                            .into(),
+                            entry.and_then(|e| e.album_id).unwrap_or(0) as u64,
+                        ),
+                        stage,
+                    )
+                    .fill(),
+                ),
+            )
+            .children(titles.map(|titles| {
+                crate::components::FadeIn::new(
+                    ElementId::NamedInteger(
+                        "np-titles".into(),
+                        entry.and_then(|e| e.track_id).unwrap_or(0) as u64,
+                    ),
+                    titles,
+                )
+            }))
             .child(
                 self.seek.clone().cached(
                     StyleRefinement::default()
@@ -363,9 +443,63 @@ impl Transport {
                     .text_color(p.muted)
                     .child(format)
             }));
+        // Pulled down by a finger it follows, and closes once let go past a
+        // fifth of the screen, as the iOS app's does; short of that it goes
+        // back. A pan the lyrics can still scroll is theirs.
+        let close_at = viewport.height * 0.2;
+        let offset = self.pull.or_else(|| {
+            let (at, since, closes) = self.released?;
+            if closes {
+                return Some(at);
+            }
+            let t = since.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
+            if t >= 1.0 {
+                self.released = None;
+                return None;
+            }
+            window.request_animation_frame();
+            Some(at * (1.0 - crate::theme::Motion::quick_out(t)))
+        });
         div()
             .id("now-playing-page")
             .size_full()
+            .when_some(offset, |page, by| page.relative().top(by))
+            .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                if event.source != ScrollSource::Touch {
+                    return;
+                }
+                let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
+                match event.touch_phase {
+                    koan_kit::app::platform::TouchPhase::Started => {
+                        if this.released.is_some_and(|(_, _, closes)| closes) {
+                            return;
+                        }
+                        this.released = None;
+                        this.pull = Some(dy.max(Pixels::ZERO))
+                    }
+                    koan_kit::app::platform::TouchPhase::Moved => match this.pull {
+                        Some(by) => this.pull = Some((by + dy).max(Pixels::ZERO)),
+                        // A fling's coasting after the release decided.
+                        None => return,
+                    },
+                    koan_kit::app::platform::TouchPhase::Ended => {
+                        let Some(by) = this.pull.take() else { return };
+                        let at = (by + dy).max(Pixels::ZERO);
+                        let closes = at > close_at;
+                        this.released = Some((at, std::time::Instant::now(), closes));
+                        if closes {
+                            cx.emit(Collapse);
+                        }
+                    }
+                    koan_kit::app::platform::TouchPhase::Cancelled => {
+                        if let Some(at) = this.pull.take() {
+                            this.released = Some((at, std::time::Instant::now(), false));
+                        }
+                    }
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
             .clear_of_system(crate::components::Clear::System, window)
             .child(page)
             .into_any_element()

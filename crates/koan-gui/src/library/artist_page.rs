@@ -535,7 +535,11 @@ impl ArtistPage {
         };
         let scale = window.scale_factor();
         match item {
-            Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
+            // Below a phone's bar, which the page scrolls under.
+            Item::Header => div()
+                .pt(crate::components::bar_inset(cx))
+                .child(self.header(p, &record, grid, scale, window, cx))
+                .into_any_element(),
             Item::About => self.about(p, cx),
             Item::Heading(title, _) => SectionHeading::new(title).into_any_element(),
             Item::FeaturesHeading => {
@@ -693,6 +697,7 @@ impl ArtistPage {
         record: &Record,
         _grid: Grid,
         scale: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let id = self.artist_id;
@@ -738,7 +743,8 @@ impl ArtistPage {
             0 => chrome::count(record.appearances.len() as u64, "track", "tracks"),
             albums => chrome::count(albums, "album", "albums"),
         };
-        let mut header = super::header::playable_header(&self.lib, item, name, cx).detail(detail);
+        let mut header =
+            super::header::playable_header(&self.lib, item, name, window, cx).detail(detail);
         if let Some(photo) = photo {
             header = header.art(photo);
         }
@@ -770,7 +776,11 @@ impl ArtistPage {
         };
         let info = self.info.as_ref();
         let long = bio.len() > BIO_CLAMP;
+        // As wide as the page, up to a reading measure, so it wraps on a
+        // phone too.
         let mut text = div()
+            .w_full()
+            .min_w_0()
             .max_w(p.look.spaced(680.0))
             .typeset(p, Type::Control, p.muted)
             .child(bio.replace('\n', "\n\n"));
@@ -810,10 +820,12 @@ impl ArtistPage {
                 d.child(format!("photo: {credit}"))
             });
         div()
+            .w_full()
             .pb(RowMetrics::page_top(&p.look))
             .child(SectionHeading::new("about"))
             .child({
                 let body = div()
+                    .w_full()
                     .flex()
                     .flex_col()
                     .gap(p.space(Space::S))
@@ -1168,7 +1180,10 @@ impl Render for ArtistPage {
                     view.update(cx, |this, cx| this.item(ix, window, cx))
                         .unwrap_or_else(|_| div().into_any_element())
                 })
-                .size_full(),
+                .size_full()
+                // Rows are laid out over the bottom padding as the list
+                // scrolls: the last ends clear of a phone's foot.
+                .pb(crate::components::foot_inset(cx)),
             );
 
         self.keyed = self.focus.is_focused(window);
@@ -1200,7 +1215,7 @@ impl Render for ArtistPage {
                 .min_h_0()
                 .child(body)
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                .child(crate::components::list_scrollbar(&self.list)),
+                .child(crate::components::Scrollbar::vertical(&self.list).under_bar()),
         )
         .when(self.selection.is_active(), |d| {
             d.child(chrome::selection_bar(

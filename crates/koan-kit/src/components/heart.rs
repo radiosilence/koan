@@ -183,6 +183,9 @@ impl RenderOnce for Heart {
             .flex()
             .items_center()
             .justify_center()
+            // A finger's target, the glyph centred in it.
+            .min_w(look.target())
+            .min_h(look.target())
             .when(self.on_click.is_some(), |d| {
                 d.cursor_pointer()
                     .tooltip(move |window, cx| super::Tooltip::view(tip.clone(), window, cx))
@@ -198,6 +201,7 @@ impl RenderOnce for Heart {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     answers.start(answer(!on, icons), accent, cx);
+                    cx.perform_haptic(gpui::HapticFeedback::Light);
                     handler(event, window, cx)
                 });
                 answers_click(d, press.clone()).on_click(move |event, window, cx| {

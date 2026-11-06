@@ -53,6 +53,8 @@ pub struct ArtistBrowser {
     request: u64,
     _load: Option<Task<()>>,
     scroll: crate::components::UniformListScrollHandle,
+    /// The header's height on a phone, where the list scrolls it away.
+    header_height: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
     /// What the list's context menu acts on: the row last right-clicked.
@@ -154,6 +156,7 @@ impl ArtistBrowser {
             request: 0,
             _load: None,
             scroll: crate::components::UniformListScrollHandle::new(),
+            header_height: Default::default(),
             selection: Selection::default(),
             pick: None,
             menu: None,
@@ -305,7 +308,7 @@ impl ArtistBrowser {
         };
         let view = cx.weak_entity();
         let heart = crate::components::Heart::new(("artist-heart", id as u64), favourite)
-            .when(!favourite, |d| {
+            .when(!favourite && !p.look.touch, |d| {
                 d.invisible().group_hover(ROW_GROUP, |s| s.visible())
             })
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -356,15 +359,18 @@ impl ArtistBrowser {
                 },
             )
             .title(name)
-            .figure(HEART, heart)
+            .figure(if p.look.touch { 44.0 } else { HEART }, heart)
             .figure(
                 COUNT,
                 chrome::count(artist.album_count.max(0) as u64, "album", "albums"),
             )
-            .figure(
-                COUNT,
-                chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
-            )
+            // A phone's row keeps the name its width: the record count alone.
+            .when(!crate::mobile::phone(), |row| {
+                row.figure(
+                    COUNT,
+                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
+                )
+            })
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.
@@ -416,9 +422,7 @@ impl actions::Menus for ArtistBrowser {
 impl ArtistBrowser {
     /// The browser's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::components::ToolbarGroup::new()
-            .child(self.search.clone())
-            .spacer()
+        chrome::browser_controls(&self.search)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .into_any_element()
     }
@@ -452,6 +456,28 @@ impl Render for ArtistBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's list scrolls its header away with the rows, as the iOS
+        // app's does.
+        let phone = crate::mobile::phone() && !held;
+        // The header starts below the phone's bar, which the list scrolls
+        // under.
+        let above = if phone {
+            crate::components::bar_inset(cx) + p.look.spaced(10.0)
+        } else {
+            Pixels::ZERO
+        };
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default() + above
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let entity = cx.entity_id();
+        let (inline_header, away_header) = if phone {
+            (None, Some(chrome::with_filter(&self.search, p)))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -465,19 +491,34 @@ impl Render for ArtistBrowser {
             chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
                 .into_any_element()
         } else {
+            let under_foot = crate::components::rows_under_foot(rows::height(p), cx);
             crate::components::uniform_list(
                 "artists",
-                self.artists.len(),
+                // Blank rows after the last pass under a phone's foot.
+                self.artists.len() + under_foot.0,
                 cx.processor(|this, range: Range<usize>, window, cx| {
                     let p = Paint::of(window, cx);
                     range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
+            .pt(lead)
             .size_full()
             .map(|list| {
                 crate::components::spoken_list("artists-list", "artists")
-                    .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .map(|d| {
+                        if under_foot.1 > Pixels::ZERO {
+                            d.absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom(-under_foot.1)
+                        } else {
+                            d.size_full()
+                        }
+                    })
                     .child(list)
             })
             .into_any_element()
@@ -500,16 +541,28 @@ impl Render for ArtistBrowser {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .when(!held, |d| d.child(header))
+        .children(inline_header)
         .child(
             div()
                 .id("artist-list")
+                .overflow_hidden()
                 .flex_1()
                 .min_h_0()
-                .pt(p.look.spaced(10.0))
+                .when(!phone, |d| d.pt(p.look.spaced(10.0)))
                 .relative()
                 .child(body)
-                .child(crate::components::list_scrollbar(&self.scroll)),
+                .child(
+                    crate::components::Scrollbar::vertical(&self.scroll)
+                        .when(phone, crate::components::Scrollbar::under_bar),
+                )
+                .children(away_header.map(|header| {
+                    crate::components::scrolls_away(
+                        header,
+                        scrolled + above,
+                        self.header_height.clone(),
+                        entity,
+                    )
+                })),
         )
     }
 }

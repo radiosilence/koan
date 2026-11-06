@@ -476,9 +476,11 @@ impl ServerPane {
             let secret_label = if self.with_key { "API key" } else { "Password" };
             let rows = vec![
                 Row::new("Server URL")
+                    .stacked()
                     .control(div().w_full().child(TextField::new(&self.url)))
                     .into_any_element(),
                 Row::new("Username")
+                    .stacked()
                     .control(div().w_full().child(TextField::new(&self.username)))
                     .into_any_element(),
                 Row::new("Sign in with")
@@ -497,6 +499,7 @@ impl ServerPane {
                     )
                     .into_any_element(),
                 Row::new(secret_label)
+                    .stacked()
                     .control(div().w_full().child(TextField::new(&self.secret)))
                     .into_any_element(),
                 buttons(
@@ -801,10 +804,18 @@ impl Render for ServerPane {
         let sharing = self.ctx.sharing.read(cx);
         let status = mode_label(sharing, &connection);
         let doing = doing_now(&self.ctx, cx);
-        let mode = self.pinned.unwrap_or_else(|| self.side.draw(doing));
+        // A phone signs in to a server and shares nothing, as the iOS app:
+        // no choice is offered, and the sign-in side is the pane.
+        let phone = crate::mobile::phone();
+        let mode = if phone {
+            Mode::Connect
+        } else {
+            self.pinned.unwrap_or_else(|| self.side.draw(doing))
+        };
         // Neither signed in nor sharing: the two are offered as a question,
         // and neither side shows until one is chosen.
-        let undecided = self.pinned.is_none()
+        let undecided = !phone
+            && self.pinned.is_none()
             && doing == Mode::Connect
             && !settings.remote_signed_in
             && !settings.remote_enabled;
@@ -823,7 +834,7 @@ impl Render for ServerPane {
             }
         } else if undecided {
             sections.push(self.choice_section(Some(mode), &look, entity.clone()));
-        } else if self.pinned.is_none() {
+        } else if self.pinned.is_none() && !phone {
             sections.push(self.mode_section(mode, &status, &look, entity.clone()));
         }
         match mode {

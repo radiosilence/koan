@@ -62,6 +62,8 @@ pub struct TrackBrowser {
     request: u64,
     _load: Option<Task<()>>,
     scroll: UniformListScrollHandle,
+    /// The header's height on a phone, where the list scrolls it away.
+    header_height: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
     /// Where the cursor was laid out, for the menu key and the scroll.
@@ -174,6 +176,7 @@ impl TrackBrowser {
             request: 0,
             _load: None,
             scroll: UniformListScrollHandle::new(),
+            header_height: Default::default(),
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
@@ -515,9 +518,7 @@ impl TrackBrowser {
 
     /// The browser's controls, in the window's toolbar.
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::components::ToolbarGroup::new()
-            .child(self.search.clone())
-            .spacer()
+        chrome::browser_controls(&self.search)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::track_sort_button(&self.lib, cx))
             .into_any_element()
@@ -586,6 +587,28 @@ impl Render for TrackBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
+        // A phone's list scrolls its header away with the rows, as the iOS
+        // app's does.
+        let phone = crate::mobile::phone() && !held;
+        // The header starts below the phone's bar, which the list scrolls
+        // under.
+        let above = if phone {
+            crate::components::bar_inset(cx) + p.look.spaced(10.0)
+        } else {
+            Pixels::ZERO
+        };
+        let lead = if phone {
+            self.header_height.get().unwrap_or_default() + above
+        } else {
+            Pixels::ZERO
+        };
+        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
+        let entity = cx.entity_id();
+        let (inline_header, away_header) = if phone {
+            (None, Some(chrome::with_filter(&self.search, p)))
+        } else {
+            ((!held).then_some(header), None)
+        };
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -599,11 +622,13 @@ impl Render for TrackBrowser {
             chrome::empty_state(crate::theme::Icon::Track, empty_title, empty_detail)
                 .into_any_element()
         } else {
+            let under_foot = crate::components::rows_under_foot(rows::art_height(p), cx);
             // Rows past what has arrived are drawn empty, so the scroll bar
             // is the listing's length from the first page.
             uniform_list(
                 "tracks",
-                self.total as usize,
+                // Blank rows after the last pass under a phone's foot.
+                self.total as usize + under_foot.0,
                 // Builds rows only: uniform_list also calls it to measure a
                 // row, so the cover requests happen once a frame in `render`.
                 cx.processor(move |this, range: Range<usize>, window, cx| {
@@ -614,10 +639,23 @@ impl Render for TrackBrowser {
                 }),
             )
             .track_scroll(&self.scroll)
+            .pt(lead)
             .size_full()
             .map(|list| {
                 crate::components::spoken_list("tracks-list", "tracks")
-                    .size_full()
+                    // Reaching below the page so its blank rows come to the
+                    // foot's height (`rows_under_foot`).
+                    .map(|d| {
+                        if under_foot.1 > Pixels::ZERO {
+                            d.absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom(-under_foot.1)
+                        } else {
+                            d.size_full()
+                        }
+                    })
                     .child(list)
             })
             .into_any_element()
@@ -639,17 +677,29 @@ impl Render for TrackBrowser {
             .flex()
             .flex_col()
             .typeset(p, Type::Body, p.ink)
-            .when(!held, |d| d.child(header))
+            .children(inline_header)
             .child(
                 div()
                     .id("track-list")
+                    .overflow_hidden()
                     .flex_1()
                     .min_h_0()
-                    .pt(p.look.spaced(10.0))
+                    .when(!phone, |d| d.pt(p.look.spaced(10.0)))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(crate::components::list_scrollbar(&self.scroll)),
+                    .child(
+                        crate::components::Scrollbar::vertical(&self.scroll)
+                            .when(phone, crate::components::Scrollbar::under_bar),
+                    )
+                    .children(away_header.map(|header| {
+                        crate::components::scrolls_away(
+                            header,
+                            scrolled + above,
+                            self.header_height.clone(),
+                            entity,
+                        )
+                    })),
             )
     }
 }

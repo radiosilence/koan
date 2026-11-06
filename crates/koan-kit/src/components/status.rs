@@ -75,7 +75,14 @@ impl RenderOnce for StatusBlock {
                     .into_iter()
                     .enumerate()
                     .map(|(i, (icon, text, tone, action))| {
-                        let color = look.text_color(tone);
+                        // A line that opens something brightens under the
+                        // pointer; under touch nothing hovers, so a muted one
+                        // rests at `ink`.
+                        let color = if look.touch && action.is_some() && tone == Tone::Muted {
+                            look.palette.ink.hsla()
+                        } else {
+                            look.text_color(tone)
+                        };
                         let line = div()
                             .id(("status-line", i))
                             .flex()

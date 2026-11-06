@@ -122,7 +122,7 @@ impl RenderOnce for CopyButton {
     }
 }
 
-/// A value shown in `control`, `muted`, `ink` under the pointer, which a
+/// A value shown in `control`, `muted`, `ink` under the pointer or touch, which a
 /// click copies: the value reads "copied" for a moment after.
 #[derive(IntoElement)]
 pub struct CopyText {
@@ -170,7 +170,11 @@ impl RenderOnce for CopyText {
             .cursor_pointer()
             .track_focus(&handle)
             .text_role(TypeRole::Control, &look)
-            .text_color(look.palette.muted.hsla())
+            .text_color(if look.touch {
+                ink
+            } else {
+                look.palette.muted.hsla()
+            })
             .hover(move |s| s.text_color(ink))
             .child(
                 div()

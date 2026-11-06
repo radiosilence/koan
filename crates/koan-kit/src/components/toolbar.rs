@@ -63,11 +63,18 @@ pub struct Toolbar {
     leading: Vec<AnyElement>,
     principal: Option<AnyElement>,
     trailing: Vec<AnyElement>,
+    flush: bool,
 }
 
 impl Toolbar {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// No ground and no rule: a phone's bar, which the page runs up to.
+    pub fn flush(mut self) -> Self {
+        self.flush = true;
+        self
     }
 
     /// The window's own buttons sit over the toolbar's leading edge (the
@@ -113,7 +120,9 @@ impl RenderOnce for Toolbar {
             // ground and meets the page at a hairline; otherwise it is on
             // `bg`, flush with the page.
             .map(|d| {
-                if KoanTheme::washes_window(cx) {
+                if self.flush {
+                    d
+                } else if KoanTheme::washes_window(cx) {
                     d.border_b(look.hairline)
                         .border_color(look.palette.rule.hsla())
                 } else {
@@ -168,13 +177,22 @@ impl RenderOnce for ToolbarTitle {
 #[derive(IntoElement, Default)]
 pub struct ToolbarGroup {
     groups: Vec<Vec<AnyElement>>,
+    fills: bool,
 }
 
 impl ToolbarGroup {
     pub fn new() -> Self {
         Self {
             groups: vec![Vec::new()],
+            fills: false,
         }
+    }
+
+    /// Under touch, as wide as the row holding it, for a filter field among
+    /// its items to take what the buttons leave: a phone's controls row.
+    pub fn fills(mut self) -> Self {
+        self.fills = true;
+        self
     }
 
     /// Starts a new group, a fixed spacer after the last.
@@ -196,7 +214,8 @@ impl ParentElement for ToolbarGroup {
 }
 
 impl RenderOnce for ToolbarGroup {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let touch = Look::of(window, cx).touch;
         // One row, the groups apart by a fixed spacer: every item is the
         // row's own, so when the toolbar is narrow a filter field gives up
         // its width down to its minimum while buttons and spacers keep
@@ -214,6 +233,8 @@ impl RenderOnce for ToolbarGroup {
         }
         div()
             .flex_shrink_1()
+            // A filling group grows to its row's width under touch.
+            .when(touch && self.fills, |row| row.flex_1())
             .min_w_0()
             .flex()
             .items_center()
@@ -354,7 +375,7 @@ impl RenderOnce for TextTrigger {
             .id(self.id)
             .cursor_pointer()
             .text_role(crate::theme::TypeRole::Control, &look)
-            .text_color(if self.open {
+            .text_color(if self.open || look.touch {
                 ink
             } else {
                 look.palette.muted.hsla()

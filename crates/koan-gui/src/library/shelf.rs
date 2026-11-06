@@ -112,6 +112,9 @@ pub struct ShelfPage {
     /// The search's results page: the summary is the sidebar search's
     /// answer, read as it is typed, rather than read here.
     follows_search: bool,
+    /// Under a field of its own (a phone's Search tab) rather than at the
+    /// top of the page, where a phone's bar is over it.
+    below_field: bool,
     /// The search's answer the page shows.
     adopted: Option<Rc<crate::search::Results>>,
     summary: Option<Rc<ShelfSummary>>,
@@ -199,6 +202,7 @@ impl ShelfPage {
             spot: Default::default(),
             keyed: false,
             grid: None,
+            below_field: false,
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -217,6 +221,13 @@ impl ShelfPage {
             }));
         this.adopt(&search, cx);
         this
+    }
+
+    /// Drawn under a search field of its own rather than at the top of the
+    /// page: it leaves no room for a phone's bar.
+    pub fn below_field(mut self) -> Self {
+        self.below_field = true;
+        self
     }
 
     fn adopt(&mut self, search: &Entity<crate::search::Search>, cx: &mut Context<Self>) {
@@ -729,8 +740,26 @@ impl TrackList for ShelfPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
-                let ids = self.row_tracks();
                 let item = Playable::Track(track);
+                // A finger's tap goes to the track on its record's page, as
+                // the search box's choice does: a shelf mixes kinds, and its
+                // rows are not a list to play through.
+                if cx.global::<crate::theme::KoanTheme>().touch && !self.selection.is_active() {
+                    let album = self
+                        .summary
+                        .as_ref()
+                        .and_then(|s| s.tracks.iter().find(|t| t.id == track))
+                        .and_then(|t| t.album_id);
+                    if let Some(album) = album {
+                        self.lib.nav.update(cx, |nav, cx| {
+                            nav.pick = Some((album, track));
+                            nav.open(Page::Album(album), cx);
+                            cx.notify();
+                        });
+                    }
+                    return;
+                }
+                let ids = self.row_tracks();
                 let order = self.order();
                 let m = event.modifiers();
                 self.place(item, m.shift, &order);
@@ -909,7 +938,11 @@ impl Render for ShelfPage {
             let rows = self.rows(p, &s, window, cx);
             collection = collection.section(CollectionSection::rows(tracks, rows));
         }
-        let collection = collection.header(header).follow(&self.spot);
+        let collection = collection
+            .header(header)
+            .follow(&self.spot)
+            .when(!self.below_field, Collection::under_bar)
+            .when(self.below_field, Collection::under_foot);
 
         actions::list_menu(
             super::keys::keyed(

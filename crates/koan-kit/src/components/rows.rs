@@ -13,7 +13,8 @@ use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Space, TypeRole,
 /// The hover group a nav row's glyph brightens by.
 const NAV_ROW: &str = "koan-nav-row";
 
-/// A navigation row, as the sidebar's: the label in `body`, `muted`, after
+/// A navigation row, as the sidebar's: the label in `body`, `muted` (`ink`
+/// under touch, which has no hover to brighten it), after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
 /// accent rule on the leading edge, and no fill.
 ///
@@ -165,10 +166,17 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // At rest a row is `muted` and brightens under the pointer; under
+        // touch nothing hovers, so it rests at `ink`, as iOS lists draw.
+        let rest = if look.touch {
+            look.palette.ink.hsla()
+        } else {
+            look.palette.muted.hsla()
+        };
         let color = fade(
             child(&self.id, "selected"),
             self.selected,
-            look.palette.muted.hsla(),
+            rest,
             look.text_color(crate::theme::Tone::Accent),
             window,
             cx,
@@ -182,6 +190,9 @@ impl RenderOnce for NavRow {
             cx,
         );
         let on_click = self.on_click;
+        // Under touch a row that opens a page says so with a chevron at its
+        // end, as iOS lists do; a pointer reads it from the sidebar's place.
+        let pushes = look.touch && on_click.is_some() && self.trailing.is_none();
         let answers = super::Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
         let mut base = self.base;
@@ -263,6 +274,15 @@ impl RenderOnce for NavRow {
                     .text_color(look.palette.muted.hsla())
                     .child(figure)
             }))
+            .when(pushes, |row| {
+                row.child(
+                    div().ml_auto().flex_none().child(
+                        KoanIcon::new(Icon::Forward)
+                            .role(TypeRole::Meta)
+                            .tone(crate::theme::Tone::Muted),
+                    ),
+                )
+            })
             .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
                 answers_click(row, on_click.clone())

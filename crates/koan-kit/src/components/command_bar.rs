@@ -83,14 +83,14 @@ impl RenderOnce for CommandBar {
         let p = look.palette;
         let dismiss = self.on_dismiss;
         let height = window.viewport_size().height;
-        sheet::scrim(self.id.clone(), &look)
+        sheet::scrim_top(self.id.clone(), &look)
             .pt(height * Self::TOP)
             .when_some(dismiss, |d, dismiss| {
                 d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     dismiss(&(), window, cx)
                 })
             })
-            .child(Rise::new(
+            .child(Rise::in_place(
                 // A dialog to a screen reader, holding the query and its
                 // results.
                 super::accessible(
@@ -99,6 +99,7 @@ impl RenderOnce for CommandBar {
                     Some(label("search")),
                 )
                 .w(look.spaced(Self::WIDTH))
+                .max_w(window.viewport_size().width - look.space(Space::M))
                 // What the window has below the panel's top, less a margin:
                 // in a small window the list scrolls between the query and
                 // the keys rather than running past them. The room is

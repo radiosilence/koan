@@ -678,6 +678,7 @@ impl Render for HistoryPage {
                     this.line(&p, i, window, cx)
                 })
             })
+            .under_foot()
             .into_any_element()
         };
         let view = cx.entity();

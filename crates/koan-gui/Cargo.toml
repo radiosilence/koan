@@ -97,3 +97,14 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
   "AVAudioSession",
   "AVAudioSessionTypes",
 ] }
+# Its interruptions and route changes, heard as notifications.
+block2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "NSDictionary",
+  "NSNotification",
+  "NSOperation",
+  "NSString",
+  "NSValue",
+] }

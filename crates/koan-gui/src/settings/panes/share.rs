@@ -331,12 +331,15 @@ impl ShareForm {
         let ctx = ctx.clone();
         let mut rows = vec![
             Row::new("Username")
+                .stacked()
                 .control(div().w_full().child(TextField::new(&self.username)))
                 .into_any_element(),
             Row::new("Password")
+                .stacked()
                 .control(div().w_full().child(TextField::new(&self.password)))
                 .into_any_element(),
             Row::new("Again")
+                .stacked()
                 .control(div().w_full().child(TextField::new(&self.again)))
                 .into_any_element(),
         ];
@@ -512,6 +515,7 @@ fn away_from_home(
         if choice == InviteTo::Custom {
             rows.push(
                 Row::new("Address")
+                    .stacked()
                     .control(div().w_full().child(TextField::new(address)))
                     .into_any_element(),
             );

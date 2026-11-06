@@ -168,8 +168,18 @@ impl TileColumns {
     }
 }
 
-/// A record heading's sleeve at 100 %, the Mac queue's.
+/// A record heading's sleeve at 100 %, the Mac queue's, and a phone's,
+/// larger beside the record's three lines on a narrow screen.
 const HEADING_SLEEVE: f32 = 52.0;
+const HEADING_SLEEVE_TOUCH: f32 = 64.0;
+
+fn heading_sleeve(look: &Look) -> f32 {
+    if look.touch {
+        HEADING_SLEEVE_TOUCH
+    } else {
+        HEADING_SLEEVE
+    }
+}
 
 impl RowMetrics {
     pub fn height(kind: RowKind, look: &Look) -> Pixels {
@@ -177,7 +187,7 @@ impl RowMetrics {
             RowKind::Line => 24.0,
             RowKind::Text => 34.0,
             RowKind::Art => 40.0,
-            RowKind::Heading => HEADING_SLEEVE + 12.0,
+            RowKind::Heading => heading_sleeve(look) + 12.0,
         };
         (px((points * look.scale.size).round()) + Self::padding(look) * 2.0).max(look.target())
     }
@@ -223,7 +233,7 @@ impl RowMetrics {
 
     /// A record heading's sleeve, square.
     pub fn heading_sleeve(look: &Look) -> Pixels {
-        px((HEADING_SLEEVE * look.scale.size).round())
+        px((heading_sleeve(look) * look.scale.size).round())
     }
 
     /// A row's leading glyph, where it has no number: the glyph's own

@@ -106,6 +106,8 @@ pub struct Collection {
     sections: Vec<CollectionSection>,
     empty: Option<EmptyState>,
     follow: Option<super::CursorSpot>,
+    under_bar: bool,
+    under_foot: bool,
 }
 
 impl Collection {
@@ -117,7 +119,23 @@ impl Collection {
             sections: Vec::new(),
             empty: None,
             follow: None,
+            under_bar: false,
+            under_foot: false,
         }
+    }
+
+    /// A page that scrolls under a phone's bar and its foot
+    /// (`ScrollArea::under_bar`).
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
+        self
+    }
+
+    /// A page held clear of a phone's bar that scrolls under its foot alone
+    /// (`ScrollArea::under_foot`).
+    pub fn under_foot(mut self) -> Self {
+        self.under_foot = true;
+        self
     }
 
     /// Brings the page's keyboard cursor into view as the keys move it,
@@ -232,11 +250,14 @@ impl RenderOnce for Collection {
                         .size_full()
                         .flex()
                         .flex_col()
+                        .when(self.under_bar, |d| d.pt(super::bar_inset(cx)))
                         .child(div().w_full().flex().flex_col().children(lines))
                         .child(div().flex_1().flex().child(state)),
                 ),
                 _ => {
-                    let area = ScrollArea::items(self.id, lines);
+                    let area = ScrollArea::items(self.id, lines)
+                        .when(self.under_bar, ScrollArea::under_bar)
+                        .when(self.under_foot, ScrollArea::under_foot);
                     d.child(match &self.follow {
                         Some(spot) => area.follow(spot),
                         None => area,

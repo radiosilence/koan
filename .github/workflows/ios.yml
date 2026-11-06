@@ -25,7 +25,7 @@ on:
       platform:
         description: Which app to upload
         type: choice
-        options: [both, ios, tvos]
+        options: [both, ios, tvos, gpui]
         default: both
       public:
         description: Offer the builds on the public TestFlight link
@@ -80,14 +80,15 @@ jobs:
       group: testflight-${{ matrix.platform }}
       cancel-in-progress: false
     env:
-      TARGET: ${{ matrix.platform == 'ios' && 'ios' || 'tv' }}
+      # `gpui` is the GPUI app, "kōan GPUI" (`just gui-testflight`).
+      TARGET: ${{ matrix.platform == 'ios' && 'ios' || matrix.platform == 'tvos' && 'tv' || 'gui' }}
       KOAN_BUILD: ${{ needs.signable.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-          targets: aarch64-apple-${{ matrix.platform }}
+          targets: aarch64-apple-${{ matrix.platform == 'tvos' && 'tvos' || 'ios' }}
       # The engine builds for the device into a target directory of its own
       # (see `ios-ffi` and `tv-ffi`), which rust-cache does not look in unless
       # told. Saved even when the archive fails: the Rust built fine, and a
@@ -152,10 +153,12 @@ jobs:
   # processing the upload, which takes anywhere from minutes to an hour, so the
   # wait happens here on a Linux runner rather than holding the macOS one.
   # Notes that fail to land are not a failed upload.
+  # The SwiftUI apps' notes; the GPUI app's builds go to internal testers
+  # with none.
   whats-new:
     name: What to Test (${{ matrix.platform }})
     needs: [signable, testflight]
-    if: ${{ !cancelled() && needs.signable.outputs.ready == 'true' }}
+    if: ${{ !cancelled() && needs.signable.outputs.ready == 'true' && inputs.platform != 'gpui' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     continue-on-error: true

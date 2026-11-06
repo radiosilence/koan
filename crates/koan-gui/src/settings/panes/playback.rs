@@ -143,29 +143,29 @@ impl Render for PlaybackPane {
             );
         }
 
-        page(
-            "playback",
+        let mut sections = Vec::new();
+        // On a phone the route is the only device, and choosing it is the
+        // system's, as in the iOS app.
+        if !crate::mobile::phone() {
+            sections.push(section(
+                Some("Device"),
+                vec![device.into_any_element()],
+                Some("kōan asks the device to run at the source's sample rate, so nothing is resampled unless the device refuses.".into()),
+                &look,
+            ));
+        }
+        sections.push(section(
+            Some("Transport"),
+            vec![fade.into_any_element()],
+            Some("Pause and resume ramp the volume over a moment instead of cutting.".into()),
             &look,
-            vec![
-                section(
-                    Some("Device"),
-                    vec![device.into_any_element()],
-                    Some("kōan asks the device to run at the source's sample rate, so nothing is resampled unless the device refuses.".into()),
-                    &look,
-                ),
-                section(
-                    Some("Transport"),
-                    vec![fade.into_any_element()],
-                    Some("Pause and resume ramp the volume over a moment instead of cutting.".into()),
-                    &look,
-                ),
-                section(
-                    Some("Loudness"),
-                    loudness,
-                    Some("Applies the gain written into the file's tags. Per album keeps the relative loudness within a record.".into()),
-                    &look,
-                ),
-            ],
-        )
+        ));
+        sections.push(section(
+            Some("Loudness"),
+            loudness,
+            Some("Applies the gain written into the file's tags. Per album keeps the relative loudness within a record.".into()),
+            &look,
+        ));
+        page("playback", &look, sections)
     }
 }

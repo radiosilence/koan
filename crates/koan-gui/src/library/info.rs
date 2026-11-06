@@ -112,7 +112,7 @@ impl Render for TrackInfo {
                 this.lib.nav.update(cx, |nav, cx| nav.close_info(cx));
             }));
         // Over the page; a click outside closes it.
-        ask::scrim("track-info-scrim", look)
+        ask::scrim("track-info-scrim", look, window)
             .key_context("Library")
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::close))

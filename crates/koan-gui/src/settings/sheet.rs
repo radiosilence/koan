@@ -414,7 +414,7 @@ impl Sheets {
 
         Some(
             // Every click on the window behind goes nowhere.
-            crate::components::sheet::scrim("sheet-scrim", look)
+            crate::components::sheet::scrim("sheet-scrim", look, window)
                 .items_center()
                 .pt_0()
                 .child(crate::components::Rise::new(panel))

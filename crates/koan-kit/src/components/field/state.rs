@@ -124,6 +124,10 @@ pub struct FieldState {
     /// cached view replays its last frame, and the field shows its old text
     /// until something else redraws the view.
     pub(super) drawn_in: Option<EntityId>,
+    /// Where a press keeps the keyboard under touch, beyond the text: the
+    /// control the field is part of (a filter field's clear mark), as its
+    /// owner lays it out.
+    pub(crate) keeps: Option<Bounds<Pixels>>,
     _focus: [Subscription; 4],
 }
 
@@ -183,6 +187,7 @@ impl FieldState {
             caret: Animated::new(),
             blink: Task::ready(()),
             drawn_in: None,
+            keeps: None,
             _focus: [focused, blurred, activation, redraw],
         }
     }

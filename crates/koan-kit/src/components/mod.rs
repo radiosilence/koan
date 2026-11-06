@@ -100,7 +100,7 @@ pub use animated::{
     ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
-pub use appear::{Fading, Rise, Veil};
+pub use appear::{Fading, Rise, SlideUp, Veil};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
@@ -134,7 +134,10 @@ pub use form::{
 };
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
-pub use insets::{Clear, KoanInsets, system_insets};
+pub use insets::{
+    Clear, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe, set_bar_inset,
+    set_foot_inset, system_insets,
+};
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
 pub use level::Level;
@@ -142,14 +145,16 @@ pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
-    spoken_list, uniform_list, width_probe,
+    rows_under_foot, scrolls_away, spoken_list, uniform_list, width_probe,
 };
 pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
-pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, title_text};
+pub use page::{
+    Page, PageHeader, PlayButton, SectionHeading, ShuffleButton, head as page_head, title_text,
+};
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use panel::TOOLTIPS_DRAWN;
@@ -177,7 +182,7 @@ pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
 pub use tabs::{StatusLine, TabStrip};
 pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
-pub use toggle::{IconToggle, Toggle};
+pub use toggle::{CheckBox, IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,

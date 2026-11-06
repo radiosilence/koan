@@ -85,6 +85,8 @@ pub struct Queue {
     pub track_rows: HashMap<String, usize>,
     /// The records whose rows number by disc and track.
     pub disc_records: std::collections::HashSet<i64>,
+    /// The longest length as a clock, in characters (`rows::longest`).
+    pub longest: usize,
     /// Whether `rows` are laid out under record headings.
     pub grouped: bool,
     /// The rows the latest patch changed, put back from `base` before the
@@ -105,6 +107,7 @@ impl Queue {
         let grouped = crate::window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         let rows = rows::build(&items, grouped);
         let disc_records = rows::disc_records(&items);
+        let longest = rows::longest(&items);
         let track_rows = track_rows(&rows, &items);
         Self {
             items: items.clone(),
@@ -115,6 +118,7 @@ impl Queue {
             rows,
             track_rows,
             disc_records,
+            longest,
             grouped,
             patched: Vec::new(),
         }

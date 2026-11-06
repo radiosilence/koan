@@ -79,6 +79,51 @@ impl SelectionBar {
 impl RenderOnce for SelectionBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let done = self.done.map(|done| {
+            Button::new("selection-done", ButtonKind::Text)
+                .label("done")
+                .when_some(self.done_help, |b, help| b.help(help))
+                .on_click(move |e, window, cx| done(e, window, cx))
+        });
+        // A phone's bar, as the iOS app's: the count and "done" along its
+        // top, the verbs sharing the width under them, each a thumb's target.
+        // Its ground runs on under the phone's foot, which is drawn over the
+        // page, and its controls sit above it.
+        if look.touch {
+            return div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::S))
+                .px(RowMetrics::page_margin(&look))
+                .pt(look.space(Space::S))
+                .pb(look.space(Space::S) + super::foot_inset(cx))
+                .border_t(look.hairline)
+                .border_color(look.palette.rule.hsla())
+                .bg(look.palette.bg.hsla())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .min_h(look.target())
+                        .child(
+                            div()
+                                .text_role(TypeRole::Meta, &look)
+                                .text_color(look.palette.ink.hsla())
+                                .child(self.count),
+                        )
+                        .children(done),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_around()
+                        .min_h(look.target())
+                        .children(self.verbs),
+                )
+                .into_any_element();
+        }
         div()
             .flex()
             .items_center()
@@ -100,12 +145,8 @@ impl RenderOnce for SelectionBar {
                     .items_center()
                     .gap(look.space(Space::L))
                     .children(self.verbs)
-                    .children(self.done.map(|done| {
-                        Button::new("selection-done", ButtonKind::Text)
-                            .label("done")
-                            .when_some(self.done_help, |b, help| b.help(help))
-                            .on_click(move |e, window, cx| done(e, window, cx))
-                    })),
+                    .children(done),
             )
+            .into_any_element()
     }
 }

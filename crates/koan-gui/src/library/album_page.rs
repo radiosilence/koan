@@ -393,7 +393,17 @@ impl AlbumPage {
                 rest.push(super::format::duration(Some(total)));
             }
             if !rest.is_empty() {
-                details = details.child(format!(" · {}", rest.join(" · ")));
+                // A phone's narrow header gives the facts a line under the
+                // credit, as the iOS app's does.
+                details = if crate::mobile::phone() {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(details)
+                        .child(div().child(rest.join(" · ")))
+                } else {
+                    details.child(format!(" · {}", rest.join(" · ")))
+                };
             }
         }
         let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
@@ -402,7 +412,7 @@ impl AlbumPage {
             .pt(RowMetrics::page_top(&p.look))
             .pb(RowMetrics::header_gap(&p.look))
             .child(
-                super::header::playable_header(&self.lib, item, title.clone(), cx)
+                super::header::playable_header(&self.lib, item, title.clone(), window, cx)
                     .art(
                         div()
                             .id("album-sleeve")
@@ -546,35 +556,49 @@ impl Render for AlbumPage {
             (Some(width), None) if self.album.is_some() => {
                 let grid = Grid::for_width(width, &p.look.scale);
                 let lead_width = rows::lead_width(p, self.tracks.len(), window);
-                div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .child(self.header(p, grid, window, cx))
-                    .child(
-                        crate::components::spoken_list("album-track-list", "tracks")
-                            .relative()
-                            .flex_1()
-                            .min_h_0()
-                            .child(
-                                uniform_list(
-                                    "album-tracks",
-                                    self.lines.len(),
-                                    cx.processor(move |this, range: Range<usize>, window, cx| {
-                                        let p = Paint::of(window, cx);
-                                        range
-                                            .map(|i| this.line(&p, i, lead_width, cx))
-                                            .collect::<Vec<_>>()
-                                    }),
+                // A phone's page scrolls whole, the header with the tracks, as
+                // the iOS app's does: a header held above the list would leave
+                // the tracks a sliver of the screen. A record's tracks are few
+                // enough to lay out at once.
+                if crate::mobile::phone() {
+                    let mut items = vec![self.header(p, grid, window, cx).into_any_element()];
+                    items.extend((0..self.lines.len()).map(|i| self.line(p, i, lead_width, cx)));
+                    crate::components::ScrollArea::items("album-page", items)
+                        .under_bar()
+                        .into_any_element()
+                } else {
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(self.header(p, grid, window, cx))
+                        .child(
+                            crate::components::spoken_list("album-track-list", "tracks")
+                                .relative()
+                                .flex_1()
+                                .min_h_0()
+                                .child(
+                                    uniform_list(
+                                        "album-tracks",
+                                        self.lines.len(),
+                                        cx.processor(
+                                            move |this, range: Range<usize>, window, cx| {
+                                                let p = Paint::of(window, cx);
+                                                range
+                                                    .map(|i| this.line(&p, i, lead_width, cx))
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        ),
+                                    )
+                                    .track_scroll(&self.scroll)
+                                    .pb(grid.margin)
+                                    .size_full(),
                                 )
-                                .track_scroll(&self.scroll)
-                                .pb(grid.margin)
-                                .size_full(),
-                            )
-                            // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                            .child(crate::components::list_scrollbar(&self.scroll)),
-                    )
-                    .into_any_element()
+                                // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
+                                .child(crate::components::list_scrollbar(&self.scroll)),
+                        )
+                        .into_any_element()
+                }
             }
             // Still reading: nothing at first, since a local record lands
             // within a frame or two; the spinner once it has not.

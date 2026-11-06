@@ -28,7 +28,7 @@ pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<An
         role(dsp, ask, &look, cx)
     };
     Some(
-        scrim("dsp-prompt", &look)
+        scrim("dsp-prompt", &look, window)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(Rise::new(panel("eq", &look).child(shown)))
             .into_any_element(),
