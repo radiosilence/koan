@@ -195,6 +195,28 @@ pub fn open_server(cx: &mut App) {
         .ok();
 }
 
+/// Opens Settings on its EQ pane, showing `device`, or the output in use:
+/// what Playback → EQ… and the transport's EQ menus do.
+pub fn open_eq(device: Option<String>, cx: &mut App) {
+    if crate::mobile::open_eq(device.clone(), cx) {
+        return;
+    }
+    open(cx);
+    let Some((handle, view)) = cx.global::<Settings>().window.clone() else {
+        return;
+    };
+    handle
+        .update(cx, |_, window, cx| {
+            view.update(cx, |settings, cx| {
+                settings.choose(Tab::Eq, window, cx);
+                if let Some(page) = settings.eq_page() {
+                    page.update(cx, |page, cx| page.show(device, cx));
+                }
+            })
+        })
+        .ok();
+}
+
 /// Whether two addresses name one server: scheme and host compared without
 /// regard to case, a scheme's default port the same as none, and a trailing
 /// slash ignored.
@@ -477,6 +499,11 @@ impl SettingsWindow {
     /// The tab showing.
     pub fn tab(&self) -> Tab {
         self.tab
+    }
+
+    /// The EQ page, while it is the pane showing.
+    pub fn eq_page(&self) -> Option<Entity<crate::dsp::EqPage>> {
+        self.pane.view().downcast::<crate::dsp::EqPage>().ok()
     }
 
     /// Drawn as a phone's screen from now on: the pane alone.
