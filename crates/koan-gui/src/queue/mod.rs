@@ -977,7 +977,7 @@ impl QueueView {
                         }
                         this.unswipe = None;
                         let dx = delta.x.min(Pixels::ZERO);
-                        this.swiped.follow(point(dx, Pixels::ZERO), window);
+                        this.swiped.follow(Point::new(dx, Pixels::ZERO), window);
                         this.swipe = Some((row, dx));
                     }
                     koan_kit::app::platform::TouchPhase::Moved => {
@@ -993,7 +993,7 @@ impl QueueView {
                         if (dx < threshold) != (to < threshold) {
                             cx.perform_haptic(HapticFeedback::Light);
                         }
-                        this.swiped.follow(point(to, Pixels::ZERO), window);
+                        this.swiped.follow(Point::new(to, Pixels::ZERO), window);
                         this.swipe = Some((at, to));
                         cx.stop_propagation();
                         return;

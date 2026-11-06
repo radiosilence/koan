@@ -458,7 +458,7 @@ impl Transport {
                     return;
                 }
                 let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
-                let down = |by: Pixels| point(Pixels::ZERO, by.max(Pixels::ZERO));
+                let down = |by: Pixels| Point::new(Pixels::ZERO, by.max(Pixels::ZERO));
                 match event.touch_phase {
                     koan_kit::app::platform::TouchPhase::Started => {
                         if this.released == Some(true) {
