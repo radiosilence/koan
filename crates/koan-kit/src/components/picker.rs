@@ -116,7 +116,7 @@ impl RenderOnce for Picker {
         // short inside its box rather than running past the margin.
         .map(|d| {
             if look.touch {
-                d.flex_shrink().min_w_0()
+                d.flex_shrink(1.).min_w_0()
             } else {
                 d.flex_none()
             }

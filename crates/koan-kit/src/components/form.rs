@@ -247,7 +247,7 @@ impl FormRow {
             .gap_x(look.space(Space::M))
             .gap_y(look.space(Space::S))
             .min_h(look.spaced(ROW).max(look.target()))
-            .child(label.flex_grow().max_w_full())
+            .child(label.flex_grow(1.).max_w_full())
             .child(held.justify_end().ml_auto())
     }
 }
