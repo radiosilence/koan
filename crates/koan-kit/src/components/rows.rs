@@ -13,7 +13,8 @@ use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Space, TypeRole,
 /// The hover group a nav row's glyph brightens by.
 const NAV_ROW: &str = "koan-nav-row";
 
-/// A navigation row, as the sidebar's: the label in `body`, `muted`, after
+/// A navigation row, as the sidebar's: the label in `body`, `muted` (`ink`
+/// under touch, which has no hover to brighten it), after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
 /// accent rule on the leading edge, and no fill.
 ///
@@ -165,10 +166,17 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // At rest a row is `muted` and brightens under the pointer; under
+        // touch nothing hovers, so it rests at `ink`, as iOS lists draw.
+        let rest = if look.touch {
+            look.palette.ink.hsla()
+        } else {
+            look.palette.muted.hsla()
+        };
         let color = fade(
             child(&self.id, "selected"),
             self.selected,
-            look.palette.muted.hsla(),
+            rest,
             look.text_color(crate::theme::Tone::Accent),
             window,
             cx,

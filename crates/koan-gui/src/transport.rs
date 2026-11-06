@@ -790,7 +790,8 @@ fn text_button(
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    let (base, color) = crate::components::hover_tint(label, p.muted, p.ink, window, cx);
+    let rest = if p.look.touch { p.ink } else { p.muted };
+    let (base, color) = crate::components::hover_tint(label, rest, p.ink, window, cx);
     let child = if p.look.icons {
         KoanIcon::new(icon)
             .points(TransportMetrics::trailing_icon(&p.look))

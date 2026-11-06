@@ -375,7 +375,7 @@ impl RenderOnce for TextTrigger {
             .id(self.id)
             .cursor_pointer()
             .text_role(crate::theme::TypeRole::Control, &look)
-            .text_color(if self.open {
+            .text_color(if self.open || look.touch {
                 ink
             } else {
                 look.palette.muted.hsla()

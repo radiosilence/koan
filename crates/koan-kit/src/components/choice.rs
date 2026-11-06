@@ -120,7 +120,11 @@ pub fn menu(
                 .bg(look.palette.surface.hsla())
                 .text_color(look.palette.ink.hsla()),
             Trigger::Word => d
-                .text_color(look.text_color(Tone::Muted))
+                .text_color(if look.touch {
+                    look.palette.ink.hsla()
+                } else {
+                    look.text_color(Tone::Muted)
+                })
                 .hover(|d| d.text_color(look.palette.ink.hsla())),
         })
         .on_hover({

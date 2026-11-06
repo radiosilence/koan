@@ -528,7 +528,13 @@ impl RenderOnce for ShuffleButton {
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
                     .points(SHUFFLE_GLYPH * look.scale.size)
-                    .tone(crate::theme::Tone::Muted)
+                    .map(|i| {
+                        if look.touch && !disabled {
+                            i.color(ink)
+                        } else {
+                            i.tone(crate::theme::Tone::Muted)
+                        }
+                    })
                     .when(!disabled, |i| i.hover_color(group, ink)),
             )
             .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))

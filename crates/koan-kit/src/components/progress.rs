@@ -223,7 +223,11 @@ impl RenderOnce for ProgressRow {
                 .child(
                     KoanIcon::new(Icon::Deselect)
                         .role(TypeRole::Fine)
-                        .color(muted.opacity(0.6))
+                        .color(if look.touch {
+                            muted
+                        } else {
+                            muted.opacity(0.6)
+                        })
                         .hover_color(group, muted),
                 )
                 .tooltip(|window, cx| {
