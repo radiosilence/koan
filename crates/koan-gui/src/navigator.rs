@@ -176,6 +176,11 @@ impl Navigator {
 
     /// Whether the page showing is its tab's first, which a phone's back
     /// gesture cannot leave.
+    /// How far into its tab's history the page showing is: 0 at the root.
+    pub fn history_ix(&self) -> usize {
+        self.cursor
+    }
+
     pub fn at_root(&self) -> bool {
         self.cursor == 0
     }

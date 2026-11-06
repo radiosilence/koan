@@ -539,8 +539,18 @@ impl PhoneShell {
 
     /// The bar over the page: back while the tab has somewhere to go back
     /// to, and the name of a page that has no header of its own.
-    fn bar(&self, route: Route, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let nav = self.nav.read(cx);
+    /// A page's bar, drawn with its page so that it comes and goes with it
+    /// as a page slides in or is swiped back: `root` when the page is its
+    /// tab's first, `live` for the page in front, whose controls are the
+    /// ones shown (the page under a swipe draws its name and back alone).
+    fn bar(
+        &self,
+        route: Route,
+        root: bool,
+        live: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         // Named where the page has no heading of its own, or where its heading
         // scrolls away with its rows.
         let title = match route {
@@ -561,6 +571,7 @@ impl PhoneShell {
         let library_controls = self
             .library
             .as_ref()
+            .filter(|_| live)
             .filter(|library| LibraryStage::draws(route) && library.read(cx).has_controls(cx))
             .and_then(|library| library.read(cx).toolbar());
         // A browser's filter field and buttons take a row of their own under
@@ -568,7 +579,9 @@ impl PhoneShell {
         // button the field has room for a few letters. Buttons alone stay in
         // the bar.
         let filters = matches!(route, Route::Albums | Route::Artists | Route::Tracks);
-        let (controls, row): (Option<AnyView>, Option<AnyView>) = if route == Route::Queue {
+        let (controls, row): (Option<AnyView>, Option<AnyView>) = if !live {
+            (None, None)
+        } else if route == Route::Queue {
             (Some(self.queue_controls.clone().into()), None)
         } else if filters {
             (None, library_controls)
@@ -577,12 +590,12 @@ impl PhoneShell {
         };
         // A tab's first page that heads itself, with no controls of its own,
         // has nothing for a bar to say.
-        if nav.at_root() && title.is_none() && controls.is_none() && row.is_none() {
+        if root && title.is_none() && controls.is_none() && row.is_none() {
             return None;
         }
         let bar = Toolbar::new()
             .flush()
-            .when(!nav.at_root(), |bar| {
+            .when(!root, |bar| {
                 bar.leading(
                     ToolbarButton::new("back", Icon::Back, "back")
                         .on_click(cx.listener(|this, _, _, cx| this.animate_back(cx))),
@@ -790,9 +803,17 @@ impl Render for PhoneShell {
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
         let under = swipe.and_then(|progress| {
-            let behind = self.nav.read(cx).behind()?;
-            Some((progress, self.under(behind, window, cx)))
+            let nav = self.nav.read(cx);
+            let behind = nav.behind()?;
+            let behind_root = nav.history_ix() == 1;
+            let bar = self.bar(behind, behind_root, false, window, cx);
+            let page = self.under(behind, window, cx);
+            Some((progress, with_bar(bar, page)))
         });
+        let stage = {
+            let root = self.nav.read(cx).at_root();
+            with_bar(self.bar(route, root, true, window, cx), stage)
+        };
         div()
             .key_context(crate::platform::actions::CONTEXT)
             // The swipe from the edge: the page follows the finger, and goes
@@ -829,7 +850,6 @@ impl Render for PhoneShell {
             .pt(insets.top)
             .pl(insets.left)
             .pr(insets.right)
-            .children(self.bar(route, window, cx))
             .child(self.banner.clone())
             .child(self.output_wait.clone())
             .child(
@@ -941,4 +961,15 @@ impl Render for PhoneShell {
             )
             .into_any_element()
     }
+}
+
+/// A page under its bar, the two moving as one.
+fn with_bar(bar: Option<AnyElement>, page: AnyElement) -> AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .children(bar)
+        .child(div().flex_1().min_h_0().child(page))
+        .into_any_element()
 }
