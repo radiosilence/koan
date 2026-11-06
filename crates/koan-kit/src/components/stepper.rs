@@ -167,6 +167,7 @@ impl RenderOnce for Stepper {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.palette.ink.hsla())
                     .child(self.title),

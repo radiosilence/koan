@@ -1,6 +1,6 @@
 //! Walks the phone shell headlessly at an iPhone's size, under touch, and
 //! saves a PNG of each page, dark and light: the tabs' first pages, the
-//! library's pages, a record, an artist, a playlist, a Settings section and
+//! library's pages, a record, an artist, a playlist, each Settings section and
 //! Now Playing, and each page again scrolled part way, its rows under the
 //! bar, and to its end, its last row clear of the foot. Nothing is shown and nothing on the screen is read: GPUI's
 //! headless renderer draws it, as `walk` does for the desktop shell.
@@ -9,7 +9,8 @@
 //! `KOAN_CONFIG_DIR`, whose library folders it scans first.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example phone_walk -- target/phone-walk
-//! `KOAN_WALK_PAGES=library,now-playing` walks only those.
+//! `KOAN_WALK_PAGES=library,now-playing` walks only those, and
+//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini.
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -29,6 +30,14 @@ use koan_kit::raw::{
 
 /// An iPhone 17 Pro, in points.
 const WIDTH: f32 = 402.0;
+
+/// The width walked: an iPhone 17 Pro's, or `KOAN_WALK_WIDTH`'s.
+fn width() -> f32 {
+    std::env::var("KOAN_WALK_WIDTH")
+        .ok()
+        .and_then(|w| w.parse().ok())
+        .unwrap_or(WIDTH)
+}
 const HEIGHT: f32 = 874.0;
 
 enum Step {
@@ -73,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut shell = None;
-    let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
+    let window = cx.open_window(size(px(width()), px(HEIGHT)), |window, cx| {
         let made = cx.new(|cx| PhoneShell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
@@ -147,15 +156,26 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("playlists", Route::Playlists),
         page("search", Route::SearchTab),
         page("settings", Route::Settings),
-        page(
-            "settings-playback",
-            Route::SettingsSection(koan_gui::settings::Tab::Playback),
-        ),
-        page(
-            "settings-server",
-            Route::SettingsSection(koan_gui::settings::Tab::Server),
-        ),
     ];
+    // Each Settings section a phone offers; those that need a signed-in
+    // server show what they show without one.
+    {
+        use koan_gui::settings::Tab;
+        for (name, tab) in [
+            ("server", Tab::Server),
+            ("account", Tab::Account),
+            ("people", Tab::People),
+            ("playback", Tab::Playback),
+            ("devices", Tab::Devices),
+            ("integrations", Tab::Integrations),
+            ("appearance", Tab::Appearance),
+        ] {
+            steps.push(page(
+                &format!("settings-{name}"),
+                Route::SettingsSection(tab),
+            ));
+        }
+    }
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
         block_on(engine.clone().pause())?;
@@ -189,7 +209,7 @@ fn scroll(
     cx.update_window(window, |_, window, cx| {
         window.dispatch_event(
             PlatformInput::Scroll(ScrollEvent {
-                position: point(px(WIDTH / 2.), px(HEIGHT / 2.)),
+                position: point(px(width() / 2.), px(HEIGHT / 2.)),
                 delta: ScrollDelta::Pixels(point(px(0.), px(-by))),
                 modifiers: Modifiers::default(),
                 touch_phase: TouchPhase::Moved,
