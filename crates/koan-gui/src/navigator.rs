@@ -220,11 +220,7 @@ impl Navigator {
     /// back (a row id reused) never repeats a count a page has seen.
     pub fn forget(&mut self, route: Route) {
         for (history, cursor) in self.stashed.values_mut() {
-            std::mem::swap(history, &mut self.history);
-            std::mem::swap(cursor, &mut self.cursor);
-            Self::forget_here(&mut self.history, &mut self.cursor, route);
-            std::mem::swap(history, &mut self.history);
-            std::mem::swap(cursor, &mut self.cursor);
+            Self::forget_here(history, cursor, route);
         }
         Self::forget_here(&mut self.history, &mut self.cursor, route);
     }

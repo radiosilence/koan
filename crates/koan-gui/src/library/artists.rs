@@ -361,10 +361,13 @@ impl ArtistBrowser {
                 COUNT,
                 chrome::count(artist.album_count.max(0) as u64, "album", "albums"),
             )
-            .figure(
-                COUNT,
-                chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
-            )
+            // A phone's row keeps the name its width: the record count alone.
+            .when(!crate::mobile::phone(), |row| {
+                row.figure(
+                    COUNT,
+                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
+                )
+            })
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 // The keyboard carries on from the row clicked.

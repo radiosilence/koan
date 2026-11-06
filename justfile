@@ -560,6 +560,123 @@ kit-ios story="" shot="":
 gui-ios shot="":
     just _gpui-sim koan-gui cc.blit.koan.gpui "" "{{shot}}"
 
+# The kōan GUI app on an iPhone: a release build for the device, bundled with
+# `ios/Info.plist` and a development profile for `cc.blit.koan.gpui` that
+# names the phone (made in App Store Connect), signed with the profile's
+# entitlements, installed and launched. A development bundle of its own, so
+# the app being built sits beside the released one. The device is a UDID,
+# always given: the Mac may see phones that are not for testing.
+gui-phone device profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build --release -p koan-gui --bin koan-gui --target aarch64-apple-ios
+    app=target/koan-gui-phone/koan-gui.app
+    rm -rf "$app" && mkdir -p "$app"
+    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios/release/koan-gui" "$app/koan-gui"
+    cp crates/koan-gui/ios/Info.plist "$app/Info.plist"
+    # The icon, compiled from the SwiftUI app's catalog, and the keys naming it.
+    icons=$(mktemp "${TMPDIR:-/tmp}/koan-gui-icons.XXXXXX")
+    /usr/bin/actool apps/ios/Resources/Assets.xcassets \
+        --compile "$app" --platform iphoneos \
+        --minimum-deployment-target {{ios_deployment_target}} \
+        --app-icon AppIcon --include-all-app-icons \
+        --output-partial-info-plist "$icons" >/dev/null
+    /usr/libexec/PlistBuddy -c "Merge $icons" "$app/Info.plist"
+    rm -f "$icons"
+    cp "{{profile}}" "$app/embedded.mobileprovision"
+    entitlements=$(mktemp "${TMPDIR:-/tmp}/koan-gui-entitlements.XXXXXX")
+    security cms -D -i "{{profile}}" | plutil -extract Entitlements xml1 -o "$entitlements" -
+    identity=$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development/ {print $2; exit}')
+    codesign --force --sign "$identity" --entitlements "$entitlements" "$app"
+    rm -f "$entitlements"
+    xcrun devicectl device install app --device "{{device}}" "$app"
+    xcrun devicectl device process launch --device "{{device}}" cc.blit.koan.gpui
+
+# The kōan GUI app ("kōan GPUI", `cc.blit.koan.gpui`) to TestFlight for the
+# internal testers: never submitted to the store, it sits beside the
+# released app while it is built. GPUI's app has no Xcode project, so the
+# device build is wrapped in an archive of its own, and `-exportArchive`
+# signs it for distribution with the App Store Connect key and uploads it,
+# as `ios-testflight` does for the SwiftUI app. BUILD is the build number.
+gui-testflight build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${APPLE_TEAM_ID:?}" "${APPLE_API_KEY_PATH:?}" "${APPLE_API_KEY_ID:?}" "${APPLE_API_ISSUER_ID:?}"
+    IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build --release -p koan-gui --bin koan-gui --target aarch64-apple-ios
+    out=target/gui-testflight
+    rm -rf "$out" && mkdir -p "$out"
+    archive="$out/koan-gui.xcarchive"
+    app="$archive/Products/Applications/koan-gui.app"
+    mkdir -p "$app"
+    cp "${CARGO_TARGET_DIR:-target}/aarch64-apple-ios/release/koan-gui" "$app/koan-gui"
+    cp crates/koan-gui/ios/Info.plist "$app/Info.plist"
+    version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "koan-gui"))')
+    plist() { /usr/libexec/PlistBuddy -c "$1" "$app/Info.plist"; }
+    plist "Set :CFBundleShortVersionString $version"
+    plist "Set :CFBundleVersion {{build}}"
+    # What App Store validation reads of the platform and SDK the app was
+    # built for, which Xcode would have written.
+    sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+    plist "Add :CFBundleSupportedPlatforms array"
+    plist "Add :CFBundleSupportedPlatforms:0 string iPhoneOS"
+    plist "Add :DTPlatformName string iphoneos"
+    plist "Add :DTPlatformVersion string $sdk"
+    plist "Add :DTSDKName string iphoneos$sdk"
+    plist "Add :DTSDKBuild string $(xcrun --sdk iphoneos --show-sdk-build-version)"
+    plist "Add :DTXcode string $(xcodebuild -version | awk '/Xcode/ {split($2, v, "."); printf "%d%d%d", v[1], v[2], v[3]}')"
+    plist "Add :DTXcodeBuild string $(xcodebuild -version | awk '/Build version/ {print $3}')"
+    plist "Add :DTPlatformBuild string $(xcrun --sdk iphoneos --show-sdk-build-version)"
+    plist "Add :BuildMachineOSBuild string $(sw_vers -buildVersion)"
+    plist "Add :ITSAppUsesNonExemptEncryption bool false"
+    # The icon, compiled from the SwiftUI app's catalog, and the keys naming it.
+    icons=$(mktemp "${TMPDIR:-/tmp}/koan-gui-icons.XXXXXX")
+    /usr/bin/actool apps/ios/Resources/Assets.xcassets         --compile "$app" --platform iphoneos         --minimum-deployment-target {{ios_deployment_target}}         --app-icon AppIcon --include-all-app-icons         --output-partial-info-plist "$icons" >/dev/null
+    plist "Merge $icons"
+    rm -f "$icons"
+    identity=$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development/ {print $2; exit}')
+    codesign --force --sign "$identity" "$app"
+    cat > "$archive/Info.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>ApplicationProperties</key>
+        <dict>
+            <key>ApplicationPath</key><string>Applications/koan-gui.app</string>
+            <key>CFBundleIdentifier</key><string>cc.blit.koan.gpui</string>
+            <key>CFBundleShortVersionString</key><string>$version</string>
+            <key>CFBundleVersion</key><string>{{build}}</string>
+            <key>Team</key><string>$APPLE_TEAM_ID</string>
+        </dict>
+        <key>ArchiveVersion</key><integer>2</integer>
+        <key>CreationDate</key><date>$(date -u +%Y-%m-%dT%H:%M:%SZ)</date>
+        <key>Name</key><string>koan-gui</string>
+        <key>SchemeName</key><string>koan-gui</string>
+    </dict>
+    </plist>
+    PLIST
+    cat > "$out/ExportOptions.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>destination</key><string>upload</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>teamID</key><string>$APPLE_TEAM_ID</string>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+    </dict>
+    </plist>
+    PLIST
+    xcodebuild -exportArchive \
+        -archivePath "$archive" \
+        -exportOptionsPlist "$out/ExportOptions.plist" \
+        -exportPath "$out/export" \
+        -allowProvisioningUpdates \
+        -authenticationKeyPath "$APPLE_API_KEY_PATH" \
+        -authenticationKeyID "$APPLE_API_KEY_ID" \
+        -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID"
+
 # A GPUI crate's binary bundled with its `ios/Info.plist`, installed and
 # launched on a single-screen iPhone simulator with one `NAME=value` set.
 _gpui-sim crate bundle env shot:

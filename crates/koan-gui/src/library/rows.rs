@@ -297,13 +297,16 @@ pub fn track_row<V: TrackList>(
             .id(("row-availability", key))
             .picked(state.selected),
         )
-        // A phone's row is the title and the length: the heart and the
-        // format are its menu's and its record's, as on iOS.
+        .figure(20.0, heart)
+        // A phone's row leaves the format to its record, as on iOS, and its
+        // length takes no more than its digits.
         .when(!p.look.touch, |row| {
-            row.figure(20.0, heart)
-                .figure(110.0, div().children(format::quality(track)))
+            row.figure(110.0, div().children(format::quality(track)))
         })
-        .figure(64.0, format::duration(track.duration_ms))
+        .figure(
+            if p.look.touch { 44.0 } else { 64.0 },
+            format::duration(track.duration_ms),
+        )
         .on_click(click(RowPart::Row))
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
         .on_mouse_down(MouseButton::Right, actions::mark(view, target))
@@ -331,6 +334,10 @@ pub fn select(
     // A touch screen has no click to pick with: a tap plays or opens the
     // row, and picks it only while picking (the Select button's mode).
     if cx.global::<crate::theme::KoanTheme>().touch {
+        // A quick second tap is the same tap again, not a second play.
+        if event.click_count() > 1 {
+            return false;
+        }
         if !selection.is_active() {
             return true;
         }

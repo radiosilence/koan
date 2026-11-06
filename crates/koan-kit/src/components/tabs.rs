@@ -15,11 +15,22 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, labe
 #[derive(IntoElement)]
 pub struct TabStrip {
     tabs: Vec<(ElementId, Icon, SharedString, bool, Handler<ClickEvent>)>,
+    bar: bool,
 }
 
 impl TabStrip {
     pub fn new() -> Self {
-        Self { tabs: Vec::new() }
+        Self {
+            tabs: Vec::new(),
+            bar: false,
+        }
+    }
+
+    /// A phone's tab bar, as the iOS app's: the words alone, the tabs
+    /// sharing the bar's width, each a thumb's height to tap.
+    pub fn bar(mut self) -> Self {
+        self.bar = true;
+        self
     }
 
     /// A tab: its glyph, its title in the app's words, whether it is the one
@@ -49,12 +60,17 @@ impl RenderOnce for TabStrip {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let prism = crate::theme::KoanTheme::prism_gradient(cx);
+        let bar = self.bar;
         div()
             .flex()
             .justify_center()
-            .gap(look.space(Space::L))
-            .px(look.space(Space::M))
-            .pb(look.space(Space::Xs))
+            .when(bar, |strip| strip.w_full().min_h(px(49.0)).items_center())
+            .when(!bar, |strip| {
+                strip
+                    .gap(look.space(Space::L))
+                    .px(look.space(Space::M))
+                    .pb(look.space(Space::Xs))
+            })
             .children(self.tabs.into_iter().map(|(id, icon, title, chosen, run)| {
                 let color = look.text_color(if chosen { Tone::Accent } else { Tone::Muted });
                 let prism = chosen.then_some(prism).flatten();
@@ -65,12 +81,18 @@ impl RenderOnce for TabStrip {
                     .flex_col()
                     .items_center()
                     .gap(look.space(Space::Xs))
-                    .px(look.space(Space::S))
-                    .pt(look.space(Space::S))
+                    .when(bar, |item| {
+                        item.flex_1()
+                            .justify_center()
+                            .min_h(crate::theme::tokens::HIT)
+                    })
+                    .when(!bar, |item| {
+                        item.px(look.space(Space::S)).pt(look.space(Space::S))
+                    })
                     .cursor_pointer()
                     .text_role(TypeRole::Fine, &look)
                     .text_color(color)
-                    .when(look.icons, |item| {
+                    .when(look.icons && !bar, |item| {
                         item.child(KoanIcon::new(icon).role(TypeRole::Title).color(color))
                     })
                     .child(

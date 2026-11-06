@@ -14,13 +14,14 @@
 pub use gpui::prelude::*;
 pub use gpui::{
     Action, AnyElement, AnyEntity, AnyView, AnyWeakEntity, AnyWindowHandle, App, AppContext,
-    AsyncApp, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, Div, DragMoveEvent,
-    ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
-    IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement,
-    PathPromptOptions, Pixels, Point, QuitMode, ReadGlobal, Render, RenderOnce, ScrollEvent,
-    SharedString, Size, Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity,
-    Window, WindowBounds, WindowHandle, WindowId, WindowVisibility, actions, div, relative,
+    AsyncApp, AsyncWindowContext, BackGestureEvent, BackGesturePhase, Bounds, ClickEvent,
+    ClipboardItem, Context, Div, DragMoveEvent, ElementId, Entity, EntityId, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Global, IntoElement, KeyBinding, KeyContext,
+    KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    NavigationDirection, ParentElement, PathPromptOptions, Pixels, Point, QuitMode, ReadGlobal,
+    Render, RenderOnce, ScrollEvent, ScrollSource, SharedString, Size, Stateful, StyleRefinement,
+    Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowId,
+    WindowVisibility, actions, div, relative,
 };
 
 /// What the app asks of the platform beyond its windows' content: starting

@@ -99,6 +99,7 @@ impl RenderOnce for CommandBar {
                     Some(label("search")),
                 )
                 .w(look.spaced(Self::WIDTH))
+                .max_w(window.viewport_size().width - look.space(Space::M))
                 // What the window has below the panel's top, less a margin:
                 // in a small window the list scrolls between the query and
                 // the keys rather than running past them. The room is

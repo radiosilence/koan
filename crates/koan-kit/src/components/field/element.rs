@@ -287,7 +287,7 @@ impl gpui::Element for FieldElement {
             });
         }
         if focus.is_focused(window) {
-            super::drawn_focused(&focus, bounds);
+            super::drawn_focused(&focus, bounds, window.content_mask().bounds);
         }
         // Under touch, a tap anywhere but the field puts the keyboard away:
         // the tap goes where it landed first (a button presses, another
@@ -295,8 +295,12 @@ impl gpui::Element for FieldElement {
         // has it.
         if focus.is_focused(window) && window.last_input_was_touch() {
             let focus = focus.clone();
+            let keeps = self.state.read(cx).keeps;
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                if phase != DispatchPhase::Capture || bounds.contains(&event.position) {
+                if phase != DispatchPhase::Capture
+                    || bounds.contains(&event.position)
+                    || keeps.is_some_and(|keeps| keeps.contains(&event.position))
+                {
                     return;
                 }
                 let focus = focus.clone();

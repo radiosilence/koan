@@ -489,6 +489,10 @@ impl QueueView {
         // A tap plays the row, or while picking ticks it: a touch screen has
         // no click to pick with.
         let touch = cx.global::<crate::theme::KoanTheme>().touch;
+        // A quick second tap is the same tap again, not a second play.
+        if touch && event.click_count() > 1 {
+            return;
+        }
         if touch && self.picking {
             self.toggle(row, cx);
         } else if event.click_count() >= 2 || touch {

@@ -60,13 +60,16 @@ impl ParentElement for MenuPanel {
 impl RenderOnce for MenuPanel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // Never wider than the window less the margin a menu is kept from its
+        // edges: a phone is narrower than a picker's width.
+        let width = look
+            .spaced(self.min_width.unwrap_or(180.))
+            .min(window.viewport_size().width - px(16.));
         super::accessible(div().id("menu-panel"), gpui::Role::Menu, None)
             .flex()
             .flex_col()
-            .min_w(look.spaced(self.min_width.unwrap_or(180.)))
-            .when(self.fixed, |panel| {
-                panel.w(look.spaced(self.min_width.unwrap_or(180.)))
-            })
+            .min_w(width)
+            .when(self.fixed, |panel| panel.w(width))
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
             .border(look.hairline)

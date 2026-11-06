@@ -9,6 +9,13 @@ use gpui::*;
 
 use super::child;
 
+thread_local! {
+    /// The field and keyboard height an area has scrolled for, so an area
+    /// around it leaves them be.
+    static TAKEN: std::cell::RefCell<Option<(FocusHandle, u32)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[derive(IntoElement)]
 pub struct ScrollArea {
     id: ElementId,
@@ -132,22 +139,44 @@ impl RenderOnce for ScrollArea {
         let clear_of_keyboard = canvas(
             move |area, window, cx| {
                 let keyboard = window.insets().ime.bottom;
-                let Some((focus, field)) = super::field::typing_in() else {
+                // The keyboard gone: the next time it comes up is a new one.
+                if keyboard <= Pixels::ZERO {
+                    if typing.read(cx).is_some() {
+                        typing.update(cx, |t, _| *t = None);
+                    }
+                    TAKEN.with_borrow_mut(|taken| *taken = None);
+                    return;
+                }
+                let Some(super::field::Typing {
+                    focus,
+                    bounds: field,
+                    clip,
+                }) = super::field::typing_in()
+                else {
                     return;
                 };
                 // Once for each field and each height the keyboard takes,
-                // so a scroll by hand afterwards is left alone.
+                // so a scroll by hand afterwards is left alone; and only by
+                // the area the field is drawn in, whose clip holds it, not
+                // a page's under a sheet. Of nested areas the inner one,
+                // whose canvas comes first, takes it.
                 let asked = Some((focus.clone(), f32::from(keyboard).to_bits()));
-                if keyboard <= Pixels::ZERO
-                    || !focus.is_focused(window)
+                let inside = |b: Bounds<Pixels>| {
+                    b.left() >= area.left() - px(1.)
+                        && b.right() <= area.right() + px(1.)
+                        && b.top() >= area.top() - px(1.)
+                        && b.bottom() <= area.bottom() + px(1.)
+                };
+                if !focus.is_focused(window)
                     || *typing.read(cx) == asked
-                    || field.left() < area.left()
-                    || field.right() > area.right()
+                    || !inside(clip)
                     || field.top() < area.top()
+                    || TAKEN.with_borrow(|taken| *taken == asked)
                 {
                     return;
                 }
-                typing.update(cx, |t, _| *t = asked);
+                typing.update(cx, |t, _| *t = asked.clone());
+                TAKEN.with_borrow_mut(|taken| *taken = asked);
                 let margin = px(16.);
                 let clear = (window.viewport_size().height - keyboard).min(area.bottom()) - margin;
                 if field.bottom() <= clear {

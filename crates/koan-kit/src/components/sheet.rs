@@ -25,6 +25,7 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .flex()
     .flex_col()
     .w(px(560.0))
+    .max_w_full()
     .max_h(relative(0.85))
     .bg(look.palette.bg.hsla())
     .border(look.hairline)
@@ -111,6 +112,13 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .justify_center()
         .items_start()
         .pt(look.space(Space::Xxl))
+        // On a phone the panel takes the width less a margin, under the
+        // status bar.
+        .when(look.touch, |scrim| {
+            scrim
+                .px(look.space(Space::S))
+                .pt(look.space(Space::Xxl) * 2.)
+        })
         .occlude()
         .child(Veil::new(look.veil(0.6)))
 }

@@ -535,7 +535,9 @@ impl ArtistPage {
         };
         let scale = window.scale_factor();
         match item {
-            Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
+            Item::Header => self
+                .header(p, &record, grid, scale, window, cx)
+                .into_any_element(),
             Item::About => self.about(p, cx),
             Item::Heading(title, _) => SectionHeading::new(title).into_any_element(),
             Item::FeaturesHeading => {
@@ -693,6 +695,7 @@ impl ArtistPage {
         record: &Record,
         _grid: Grid,
         scale: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let id = self.artist_id;
@@ -738,7 +741,8 @@ impl ArtistPage {
             0 => chrome::count(record.appearances.len() as u64, "track", "tracks"),
             albums => chrome::count(albums, "album", "albums"),
         };
-        let mut header = super::header::playable_header(&self.lib, item, name, cx).detail(detail);
+        let mut header =
+            super::header::playable_header(&self.lib, item, name, window, cx).detail(detail);
         if let Some(photo) = photo {
             header = header.art(photo);
         }
