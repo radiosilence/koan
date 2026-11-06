@@ -842,21 +842,35 @@ impl Render for PhoneShell {
                     .size_full()
                     .map(|d| match under {
                         None => d.child(stage),
+                        // The pages are drawn over the window's wash, which
+                        // stays put: the page going sits over the uncovered
+                        // strip alone, a third of its way behind and dimmed
+                        // as UIKit's navigation does, so the two never
+                        // overlap and neither needs a ground of its own.
                         Some((progress, under)) => d
                             .child(
                                 div()
                                     .absolute()
                                     .top_0()
                                     .bottom_0()
-                                    .w(width)
-                                    .left(-width * 0.3 * (1.0 - progress))
-                                    .child(under),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .bg(p.look.veil(0.25 * (1.0 - progress))),
+                                    .left_0()
+                                    .w(width * progress)
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .bottom_0()
+                                            .w(width)
+                                            .left(-width * 0.3 * (1.0 - progress))
+                                            .child(under),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .bg(p.look.veil(0.25 * (1.0 - progress))),
+                                    ),
                             )
                             .child(
                                 div()
@@ -865,7 +879,7 @@ impl Render for PhoneShell {
                                     .bottom_0()
                                     .w(width)
                                     .left(width * progress)
-                                    .bg(p.bg)
+                                    .overflow_hidden()
                                     .border_l(p.look.hairline)
                                     .border_color(p.rule)
                                     .child(stage),
