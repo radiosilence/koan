@@ -9,6 +9,7 @@
 
 use koan_kit::app::*;
 
+use crate::components::flight;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
     Clear, KoanFrosted, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
@@ -178,6 +179,9 @@ impl PhoneShell {
             // Playing would cover.
             cx.observe(&nav, |this, _, cx| {
                 this.now_playing = None;
+                if flight::flying(cx) == Some(transport::NOW_PLAYING) {
+                    flight::land(cx);
+                }
                 cx.notify();
             }),
             cx.subscribe_in(
@@ -430,6 +434,37 @@ impl PhoneShell {
         Some(from + (to - from) * crate::theme::Motion::quick_out(t))
     }
 
+    /// What the record page in front flies its sleeve under.
+    fn sleeve(&self, cx: &App) -> Option<crate::components::FlightKey> {
+        match self.nav.read(cx).current() {
+            Route::Album(id) => Some(library::tile::sleeve_key(id)),
+            _ => None,
+        }
+    }
+
+    /// The record page's sleeve let go, eased to `to` (0 its tile, 1 the
+    /// header) as the page settles.
+    fn release_sleeve(&self, to: f32, cx: &mut App) {
+        if self.sleeve(cx).is_some() && flight::flying(cx) == self.sleeve(cx) {
+            flight::release(
+                to,
+                crate::theme::Motion::SETTLE,
+                crate::components::Ease::QuickOut,
+                cx,
+            );
+        }
+    }
+
+    /// A record's page swiped `progress` of the way back: its header's
+    /// sleeve follows the finger toward its tile on the page under it,
+    /// landing there if that page draws it.
+    fn fly_back(&self, progress: f32, cx: &mut App) {
+        let Some(key) = self.sleeve(cx) else { return };
+        if flight::flying(cx) == Some(key) || flight::recall(key, None, cx) {
+            flight::drive(1.0 - progress, cx);
+        }
+    }
+
     /// The page under a swipe back: the library's made ahead and kept to be
     /// the page, the shell's own drawn as they are.
     fn under(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -461,6 +496,16 @@ impl PhoneShell {
         }
         self.back_swipe = None;
         self.settling = Some((0.0, std::time::Instant::now(), true));
+        if let Some(key) = self.sleeve(cx) {
+            flight::recall(
+                key,
+                Some((
+                    crate::theme::Motion::SETTLE,
+                    crate::components::Ease::QuickOut,
+                )),
+                cx,
+            );
+        }
         cx.notify();
     }
 
@@ -678,7 +723,16 @@ impl PhoneShell {
                 full.set_lib(lib);
             });
         }
-        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
+        // Going down, the art shrinks back into the mini player's sleeve as
+        // Now Playing slides away.
+        let closed = cx.subscribe(&full, |this, full, _: &transport::Collapse, cx| {
+            if this.closing.is_none() && full.read(cx).shows_art() {
+                flight::recall(
+                    transport::NOW_PLAYING,
+                    Some((crate::theme::Motion::SETTLE, crate::components::Ease::InOut)),
+                    cx,
+                );
+            }
             this.closing.get_or_insert_with(std::time::Instant::now);
             cx.notify();
         });
@@ -691,6 +745,17 @@ impl PhoneShell {
             }
             cx.notify();
         });
+        // The mini player's sleeve grows into Now Playing's art as it slides
+        // up, on the slide's clock.
+        let art = self.transport.read(cx).cover();
+        flight::depart(
+            transport::NOW_PLAYING,
+            &art,
+            None,
+            crate::theme::Motion::SETTLE * 2,
+            crate::components::Ease::QuickOut,
+            cx,
+        );
         self.closing = None;
         self.now_playing = Some((full, closed, info));
         cx.notify();
@@ -775,6 +840,13 @@ impl Render for PhoneShell {
         // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
         let width = window.viewport_size().width - insets.left - insets.right;
+        // A flight between a record's tile and its header runs between
+        // where the two will rest: the page under stands a third of its
+        // way behind, the page in front `progress` of the way off.
+        let (behind, off) = swipe.map_or((Pixels::ZERO, Pixels::ZERO), |progress| {
+            (-width * 0.3 * (1.0 - progress), width * progress)
+        });
+        flight::page_offsets(behind, off, cx);
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
         let under = swipe.and_then(|progress| {
@@ -814,16 +886,23 @@ impl Render for PhoneShell {
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
                         this.settling = None;
-                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
+                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress);
+                        if let Some(progress) = this.back_swipe {
+                            this.fly_back(progress, cx);
+                        }
                     }
+                    // Let go, the sleeve is handed the rest of the way on the
+                    // page's curve: to its tile, or back to the header.
                     BackGesturePhase::Committed => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, true));
+                            this.release_sleeve(0.0, cx);
                         }
                     }
                     BackGesturePhase::Cancelled => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, false));
+                            this.release_sleeve(1.0, cx);
                         }
                     }
                 }
@@ -955,6 +1034,8 @@ impl Render for PhoneShell {
                     })),
             )
             .children(now_playing)
+            // A sleeve flying between pages, over them and under any sheet.
+            .child(flight::overlay())
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))
             .children(ask::overlay(window, cx).map(|q| ask::layered(Layer::Question, q)))
             .children(crate::artwork::overlay(window, cx).map(|v| ask::layered(Layer::Sheet, v)))
