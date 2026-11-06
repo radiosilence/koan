@@ -126,6 +126,7 @@ pub struct FormRow {
     value: Option<SharedString>,
     control: Option<AnyElement>,
     compact: bool,
+    stacked: bool,
 }
 
 impl FormRow {
@@ -149,7 +150,15 @@ impl FormRow {
             value: None,
             control: None,
             compact: false,
+            stacked: false,
         }
+    }
+
+    /// A control that wants the row's width, a slider: on a phone it goes
+    /// under the label, across the whole row, rather than squeezed beside it.
+    pub fn stacked(mut self) -> Self {
+        self.stacked = true;
+        self
     }
 
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
@@ -166,9 +175,13 @@ impl FormRow {
 impl RenderOnce for FormRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let stacked = self.stacked && look.touch;
         div()
             .flex()
-            .items_center()
+            .when(stacked, |row| {
+                row.flex_col().items_start().py(look.space(Space::S))
+            })
+            .when(!stacked, |row| row.items_center())
             .min_h(look.spaced(ROW))
             .child(
                 div()
@@ -177,7 +190,9 @@ impl RenderOnce for FormRow {
                     // column: the label takes its own width, at most half
                     // the row, and the control the rest.
                     .map(|label| {
-                        if look.touch {
+                        if stacked {
+                            label.w_full()
+                        } else if look.touch {
                             label.max_w(relative(0.5))
                         } else {
                             label.w(look.spaced(if self.compact { COMPACT_LABELS } else { LABELS }))
@@ -191,7 +206,8 @@ impl RenderOnce for FormRow {
             .child(
                 div()
                     .flex()
-                    .flex_1()
+                    .when(stacked, |control| control.w_full().min_h(look.target()))
+                    .when(!stacked, |control| control.flex_1())
                     .min_w_0()
                     .items_center()
                     .gap(look.space(Space::L))

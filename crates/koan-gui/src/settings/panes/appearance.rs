@@ -146,6 +146,7 @@ fn held_row(which: Held, value: u32, entity: &Entity<AppearancePane>) -> AnyElem
     let (id, name, (low, high), max, step) = which.spec();
     let (moving, landing) = (entity.clone(), entity.clone());
     Row::new(which.label(value))
+        .stacked()
         .control(
             div().w_full().child(
                 Slider::new(id, value as f32 / max as f32)
@@ -227,6 +228,7 @@ impl Render for AppearancePane {
                 })
                 .into_any_element(),
             Row::new(format!("Text size {text_size}%"))
+                .stacked()
                 .control(div().w_full().child(size_slider))
                 .into_any_element(),
         ];
