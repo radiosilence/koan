@@ -86,12 +86,24 @@ impl RenderOnce for Veil {
 #[derive(IntoElement)]
 pub struct Rise {
     child: AnyElement,
+    in_place: bool,
 }
 
 impl Rise {
+    /// On a phone, where the scrim stands the panel on the window's foot,
+    /// it comes up from below the window instead, as an iOS sheet does.
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
+            in_place: false,
+        }
+    }
+
+    /// The small rise on every platform: a panel hung near the top.
+    pub fn in_place(child: impl IntoElement) -> Self {
+        Self {
+            child: child.into_any_element(),
+            in_place: true,
         }
     }
 }
@@ -100,6 +112,9 @@ impl RenderOnce for Rise {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         if !moves(cx) {
             return self.child;
+        }
+        if Look::of(window, cx).touch && !self.in_place {
+            return SlideUp::new(self.child).into_any_element();
         }
         let step = Look::of(window, cx).space(Space::S);
         let device = f32::from(step) * window.scale_factor();
