@@ -1,0 +1,1 @@
+- **Every button answers a press.** Buttons that read as words (play next, queue, copy share link) now lift when pressed, and the sidebar's queue or playlist row glows when music is sent to it.
