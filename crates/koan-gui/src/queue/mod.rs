@@ -122,6 +122,9 @@ impl Render for DragPreview {
 pub struct QueueView {
     /// A finger swiping a row away: the row and how far it has gone.
     swipe: Option<(usize, Pixels)>,
+    /// A swipe let go short of removing its row, easing back: the row,
+    /// where it was let go and when.
+    unswipe: Option<(usize, Pixels, std::time::Instant)>,
     queue: Entity<Queue>,
     focus: FocusHandle,
     list: RowListState,
@@ -245,6 +248,7 @@ impl QueueView {
             drop_at: None,
             menu_row: None,
             swipe: None,
+            unswipe: None,
             dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
@@ -834,7 +838,20 @@ impl QueueView {
         };
         let view = cx.entity();
         let list = self.list.clone();
-        let swiped = self.swipe.filter(|(at, _)| *at == row).map(|(_, dx)| dx);
+        let swiped = self
+            .swipe
+            .filter(|(at, _)| *at == row)
+            .map(|(_, dx)| dx)
+            .or_else(|| {
+                let (_, from, since) = self.unswipe.filter(|(at, ..)| *at == row)?;
+                let t = since.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
+                if t >= 1.0 {
+                    self.unswipe = None;
+                    return None;
+                }
+                window.request_animation_frame();
+                Some(from * (1.0 - crate::theme::Motion::quick_out(t)))
+            });
         let touch = p.look.touch;
         row_frame
             // Under touch a row swiped toward the leading edge follows the
@@ -858,6 +875,7 @@ impl QueueView {
                             if delta.x == Pixels::ZERO || delta.y != Pixels::ZERO {
                                 return;
                             }
+                            this.unswipe = None;
                             this.swipe = Some((row, delta.x.min(Pixels::ZERO)));
                         }
                         koan_kit::app::platform::TouchPhase::Moved => {
@@ -881,6 +899,8 @@ impl QueueView {
                             if dx < -window.viewport_size().width / 4.0 {
                                 let ids = this.acting_on(row, cx);
                                 this.remove(ids, cx);
+                            } else {
+                                this.unswipe = Some((row, dx, std::time::Instant::now()));
                             }
                         }
                     }
