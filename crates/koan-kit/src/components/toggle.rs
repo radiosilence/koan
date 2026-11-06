@@ -49,17 +49,35 @@ impl Toggle {
 /// The box's side.
 const BOX: f32 = 14.0;
 
-impl RenderOnce for Toggle {
+/// The kōan checkbox: a `muted` square that fills with the accent and draws
+/// its tick in when checked, and erases it when not, however it was turned
+/// (with icons hidden, a ring as it turns on). Toggles draw it, and so does
+/// anything picked by ticking. `id` names its answers, so a control that
+/// answers its own click starts them under the same id.
+#[derive(IntoElement)]
+pub struct CheckBox {
+    id: ElementId,
+    checked: bool,
+}
+
+impl CheckBox {
+    pub fn new(id: impl Into<ElementId>, checked: bool) -> Self {
+        Self {
+            id: id.into(),
+            checked,
+        }
+    }
+}
+
+impl RenderOnce for CheckBox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let handle = focus(&self.id, window, cx);
         let answers = Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
         // Its tick draws itself in, or erases, however it was turned:
         // a click, Settings read again, a shortcut. With icons hidden, a
         // ring as before.
-        let icons = look.icons;
-        if icons {
+        if look.icons {
             answers.follow(
                 self.checked as u64,
                 Answer::Tick(self.checked),
@@ -93,6 +111,45 @@ impl RenderOnce for Toggle {
             window,
             cx,
         );
+        div()
+            .relative()
+            .flex_none()
+            .size(px(BOX))
+            .border(look.hairline)
+            .border_color(edge)
+            .child(
+                div()
+                    .absolute()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(ground)
+                    .child(
+                        div()
+                            .relative()
+                            .size(tick_side)
+                            .when(self.checked && !drawing, |cell| {
+                                cell.child(
+                                    KoanIcon::new(Icon::Check)
+                                        .points(BOX * 0.64)
+                                        .color(look.palette.bg.hsla()),
+                                )
+                            })
+                            .children(tick_drawn),
+                    ),
+            )
+            .children(answers.layer(window, cx))
+    }
+}
+
+impl RenderOnce for Toggle {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let handle = focus(&self.id, window, cx);
+        let answers = Answerer::of(&self.id, window, cx);
+        let accent = look.accent.hsla();
+        let icons = look.icons;
         let mut row = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
             .aria_disabled(self.disabled)
             .relative()
@@ -108,37 +165,7 @@ impl RenderOnce for Toggle {
                     .text_color(look.palette.ink.hsla())
                     .child(self.label),
             )
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .size(px(BOX))
-                    .border(look.hairline)
-                    .border_color(edge)
-                    .child(
-                        div()
-                            .absolute()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(ground)
-                            .child(
-                                div()
-                                    .relative()
-                                    .size(tick_side)
-                                    .when(self.checked && !drawing, |cell| {
-                                        cell.child(
-                                            KoanIcon::new(Icon::Check)
-                                                .points(BOX * 0.64)
-                                                .color(look.palette.bg.hsla()),
-                                        )
-                                    })
-                                    .children(tick_drawn),
-                            ),
-                    )
-                    .children(answers.layer(window, cx)),
-            );
+            .child(CheckBox::new(self.id.clone(), self.checked));
         if self.disabled {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {

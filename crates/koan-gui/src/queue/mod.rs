@@ -56,8 +56,8 @@ pub const CONTEXT: &str = "Queue";
 /// word's room in the plain look), the place on the record (wider when a
 /// record in the queue numbers by disc), then the figures trailing.
 const MARK: f32 = 16.0;
-/// A phone's pick circle, while picking.
-const PICK: f32 = 36.0;
+/// A phone's pick checkbox column, while picking.
+const PICK: f32 = 28.0;
 const MARK_WORD: f32 = 56.0;
 const PLACE: f32 = 24.0;
 const PLACE_WIDE: f32 = 36.0;
@@ -696,8 +696,8 @@ impl QueueView {
             return div().into_any_element();
         }
         let ticked = self.is_selected(row, cx);
-        // While a phone picks, a pick is a filled circle at the row's
-        // leading edge, as the iOS app's, not a highlighted row.
+        // While a phone picks, a pick is a ticked checkbox at the row's
+        // leading edge, as the iOS app's circle, not a highlighted row.
         let pick = (p.look.touch && self.picking).then_some(ticked);
         let selected = ticked && pick.is_none();
         let cursor = self.focus.is_focused(window)
@@ -1288,7 +1288,7 @@ pub(crate) struct Look<'a> {
     /// are not waiting for anything.
     pub waiting: bool,
     /// While picking on a phone, whether the row is ticked: drawn as a
-    /// circle, and its names are not links.
+    /// checkbox, and its names are not links.
     pub pick: Option<bool>,
 }
 
@@ -1339,20 +1339,18 @@ fn credit(parts: &[CreditPart], fallback: &str, part: &str, look: &Look) -> Vec<
     )
 }
 
-/// A phone's pick, while picking: a circle at the row's leading edge, filled
-/// once ticked.
+/// A phone's pick, while picking: the kōan checkbox at the row's leading
+/// edge, ticked as it is picked.
 fn picked_circle(row: TableRow, look: &Look) -> TableRow {
     let Some(ticked) = look.pick else {
         return row;
     };
-    let p = look.p;
     row.lead(
         PICK,
-        div().flex().items_center().child(
-            KoanIcon::new(if ticked { Icon::Picked } else { Icon::Unpicked })
-                .role(TypeRole::Title)
-                .color(if ticked { p.accent_text } else { p.muted }),
-        ),
+        div()
+            .flex()
+            .items_center()
+            .child(crate::components::CheckBox::new(look.id("pick", 0), ticked)),
     )
 }
 

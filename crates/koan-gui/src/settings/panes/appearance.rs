@@ -88,7 +88,7 @@ impl AppearancePane {
     }
 }
 
-/// The wash's sliders, each held while dragged and committed when let go.
+/// The wash's sliders, each shown as it is dragged and written when let go.
 #[derive(Clone, Copy)]
 enum Held {
     Tint,
@@ -160,6 +160,15 @@ fn held_row(which: Held, value: u32, entity: &Entity<AppearancePane>) -> AnyElem
                             let held = pane.held(which);
                             if *held != Some(to) {
                                 *held = Some(to);
+                                // The wash shows it as it is dragged; the
+                                // setting is written when let go.
+                                let theme = cx.global::<KoanTheme>();
+                                let (pace, turn) = (theme.wash_drift, theme.wash_turn);
+                                match which {
+                                    Held::Tint => KoanTheme::set_wash_tint(to, cx),
+                                    Held::Drift => KoanTheme::set_wash_drift(to, turn, cx),
+                                    Held::Turn => KoanTheme::set_wash_drift(pace, to, cx),
+                                }
                                 cx.notify();
                             }
                         })
@@ -208,6 +217,8 @@ impl Render for AppearancePane {
                     entity.update(cx, |pane, cx| {
                         if pane.text_size != Some(percent) {
                             pane.text_size = Some(percent);
+                            // Shown as it is dragged; written when let go.
+                            KoanTheme::set_text_size(percent, cx);
                             cx.notify();
                         }
                     })

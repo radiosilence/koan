@@ -179,7 +179,7 @@ pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
 pub use tabs::{StatusLine, TabStrip};
 pub use tile::{TileArt, TileMark, TileSleeve, origin_probe, text_widths};
-pub use toggle::{IconToggle, Toggle};
+pub use toggle::{CheckBox, IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, TextTrigger, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
