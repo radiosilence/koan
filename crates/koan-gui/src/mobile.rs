@@ -416,7 +416,6 @@ impl PhoneShell {
         }
         self.seen = Some(now);
         if let Some(progress) = self.back_swipe {
-            self.fly(progress, true, cx);
             return Some(progress);
         }
         let (from, started, back) = self.settling?;
@@ -424,9 +423,6 @@ impl PhoneShell {
         let to = if back { 1.0 } else { 0.0 };
         if t >= 1.0 {
             self.settling = None;
-            if self.sleeve(cx).is_some() && flight::flying(cx) == self.sleeve(cx) {
-                flight::land(cx);
-            }
             if back {
                 self.back(cx);
             } else if let Some(library) = &self.library {
@@ -435,9 +431,7 @@ impl PhoneShell {
             return None;
         }
         window.request_animation_frame();
-        let progress = from + (to - from) * crate::theme::Motion::quick_out(t);
-        self.fly(progress, back, cx);
-        Some(progress)
+        Some(from + (to - from) * crate::theme::Motion::quick_out(t))
     }
 
     /// What the record page in front flies its sleeve under.
@@ -448,16 +442,27 @@ impl PhoneShell {
         }
     }
 
-    /// A record's page sliding in or swiped back, `progress` of the way to
-    /// the page under it: its header's sleeve follows, between its tile on
-    /// that page and the header. Going back, the flight is set going from
-    /// the header, and lands on the tile if the page under draws it.
-    fn fly(&self, progress: f32, going_back: bool, cx: &mut App) {
-        let Some(key) = self.sleeve(cx) else { return };
-        if flight::flying(cx) != Some(key) && !(going_back && flight::recall(key, None, cx)) {
-            return;
+    /// The record page's sleeve let go, eased to `to` (0 its tile, 1 the
+    /// header) as the page settles.
+    fn release_sleeve(&self, to: f32, cx: &mut App) {
+        if self.sleeve(cx).is_some() && flight::flying(cx) == self.sleeve(cx) {
+            flight::release(
+                to,
+                crate::theme::Motion::SETTLE,
+                crate::components::Ease::QuickOut,
+                cx,
+            );
         }
-        flight::drive(1.0 - progress, cx);
+    }
+
+    /// A record's page swiped `progress` of the way back: its header's
+    /// sleeve follows the finger toward its tile on the page under it,
+    /// landing there if that page draws it.
+    fn fly_back(&self, progress: f32, cx: &mut App) {
+        let Some(key) = self.sleeve(cx) else { return };
+        if flight::flying(cx) == Some(key) || flight::recall(key, None, cx) {
+            flight::drive(1.0 - progress, cx);
+        }
     }
 
     /// The page under a swipe back: the library's made ahead and kept to be
@@ -491,6 +496,16 @@ impl PhoneShell {
         }
         self.back_swipe = None;
         self.settling = Some((0.0, std::time::Instant::now(), true));
+        if let Some(key) = self.sleeve(cx) {
+            flight::recall(
+                key,
+                Some((
+                    crate::theme::Motion::SETTLE,
+                    crate::components::Ease::QuickOut,
+                )),
+                cx,
+            );
+        }
         cx.notify();
     }
 
@@ -714,7 +729,7 @@ impl PhoneShell {
             if this.closing.is_none() && full.read(cx).shows_art() {
                 flight::recall(
                     transport::NOW_PLAYING,
-                    Some((crate::theme::Motion::SETTLE, flight::Curve::InOut)),
+                    Some((crate::theme::Motion::SETTLE, crate::components::Ease::InOut)),
                     cx,
                 );
             }
@@ -738,7 +753,7 @@ impl PhoneShell {
             &art,
             None,
             crate::theme::Motion::SETTLE * 2,
-            flight::Curve::QuickOut,
+            crate::components::Ease::QuickOut,
             cx,
         );
         self.closing = None;
@@ -825,6 +840,13 @@ impl Render for PhoneShell {
         // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
         let width = window.viewport_size().width - insets.left - insets.right;
+        // A flight between a record's tile and its header runs between
+        // where the two will rest: the page under stands a third of its
+        // way behind, the page in front `progress` of the way off.
+        let (behind, off) = swipe.map_or((Pixels::ZERO, Pixels::ZERO), |progress| {
+            (-width * 0.3 * (1.0 - progress), width * progress)
+        });
+        flight::page_offsets(behind, off, cx);
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
         let under = swipe.and_then(|progress| {
@@ -864,16 +886,23 @@ impl Render for PhoneShell {
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
                         this.settling = None;
-                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
+                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress);
+                        if let Some(progress) = this.back_swipe {
+                            this.fly_back(progress, cx);
+                        }
                     }
+                    // Let go, the sleeve is handed the rest of the way on the
+                    // page's curve: to its tile, or back to the header.
                     BackGesturePhase::Committed => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, true));
+                            this.release_sleeve(0.0, cx);
                         }
                     }
                     BackGesturePhase::Cancelled => {
                         if let Some(from) = this.back_swipe.take() {
                             this.settling = Some((from, now, false));
+                            this.release_sleeve(1.0, cx);
                         }
                     }
                 }

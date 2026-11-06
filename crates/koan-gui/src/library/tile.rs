@@ -467,7 +467,7 @@ impl<V: TileHost> Render for TileView<V> {
                         &crate::components::CoverArt::from(this.state.sleeve.clone()),
                         Some(Bounds::new(this.origin.get(), size(side, side))),
                         Motion::SETTLE,
-                        crate::components::flight::Curve::QuickOut,
+                        crate::components::Ease::QuickOut,
                         cx,
                     );
                 }
