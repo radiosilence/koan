@@ -202,23 +202,14 @@ pub fn browser_controls(search: &Entity<SearchField>) -> crate::components::Tool
     }
 }
 
-/// A phone browser's header with its filter field under it, scrolled away
-/// with the list as an iOS list's search field is.
-pub fn with_filter(
-    header: impl IntoElement,
-    search: &Entity<SearchField>,
-    p: &Paint,
-) -> AnyElement {
+/// What a phone browser leads its list with: its filter field alone,
+/// scrolled away with the list as an iOS list's search field is. The bar
+/// names the page, so it draws no heading of its own.
+pub fn with_filter(search: &Entity<SearchField>, p: &Paint) -> AnyElement {
     div()
-        .flex()
-        .flex_col()
-        .child(header)
-        .child(
-            div()
-                .px(crate::components::RowMetrics::page_margin(&p.look))
-                .pb(p.space(Space::M))
-                .child(search.clone()),
-        )
+        .px(crate::components::RowMetrics::page_margin(&p.look))
+        .pt(p.space(Space::S))
+        .child(search.clone())
         .into_any_element()
 }
 

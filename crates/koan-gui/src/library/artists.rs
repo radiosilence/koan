@@ -474,7 +474,7 @@ impl Render for ArtistBrowser {
         let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
         let (inline_header, away_header) = if phone {
-            (None, Some(chrome::with_filter(header, &self.search, p)))
+            (None, Some(chrome::with_filter(&self.search, p)))
         } else {
             ((!held).then_some(header), None)
         };
