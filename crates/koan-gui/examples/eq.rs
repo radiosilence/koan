@@ -20,6 +20,9 @@
 //! sets for a run.
 //! KOAN_CONFIG_DIR=… cargo run --release -p koan-gui --example eq -- --measure
 //!
+//! `--settings` draws EQ where the desktop shows it, as the Settings
+//! window's EQ pane, with `--profile` and `--sheet` over it.
+//!
 //! `--phone` draws EQ as a phone shows it instead: the phone shell at an
 //! iPhone mini's size, under touch, on its EQ page, with `--profile` and
 //! `--sheet` over it as on the desktop, and `--end` scrolled to the page's
@@ -45,6 +48,9 @@ use koan_kit::raw::{HeadlessAppContext, WindowBounds, WindowOptions, px, size};
 const WIDTH: f32 = 900.0;
 const HEIGHT: f32 = 1100.0;
 const DEVICE: &str = "Desk DAC";
+/// The Settings window as it opens, in points.
+const SETTINGS_W: f32 = 900.0;
+const SETTINGS_H: f32 = 820.0;
 /// An iPhone 13 mini, in points: the narrowest phone kōan runs on.
 const PHONE_W: f32 = 375.0;
 const PHONE_H: f32 = 812.0;
@@ -165,6 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let measure = args.iter().any(|a| a == "--measure");
     let phone = args.iter().any(|a| a == "--phone");
     let end = args.iter().any(|a| a == "--end");
+    let in_settings = args.iter().any(|a| a == "--settings");
     let after = |flag: &str| {
         args.iter()
             .position(|a| a == flag)
@@ -234,7 +241,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             koan_gui::library::bind_keys(cx);
         }
     });
-    let dsp = cx.update(|cx| Dsp::new(engine.clone(), cx));
+    let dsp = cx.update(koan_gui::dsp::model);
     if sheet.as_deref() == Some("role") {
         cx.update(|cx| {
             dsp.update(cx, |d, cx| {
@@ -253,10 +260,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     if phone {
         return phone_shots(&mut cx, &dsp, profile, sheet, end, &out);
     }
+    let (width, height) = if in_settings {
+        (SETTINGS_W, SETTINGS_H)
+    } else {
+        (WIDTH, HEIGHT)
+    };
     let mut shots = Vec::new();
     for dark in [true, false] {
         let (dsp, profile, sheet) = (dsp.clone(), profile.clone(), sheet.clone());
-        let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |window, cx| {
+        let window = cx.open_window(size(px(width), px(height)), move |window, cx| {
+            if in_settings {
+                let settings = cx.new(|cx| {
+                    koan_gui::settings::SettingsWindow::new(koan_gui::settings::Tab::Eq, window, cx)
+                });
+                if let Some(page) = settings.read(cx).eq_page() {
+                    page.update(cx, |page, cx| page.show(Some(DEVICE.into()), cx));
+                    open_sheets(&page, &dsp, profile, sheet.as_deref(), window, cx);
+                }
+                return koan_kit::components::host(settings, window, cx);
+            }
             let page = cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
             open_sheets(&page, &dsp, profile, sheet.as_deref(), window, cx);
             koan_kit::components::host(page, window, cx)
@@ -306,7 +328,7 @@ fn phone_shots(
     settle(cx, window)?;
     cx.update_window(window, |_, window, cx| {
         shell.update(cx, |s, cx| s.go_eq(Some(DEVICE.into()), window, cx));
-        if let Some(page) = shell.read(cx).eq_page() {
+        if let Some(page) = shell.read(cx).eq_page(cx) {
             open_sheets(&page, dsp, profile, sheet.as_deref(), window, cx);
         }
     })?;
