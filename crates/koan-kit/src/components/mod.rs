@@ -135,8 +135,8 @@ pub use form::{
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use insets::{
-    Clear, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe, set_bar_inset,
-    set_foot_inset, system_insets,
+    Clear, Frost, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe,
+    keep_clear, page_shown, report_scroll_edges, set_bar_inset, set_foot_inset, system_insets,
 };
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
@@ -448,6 +448,9 @@ struct Spot {
     /// Bumped each time the keys move the cursor: what a scroll area
     /// follows, so moving to the same item again still scrolls to it.
     moves: std::cell::Cell<u64>,
+    /// The move last held clear of what is drawn over the page
+    /// (`keep_clear`).
+    cleared: std::cell::Cell<u64>,
 }
 
 impl CursorSpot {
@@ -471,6 +474,13 @@ impl CursorSpot {
 
     pub(crate) fn moves(&self) -> u64 {
         self.0.moves.get()
+    }
+
+    /// Whether the last move is yet to be held clear of what is drawn over
+    /// the page; asking marks it held.
+    pub(crate) fn clearing(&self) -> bool {
+        let moves = self.0.moves.get();
+        self.0.cleared.replace(moves) != moves
     }
 
     fn record(&self, bounds: Bounds<Pixels>) {

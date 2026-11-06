@@ -456,28 +456,34 @@ impl Render for ArtistBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
-        // A phone's list scrolls its header away with the rows, as the iOS
-        // app's does.
-        let phone = crate::mobile::phone() && !held;
-        // The header starts below the phone's bar, which the list scrolls
-        // under.
+        // The list scrolls its header away with the rows, as the iOS app's
+        // does, and passes under the toolbar.
+        let away = !held;
+        let phone = crate::mobile::phone();
+        // The header starts below the bar, which the list scrolls under; a
+        // phone's filter field a step further down.
+        let bar = crate::components::bar_inset(window, cx);
         let above = if phone {
-            crate::components::bar_inset(cx) + p.look.spaced(10.0)
+            bar + p.look.spaced(10.0)
         } else {
-            Pixels::ZERO
+            bar
         };
-        let lead = if phone {
-            self.header_height.get().unwrap_or_default() + above
+        let lead = if away {
+            self.header_height.get().unwrap_or_default() + bar + p.look.spaced(10.0)
         } else {
             Pixels::ZERO
         };
         let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
-        let (inline_header, away_header) = if phone {
-            (None, Some(chrome::with_filter(&self.search, p)))
-        } else {
-            ((!held).then_some(header), None)
-        };
+        // A phone's bar names the page: its list leads with the filter field
+        // alone.
+        let away_header = away.then(|| {
+            if phone {
+                chrome::with_filter(&self.search, p)
+            } else {
+                header.into_any_element()
+            }
+        });
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -491,7 +497,7 @@ impl Render for ArtistBrowser {
             chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
                 .into_any_element()
         } else {
-            let under_foot = crate::components::rows_under_foot(rows::height(p), cx);
+            let under_foot = crate::components::rows_under_foot(rows::height(p), window, cx);
             crate::components::uniform_list(
                 "artists",
                 // Blank rows after the last pass under a phone's foot.
@@ -541,19 +547,18 @@ impl Render for ArtistBrowser {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .children(inline_header)
         .child(
             div()
                 .id("artist-list")
                 .overflow_hidden()
                 .flex_1()
                 .min_h_0()
-                .when(!phone, |d| d.pt(p.look.spaced(10.0)))
                 .relative()
                 .child(body)
+                .child(crate::components::keep_clear(&self.spot, &self.scroll))
                 .child(
                     crate::components::Scrollbar::vertical(&self.scroll)
-                        .when(phone, crate::components::Scrollbar::under_bar),
+                        .when(away, crate::components::Scrollbar::under_bar),
                 )
                 .children(away_header.map(|header| {
                     crate::components::scrolls_away(

@@ -6,7 +6,9 @@
 //! renderer draws it, as `window_shot` does.
 //!
 //! The PNGs are named by page and appearance (`window-albums-dark.png`,
-//! `window-album-<id>-dark.png`). The record, artist and playlist it walks are
+//! `window-album-<id>-dark.png`), each at rest and scrolled a little way
+//! (`window-albums-dark-scrolled.png`), where the page runs under the
+//! toolbar's frost. The record, artist and playlist it walks are
 //! written to `<out>/ids.env`. PNGs left from an earlier walk are removed
 //! first, so none is read out of date.
 //!
@@ -40,6 +42,8 @@ const HEIGHT: f32 = 750.0;
 /// Wheel steps per direction.
 const STEPS: usize = 120;
 const STEP: f32 = 40.0;
+/// Wheel steps down for the scrolled PNGs.
+const SHOT_STEPS: usize = 4;
 
 struct Page {
     name: String,
@@ -141,6 +145,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if dark { "dark" } else { "light" }
             ));
             cx.capture_screenshot(window)?.save(&file)?;
+        }
+        // Scrolled a little way, the page under the toolbar.
+        for _ in 0..SHOT_STEPS {
+            wheel(&mut cx, window, -1.0)?;
+        }
+        for dark in [true, false] {
+            cx.update_window(window, |_, window, cx| {
+                theme::pin_appearance(Some(dark), window, cx)
+            })?;
+            settle(&mut cx, window)?;
+            let file = out.join(format!(
+                "window-{}-{}-scrolled.png",
+                page.name,
+                if dark { "dark" } else { "light" }
+            ));
+            cx.capture_screenshot(window)?.save(&file)?;
+        }
+        for _ in 0..SHOT_STEPS {
+            wheel(&mut cx, window, 1.0)?;
         }
         timings.push(Timing {
             name: page.name.clone(),
@@ -273,28 +296,38 @@ fn scroll(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
 ) -> Result<Vec<Duration>, Box<dyn Error>> {
-    let centre = point(px(WIDTH * 0.6), px(HEIGHT * 0.5));
     let mut frames = Vec::with_capacity(STEPS * 2);
     for direction in [-1.0, 1.0] {
         for _ in 0..STEPS {
-            let took = cx.update_window(window, |_, window, cx| {
-                window.dispatch_event(
-                    PlatformInput::Scroll(ScrollEvent {
-                        position: centre,
-                        delta: ScrollDelta::Pixels(point(px(0.), px(STEP * direction))),
-                        modifiers: Modifiers::default(),
-                        touch_phase: TouchPhase::Moved,
-                        source: ScrollSource::Pointer,
-                    }),
-                    cx,
-                );
-                let start = Instant::now();
-                window.draw(cx).clear(cx);
-                start.elapsed()
-            })?;
-            frames.push(took);
-            cx.run_until_parked();
+            frames.push(wheel(cx, window, direction)?);
         }
     }
     Ok(frames)
+}
+
+/// One wheel step at the window's centre, down for -1 and up for 1: the
+/// time the frame drawn after it took.
+fn wheel(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    direction: f32,
+) -> Result<Duration, Box<dyn Error>> {
+    let centre = point(px(WIDTH * 0.6), px(HEIGHT * 0.5));
+    let took = cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::Scroll(ScrollEvent {
+                position: centre,
+                delta: ScrollDelta::Pixels(point(px(0.), px(STEP * direction))),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
+            }),
+            cx,
+        );
+        let start = Instant::now();
+        window.draw(cx).clear(cx);
+        start.elapsed()
+    })?;
+    cx.run_until_parked();
+    Ok(took)
 }

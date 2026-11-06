@@ -538,9 +538,9 @@ impl ArtistPage {
         };
         let scale = window.scale_factor();
         match item {
-            // Below a phone's bar, which the page scrolls under.
+            // Below the bar, which the page scrolls under.
             Item::Header => div()
-                .pt(crate::components::bar_inset(cx))
+                .pt(crate::components::bar_inset(window, cx))
                 .child(self.header(p, &record, grid, scale, window, cx))
                 .into_any_element(),
             Item::About => self.about(p, cx),
@@ -1186,7 +1186,7 @@ impl Render for ArtistPage {
                 .size_full()
                 // Rows are laid out over the bottom padding as the list
                 // scrolls: the last ends clear of a phone's foot.
-                .pb(crate::components::foot_inset(cx)),
+                .pb(crate::components::foot_inset(window, cx)),
             );
 
         self.keyed = self.focus.is_focused(window);
@@ -1217,6 +1217,7 @@ impl Render for ArtistPage {
                 .flex_1()
                 .min_h_0()
                 .child(body)
+                .child(crate::components::keep_clear(&self.spot, &self.list))
                 // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                 .child(crate::components::Scrollbar::vertical(&self.list).under_bar()),
         )

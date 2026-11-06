@@ -1,6 +1,8 @@
-//! The window: the sidebar from the top edge, beside the page column (its
-//! toolbar, then the stage), and the transport along the foot under both.
-//! On macOS the window's buttons sit on the sidebar's ground.
+//! The window: the sidebar from the top edge, beside the page column (the
+//! stage, its toolbar drawn over its top), and the transport over the foot.
+//! The pages scroll under the toolbar and the transport, which are frosted
+//! while they do (`Frost`). On macOS the window's buttons sit on the
+//! sidebar's ground.
 //!
 //! Each region is a cached view, so a region that changes (the playhead's
 //! slider, a row of the queue) redraws itself and the views that hold it,
@@ -525,7 +527,9 @@ impl Shell {
                 .filter(|_| LibraryStage::draws(route))
                 .and_then(|library| library.read(cx).toolbar())
         };
+        // Flush: it stands on the frost drawn under it, which has no rule.
         Toolbar::new()
+            .flush()
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.
             .under_window_buttons(!self.sidebar_shown)
@@ -629,18 +633,36 @@ impl Render for Shell {
         } else {
             WINDOW_BUTTONS.height
         };
+        // The transport over the foot of the pages, frosted while they run
+        // under it, its height the room they leave at their end.
         let transport = {
             let transport = self.transport.clone();
             move || {
-                transport.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(transport::HEIGHT)
-                        .flex_shrink_0(),
-                )
+                div()
+                    .id("desktop-foot")
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .occlude()
+                    .child(crate::components::Frost::foot().feathered())
+                    .child(crate::components::foot_probe())
+                    .child(
+                        transport.clone().cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .h(transport::HEIGHT)
+                                .flex_shrink_0(),
+                        ),
+                    )
             }
         };
         let route = self.nav.read(cx).current();
+        crate::components::page_shown(route, window, cx);
+        let (bar_inset, foot_inset) = (
+            crate::components::bar_inset(window, cx),
+            crate::components::foot_inset(window, cx),
+        );
         if route != Route::Downloads {
             self.downloads = None;
         }
@@ -723,11 +745,12 @@ impl Render for Shell {
             .flex_col()
             .text_color(p.ink)
             // The sidebar runs from the window's top edge to the transport,
-            // the window's buttons on its ground; the toolbar heads the page
-            // column alone. With "wash the whole window" the sidebar and the
-            // toolbar have no ground, the wash runs under them, and the
-            // transport spans the whole window; otherwise they are on `bg`
-            // and the transport spans the page column only.
+            // the window's buttons on its ground; the page column runs the
+            // window's height, its toolbar and the transport drawn over the
+            // page, which scrolls under them. With "wash the whole window"
+            // the sidebar has no ground, the wash runs under it, and the
+            // transport spans the whole window; otherwise the sidebar is on
+            // `bg` and the transport spans the page column only.
             .child(
                 div().flex_1().min_h_0().child(
                     SplitView::new(
@@ -745,6 +768,7 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
+                                .when(washed, |d| d.pb(transport::HEIGHT))
                                 // Room for the window's buttons, which full
                                 // screen hides, and a place to move the
                                 // window by: on macOS under the traffic
@@ -782,16 +806,12 @@ impl Render for Shell {
                     })
                     .trailing(
                         div()
+                            .relative()
                             .size_full()
-                            .flex()
-                            .flex_col()
-                            .child(self.toolbar(window, cx))
-                            .child(self.banner.clone())
-                            .child(self.output_wait.clone())
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_h_0()
+                                    .absolute()
+                                    .inset_0()
                                     .flex()
                                     // The page: the main landmark.
                                     .child(
@@ -803,16 +823,17 @@ impl Render for Shell {
                                             .h_full()
                                             .child(stage),
                                     )
+                                    // The lyrics stand between the toolbar
+                                    // and the transport.
                                     .child(
-                                        Slide::new(
-                                            "lyrics-slide",
-                                            &self.lyrics_slide,
-                                            self.lyrics_shown,
-                                            RowMetrics::inspector(&p.look),
-                                        )
-                                        .when_some(
-                                            self.lyrics.clone(),
-                                            |slide, lyrics| {
+                                        div().h_full().pt(bar_inset).pb(foot_inset).child(
+                                            Slide::new(
+                                                "lyrics-slide",
+                                                &self.lyrics_slide,
+                                                self.lyrics_shown,
+                                                RowMetrics::inspector(&p.look),
+                                            )
+                                            .when_some(self.lyrics.clone(), |slide, lyrics| {
                                                 slide.child(
                                                     lyrics.cached(
                                                         StyleRefinement::default()
@@ -821,9 +842,28 @@ impl Render for Shell {
                                                             .flex_none(),
                                                     ),
                                                 )
-                                            },
+                                            }),
                                         ),
                                     ),
+                            )
+                            // The toolbar and what is wrong, over the top of
+                            // the page, frosted while it runs under them, their
+                            // height the room it leaves at its top.
+                            .child(
+                                div()
+                                    .id("desktop-bar")
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .right_0()
+                                    .flex()
+                                    .flex_col()
+                                    .occlude()
+                                    .child(crate::components::Frost::bar().feathered())
+                                    .child(crate::components::bar_probe())
+                                    .child(self.toolbar(window, cx))
+                                    .child(self.banner.clone())
+                                    .child(self.output_wait.clone()),
                             )
                             .when(!washed, |d| d.child(transport())),
                     )

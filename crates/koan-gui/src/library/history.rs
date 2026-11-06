@@ -119,7 +119,12 @@ impl HistoryPage {
             reads: 0,
             failed: None,
             pick: None,
-            list: RowListState::new(),
+            // The heading scrolls away with the plays.
+            list: {
+                let list = RowListState::new();
+                list.set_lead(true, 0, RowKind::Art);
+                list
+            },
             selected: HashSet::new(),
             menu: None,
             menu_plays: Vec::new(),
@@ -643,11 +648,12 @@ impl Render for HistoryPage {
         }
         self.aim(window, cx);
         let narrowed = self.lib.browse.read(cx).search().is_some();
-        let header = PageHeader::new("history").detail(chrome::count(
-            self.entries.len() as u64,
-            "play",
-            "plays",
-        ));
+        let header = |plays: usize| {
+            PageHeader::new("history").detail(chrome::count(plays as u64, "play", "plays"))
+        };
+        // The heading scrolls away with the plays, which pass under the
+        // toolbar.
+        let away = self.loaded && !self.entries.is_empty();
         let body = if !self.loaded {
             match &self.failed {
                 Some(why) => EmptyState::new(Icon::History, "couldn't read history")
@@ -672,13 +678,20 @@ impl Render for HistoryPage {
             .into_any_element()
         } else {
             let view = cx.entity();
+            let head = view.clone();
             RowList::new(&self.list, move |i, window, cx| {
                 view.update(cx, |this, cx| {
                     let p = Paint::of(window, cx);
                     this.line(&p, i, window, cx)
                 })
             })
-            .under_foot()
+            .under_bar()
+            .lead(move |window, cx| {
+                let look = crate::theme::Look::of(window, cx);
+                let plays = head.read(cx).entries.len();
+                crate::components::page_head(header(plays), &look).into_any_element()
+            })
+            .follow(&self.spot)
             .into_any_element()
         };
         let view = cx.entity();
@@ -710,7 +723,14 @@ impl Render for HistoryPage {
                 this.menu_plays.clear();
             }
         }))
-        .child(PageFrame::new(header).body(body))
+        .child(
+            if away {
+                PageFrame::bare()
+            } else {
+                PageFrame::new(header(self.entries.len()))
+            }
+            .body(body),
+        )
         .koan_context_menu_at(
             "history-menu",
             Some(self.spot.clone()),
