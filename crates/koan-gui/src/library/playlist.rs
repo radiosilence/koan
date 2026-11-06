@@ -170,7 +170,12 @@ impl PlaylistPage {
             disc_records: HashSet::new(),
             longest: 4,
             faces: Vec::new(),
-            list: RowListState::new(),
+            // On a phone the header scrolls away with the rows.
+            list: {
+                let list = RowListState::new();
+                list.set_lead(crate::mobile::phone(), 0, RowKind::Text);
+                list
+            },
             selected: HashSet::new(),
             anchor: None,
             drop_at: None,
@@ -1261,7 +1266,9 @@ impl Render for PlaylistPage {
         let count = self.rows.len();
         let fillable = self.fillable();
         let view = cx.entity();
-        let header = self.header(&p, window, cx);
+        // On a phone the header scrolls away with the rows, as the queue's.
+        let phone = crate::mobile::phone() && count > 0;
+        let header = (!phone).then(|| self.header(&p, window, cx));
         let body = if count == 0 {
             EmptyState::new(Icon::Playlist, "nothing in this playlist")
                 .detail(if fillable {
@@ -1272,8 +1279,19 @@ impl Render for PlaylistPage {
                 .into_any_element()
         } else {
             let rows_view = view.clone();
+            let head = view.clone();
             RowList::new(&self.list, move |row, window, cx| {
                 rows_view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
+            })
+            .when(phone, |list| {
+                list.lead(move |window, cx| {
+                    let look = crate::theme::Look::of(window, cx);
+                    head.update(cx, |this, cx| {
+                        let p = Paint::of(window, cx);
+                        let header = this.header(&p, window, cx);
+                        crate::components::page_head(header, &look).into_any_element()
+                    })
+                })
             })
             .named(self.name())
             .into_any_element()
@@ -1344,7 +1362,13 @@ impl Render for PlaylistPage {
                 this.menu_row = None;
             }
         }))
-        .child(Page::new(header).body(body))
+        .child(
+            match header {
+                Some(header) => Page::new(header),
+                None => Page::bare(),
+            }
+            .body(body),
+        )
         .koan_context_menu_at("playlist-menu", Some(self.spot.clone()), window, cx, {
             let view = view.clone();
             move |menu, window, cx| row_menu(menu, &view, window, cx)
