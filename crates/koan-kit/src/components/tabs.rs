@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::Handler;
+use super::{Animated, AnimatedLayer, Ease, Handler, Repeat};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Motion, Space, Tone, TypeRole, label};
 
 /// The width of a bar's gliding rule, in points at 100 %.
@@ -15,14 +15,11 @@ const BAR_RULE: f32 = 28.0;
 /// A phone's tab bar's height, the iOS tab bar's.
 const BAR_HEIGHT: f32 = 49.0;
 
-/// A bar's rule: the tab it moves from and to, since when, whether it has
-/// been placed.
-#[derive(Default)]
+/// A bar's rule: the tab it was last laid out under, and the track that
+/// glides it there, an offset the GPU composes from where it stood.
 struct BarRule {
-    from: f32,
-    to: f32,
-    since: Option<std::time::Instant>,
-    placed: bool,
+    animated: Animated,
+    at: Option<f32>,
 }
 
 /// The tabs, centred: each its glyph over its label in `fine`, lowercase,
@@ -78,61 +75,55 @@ impl RenderOnce for TabStrip {
         let prism = crate::theme::KoanTheme::prism_gradient(cx);
         let bar = self.bar;
         // A bar's one rule, gliding to the chosen tab rather than each tab
-        // drawing its own: the tabs share the bar's width. A move of a few
-        // points for a moment, laid out.
+        // drawing its own: the tabs share the bar's width. The glide is the
+        // GPU's, an offset track on the rule's layer.
         let glide = bar.then(|| {
             let chosen = self.tabs.iter().position(|t| t.3).unwrap_or(0) as f32;
             let count = self.tabs.len().max(1) as f32;
-            let state = window.use_keyed_state("tab-bar-rule", cx, |_, _| BarRule::default());
-            let reduce = !crate::theme::KoanTheme::motion_allowed(cx);
-            let (x, moving) = state.update(cx, |rule, _| {
-                let now = std::time::Instant::now();
-                let at = |rule: &BarRule| {
-                    let t = rule.since.map_or(1.0, |since| {
-                        now.duration_since(since).as_secs_f32() / Motion::SETTLE.as_secs_f32()
-                    });
-                    if t >= 1.0 {
-                        rule.to
-                    } else {
-                        rule.from + (rule.to - rule.from) * Motion::quick_out(t)
-                    }
-                };
-                if rule.to != chosen {
-                    rule.from = if rule.since.is_none() && rule.placed {
-                        rule.to
-                    } else {
-                        at(rule)
-                    };
-                    rule.to = chosen;
-                    rule.since = (rule.placed && !reduce).then_some(now);
-                }
-                rule.placed = true;
-                let x = at(rule);
-                let moving = rule
-                    .since
-                    .is_some_and(|since| now.duration_since(since) < Motion::SETTLE);
-                if !moving {
-                    rule.since = None;
-                }
-                (x, moving)
+            let state = window.use_keyed_state("tab-bar-rule", cx, |_, _| {
+                let animated = Animated::new();
+                super::layer::standing(&animated);
+                BarRule { animated, at: None }
             });
-            if moving {
-                window.request_animation_frame();
-            }
             // The bar spans the window between the system's side insets.
             let insets = super::system_insets(super::Clear::System, window);
             let tab = (window.viewport_size().width - insets.left - insets.right) / count;
+            let scale = window.scale_factor();
+            let animated = state.update(cx, |rule, _| {
+                // Laid out under the tab chosen, and offset back to where it
+                // stood, the offset gliding to nothing.
+                if let Some(was) = rule.at.filter(|was| *was != chosen) {
+                    let now = Animated::now();
+                    let from = rule.animated.at(1, now) + (was - chosen) * f32::from(tab) * scale;
+                    rule.animated.segment(
+                        1,
+                        from,
+                        0.0,
+                        now,
+                        Motion::SETTLE,
+                        Ease::QuickOut,
+                        Repeat::Once,
+                    );
+                }
+                rule.at = Some(chosen);
+                rule.animated.clone()
+            });
             let rule = look.spaced(BAR_RULE);
             // Just under the label, which sits in the middle of the bar.
             let under = px(BAR_HEIGHT / 2.0) + look.line_height(TypeRole::Fine) / 2.0 + px(2.0);
-            div().absolute().inset_0().child(
-                div()
-                    .absolute()
-                    .top(under)
-                    .left(tab * x + (tab - rule) / 2.0)
-                    .w(rule)
-                    .h(look.hairline * 2.)
-                    .bg(look.accent.hsla()),
+            // A layer over the whole bar, so the rule offset from its place
+            // is drawn rather than cut off.
+            AnimatedLayer::new(
+                &animated,
+                div().absolute().inset_0().child(
+                    div()
+                        .absolute()
+                        .top(under)
+                        .left(tab * chosen + (tab - rule) / 2.0)
+                        .w(rule)
+                        .h(look.hairline * 2.)
+                        .bg(look.accent.hsla()),
+                ),
             )
         });
         div()

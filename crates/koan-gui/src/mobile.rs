@@ -105,14 +105,17 @@ pub struct PhoneShell {
     /// the bar on every page.
     banner: Entity<crate::server_banner::ServerBanner>,
     output_wait: Entity<crate::output_wait::OutputWaitBanner>,
-    /// How far a swipe from the edge has gone toward going back, while one is
-    /// under way.
-    back_swipe: Option<f32>,
-    /// A swipe let go: from how far it had gone, when, and whether it goes
-    /// back or returns. The rest of the way eases on.
-    settling: Option<(f32, std::time::Instant, bool)>,
-    /// Now Playing going back down, since when.
-    closing: Option<std::time::Instant>,
+    /// The page in front over the page under it, moved on the GPU: by a
+    /// swipe from the edge, a page pushed, or back by the bar's button.
+    push: crate::components::Push,
+    /// The page under is drawn, while a swipe or a settle moves the push.
+    pushing: bool,
+    /// A finger is on the swipe from the edge.
+    swiping: bool,
+    /// A push let go, easing the rest of the way: lands when it fires.
+    settle: Option<Task<()>>,
+    /// Now Playing going back down: lets it go once it is down.
+    closing: Option<Task<()>>,
     /// The tab and page last drawn, so a move forward is seen and slid in.
     seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
@@ -210,8 +213,10 @@ impl PhoneShell {
             search: None,
             eq_watch: None,
             info: None,
-            back_swipe: None,
-            settling: None,
+            push: crate::components::Push::new(),
+            pushing: false,
+            swiping: false,
+            settle: None,
             closing: None,
             seen: None,
             now_playing: None,
@@ -395,40 +400,44 @@ impl PhoneShell {
             .clone()
     }
 
-    /// How far a swipe back stands, while one is under way or easing to
-    /// its end; going back once it reaches it.
-    fn swipe(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<f32> {
-        // A move forward within a tab is the swipe back run the other way:
-        // the new page comes in from the trailing edge over the one left.
+    /// Starts a page pushed within a tab: a move forward is the swipe back
+    /// run the other way, the new page coming in from the trailing edge over
+    /// the one left.
+    fn see_push(&mut self, cx: &mut Context<Self>) {
         let nav = self.nav.read(cx);
         let now = (nav.tab(), nav.current());
         if let Some(was) = self.seen
             && was.0 == now.0
             && was.1 != now.1
             && nav.behind() == Some(was.1)
-            && self.back_swipe.is_none()
-            && self.settling.is_none()
+            && !self.pushing
+            && crate::components::Push::moves(cx)
         {
-            self.settling = Some((1.0, std::time::Instant::now(), false));
+            self.pushing = true;
+            let length = self.push.enter(cx);
+            self.land(length, false, cx);
         }
         self.seen = Some(now);
-        if let Some(progress) = self.back_swipe {
-            return Some(progress);
-        }
-        let (from, started, back) = self.settling?;
-        let t = started.elapsed().as_secs_f32() / crate::theme::Motion::SETTLE.as_secs_f32();
-        let to = if back { 1.0 } else { 0.0 };
-        if t >= 1.0 {
-            self.settling = None;
-            if back {
-                self.back(cx);
-            } else if let Some(library) = &self.library {
-                library.update(cx, |library, _| library.drop_under());
-            }
-            return None;
-        }
-        window.request_animation_frame();
-        Some(from + (to - from) * crate::theme::Motion::quick_out(t))
+    }
+
+    /// The push lands `after` from now: back once it has gone, or the page
+    /// under let go once the page in front is back in place. The one frame
+    /// drawn is the layout changing.
+    fn land(&mut self, after: std::time::Duration, back: bool, cx: &mut Context<Self>) {
+        self.settle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(after).await;
+            this.update(cx, |this, cx| {
+                this.settle = None;
+                this.pushing = false;
+                if back {
+                    this.back(cx);
+                } else if let Some(library) = &this.library {
+                    library.update(cx, |library, _| library.drop_under());
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// The page under a swipe back: the library's made ahead and kept to be
@@ -457,11 +466,14 @@ impl PhoneShell {
     /// Back by the bar's button: the page slides away as a swipe back's
     /// release does, and the move happens as it lands.
     fn animate_back(&mut self, cx: &mut Context<Self>) {
-        if self.nav.read(cx).at_root() || self.settling.is_some() {
+        if self.nav.read(cx).at_root() || self.settle.is_some() {
             return;
         }
-        self.back_swipe = None;
-        self.settling = Some((0.0, std::time::Instant::now(), true));
+        self.swiping = false;
+        self.pushing = true;
+        self.push.follow(0.0);
+        let length = self.push.settle(1.0, cx);
+        self.land(length, true, cx);
         cx.notify();
     }
 
@@ -696,7 +708,20 @@ impl PhoneShell {
             });
         }
         let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
-            this.closing.get_or_insert_with(std::time::Instant::now);
+            if this.closing.is_some() {
+                return;
+            }
+            // Down on the GPU (`SlideUp`), and let go once it is down.
+            let length = crate::components::settle_length(cx);
+            this.closing = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(length).await;
+                this.update(cx, |this, cx| {
+                    this.closing = None;
+                    this.now_playing = None;
+                    cx.notify();
+                })
+                .ok();
+            }));
             cx.notify();
         });
         // The title asks for the track's details, over the page Now Playing
@@ -735,15 +760,6 @@ impl Render for PhoneShell {
         let p = Paint::of(window, cx);
         // Now Playing over the page, on a wash of its own as the iOS app's
         // bleed is, coming up from the foot and going back down to it.
-        if self
-            .closing
-            .is_some_and(|at| at.elapsed() >= crate::theme::Motion::SETTLE)
-        {
-            self.closing = None;
-            self.now_playing = None;
-        } else if self.closing.is_some() {
-            window.request_animation_frame();
-        }
         // Now Playing is about the playing record, whatever page it covers:
         // the window wears that record's colours until it has gone down.
         crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
@@ -768,7 +784,7 @@ impl Render for PhoneShell {
                 .leaving(self.closing.is_some()),
             )
         });
-        let swipe = self.swipe(window, cx);
+        self.see_push(cx);
         let route = self.nav.read(cx).current();
         crate::components::page_shown(route, window, cx);
         let stage = self.stage(route, window, cx);
@@ -796,16 +812,18 @@ impl Render for PhoneShell {
         // itself into the room pages leave for it (`bar_inset`,
         // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
-        let width = window.viewport_size().width - insets.left - insets.right;
         // The page a swipe back uncovers, drawn under the one going, a third
         // of its way behind and dimmed as UIKit's navigation does.
-        let under = swipe.and_then(|progress| {
+        let behind = {
             let nav = self.nav.read(cx);
-            let behind = nav.behind()?;
-            let behind_root = nav.history_ix() == 1;
+            nav.behind()
+                .filter(|_| self.pushing)
+                .map(|behind| (behind, nav.history_ix() == 1))
+        };
+        let under = behind.map(|(behind, behind_root)| {
             let bar = self.bar(behind, behind_root, false, cx);
             let page = self.under(behind, window, cx);
-            Some((progress, under_bar(bar, page, None, false, insets.top)))
+            under_bar(bar, page, None, false, insets.top)
         });
         let stage = {
             let root = self.nav.read(cx).at_root();
@@ -831,24 +849,31 @@ impl Render for PhoneShell {
                 if this.now_playing.is_some() {
                     return;
                 }
-                let now = std::time::Instant::now();
+                // The finger writes the push's progress and nothing is
+                // drawn; only the page under coming and going is laid out.
                 match event.phase {
                     BackGesturePhase::Started | BackGesturePhase::Progressed => {
-                        this.settling = None;
-                        this.back_swipe = (!this.nav.read(cx).at_root()).then_some(event.progress)
-                    }
-                    BackGesturePhase::Committed => {
-                        if let Some(from) = this.back_swipe.take() {
-                            this.settling = Some((from, now, true));
+                        if this.nav.read(cx).at_root() {
+                            return;
+                        }
+                        this.settle = None;
+                        this.push.follow(event.progress);
+                        if !this.swiping || !this.pushing {
+                            this.swiping = true;
+                            this.pushing = true;
+                            cx.notify();
                         }
                     }
-                    BackGesturePhase::Cancelled => {
-                        if let Some(from) = this.back_swipe.take() {
-                            this.settling = Some((from, now, false));
+                    BackGesturePhase::Committed | BackGesturePhase::Cancelled => {
+                        if !this.swiping {
+                            return;
                         }
+                        this.swiping = false;
+                        let back = matches!(event.phase, BackGesturePhase::Committed);
+                        let length = this.push.settle(if back { 1.0 } else { 0.0 }, cx);
+                        this.land(length, back, cx);
                     }
                 }
-                cx.notify();
             }))
             .relative()
             .size_full()
@@ -868,42 +893,23 @@ impl Render for PhoneShell {
                         // strip alone, a third of its way behind and dimmed
                         // as UIKit's navigation does, so the two never
                         // overlap and neither needs a ground of its own.
-                        Some((progress, under)) => d
+                        // Both are layers the GPU moves by the push's
+                        // progress.
+                        Some(under) => d
+                            .child(self.push.under(
+                                div().absolute().inset_0().child(under),
+                                p.look.veil(0.25),
+                                !p.look.opaque,
+                            ))
                             .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left_0()
-                                    .w(width * progress)
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .top_0()
-                                            .bottom_0()
-                                            .w(width)
-                                            .left(-width * 0.3 * (1.0 - progress))
-                                            .child(under),
-                                    )
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .inset_0()
-                                            .bg(p.look.veil(0.25 * (1.0 - progress))),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .w(width)
-                                    .left(width * progress)
-                                    .overflow_hidden()
-                                    .border_l(p.look.hairline)
-                                    .border_color(p.rule)
-                                    .child(stage),
+                                self.push.front(
+                                    div()
+                                        .absolute()
+                                        .inset_0()
+                                        .border_l(p.look.hairline)
+                                        .border_color(p.rule)
+                                        .child(stage),
+                                ),
                             ),
                     })
                     // What the library is busy with, floating over the foot of
