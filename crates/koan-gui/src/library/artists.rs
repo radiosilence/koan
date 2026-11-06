@@ -16,7 +16,7 @@ use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::navigator::{Listing, Shelf};
-use crate::theme::Icon;
+use crate::theme::{Icon, KoanStyled};
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -330,22 +330,30 @@ impl ArtistBrowser {
         let play = cx.weak_entity();
         let count = self.artists.len();
         let scroll = self.scroll.clone();
-        TableRow::new(("artist", id as u64), RowKind::Line)
-            .when(p.a11y, |row| {
-                row.spoken(crate::components::spoken([
-                    artist.name.as_str(),
-                    chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
-                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
-                    if favourite { "favourite" } else { "" },
-                ]))
-                .place(index, count)
-                .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
-            })
-            .selected(selected)
-            .cursor(self.keyed && self.cursor.at == Some(index))
-            .spot(&self.spot)
-            // Exactly the glyph's width, so it starts on the header's edge.
-            .lead_exact(
+        let phone = crate::mobile::phone();
+        let albums = chrome::count(artist.album_count.max(0) as u64, "album", "albums");
+        // A phone's row is the name over its record count, and the heart: no
+        // glyph to play from, no columns to read across.
+        TableRow::new(
+            ("artist", id as u64),
+            if phone { RowKind::Text } else { RowKind::Line },
+        )
+        .when(p.a11y, |row| {
+            row.spoken(crate::components::spoken([
+                artist.name.as_str(),
+                chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
+                chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
+                if favourite { "favourite" } else { "" },
+            ]))
+            .place(index, count)
+            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+        })
+        .selected(selected)
+        .cursor(self.keyed && self.cursor.at == Some(index))
+        .spot(&self.spot)
+        // Exactly the glyph's width, so it starts on the header's edge.
+        .when(!phone, |row| {
+            row.lead_exact(
                 crate::components::RowMetrics::lead_glyph(&p.look),
                 if starting {
                     crate::components::Spinner::new(p.look.font_size(Type::Meta)).into_any_element()
@@ -358,34 +366,40 @@ impl ArtistBrowser {
                         .into_any_element()
                 },
             )
-            .title(name)
-            .figure(if p.look.touch { 44.0 } else { HEART }, heart)
-            .figure(
-                COUNT,
-                chrome::count(artist.album_count.max(0) as u64, "album", "albums"),
-            )
-            // A phone's row keeps the name its width: the record count alone.
-            .when(!crate::mobile::phone(), |row| {
-                row.figure(
+        })
+        .title(name)
+        .map(|row| {
+            if phone {
+                row.line(
+                    div()
+                        .text_role(Type::Meta, &p.look)
+                        .text_color(p.muted)
+                        .child(albums),
+                )
+                // The heart's column narrow, its target reaching past it.
+                .figure(28.0, div().w_full().flex().justify_center().child(heart))
+            } else {
+                row.figure(HEART, heart).figure(COUNT, albums).figure(
                     COUNT,
                     chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
                 )
-            })
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                window.focus(&this.focus, cx);
-                // The keyboard carries on from the row clicked.
-                this.cursor.click(index, e.modifiers().shift);
-                let order = &this.order;
-                if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
-                    this.lib
-                        .nav
-                        .update(cx, |n, cx| n.open(Page::Artist(id), cx));
-                }
-                cx.notify();
-            }))
-            .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-            .on_mouse_down(MouseButton::Right, actions::mark(view, target))
-            .into_any_element()
+            }
+        })
+        .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            window.focus(&this.focus, cx);
+            // The keyboard carries on from the row clicked.
+            this.cursor.click(index, e.modifiers().shift);
+            let order = &this.order;
+            if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
+                this.lib
+                    .nav
+                    .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+            }
+            cx.notify();
+        }))
+        .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
+        .on_mouse_down(MouseButton::Right, actions::mark(view, target))
+        .into_any_element()
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
