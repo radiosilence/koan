@@ -1172,6 +1172,35 @@ mod tests {
         }
     }
 
+    /// Quantised to 8 bits after the spline, the drawn field read with a
+    /// linear filter stays within half a level of the exact curve across a
+    /// 6K window on a slow dark gradient: no more than the field read by a
+    /// spline on the GPU erred, and under the program's dither of a level.
+    #[test]
+    fn the_drawn_field_bands_no_more_than_the_spline() {
+        let n = FIELD as usize;
+        let m = FIELD_DRAWN as usize;
+        let row: Vec<f64> = (0..n)
+            .map(|i| 0.10 + 0.04 * (0.5 + 0.5 * (i as f64 / n as f64 * 3.0).sin()))
+            .collect();
+        let field: Vec<[f64; 3]> = (0..n * n).map(|i| [row[i % n], 0.0, 0.0]).collect();
+        let exact = spline_up(&field, n, 4096);
+        let drawn: Vec<f64> = spline_up(&field, n, m)
+            .iter()
+            .map(|v| (v[0] * 255.0).round() / 255.0)
+            .collect();
+        let line = |j: usize| drawn[(m / 2) * m + j.min(m - 1)];
+        let mut worst: f64 = 0.0;
+        for k in 0..4096 {
+            let t = (k as f64 + 0.5) / 4096.0 * m as f64 - 0.5;
+            let i = t.floor().max(0.0);
+            let f = (t - i).clamp(0.0, 1.0);
+            let read = line(i as usize) + (line(i as usize + 1) - line(i as usize)) * f;
+            worst = worst.max((read - exact[2048 * 4096 + k][0]).abs() * 255.0);
+        }
+        assert!(worst <= 0.55, "{worst} of a level");
+    }
+
     #[test]
     fn the_field_is_the_blurred_sleeve_in_little() {
         let red = Sleeve::new([220, 20, 20, 255].repeat(64 * 64).into(), 64, 64).unwrap();

@@ -59,13 +59,28 @@ impl EmptyState {
     }
 }
 
-/// The scale an empty state is drawn at in an area of `area` (what the foot
-/// leaves), whose natural height at full size is `natural`, with text at
-/// `text` times its points.
-fn fit(area: Size<Pixels>, natural: f32, text: f32) -> f32 {
+/// The scale to draw at in an area of `area` (what the foot leaves), given
+/// that drawn at `scale` the content stood `content` tall, with text at
+/// `text` times its points. The height asks for the scale at which the
+/// content would just fit; in a parent sized by its content the area is the
+/// content, which asks for the scale it has, so it holds rather than
+/// shrinking frame after frame.
+fn fit(area: Size<Pixels>, content: Pixels, scale: f32, text: f32) -> f32 {
     let wide = f32::from(area.width) / (ROOM * text);
-    let tall = f32::from(area.height) / natural;
+    let content = f32::from(content);
+    let tall = if content > 0.0 {
+        f32::from(area.height) * scale / content
+    } else {
+        1.0
+    };
     wide.min(tall).clamp(LEAST, 1.0)
+}
+
+/// The scale an empty state draws at, and how tall its content stood at it.
+#[derive(Clone, Copy)]
+struct Fit {
+    scale: f32,
+    content: Pixels,
 }
 
 impl RenderOnce for EmptyState {
@@ -76,24 +91,18 @@ impl RenderOnce for EmptyState {
             .clone()
             .unwrap_or_else(|| gpui::ElementId::Name(format!("empty-{}", self.title).into()));
         let foot = super::foot_inset(window, cx);
-        // The area as last laid out: the scale is known a frame after the
-        // area changes, and the first frame draws at full size.
-        let area = window.use_keyed_state(super::child(&id, "area"), cx, |_, _| None);
-        let natural = f32::from(
-            full.space(Space::Xxl) * 2.0
-                + px(28.0 * full.scale.text)
-                + full.space(Space::M)
-                + full.line_height(TypeRole::Body)
-                + if self.detail.is_some() {
-                    full.space(Space::M) + full.line_height(TypeRole::Meta) * 2.0
-                } else {
-                    px(0.0)
-                },
-        );
-        let scale = (*area.read(cx)).map_or(1.0, |size| fit(size, natural, full.scale.text));
+        // As the last frame laid it out: the scale follows the area a frame
+        // after it changes, and the first frame draws at full size.
+        let fit_state = window.use_keyed_state(super::child(&id, "fit"), cx, |_, _| Fit {
+            scale: 1.0,
+            content: px(0.0),
+        });
+        let scale = fit_state.read(cx).scale;
         let mut look = full;
         look.scale.text *= scale;
         look.scale.space *= scale;
+        let text = full.scale.text;
+        let measured = fit_state.clone();
         // A group to a screen reader, named by what it says.
         let spoken: gpui::SharedString = match &self.detail {
             Some(detail) => format!("{}. {detail}", self.title).into(),
@@ -103,23 +112,6 @@ impl RenderOnce for EmptyState {
             .relative()
             .size_full()
             .overflow_hidden()
-            .child(
-                canvas(
-                    move |bounds, window, cx| {
-                        let size = Size {
-                            width: bounds.size.width,
-                            height: px(f32::from(bounds.size.height - foot).max(0.0)),
-                        };
-                        if area.read(cx) != &Some(size) {
-                            area.update(cx, |area, _| *area = Some(size));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
             // Centred in what a phone's foot leaves of the page.
             .pb(foot)
             .flex()
@@ -127,8 +119,19 @@ impl RenderOnce for EmptyState {
             .justify_center()
             .child(
                 div()
+                    .relative()
                     .w_full()
                     .min_w_0()
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                measured.update(cx, |fit, _| fit.content = bounds.size.height)
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
                     .flex()
                     .flex_col()
                     .items_center()
@@ -159,6 +162,26 @@ impl RenderOnce for EmptyState {
                             .child(detail)
                     })),
             )
+            // After the content, so its height is known here.
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        let area = Size {
+                            width: bounds.size.width,
+                            height: px(f32::from(bounds.size.height - foot).max(0.0)),
+                        };
+                        let now = *fit_state.read(cx);
+                        let next = fit(area, now.content, now.scale, text);
+                        if (next - now.scale).abs() > 0.005 {
+                            fit_state.update(cx, |fit, _| fit.scale = next);
+                            window.request_animation_frame();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
     }
 }
 
@@ -177,18 +200,32 @@ mod tests {
 
     #[test]
     fn full_size_with_room() {
-        assert_eq!(fit(size(800.0, 600.0), 200.0, TEXT), 1.0);
+        assert_eq!(fit(size(800.0, 600.0), px(200.0), 1.0, TEXT), 1.0);
     }
 
     #[test]
     fn shrinks_with_a_narrow_or_short_area() {
         let room = ROOM * TEXT;
-        assert!((fit(size(room * 0.75, 600.0), 200.0, TEXT) - 0.75).abs() < 1e-4);
-        assert!((fit(size(800.0, 160.0), 200.0, TEXT) - 0.8).abs() < 1e-4);
+        assert!((fit(size(room * 0.75, 600.0), px(200.0), 1.0, TEXT) - 0.75).abs() < 1e-4);
+        assert!((fit(size(800.0, 160.0), px(200.0), 1.0, TEXT) - 0.8).abs() < 1e-4);
+        // Grows back as the area does.
+        assert_eq!(fit(size(800.0, 600.0), px(100.0), 0.5, TEXT), 1.0);
+    }
+
+    /// In a parent sized by its content the area is the content: the scale
+    /// holds at full size, frame after frame, rather than ratcheting down.
+    #[test]
+    fn holds_in_a_parent_sized_by_its_content() {
+        let mut scale = 1.0;
+        for _ in 0..20 {
+            let content = 180.0 * scale;
+            scale = fit(size(400.0, content), px(content), scale, TEXT);
+        }
+        assert_eq!(scale, 1.0);
     }
 
     #[test]
     fn never_below_half() {
-        assert_eq!(fit(size(20.0, 20.0), 200.0, TEXT), LEAST);
+        assert_eq!(fit(size(20.0, 20.0), px(200.0), 1.0, TEXT), LEAST);
     }
 }

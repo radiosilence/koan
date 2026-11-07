@@ -23,6 +23,10 @@ use koan_runtime::KoanEngine;
 // tools reach.
 use koan_kit::raw::{AnyWindowHandle, HeadlessAppContext, px, size};
 
+#[path = "support/throwaway.rs"]
+mod throwaway;
+use throwaway::throwaway;
+
 /// Window sizes in points, at a scale of 2: the app's usual window, a 4K
 /// display filled, and a 6K backing (a 4K panel at "looks like 3360 × 1890").
 const SIZES: [(f32, f32); 3] = [(1180.0, 760.0), (1920.0, 1080.0), (3360.0, 1890.0)];
@@ -48,9 +52,7 @@ fn report(what: &str, mut ms: Vec<f64>) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     koan_core::places::keep_with_config();
-    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
-        return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
-    }
+    throwaway()?;
     // SAFETY: set before any other thread starts.
     unsafe {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
