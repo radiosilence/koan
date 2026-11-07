@@ -510,6 +510,7 @@ impl ApiServer {
             .spawn(move || {
                 let stop = serving;
                 rt.block_on(async {
+                    let links = tokio_util::task::TaskTracker::new();
                     if !embedded {
                         let stop = stop.clone();
                         tokio::spawn(async move {
@@ -626,6 +627,7 @@ impl ApiServer {
                                 users,
                                 profile,
                                 stop.clone(),
+                                links.clone(),
                                 serving_key,
                             )
                         })
@@ -721,12 +723,19 @@ impl ApiServer {
                             r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
                             _ = drain_deadline(&stop) => log::info!("shutting down with connections still open"),
                         }
-                        return;
+                    } else {
+                        tokio::select! {
+                            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                            _ = drain_deadline(&stop) => log::info!("shutting down with connections still open"),
+                        }
                     }
-
-                    tokio::select! {
-                        r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-                        _ = drain_deadline(&stop) => log::info!("shutting down with connections still open"),
+                    // A link is an upgraded connection, which graceful shutdown
+                    // no longer counts: its session is waited for here, so the
+                    // device is unregistered before `stop` returns rather than
+                    // dropped with the runtime part way through.
+                    links.close();
+                    if tokio::time::timeout(DRAIN, links.wait()).await.is_err() {
+                        log::info!("shutting down with links still open");
                     }
                 });
                 // Blocking work still running (a scan job, a stream's file read)
