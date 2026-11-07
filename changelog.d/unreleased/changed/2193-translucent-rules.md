@@ -1,0 +1,1 @@
+- **Rules, the selected row and the frosted bars take the wash's colour.** Hairlines and a picked row's ground in the kōan GUI app are translucent white in dark (black in light) instead of opaque grey, and the bars a page scrolls under blur what passes beneath without darkening it.
