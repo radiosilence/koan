@@ -811,9 +811,9 @@ impl Render for PhoneShell {
             .global::<crate::library::activity::ActivityHandle>()
             .0
             .clone();
-        // The page fills the screen, top to foot. Over it, frosted: at the
-        // top the status bar, the bar and the notices under it; at the foot
-        // the mini player, the tabs and the home indicator. Each measures
+        // The page fills the screen, top to foot. Over it: at the top,
+        // frosted, the status bar, the bar and the notices under it; at the
+        // foot, solid, the mini player, the tabs and the home indicator. Each measures
         // itself into the room pages leave for it (`bar_inset`,
         // `foot_inset`).
         let insets = crate::components::system_insets(Clear::System, window);
@@ -939,8 +939,8 @@ impl Render for PhoneShell {
                     })),
             )
             // The foot over the page: the mini player, its playhead along the
-            // foot's edge, over the tabs under a rule; frosted as the iOS
-            // app's bar and running on under the home indicator.
+            // foot's edge, over the tabs under a rule; solid, running on under
+            // the home indicator.
             .child(
                 div()
                     .id("phone-foot")
@@ -950,7 +950,8 @@ impl Render for PhoneShell {
                     .right_0()
                     .occlude()
                     .pb(insets.bottom)
-                    .child(crate::components::Frost::foot())
+                    // Solid: only the bar at the top is frosted.
+                    .bg(p.look.palette.bg.hsla())
                     .child(crate::components::foot_probe())
                     .child(
                         self.transport.clone().cached(

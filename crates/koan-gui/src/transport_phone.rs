@@ -103,6 +103,7 @@ impl Transport {
             .child(
                 div().absolute().top_0().left_0().right_0().child(
                     crate::components::ProgressBar::new("mini-playhead", Some(share))
+                        .thin()
                         .glide(&self.mini_glide),
                 ),
             )

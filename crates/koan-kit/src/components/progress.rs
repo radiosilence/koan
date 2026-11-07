@@ -53,6 +53,7 @@ pub struct ProgressBar {
     id: ElementId,
     fraction: Option<f32>,
     glide: Option<super::Glide>,
+    thin: bool,
 }
 
 impl ProgressBar {
@@ -61,7 +62,14 @@ impl ProgressBar {
             id: id.into(),
             fraction,
             glide: None,
+            thin: false,
         }
+    }
+
+    /// A hairline high, as an edge it draws along: the mini player's top.
+    pub fn thin(mut self) -> Self {
+        self.thin = true;
+        self
     }
 
     /// Filled to `glide`'s value as it moves, on the GPU, where the renderer
@@ -77,15 +85,20 @@ impl RenderOnce for ProgressBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let accent = look.color(crate::theme::Tone::Accent);
+        let height = if self.thin {
+            f32::from(look.hairline)
+        } else {
+            BAR
+        };
         let track = div()
             .w_full()
-            .h(px(BAR))
+            .h(px(height))
             .bg(look.palette.rule.hsla())
             .relative()
             .overflow_hidden();
         if let Some(glide) = self.glide.filter(|_| SHADED) {
             return track
-                .child(super::slider::glide_fill(glide, accent, BAR))
+                .child(super::slider::glide_fill(glide, accent, height))
                 .into_any_element();
         }
         match self.fraction {
