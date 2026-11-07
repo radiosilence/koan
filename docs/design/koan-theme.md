@@ -26,14 +26,14 @@ New screens follow these by default; a screen that breaks one says why in its PR
 |-------|------|-------|-----|
 | `bg` | `#1e1e1e` | `#ffffff` | Window and page background |
 | `surface` | `#2a2a2a` | `#f2f2f2` | A raised field, a sheet. Used sparingly; most separation is by rule |
-| `rule` | `#383838` | `#e0e0e0` | Hairlines between rows and around regions |
+| `rule` | white at 11% (`#383838` over `bg`) | black at 12% (`#e0e0e0` over `bg`) | Hairlines between rows and around regions; translucent, so a rule over the wash takes its colour |
 | `hover` | `#4d4d4d` | `#c4c4c4` | Pointer hover and pressed fill |
 | `ink` | `#cccccc` | `#333333` | Body text and icons |
 | `strong` | `#ffffff` | `#111111` | Titles and the playing track's name |
 | `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. Was `#8c8c8c`, which is 4.3:1 on `surface` |
 | `accent` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row, toggles on, focus. Mint is its value with nothing playing; see [Accent](#accent) |
 | `bad` | `#ef6b73` | `#c43f3f` | Errors and destructive actions |
-| `selection` | `#464646` | `#5c5c5c` | A picked list row's fill, opaque over the wash |
+| `selection` | white at 18% (`#464646` over `bg`) | black at 64% (`#5c5c5c` over `bg`) | A picked list row's fill, translucent over the wash |
 | `on_selection` | `#ffffff` | `#ffffff` | Everything on a picked row: text, numbers, marks and errors |
 
 `accent` is `--color-brand` in the theme package's `theme.css`.

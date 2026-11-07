@@ -1,0 +1,1 @@
+- **Rules and the selected row take the wash's colour.** Hairlines and a picked row's ground in the kōan GUI app are translucent white in dark (black in light) instead of opaque grey, so they sit in the record's colour rather than over it.

@@ -24,21 +24,46 @@ impl Hex {
     }
 }
 
+/// A translucent colour token: 0xRRGGBB at an opacity out of 255. Lines and
+/// grounds drawn in it take on the wash beneath them rather than covering it
+/// in grey.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Veil(pub u32, pub u8);
+
+impl Veil {
+    pub fn hsla(self) -> Hsla {
+        let mut colour: Hsla = rgb(self.0).into();
+        colour.a = self.1 as f32 / 255.0;
+        colour
+    }
+
+    /// The opaque colour it makes over `ground`.
+    pub fn over(self, ground: Hex) -> Hex {
+        let a = self.1 as u32;
+        let mix = |shift: u32| {
+            let top = (self.0 >> shift) & 0xFF;
+            let under = (ground.0 >> shift) & 0xFF;
+            ((top * a + under * (255 - a) + 127) / 255) << shift
+        };
+        Hex(mix(16) | mix(8) | mix(0))
+    }
+}
+
 /// The colour tokens of one appearance. The accent is not here: it follows
 /// the record playing (`theme::accent`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub bg: Hex,
     pub surface: Hex,
-    pub rule: Hex,
+    pub rule: Veil,
     pub hover: Hex,
     pub ink: Hex,
     pub strong: Hex,
     pub muted: Hex,
     pub bad: Hex,
-    /// A picked list row's ground, opaque over the wash: the Mac's tables'
-    /// selection, as the person's graphite accent draws it.
-    pub selection: Hex,
+    /// A picked list row's ground: the Mac's tables' selection, as the
+    /// person's graphite accent draws it, letting the wash through.
+    pub selection: Veil,
     /// Text and marks on `selection`.
     pub on_selection: Hex,
 }
@@ -47,26 +72,26 @@ impl Palette {
     pub const DARK: Palette = Palette {
         bg: Hex(0x1E1E1E),
         surface: Hex(0x2A2A2A),
-        rule: Hex(0x383838),
+        rule: Veil(0xFFFFFF, 0x1D),
         hover: Hex(0x4D4D4D),
         ink: Hex(0xCCCCCC),
         strong: Hex(0xFFFFFF),
         muted: Hex(0x919191),
         bad: Hex(0xEF6B73),
-        selection: Hex(0x464646),
+        selection: Veil(0xFFFFFF, 0x2D),
         on_selection: Hex(0xFFFFFF),
     };
 
     pub const LIGHT: Palette = Palette {
         bg: Hex(0xFFFFFF),
         surface: Hex(0xF2F2F2),
-        rule: Hex(0xE0E0E0),
+        rule: Veil(0x000000, 0x1F),
         hover: Hex(0xC4C4C4),
         ink: Hex(0x333333),
         strong: Hex(0x111111),
         muted: Hex(0x666666),
         bad: Hex(0xC43F3F),
-        selection: Hex(0x5C5C5C),
+        selection: Veil(0x000000, 0xA3),
         on_selection: Hex(0xFFFFFF),
     };
 
@@ -76,26 +101,26 @@ impl Palette {
     pub const DARK_CONTRAST: Palette = Palette {
         bg: Hex(0x1E1E1E),
         surface: Hex(0x2A2A2A),
-        rule: Hex(0x8A8A8A),
+        rule: Veil(0xFFFFFF, 0x7B),
         hover: Hex(0x5A5A5A),
         ink: Hex(0xF0F0F0),
         strong: Hex(0xFFFFFF),
         muted: Hex(0xC8C8C8),
         bad: Hex(0xFF9EA4),
-        selection: Hex(0x000000),
+        selection: Veil(0x000000, 0xFF),
         on_selection: Hex(0xFFFFFF),
     };
 
     pub const LIGHT_CONTRAST: Palette = Palette {
         bg: Hex(0xFFFFFF),
         surface: Hex(0xF2F2F2),
-        rule: Hex(0x767676),
+        rule: Veil(0x000000, 0x89),
         hover: Hex(0xB8B8B8),
         ink: Hex(0x111111),
         strong: Hex(0x000000),
         muted: Hex(0x3D3D3D),
         bad: Hex(0x9E1F1F),
-        selection: Hex(0x2E2E2E),
+        selection: Veil(0x000000, 0xD1),
         on_selection: Hex(0xFFFFFF),
     };
 
@@ -382,13 +407,16 @@ mod tests {
                         );
                     }
                 }
-                let ratio = contrast(p.on_selection, p.selection);
+                let ratio = contrast(p.on_selection, p.selection.over(p.bg));
                 assert!(
                     ratio >= minimum,
                     "on_selection, dark {dark}, contrast {more}: {ratio:.2}"
                 );
                 if more {
-                    assert!(contrast(p.rule, p.bg) >= 3.0, "rule, dark {dark}");
+                    assert!(
+                        contrast(p.rule.over(p.bg), p.bg) >= 3.0,
+                        "rule, dark {dark}"
+                    );
                 }
             }
         }
