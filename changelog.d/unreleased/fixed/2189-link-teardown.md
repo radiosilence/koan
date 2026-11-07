@@ -1,0 +1,1 @@
+- **Stopping a server ends its links.** An embedded server waits for its link sessions to close before it stops, so a device it was serving is no longer left listed as linked.
