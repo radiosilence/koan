@@ -352,14 +352,9 @@ pub fn menu(
             play(lib, items, true, cx).detach()
         }));
     }
-    menu = playlist_submenu(
-        menu.separator(),
-        lib,
-        items.clone(),
-        after.clone(),
-        window,
-        cx,
-    );
+    menu = menu
+        .separator()
+        .item(playlist_entry(lib, items.clone(), after.clone()));
     menu = menu.item(verb(
         if favourited {
             "unfavourite"
@@ -452,56 +447,15 @@ pub fn menu(
     menu
 }
 
-/// "add to playlist": a new playlist holding `items`, then every playlist
-/// that takes tracks. One submenu for the library's menus and the queue's.
-pub fn playlist_submenu(
-    menu: Menu,
-    lib: &Lib,
-    items: Arc<[Playable]>,
-    after: After,
-    window: &mut Window,
-    cx: &mut Context<Menu>,
-) -> Menu {
-    let playlists = lib.feed.read(cx).playlists.clone();
+/// "add to playlist…": the sheet listing every playlist that takes tracks,
+/// with a new one first. One entry for the library's menus and the queue's.
+pub fn playlist_entry(lib: &Lib, items: Arc<[Playable]>, after: After) -> MenuEntry {
     let lib = lib.clone();
-    menu.submenu_icon(
-        "add to playlist",
-        Icon::Playlist,
-        window,
-        cx,
-        move |mut menu, _, _| {
-            {
-                let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
-                menu = menu.item(MenuEntry::new("new playlist…").icon(Icon::Add).on_click(
-                    move |_, window, cx| {
-                        super::playlist::new_playlist(
-                            lib.engine.clone(),
-                            lib.nav.read(cx).navigator(),
-                            sources(&items),
-                            window,
-                            cx,
-                        );
-                        if let Some(after) = &after {
-                            after(cx);
-                        }
-                    },
-                ));
-            }
-            if !playlists.is_empty() {
-                menu = menu.separator();
-            }
-            for (id, name) in &playlists {
-                let (lib, items, after, id) = (lib.clone(), items.clone(), after.clone(), *id);
-                menu = menu.item(MenuEntry::data(name.clone()).on_click(move |_, _, cx| {
-                    add_to_playlist(&lib, id, &items, cx);
-                    if let Some(after) = &after {
-                        after(cx);
-                    }
-                }));
-            }
-            menu
-        },
-    )
+    MenuEntry::new("add to playlist…")
+        .icon(Icon::Playlist)
+        .on_click(move |_, window, cx| {
+            super::pick_playlist::open(&lib, items.clone(), after.clone(), window, cx)
+        })
 }
 
 /// Asks the server for a public link to the tracks `sets` name and copies

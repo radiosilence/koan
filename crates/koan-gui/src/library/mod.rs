@@ -20,6 +20,7 @@ pub mod history;
 pub mod info;
 pub mod keys;
 pub mod nav;
+pub mod pick_playlist;
 pub mod playlist;
 pub mod rows;
 pub mod scope;

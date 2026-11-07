@@ -1115,7 +1115,9 @@ fn row_menu(
                 }),
         );
     if let Some(lib) = lib.as_ref().filter(|_| !picked.is_empty()) {
-        menu = actions::playlist_submenu(menu.separator(), lib, picked, None, window, cx);
+        menu = menu
+            .separator()
+            .item(actions::playlist_entry(lib, picked, None));
     }
     // A phone keeps no folders of its own to organise, as on iOS.
     if !crate::mobile::phone() {
