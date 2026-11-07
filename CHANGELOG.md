@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.71.4
+
+### Fixed
+
+- **Even frost, a centred playing track and centred sheets.** In the kōan GUI app the bars a page scrolls under blur evenly from their first pixel instead of in visible steps; the queue's follow button brings the playing track to the middle of what shows, clear of the bars; sheets sit in the middle of a desktop window at up to 80% of its height and fill a phone's screen; and selection mode's playlist action opens the add-to-playlist sheet.
+- **The transport keeps its ground.** The desktop transport is tinted with the page's ground again while content runs under it; only the toolbar blurs without darkening.
+
 ## 0.71.3
 
 ### Changed
