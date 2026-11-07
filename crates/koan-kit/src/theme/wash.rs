@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
-    Task, Window, canvas, div, point, px, size,
+    App, Bounds, Context, Corners, Entity, Global, IntoElement, ParentElement, Pixels, Render,
+    RenderImage, Styled, Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
