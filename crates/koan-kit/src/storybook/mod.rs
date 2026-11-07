@@ -1116,6 +1116,27 @@ impl StoryContent {
                             .detail("Make one from the queue, or drop tracks here."),
                     )
                     .into_any_element(),
+                SectionHeader::new("Empty, in small areas: drawn smaller, then clipped")
+                    .into_any_element(),
+                div()
+                    .flex()
+                    .gap(look.space(Space::M))
+                    .children([(220.0, 160.0), (150.0, 200.0), (90.0, 90.0)].map(
+                        |(width, height)| {
+                            let id = format!("story-empty-{width}");
+                            div()
+                                .w(look.spaced(width))
+                                .h(look.spaced(height))
+                                .border(HAIRLINE)
+                                .border_color(look.palette.rule.hsla())
+                                .child(
+                                    EmptyState::new(Icon::QueueSection, "queue is empty")
+                                        .id(gpui::ElementId::Name(id.into()))
+                                        .detail("Find something to play from albums or artists."),
+                                )
+                        },
+                    ))
+                    .into_any_element(),
                 SectionHeader::new("Picking").into_any_element(),
                 SelectionBar::new("3 picked")
                     .verb("story-play", "play", |_, _, _| {})

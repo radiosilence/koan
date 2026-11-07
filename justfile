@@ -73,6 +73,18 @@ gui-walk out="target/gui-walk" albums="300" tracks="10":
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
     KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example walk -- "{{out}}"
 
+# What a frame of the GPUI app costs the GPU at its usual size, a 4K display
+# and a 6K backing: drawn whole, and presented again with only its shaders
+# moving. Against the walk's generated library with a queue filled.
+gui-present-frames out="target/gui-present-frames":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -d "$lib/config" ] || just gui-library "$lib" 300 10
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "{{out}}/config/config.toml"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example present_frames
+
 # The phone shell walked headlessly at an iPhone's size, under touch: a PNG of
 # each page, Now Playing and a Settings section, dark and light, against the
 # same generated library as `gui-walk`.

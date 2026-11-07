@@ -307,7 +307,7 @@ The storybook's motion playground plays a value on one track as a component woul
 
 `Reveal::new(id, size, element).arriving(true)`: room made for what arrives late, as an artist's photo does: the slot grows from nothing to `size` over `Motion::NORMAL`, moving what is beside it along, while what it holds fades in, laid out at full size and clipped rather than squeezed. Not arriving (known when the page first drew), it stands at its size. A layout change, so it runs on GPUI frames for its length; instant under Reduce Motion.
 
-`EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
+`EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body. It measures the area it is given and, where that is narrower than a short title needs or shorter than its glyph, title and detail, draws itself smaller to fit, down to half size; past that it is clipped to the area, so a narrow queue column or the lyrics beside a small window never draws it over the sidebar. The scale follows the area a frame after it changes.
 
 ### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)
 

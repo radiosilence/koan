@@ -9,8 +9,9 @@
 //!
 //! Where the renderer draws shaders, the wash is the GPU's to make: each
 //! record is reduced once, on a worker, to a small field (`field`: the
-//! sleeve saturated and blurred, 32 texels a side), and the program (`WASH`)
-//! reconstructs it smoothly at every present and does the rest per pixel:
+//! sleeve saturated and blurred, 32 texels a side, its cubic B-spline drawn
+//! at 128), and the program (`WASH`) reads it in one filtered sample at
+//! every present and does the rest per pixel:
 //! the tone's luminance hold, the ground at the wash's strength and the
 //! dither. An appearance or tint change is a uniform, not a bake. Each
 //! record's field is one shader quad, handed the drift's and the dissolve's
@@ -75,22 +76,30 @@ const CYCLE: f32 = 598.0;
 /// The field's side: the blurred sleeve carries nothing finer.
 pub const FIELD: u32 = 32;
 
+/// The side the field is handed to the GPU at: its cubic B-spline,
+/// evaluated here once a record rather than from four reads by every pixel
+/// of every present, and filtered linearly between. A texel spans some
+/// fifty pixels of a 6K window; the curve bends too little across one for
+/// the straight line between to show.
+pub const FIELD_DRAWN: u32 = 128;
+
 /// The span of OKLab's a and b the field encodes, centred on grey: wider
 /// than any sRGB colour reaches.
 const LAB_SPAN: f64 = 0.7;
 
 /// The wash as a fragment program, made from the record's field (`field`) at
-/// each present: a cubic B-spline through the field, the tone's luminance
+/// each present: the field's B-spline as `field` drew it, the tone's luminance
 /// hold, the ground at the wash's strength, and a dither of a level either
 /// way, so a gradient this soft shows no bands at any size. Uniforms: 0
 /// whether to lay it over `bg` (the layer drawn first), 1 whether the
 /// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1), 6 the tone's luminance
-/// limit (`Tone::limit`, the one place it is set). Tracks: 0 the drift's
+/// limit (`Tone::limit`, the one place it is set), 7 to 11 the pose
+/// `prepare` works out from the tracks. Tracks: 0 the drift's
 /// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1),
 /// 4 the turn's swing (-1 to 1) and 5 how far it turns, in radians, each at
 /// full amplitude; a new turn eases there rather than jumping (#1883). The
 /// field is OKLab: L in red, a and b in green and blue over `LAB_SPAN`. The
-/// overscan (1.38), reach (0.12), rise (0.10), field (32), the span (0.7) and
+/// overscan (1.38), reach (0.12), rise (0.10), the span (0.7) and
 /// strength (0.6) are written into the source; a test holds them to the
 /// constants.
 pub static WASH: ShaderProgram = ShaderProgram {
@@ -122,39 +131,21 @@ float koan_wash_ign(float2 p) {
 }
 
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float amplitude = koan_track(u, 0, time);
-    float opacity = koan_track(u, 1, time);
-    float scale = 1.0 + (koan_track(u, 2, time) - 1.0) * amplitude;
-    float travel = koan_track(u, 3, time) * amplitude;
-    float turn = koan_track(u, 4, time) * koan_track(u, 5, time) * amplitude;
+    // The pose, worked out once a present (`prepare`).
+    float opacity = u[7];
+    float scale = u[8];
+    float travel = u[9];
+    float c = u[10];
+    float s = u[11];
     float side = max(size.x, size.y) * 1.38 * scale;
     float2 centre = size * 0.5 + float2(size.x * 0.12, size.y * 0.10) * travel;
     // Turned about the centre: the field is sampled the other way.
     float2 d = position - centre;
-    float c = cos(turn);
-    float s = sin(turn);
     float2 uv = float2(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
 
-    // A cubic B-spline through the field, from four filtered reads.
-    float n = 32.0;
-    float2 t = uv * n - 0.5;
-    float2 i = floor(t);
-    float2 f = t - i;
-    float2 f2 = f * f;
-    float2 f3 = f2 * f;
-    float2 w0 = (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0;
-    float2 w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0;
-    float2 w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0;
-    float2 w3 = f3 / 6.0;
-    float2 g0 = w0 + w1;
-    float2 g1 = w2 + w3;
-    float2 p0 = (i - 0.5 + w1 / g0) / n;
-    float2 p1 = (i + 1.5 + w3 / g1) / n;
-    float3 field =
-        g0.y * (g0.x * koan_sample(image, tile, float2(p0.x, p0.y)).rgb
-              + g1.x * koan_sample(image, tile, float2(p1.x, p0.y)).rgb)
-      + g1.y * (g0.x * koan_sample(image, tile, float2(p0.x, p1.y)).rgb
-              + g1.x * koan_sample(image, tile, float2(p1.x, p1.y)).rgb);
+    // The field as `field` evaluated it, its cubic B-spline drawn finer
+    // than the eye can tell from the curve: one filtered read.
+    float3 field = koan_sample(image, tile, uv).rgb;
 
     // The tone's hold: under `muted`'s limit in the dark, over `surface`'s
     // in the light, by the person's tint.
@@ -206,36 +197,16 @@ fn koan_wash_ign(p: vec2<f32>) -> f32 {
 }
 
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    let amplitude = koan_track(u, 0u, time);
-    let opacity = koan_track(u, 1u, time);
-    let scale = 1.0 + (koan_track(u, 2u, time) - 1.0) * amplitude;
-    let travel = koan_track(u, 3u, time) * amplitude;
-    let turn = koan_track(u, 4u, time) * koan_track(u, 5u, time) * amplitude;
+    let opacity = u[1].w;
+    let scale = u[2].x;
+    let travel = u[2].y;
+    let c = u[2].z;
+    let s = u[2].w;
     let side = max(size.x, size.y) * 1.38 * scale;
     let centre = size * 0.5 + vec2<f32>(size.x * 0.12, size.y * 0.10) * travel;
     let d = position - centre;
-    let c = cos(turn);
-    let s = sin(turn);
     let uv = vec2<f32>(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
-    let n = 32.0;
-    let t = uv * n - 0.5;
-    let i = floor(t);
-    let f = t - i;
-    let f2 = f * f;
-    let f3 = f2 * f;
-    let w0 = (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0;
-    let w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0;
-    let w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0;
-    let w3 = f3 / 6.0;
-    let g0 = w0 + w1;
-    let g1 = w2 + w3;
-    let p0 = (i - 0.5 + w1 / g0) / n;
-    let p1 = (i + 1.5 + w3 / g1) / n;
-    let field =
-        g0.y * (g0.x * koan_sample(tile, vec2<f32>(p0.x, p0.y)).rgb
-              + g1.x * koan_sample(tile, vec2<f32>(p1.x, p0.y)).rgb)
-      + g1.y * (g0.x * koan_sample(tile, vec2<f32>(p0.x, p1.y)).rgb
-              + g1.x * koan_sample(tile, vec2<f32>(p1.x, p1.y)).rgb);
+    let field = koan_sample(tile, uv).rgb;
     var light = koan_wash_from_lab(field);
     let y = dot(light, vec3<f32>(0.2126, 0.7152, 0.0722));
     let limit = u[1].z;
@@ -257,8 +228,26 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     return vec4<f32>(colour, opacity);
 }
 "#,
-    prepare: None,
+    prepare: Some(prepare),
 };
+
+/// The pose every pixel of a present shares, from the tracks, into plain
+/// uniforms 7 to 11: the opacity, the breath's scale, the travel, and the
+/// turn's cosine and sine. Worked out here once a present rather than by
+/// each of a 4K window's eight million pixels.
+fn prepare(u: &mut [f32; gpui::SHADER_UNIFORMS], time: f32) {
+    use crate::components::track_at;
+    let amplitude = track_at(u, 0, time);
+    let opacity = track_at(u, 1, time);
+    let scale = 1.0 + (track_at(u, 2, time) - 1.0) * amplitude;
+    let travel = track_at(u, 3, time) * amplitude;
+    let turn = track_at(u, 4, time) * track_at(u, 5, time) * amplitude;
+    u[7] = opacity;
+    u[8] = scale;
+    u[9] = travel;
+    u[10] = turn.cos();
+    u[11] = turn.sin();
+}
 
 /// Where the texture is `t` seconds into the drift at `amplitude`: its scale
 /// over the overscan, and its travel across the page from -1 to 1.
@@ -368,32 +357,82 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
 }
 
 /// The wash's field for the GPU: the sleeve saturated and blurred as `bake`
-/// does it, at `FIELD` texels a side, encoded. The program reconstructs it
-/// smoothly and does the rest (the tone's hold, the ground, the dither) per
+/// does it, at `FIELD` texels a side, its cubic B-spline drawn at
+/// `FIELD_DRAWN`, encoded. The program reads it once a pixel and does the rest (the tone's hold, the ground, the dither) per
 /// pixel at each present, so a new appearance or tint is a uniform, not a
 /// bake. BGRA, as GPUI's images are. The field is band-limited by the blur,
-/// so this many texels lose nothing a cubic reconstruction would show.
+/// so this many texels lose nothing a cubic reconstruction would show; the
+/// reconstruction is made here, once a record, not by every pixel.
 pub fn field(sleeve: &Sleeve) -> image::RgbaImage {
     let channels = blurred(sleeve);
     let side = SIDE as usize;
-    let cell = side / FIELD as usize;
-    let mut out = image::RgbaImage::new(FIELD, FIELD);
-    for (x, y, pixel) in out.enumerate_pixels_mut() {
-        let linear = [0, 1, 2].map(|c| {
-            let mut sum = 0.0;
-            for dy in 0..cell {
-                for dx in 0..cell {
-                    sum += channels[c][(y as usize * cell + dy) * side + x as usize * cell + dx];
+    let n = FIELD as usize;
+    let cell = side / n;
+    // The field in OKLab, so the reads blend in an even space, not in
+    // sRGB's encoding, which would darken and dull a colour edge.
+    let lab: Vec<[f64; 3]> = (0..n * n)
+        .map(|i| {
+            let (x, y) = (i % n, i / n);
+            let linear = [0, 1, 2].map(|c| {
+                let mut sum = 0.0;
+                for dy in 0..cell {
+                    for dx in 0..cell {
+                        sum += channels[c][(y * cell + dy) * side + x * cell + dx];
+                    }
+                }
+                sum / (cell * cell) as f64
+            });
+            super::accent::oklch::lab(linear)
+        })
+        .collect();
+    let drawn = spline_up(&lab, n, FIELD_DRAWN as usize);
+    let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    let chroma = |v: f64| byte(v / LAB_SPAN + 0.5);
+    let mut out = image::RgbaImage::new(FIELD_DRAWN, FIELD_DRAWN);
+    for (pixel, [l, a, b]) in out.pixels_mut().zip(drawn) {
+        pixel.0 = [chroma(b), chroma(a), byte(l), 255];
+    }
+    out
+}
+
+/// The uniform cubic B-spline through `field` (`n` a side, its texels the
+/// control points, held at the edges), evaluated at the centres of `m` by
+/// `m` texels over the same square.
+fn spline_up(field: &[[f64; 3]], n: usize, m: usize) -> Vec<[f64; 3]> {
+    let weights = |f: f64| {
+        let (f2, f3) = (f * f, f * f * f);
+        [
+            (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0,
+            (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0,
+            (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0,
+            f3 / 6.0,
+        ]
+    };
+    // Along one axis: for each drawn texel, the four control points and
+    // their weights.
+    let taps: Vec<([usize; 4], [f64; 4])> = (0..m)
+        .map(|j| {
+            let t = (j as f64 + 0.5) / m as f64 * n as f64 - 0.5;
+            let i = t.floor();
+            let at = |k: f64| (i + k).clamp(0.0, (n - 1) as f64) as usize;
+            ([at(-1.0), at(0.0), at(1.0), at(2.0)], weights(t - i))
+        })
+        .collect();
+    let mut out = Vec::with_capacity(m * m);
+    for (ys, wy) in &taps {
+        for (xs, wx) in &taps {
+            let mut v = [0.0; 3];
+            for (y, wy) in ys.iter().zip(wy) {
+                for (x, wx) in xs.iter().zip(wx) {
+                    let w = wx * wy;
+                    let texel = field[y * n + x];
+                    for c in 0..3 {
+                        v[c] += texel[c] * w;
+                    }
                 }
             }
-            sum / (cell * cell) as f64
-        });
-        // In OKLab, so the GPU's filtered reads blend in an even space, not
-        // in sRGB's encoding, which would darken and dull a colour edge.
-        let [l, a, b] = super::accent::oklch::lab(linear);
-        let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-        let chroma = |v: f64| byte(v / LAB_SPAN + 0.5);
-        pixel.0 = [chroma(b), chroma(a), byte(l), 255];
+            out.push(v);
+        }
     }
     out
 }
@@ -1076,8 +1115,6 @@ mod tests {
                 format!("* {NEAR:?} *"),
                 format!("size.x * {REACH:.2}"),
                 format!("size.y * {RISE:.2}"),
-                format!("let n = {:?};", FIELD as f32)
-                    .replace("let ", if source == WASH.msl { "float " } else { "let " }),
                 format!("* {STRENGTH:?};"),
                 format!("- 0.5) * {LAB_SPAN:?};"),
             ] {
@@ -1112,12 +1149,35 @@ mod tests {
         println!("bake {baked:?}, field {field:?} per record");
     }
 
+    /// The spline drawn finer holds a flat field flat and a ramp straight,
+    /// and is as smooth as the curve: no step between drawn texels larger
+    /// than the field's own between its control points.
+    #[test]
+    fn the_field_is_drawn_as_its_spline() {
+        let n = FIELD as usize;
+        let flat = vec![[0.4, 0.1, -0.1]; n * n];
+        for v in spline_up(&flat, n, 128) {
+            for c in 0..3 {
+                assert!((v[c] - flat[0][c]).abs() < 1e-12);
+            }
+        }
+        let ramp: Vec<[f64; 3]> = (0..n * n)
+            .map(|i| [(i % n) as f64 / n as f64, 0.0, 0.0])
+            .collect();
+        let drawn = spline_up(&ramp, n, 128);
+        // Inside the held edges, a B-spline is exact on a straight line.
+        for x in 16..112 {
+            let t = (x as f64 + 0.5) / 128.0 * n as f64 - 0.5;
+            assert!((drawn[64 * 128 + x][0] - t / n as f64).abs() < 1e-9, "{x}");
+        }
+    }
+
     #[test]
     fn the_field_is_the_blurred_sleeve_in_little() {
         let red = Sleeve::new([220, 20, 20, 255].repeat(64 * 64).into(), 64, 64).unwrap();
         let field = field(&red);
-        assert_eq!(field.dimensions(), (FIELD, FIELD));
-        let [b, a_ch, l, alpha] = field.get_pixel(FIELD / 2, FIELD / 2).0;
+        assert_eq!(field.dimensions(), (FIELD_DRAWN, FIELD_DRAWN));
+        let [b, a_ch, l, alpha] = field.get_pixel(FIELD_DRAWN / 2, FIELD_DRAWN / 2).0;
         let lab = [
             l as f64 / 255.0,
             (a_ch as f64 / 255.0 - 0.5) * LAB_SPAN,
