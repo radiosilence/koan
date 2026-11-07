@@ -41,6 +41,7 @@ pub mod focus_trap;
 mod follow;
 mod form;
 mod gesture;
+mod grip;
 mod guide;
 mod heart;
 mod insets;
