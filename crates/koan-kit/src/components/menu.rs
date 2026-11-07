@@ -793,6 +793,10 @@ impl Render for Menu {
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }
+                    let menu = menu.clone();
+                    row = row.on_click(move |_, window, cx| {
+                        menu.update(cx, |menu, cx| menu.choose(index, window, cx))
+                    });
                     let name = label.clone();
                     panel.child(
                         div()

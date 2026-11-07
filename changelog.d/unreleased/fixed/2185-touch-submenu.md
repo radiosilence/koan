@@ -1,0 +1,1 @@
+- **Submenus open on a tap on iOS.** A submenu row had no tap of its own and opened only under a resting pointer, which touch no longer counts, so tapping it did nothing.
