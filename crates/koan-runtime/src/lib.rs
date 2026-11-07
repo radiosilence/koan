@@ -6777,11 +6777,13 @@ impl KoanEngine {
             let (meter, reading) = (sync_progress.clone(), sync_progress.clone());
             koan_core::helpers::spawn_auto_sync(
                 db_path.clone(),
+                // The flag first: a client reading the two between ticks sees
+                // the sync ended, never one running with no progress.
                 move |running| {
+                    finished(&flag, running);
                     if !running {
                         meter.clear();
                     }
-                    finished(&flag, running);
                 },
                 move |p| reading.set(p),
             );

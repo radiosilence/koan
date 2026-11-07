@@ -13,7 +13,7 @@ use std::sync::Arc;
 use futures_channel::mpsc;
 use futures_util::StreamExt;
 use koan_kit::app::*;
-use koan_runtime::{ProgressReporter, SyncPhase};
+use koan_runtime::{ProgressReporter, SyncPhase, SyncProgress};
 
 use crate::components::{NavNote, ProgressRow};
 use crate::engine::engine;
@@ -58,6 +58,10 @@ pub struct Activity {
     /// A sync asked for here and not yet answered: shown before the engine's
     /// own report of it arrives.
     syncing: bool,
+    /// The running sync's last report, held while it runs: the engine clears
+    /// its progress a tick before it says the sync has ended, and the row
+    /// keeps its shape through that tick rather than blanking.
+    last_sync: Option<SyncProgress>,
     /// The last task's failure, until another starts.
     problem: Option<SharedString>,
     _watch: [Subscription; 4],
@@ -77,10 +81,21 @@ pub fn init(cx: &mut App) {
             scan: None,
             rebuilding: false,
             syncing: false,
+            last_sync: None,
             problem: None,
             _watch: [
-                cx.observe(&tasks, |_, _, cx| cx.notify()),
-                cx.observe(&sync, |_, _, cx| cx.notify()),
+                cx.observe(&tasks, |this: &mut Activity, tasks, cx| {
+                    if !this.syncing && !tasks.read(cx).0.syncing {
+                        this.last_sync = None;
+                    }
+                    cx.notify()
+                }),
+                cx.observe(&sync, |this: &mut Activity, sync, cx| {
+                    if let Some(progress) = sync.read(cx).0 {
+                        this.last_sync = Some(progress);
+                    }
+                    cx.notify()
+                }),
                 cx.observe(&covers, |_, _, cx| cx.notify()),
                 cx.observe(&artists, |_, _, cx| cx.notify()),
             ],
@@ -226,6 +241,9 @@ impl Activity {
             let result = syncing.await;
             this.update(cx, |this, cx| {
                 this.syncing = false;
+                if !cx.global::<Mirror>().tasks.read(cx).0.syncing {
+                    this.last_sync = None;
+                }
                 if let Err(e) = result {
                     log::warn!("sync: {e}");
                     this.problem = Some(format!("sync failed: {e}").into());
@@ -305,21 +323,27 @@ impl Activity {
             });
         }
         if self.syncing || tasks.syncing {
-            let progress = mirror.sync.read(cx).0;
-            let (label, unit) = match progress.as_ref().map(|p| p.phase) {
-                Some(SyncPhase::Albums) => ("syncing albums", Some("albums")),
-                Some(SyncPhase::Tracks) => ("syncing tracks", Some("tracks")),
-                Some(SyncPhase::Artists) => ("syncing artists", Some("artists")),
-                Some(SyncPhase::Finishing) => ("finishing the sync", None),
-                None => ("syncing", None),
+            // One title for the whole sync, as the iOS app has it; the phase
+            // is the line under the bar, so the row keeps its shape from
+            // phase to phase.
+            let progress = mirror.sync.read(cx).0.or(self.last_sync);
+            let (detail, unit) = match progress.map(|p| p.phase) {
+                Some(SyncPhase::Albums) => ("listing albums", Some("albums")),
+                Some(SyncPhase::Tracks) => ("fetching tracks", Some("tracks")),
+                Some(SyncPhase::Artists) => ("recording artists", None),
+                Some(SyncPhase::Finishing) => ("finishing", None),
+                None => ("asking the server", None),
             };
             rows.push(Row {
                 id: "activity-sync",
-                label: label.into(),
-                done: progress.as_ref().filter(|_| unit.is_some()).map(|p| p.done),
-                total: progress.as_ref().and_then(|p| p.total).filter(|t| *t > 0),
+                label: "syncing with server".into(),
+                done: progress.filter(|_| unit.is_some()).map(|p| p.done),
+                total: progress
+                    .filter(|_| unit.is_some())
+                    .and_then(|p| p.total)
+                    .filter(|t| *t > 0),
                 unit,
-                detail: None,
+                detail: Some(detail.into()),
                 stop: None,
             });
         }

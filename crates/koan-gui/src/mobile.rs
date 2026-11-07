@@ -930,12 +930,12 @@ impl Render for PhoneShell {
                                     + p.space(crate::theme::Space::S),
                             )
                             .child(crate::components::Rise::in_place(
+                                // The rows pad themselves at the sides and
+                                // foot; the card evens the top to match.
                                 div()
-                                    .px(p.space(crate::theme::Space::S))
-                                    .py(p.space(crate::theme::Space::Xs))
+                                    .pt(p.space(crate::theme::Space::S))
+                                    .pb(p.space(crate::theme::Space::Xs))
                                     .bg(p.look.palette.surface.hsla())
-                                    .border(p.look.hairline)
-                                    .border_color(p.rule)
                                     .child(activity.clone()),
                             ))
                     })),

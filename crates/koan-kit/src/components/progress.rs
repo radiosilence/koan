@@ -260,10 +260,29 @@ impl RenderOnce for ProgressRow {
         .px(look.space(Space::L))
         .pt(look.space(Space::S))
         .pb(look.space(Space::M))
-        .child(line(self.title, TypeRole::Fine, muted))
-        .children(
-            self.counts
-                .map(|c| line(c, TypeRole::Meta, muted.opacity(0.7))),
+        // The title, and the counts at its end: one line whether or not a
+        // count is known yet, so the row does not jump when one arrives.
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_baseline()
+                .gap(look.space(Space::S))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(line(self.title, TypeRole::Fine, muted)),
+                )
+                .children(self.counts.map(|c| {
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_role(TypeRole::Fine, &look)
+                        .text_color(muted.opacity(0.7))
+                        .child(c)
+                })),
         )
         .child(
             div()
