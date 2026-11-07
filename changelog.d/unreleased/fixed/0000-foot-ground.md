@@ -1,0 +1,1 @@
+- **The transport keeps its ground.** The desktop transport is tinted with the page's ground again while content runs under it; only the toolbar blurs without darkening.

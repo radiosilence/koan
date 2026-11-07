@@ -320,8 +320,9 @@ enum Edge {
 /// The ground of what a shell draws over its pages, filling its parent,
 /// which is `relative`, and drawn before the rest of it: clear while
 /// nothing is under it, and frosted as the system's bars are while the
-/// page's content runs under it (what lies under blurred; tinted with the
-/// page's ground only where the renderer cannot blur). With less
+/// page's content runs under it (what lies under blurred, and under a foot
+/// tinted with the page's ground; a bar is tinted only where the renderer
+/// cannot blur). With less
 /// transparency asked for, opaque and unblurred while content is under it.
 #[derive(IntoElement)]
 pub struct Frost {
@@ -356,10 +357,11 @@ impl RenderOnce for Frost {
         };
         // The blur, whole from the first pixel to the last.
         let blur = (!look.opaque).then(|| div().absolute().inset_0().backdrop_blur(FROST_BLUR));
-        // Blurred alone where the renderer blurs: a tint of the ground
-        // over it darkens a bold wash. The ground stays for less
+        // A bar is blurred alone where the renderer blurs: a tint of the
+        // ground over it darkens a bold wash. The foot keeps the tint, which
+        // sets the transport apart from the page. The ground stays for less
         // transparency, and as the whole frost where nothing blurs.
-        let tint = if SHADED && !look.opaque {
+        let tint = if SHADED && !look.opaque && self.edge == Edge::Bar {
             None
         } else if SHADED {
             animated.set_color(0, color);
