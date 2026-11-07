@@ -669,10 +669,14 @@ impl Render for Menu {
             let hovered = {
                 let menu = menu.clone();
                 move |hovered: &bool, window: &mut Window, cx: &mut App| {
+                    // Under touch the pointer is the finger: one resting on a
+                    // row as the menu opens under it, or moving off a tap, is
+                    // no choice, and a submenu opens only when tapped.
                     if *hovered {
+                        let touch = Look::of(window, cx).touch;
                         menu.update(cx, |menu, cx| {
                             menu.highlight(Some(index), cx);
-                            if matches!(menu.entries[index], Entry::Submenu { .. }) {
+                            if !touch && matches!(menu.entries[index], Entry::Submenu { .. }) {
                                 menu.open_submenu(index, false, window, cx);
                             }
                         })
