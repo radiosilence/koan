@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.71.2
+
+### Changed
+
+- **The kōan GUI app's pages run under its toolbar and transport.** On the desktop the page column's toolbar and the transport are drawn over the page, which scrolls under them, and every page's heading scrolls away with it rather than standing over a hard edge. Those bars, and the phone's, are clear while nothing is under them and frost (blur and tint, fading on the GPU) once content passes beneath; on the desktop the frost feathers into the page rather than ending at a line. The keyboard cursor is held clear of both bars.
+- **The EQ editor's graph makes room on a phone.** A profile's graph folds to a quarter of its height once its bands scroll and opens again at the top, and folds away while the keyboard is up so the field being edited stays in view; the EQ screen's graph no longer leaves a gutter wider than its labels.
+- **The phone's moving parts run on the GPU.** A page pushed or swiped back, the tab bar's rule, a queue row swiped and Now Playing pulled down are layers composed from keyframe tracks, so they keep the display's rate while the app is busy and draw no frames as they move.
+- **Every button answers a press.** A button's glyph moves as its verb means: queue drops onto a line, share lifts, add pops, remove squeezes away, rescan turns, back steps back. Buttons without a glyph lift when pressed, and the sidebar's queue or playlist row glows when music is sent to it.
+
+### Fixed
+
+- **Every press answers.** Chips and pop-up pickers lift their ground when pressed, and a track row's play mark rings, so no press in the app goes unanswered while the music it asked for is on its way.
+- **Every header press answers.** A record or artist page's play lifts and its shuffle crosses its arrows when pressed, on the phone as on the desktop; the phone's record heart pops as hearts do elsewhere. The phone's mini player sits on a solid ground under a hairline playhead; only the bar at the top is frosted.
+- **Sync progress reads as one task.** The GUI app shows a sync under one title with the phase beneath the bar and the counts beside the title, as the iOS app does; the row no longer blanks for a frame as a sync ends, and the phone card drops its border.
+
+### Internal
+
+- **A chart component in koan-kit, with the EQ graph built on it.** Axes, lines, areas, rules, draggable points and a wrapping legend, drawn by the GPU from keyframes: a series easing between data sets, an axis rescaling and a point settling cost no frame, and samples arriving at their own rate are drawn at the display's, interpolated a sample behind or extrapolated to the present. The EQ's response graph draws the core's curves through it unchanged, its y labels' column as wide as its labels.
+
 ## 0.71.1
 
 ### Changed
