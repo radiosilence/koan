@@ -1,14 +1,15 @@
 //! A panel beside the page, the Mac's inspector: its title in the app's
 //! words with what trails it (a source, a spinner), a hairline under the
 //! head, a hairline down its leading edge, and its body. On `bg` unless the
-//! wash runs under the whole window, where it is clear over the wash.
+//! wash runs under the whole window, where it is clear over the wash. It
+//! fills the width its owner gives it (`RowMetrics::inspector`, or what the
+//! person dragged it to), the head's hairline with it.
 //!
 //! `SyncedLines` (`lyrics.rs`) is the body a panel of timed text takes.
 
 use gpui::prelude::*;
 use gpui::*;
 
-use super::RowMetrics;
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 
 #[derive(IntoElement)]
@@ -53,9 +54,7 @@ impl RenderOnce for Inspector {
         let look = Look::of(window, cx);
         let p = look.palette;
         div()
-            .w(RowMetrics::inspector(&look))
-            .h_full()
-            .flex_none()
+            .size_full()
             .flex()
             .flex_col()
             .when(!self.clear, |d| d.bg(p.bg.hsla()))
@@ -66,18 +65,23 @@ impl RenderOnce for Inspector {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .gap(look.space(Space::M))
                     .px(look.space(Space::L))
                     .py(look.spaced(11.0))
                     .border_b(look.hairline)
                     .border_color(p.rule.hsla())
                     .child(
                         div()
+                            .flex_none()
                             .text_role(TypeRole::Body, &look)
                             .text_color(p.strong.hsla())
                             .child(self.title),
                     )
                     .children(self.trailing.map(|t| {
+                        // A long source gives way before the title does.
                         div()
+                            .min_w_0()
+                            .truncate()
                             .text_role(TypeRole::Fine, &look)
                             .text_color(p.muted.hsla())
                             .child(t)

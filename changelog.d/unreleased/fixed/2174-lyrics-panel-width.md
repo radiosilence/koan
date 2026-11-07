@@ -1,0 +1,1 @@
+- **The lyrics panel fills its width.** On the desktop, the hairline under its title spans the whole panel, and "nothing playing" and "no lyrics found" sit in the middle of it at any width, rather than above it.

@@ -15,12 +15,9 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::KoanTouchDrag as _;
-
 use super::child;
+use super::grip::{Edge, GRIP, Grip, OnWidth};
 use crate::theme::{Look, Motion};
-
-type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct SplitView {
@@ -35,19 +32,6 @@ pub struct SplitView {
     on_resize: Option<OnWidth>,
     on_commit: Option<OnWidth>,
 }
-
-/// A drag under way: where the pointer and the column started.
-#[derive(Clone, Copy)]
-struct Drag {
-    from_x: Pixels,
-    from_width: Pixels,
-    /// The width the drag last reached, which the release commits.
-    to: Pixels,
-}
-
-/// How wide the grip is, centred on the divider: wide enough to find, narrow
-/// enough to leave the controls at either column's edge to their own clicks.
-const GRIP: f32 = 8.0;
 
 impl SplitView {
     /// `width` is the leading column's, held by the owner; `min` and `max`
@@ -120,96 +104,19 @@ impl RenderOnce for SplitView {
             return div().size_full().flex().children(self.trailing);
         };
         let settled = self.shown && open >= 1.0;
-        // Set on a press on the grip and cleared on release, without a
-        // notify: nothing is drawn from it.
-        let drag = window.use_keyed_state(child(&self.id, "drag"), cx, |_, _| None::<Drag>);
-        let (min, max, reset, width) = (self.min, self.max, self.reset, self.width);
-        let (on_resize, on_commit) = (self.on_resize, self.on_commit);
-        let grip = {
-            let (starting, on_resize, on_commit) =
-                (drag.clone(), on_resize.clone(), on_commit.clone());
-            div()
-                .id(child(&self.id, "grip"))
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(width - px(GRIP / 2.))
-                .w(px(GRIP))
-                .cursor_col_resize()
-                .koan_touch_drag(&look)
-                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                    cx.stop_propagation();
-                    if event.click_count == 2 {
-                        if let Some(f) = &on_resize {
-                            f(&reset, window, cx);
-                        }
-                        if let Some(f) = &on_commit {
-                            f(&reset, window, cx);
-                        }
-                        return;
-                    }
-                    starting.update(cx, |d, _| {
-                        *d = Some(Drag {
-                            from_x: event.position.x,
-                            from_width: width,
-                            to: width,
-                        })
-                    });
-                })
-        };
-        // The drag follows the pointer past the grip and the window until it
-        // is let go, through window-wide listeners, as the slider's does:
-        // GPUI's drag and drop would redraw the whole window at every move.
-        let follow = canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let (moving, ending) = (drag.clone(), drag);
-                let on_moved = on_resize.clone();
-                let on_lost = on_commit.clone();
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture {
-                        return;
-                    }
-                    // Let go outside the window, where its release is not
-                    // heard: the drag ends at the next move without the
-                    // button, where it had got to.
-                    if event.pressed_button != Some(MouseButton::Left) {
-                        if let Some(d) = moving.update(cx, |d, _| d.take())
-                            && let Some(f) = &on_lost
-                        {
-                            f(&d.to, window, cx);
-                        }
-                        return;
-                    }
-                    let Some(d) = *moving.read(cx) else {
-                        return;
-                    };
-                    let to = (d.from_width + event.position.x - d.from_x).clamp(min, max);
-                    moving.update(cx, |d, _| {
-                        if let Some(d) = d {
-                            d.to = to;
-                        }
-                    });
-                    if to != width
-                        && let Some(f) = &on_moved
-                    {
-                        f(&to, window, cx);
-                    }
-                });
-                window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
-                        return;
-                    }
-                    if let Some(d) = ending.update(cx, |d, _| d.take())
-                        && let Some(f) = &on_commit
-                    {
-                        f(&d.to, window, cx);
-                    }
-                });
-            },
-        )
-        .absolute()
-        .size_full();
+        let width = self.width;
+        let (grip, follow) = Grip {
+            id: self.id.clone(),
+            edge: Edge::Trailing,
+            width,
+            min: self.min,
+            max: self.max,
+            reset: self.reset,
+            on_resize: self.on_resize,
+            on_commit: self.on_commit,
+        }
+        .build(&look, window, cx);
+        let grip = grip.left(width - px(GRIP / 2.));
         div()
             .relative()
             .size_full()

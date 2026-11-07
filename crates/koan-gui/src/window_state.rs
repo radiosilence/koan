@@ -3,7 +3,7 @@
 //!
 //! Platform state rather than configuration, as an `NSWindow` frame is to the
 //! Mac app, so it lives in a file of its own beside `config.toml`: one line,
-//! `x y width height maximized sidebar sidebar-width grouped`. It is read
+//! `x y width height maximized sidebar sidebar-width grouped lyrics-width`. It is read
 //! and written off the main thread, but for the last write as the app quits.
 
 use std::path::PathBuf;
@@ -18,6 +18,10 @@ pub const FILE: &str = "desktop-window";
 pub static SIDEBAR: AtomicBool = AtomicBool::new(true);
 /// The sidebar's width in points, as an `f32`'s bits.
 pub static SIDEBAR_WIDTH: AtomicU32 = AtomicU32::new(f32::to_bits(220.0));
+
+/// The lyrics panel's width in points, as an `f32`'s bits; nothing (0)
+/// until the person drags it, so it follows the text size until then.
+pub static LYRICS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
 /// Whether the queue is laid out under record headings ("group by album").
 /// Read where the queue is laid out, off the main thread.
@@ -47,6 +51,9 @@ pub fn read() -> Option<Saved> {
         SIDEBAR_WIDTH.store(width.to_bits(), Ordering::Relaxed);
     }
     GROUPED.store(next().is_none_or(|on| on != 0.0), Ordering::Relaxed);
+    if let Some(width) = next() {
+        LYRICS_WIDTH.store(width.to_bits(), Ordering::Relaxed);
+    }
     Some(Saved {
         bounds: Bounds::new(
             Point {
@@ -101,7 +108,7 @@ pub fn write(bounds: WindowBounds) {
         WindowBounds::Maximized(b) => (b, 1),
     };
     let line = format!(
-        "{} {} {} {} {maximized} {} {} {}\n",
+        "{} {} {} {} {maximized} {} {} {} {}\n",
         f32::from(b.origin.x),
         f32::from(b.origin.y),
         f32::from(b.size.width),
@@ -109,6 +116,7 @@ pub fn write(bounds: WindowBounds) {
         u8::from(SIDEBAR.load(Ordering::Relaxed)),
         f32::from_bits(SIDEBAR_WIDTH.load(Ordering::Relaxed)),
         u8::from(GROUPED.load(Ordering::Relaxed)),
+        f32::from_bits(LYRICS_WIDTH.load(Ordering::Relaxed)),
     );
     if let Err(e) = std::fs::write(path(), line) {
         log::info!("window state: not saved: {e}");

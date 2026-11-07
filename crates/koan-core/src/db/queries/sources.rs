@@ -968,6 +968,55 @@ pub(crate) const RELEASE_DATE: &str =
       WHERE t.album_id = albums.id AND v IS NOT NULL
       GROUP BY v ORDER BY COUNT(*) DESC, v LIMIT 1)";
 
+/// An album's codec as a correlated subquery on `albums`: the one most of its
+/// tracks are in. A record is the format its files are now, so files replaced
+/// in another format move it, whichever path derived them. NULL when no track
+/// names one.
+pub(crate) const ALBUM_CODEC: &str = "(SELECT MIN(t.codec) FROM tracks t
+      WHERE t.album_id = albums.id AND t.codec IS NOT NULL AND t.codec != ''
+      GROUP BY UPPER(t.codec) ORDER BY COUNT(*) DESC, UPPER(t.codec) LIMIT 1)";
+
+/// Put right the codecs an earlier build left: spellings as each server gave
+/// them, in the indexer's as sources are now recorded (`codec_spelling`), and
+/// every album's codec as the one most of its tracks are in. A sync derives a
+/// track again only when its source changed, so these would otherwise stay
+/// until the tracks next change. The albums whose codec moved.
+pub fn settle_codecs(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute_batch("SAVEPOINT settle_codecs")?;
+    let settled = (|| {
+        for table in ["tracks", "local_files", "remote_entries"] {
+            let spelt: Vec<String> = conn
+                .prepare(&format!(
+                    "SELECT DISTINCT codec FROM {table} WHERE codec IS NOT NULL"
+                ))?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for codec in spelt {
+                let respelt = crate::index::metadata::codec_spelling(&codec);
+                if respelt != codec {
+                    conn.execute(
+                        &format!("UPDATE {table} SET codec = ?1 WHERE codec = ?2"),
+                        params![respelt, codec],
+                    )?;
+                }
+            }
+        }
+        conn.execute(
+            &format!(
+                "UPDATE albums SET codec = {ALBUM_CODEC}
+                  WHERE {ALBUM_CODEC} IS NOT NULL AND codec IS NOT {ALBUM_CODEC}"
+            ),
+            [],
+        )
+    })();
+    conn.execute_batch(if settled.is_ok() {
+        "RELEASE settle_codecs"
+    } else {
+        "ROLLBACK TO settle_codecs; RELEASE settle_codecs"
+    })?;
+    settled
+}
+
 /// Date every album that has no date and whose tracks' sources name one: the
 /// original release where any source names it, else the release. A sync
 /// derives a track again only when its source changed, so an album an earlier
@@ -983,7 +1032,7 @@ pub fn fill_album_dates(conn: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Derive what an album takes from all its tracks' sources again after its
-/// tracks changed: its disc total, its release types, and its date: the
+/// tracks changed: its disc total, its release types, its codec, and its date: the
 /// original release where any source names it, else the date the album holds,
 /// else the release date its sources give. Album-wide, so a reissue whose
 /// bonus tracks carry no original date, or an album reached through the
@@ -996,11 +1045,14 @@ pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqli
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        Option<String>,
     );
     let found: Option<Found> = conn
         .prepare_cached(&format!(
             "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}, date,
-                    COALESCE({ORIGINAL_DATE}, date, {RELEASE_DATE})
+                    COALESCE({ORIGINAL_DATE}, date, {RELEASE_DATE}),
+                    codec, COALESCE({ALBUM_CODEC}, codec)
                FROM albums WHERE id = ?1"
         ))?
         .query_row(params![album], |r| {
@@ -1011,17 +1063,20 @@ pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqli
                 r.get(3)?,
                 r.get(4)?,
                 r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
             ))
         })
         .optional()?;
-    let Some((discs, d_discs, types, d_types, date, d_date)) = found else {
+    let Some((discs, d_discs, types, d_types, date, d_date, codec, d_codec)) = found else {
         return Ok(());
     };
-    if (discs, &types, &date) != (d_discs, &d_types, &d_date) {
+    if (discs, &types, &date, &codec) != (d_discs, &d_types, &d_date, &d_codec) {
         conn.prepare_cached(
-            "UPDATE albums SET total_discs = ?1, release_types = ?2, date = ?3 WHERE id = ?4",
+            "UPDATE albums SET total_discs = ?1, release_types = ?2, date = ?3, codec = ?4
+              WHERE id = ?5",
         )?
-        .execute(params![d_discs, d_types, d_date, album])?;
+        .execute(params![d_discs, d_types, d_date, d_codec, album])?;
     }
     Ok(())
 }
@@ -1455,6 +1510,10 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
             meta.mtime = None;
         }
     }
+    meta.codec = meta
+        .codec
+        .as_deref()
+        .map(crate::index::metadata::codec_spelling);
     meta
 }
 

@@ -1122,6 +1122,89 @@ mod tests {
         );
     }
 
+    fn album_codec(db: &Database, title: &str) -> Option<String> {
+        db.conn
+            .query_row("SELECT codec FROM albums WHERE title = ?1", [title], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn songs_in(id: &str, suffixes: &[&str]) -> serde_json::Value {
+        let songs: Vec<_> = suffixes
+            .iter()
+            .enumerate()
+            .map(|(i, suffix)| {
+                serde_json::json!({"id": format!("s-{i}"), "title": format!("Track {i}"),
+                                   "albumId": id, "track": i + 1, "suffix": suffix})
+            })
+            .collect();
+        serde_json::json!({
+            "id": id,
+            "name": "Calling The Vultures",
+            "artist": "Enduser",
+            "artistId": "ar-enduser",
+            "song": songs,
+        })
+    }
+
+    /// The server's files replaced in another format: the tracks are found
+    /// by the server's album id, and the album takes their new codec too.
+    #[test]
+    fn an_album_replaced_in_another_format_takes_its_tracks_codec() {
+        let (db, _dir) = test_db();
+        write_server_albums(&db, &[songs_in("al-vultures", &["mp3", "mp3"])]);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("MP3")
+        );
+
+        write_server_albums(&db, &[songs_in("al-vultures", &["flac", "flac"])]);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("FLAC")
+        );
+    }
+
+    /// A library an earlier build left with codecs spelt as the server spelt
+    /// them, and an album in its old format, is put right without its tracks
+    /// changing; a codec counts as one however it was spelt.
+    #[test]
+    fn codecs_an_earlier_build_left_are_settled() {
+        let (db, _dir) = test_db();
+        write_server_albums(
+            &db,
+            &[songs_in(
+                "al-vultures",
+                &["flac", "flac", "flac", "flac", "mp3", "mp3", "mp3"],
+            )],
+        );
+        for sql in [
+            "UPDATE albums SET codec = 'mp3'",
+            "UPDATE remote_entries SET codec = LOWER(codec)",
+            "UPDATE tracks SET codec = LOWER(codec)",
+            "UPDATE tracks SET codec = 'FLAC' WHERE title IN ('Track 0', 'Track 1')",
+        ] {
+            db.conn.execute(sql, []).unwrap();
+        }
+        assert_eq!(queries::settle_codecs(&db.conn).unwrap(), 1);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("FLAC")
+        );
+        let misspelt: i64 = db
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM tracks WHERE codec NOT IN ('FLAC', 'MP3'))
+                      + (SELECT COUNT(*) FROM remote_entries WHERE codec NOT IN ('FLAC', 'MP3'))",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(misspelt, 0);
+        assert_eq!(queries::settle_codecs(&db.conn).unwrap(), 0);
+    }
+
     /// A library an earlier build left with an undated album whose tracks are
     /// dated is filled without the tracks changing.
     #[test]

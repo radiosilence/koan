@@ -24,6 +24,7 @@ pub struct EmptyState {
     title: SharedString,
     detail: Option<SharedString>,
     tone: Tone,
+    inset: bool,
 }
 
 impl EmptyState {
@@ -34,6 +35,7 @@ impl EmptyState {
             title: label(title),
             detail: None,
             tone: Tone::Muted,
+            inset: true,
         }
     }
 
@@ -41,6 +43,14 @@ impl EmptyState {
     /// `bad`, as the Mac's startup error draws its warning.
     pub fn warning(mut self) -> Self {
         self.tone = Tone::Bad;
+        self
+    }
+
+    /// In a panel that already stands clear of the window's foot (the
+    /// lyrics between the toolbar and the transport): centred in the panel,
+    /// with no room left for the foot again.
+    pub fn in_panel(mut self) -> Self {
+        self.inset = false;
         self
     }
 
@@ -90,7 +100,11 @@ impl RenderOnce for EmptyState {
             .id
             .clone()
             .unwrap_or_else(|| gpui::ElementId::Name(format!("empty-{}", self.title).into()));
-        let foot = super::foot_inset(window, cx);
+        let foot = if self.inset {
+            super::foot_inset(window, cx)
+        } else {
+            px(0.0)
+        };
         // As the last frame laid it out: the scale follows the area a frame
         // after it changes, and the first frame draws at full size.
         let fit_state = window.use_keyed_state(super::child(&id, "fit"), cx, |_, _| Fit {

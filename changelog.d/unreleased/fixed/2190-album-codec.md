@@ -1,0 +1,1 @@
+- **Albums show the format their files are now in.** An album whose files were replaced in another format, such as MP3 by FLAC, kept its old format in its header; it now follows its tracks, and the next sync puts existing albums right.
