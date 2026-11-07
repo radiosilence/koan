@@ -1,0 +1,1 @@
+- **Every press answers.** Chips and pop-up pickers lift their ground when pressed, and a track row's play mark rings, so no press in the app goes unanswered while the music it asked for is on its way.
