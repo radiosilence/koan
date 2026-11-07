@@ -67,17 +67,20 @@ impl ButtonKind {
         }
     }
 
-    /// How a press is answered: a ring off a glyph, the ground lifting in
-    /// an outlined button, nothing for the kinds that read as words.
-    fn answer(self) -> Option<super::Answer> {
+    /// How a press is answered: a ring off a glyph, the ground lifting
+    /// under anything with a word or a ground. Every kind answers, so no
+    /// press goes unacknowledged.
+    fn answer(self) -> super::Answer {
         match self {
             ButtonKind::Icon | ButtonKind::IconOutlined | ButtonKind::Toolbar => {
-                Some(super::Answer::Ring)
+                super::Answer::Ring
             }
-            ButtonKind::Prominent | ButtonKind::Bordered => Some(super::Answer::Lift),
-            ButtonKind::Standard | ButtonKind::Compact | ButtonKind::Link | ButtonKind::Text => {
-                None
-            }
+            ButtonKind::Prominent
+            | ButtonKind::Bordered
+            | ButtonKind::Standard
+            | ButtonKind::Compact
+            | ButtonKind::Link
+            | ButtonKind::Text => super::Answer::Lift,
         }
     }
 
@@ -294,9 +297,18 @@ impl RenderOnce for Button {
         // A press is answered by a ring off a glyph alone; a button showing
         // its word is lifted instead, under the word, never ringed through it.
         let worded = !glyph_only && self.label.is_some();
-        let answer = match kind.answer() {
-            Some(super::Answer::Ring) if worded => Some(super::Answer::Lift),
-            answer => answer,
+        // A glyph showing answers by moving as its verb means, in place of
+        // the ring or the lift; one that morphs answers as its state lands.
+        let answer = match self
+            .icon
+            .filter(|_| show_glyph)
+            .and_then(super::Gesture::of)
+        {
+            Some(gesture) => super::Answer::Gesture(gesture),
+            None => match kind.answer() {
+                super::Answer::Ring if worded => super::Answer::Lift,
+                answer => answer,
+            },
         };
         debug_assert!(
             !glyph_only || self.help.is_some() || self.label.is_some(),
@@ -359,7 +371,7 @@ impl RenderOnce for Button {
                 #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     // A glyph that morphs answers as its state lands.
-                    if let Some(answer) = answer.filter(|_| !morphing) {
+                    if !morphing {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
@@ -411,6 +423,7 @@ impl RenderOnce for Button {
             cx,
         );
         let glyph = self.icon.filter(|_| show_glyph).map(|icon| {
+            let moved = answers.gesture_layer(icon, look.points(role), color, window, cx);
             div()
                 .relative()
                 .child(
@@ -419,12 +432,13 @@ impl RenderOnce for Button {
                         .child(KoanIcon::new(icon).role(role).color(color)),
                 )
                 .children(drawn)
+                .children(moved)
         });
         let text = self.label.clone().filter(|_| !glyph_only);
         let underline = kind == ButtonKind::Link;
         // A ring leaves a glyph alone, not the hit area around it; a lift
         // fills the button under its content, over its fills.
-        let ring_answer = answer == Some(super::Answer::Ring);
+        let ring_answer = answer == super::Answer::Ring;
         let answered = answers.layer(window, cx);
         let (inner_answer, outer_answer) = if ring_answer {
             (answered, None)
