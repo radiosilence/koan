@@ -972,22 +972,49 @@ pub(crate) const RELEASE_DATE: &str =
 /// tracks are in. A record is the format its files are now, so files replaced
 /// in another format move it, whichever path derived them. NULL when no track
 /// names one.
-pub(crate) const ALBUM_CODEC: &str = "(SELECT t.codec FROM tracks t
+pub(crate) const ALBUM_CODEC: &str = "(SELECT MIN(t.codec) FROM tracks t
       WHERE t.album_id = albums.id AND t.codec IS NOT NULL AND t.codec != ''
-      GROUP BY t.codec ORDER BY COUNT(*) DESC, t.codec LIMIT 1)";
+      GROUP BY UPPER(t.codec) ORDER BY COUNT(*) DESC, UPPER(t.codec) LIMIT 1)";
 
-/// Set every album's codec to the one most of its tracks are in. A sync
-/// derives a track again only when its source changed, so an album an earlier
-/// build left in its old format is put right here rather than when its tracks
-/// next change.
-pub fn settle_album_codecs(conn: &Connection) -> rusqlite::Result<usize> {
-    conn.execute(
-        &format!(
-            "UPDATE albums SET codec = {ALBUM_CODEC}
-              WHERE {ALBUM_CODEC} IS NOT NULL AND codec IS NOT {ALBUM_CODEC}"
-        ),
-        [],
-    )
+/// Put right the codecs an earlier build left: spellings as each server gave
+/// them, in the indexer's as sources are now recorded (`codec_spelling`), and
+/// every album's codec as the one most of its tracks are in. A sync derives a
+/// track again only when its source changed, so these would otherwise stay
+/// until the tracks next change. The albums whose codec moved.
+pub fn settle_codecs(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute_batch("SAVEPOINT settle_codecs")?;
+    let settled = (|| {
+        for table in ["tracks", "local_files", "remote_entries"] {
+            let spelt: Vec<String> = conn
+                .prepare(&format!(
+                    "SELECT DISTINCT codec FROM {table} WHERE codec IS NOT NULL"
+                ))?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for codec in spelt {
+                let respelt = crate::index::metadata::codec_spelling(&codec);
+                if respelt != codec {
+                    conn.execute(
+                        &format!("UPDATE {table} SET codec = ?1 WHERE codec = ?2"),
+                        params![respelt, codec],
+                    )?;
+                }
+            }
+        }
+        conn.execute(
+            &format!(
+                "UPDATE albums SET codec = {ALBUM_CODEC}
+                  WHERE {ALBUM_CODEC} IS NOT NULL AND codec IS NOT {ALBUM_CODEC}"
+            ),
+            [],
+        )
+    })();
+    conn.execute_batch(if settled.is_ok() {
+        "RELEASE settle_codecs"
+    } else {
+        "ROLLBACK TO settle_codecs; RELEASE settle_codecs"
+    })?;
+    settled
 }
 
 /// Date every album that has no date and whose tracks' sources name one: the
@@ -1483,6 +1510,10 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
             meta.mtime = None;
         }
     }
+    meta.codec = meta
+        .codec
+        .as_deref()
+        .map(crate::index::metadata::codec_spelling);
     meta
 }
 

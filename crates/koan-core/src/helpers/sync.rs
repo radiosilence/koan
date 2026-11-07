@@ -51,6 +51,33 @@ pub(crate) fn hold_syncs() -> parking_lot::MutexGuard<'static, ()> {
     SYNCING.lock()
 }
 
+/// Settle the codecs an earlier build left (`queries::settle_codecs`), once
+/// per library: a marker beside the database records that it ran. A database
+/// without a file, as in tests, is settled every time.
+fn settle_codecs_once(db: &Database) {
+    let marker = db
+        .conn
+        .path()
+        .filter(|p| !p.is_empty())
+        .map(|p| std::path::PathBuf::from(format!("{p}-codecs-settled")));
+    if marker.as_ref().is_some_and(|m| m.exists()) {
+        return;
+    }
+    match crate::db::queries::settle_codecs(&db.conn) {
+        Ok(n) => {
+            if n > 0 {
+                log::info!("{n} albums given the codec their tracks are in");
+            }
+            if let Some(marker) = marker
+                && let Err(e) = std::fs::write(&marker, "")
+            {
+                log::warn!("failed to record that codecs were settled: {e}");
+            }
+        }
+        Err(e) => log::warn!("failed to settle codecs: {e}"),
+    }
+}
+
 /// Pull the library, then reconcile favourites and playlists.
 ///
 /// One function because there are four callers — the app, the CLI, the GraphQL
@@ -86,6 +113,7 @@ pub fn sync_remote(
     };
     let _one_at_a_time = SYNCING.lock();
     cancelled()?;
+    settle_codecs_once(db);
 
     let walked = sync::library_version(db, url);
     let modified = client.library_modified(walked);

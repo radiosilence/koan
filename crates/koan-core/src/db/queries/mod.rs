@@ -40,7 +40,7 @@ pub use playlists::*;
 pub use ratings::*;
 pub use scan_cache::*;
 pub use search::*;
-pub use sources::{fill_album_dates, settle_album_codecs, sources_of_track};
+pub use sources::{fill_album_dates, settle_codecs, sources_of_track};
 pub use stats::*;
 pub use tracks::*;
 pub use uids::*;

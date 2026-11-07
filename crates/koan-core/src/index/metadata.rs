@@ -577,6 +577,18 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
     }
 }
 
+/// A codec in the indexer's spelling, whoever named it: a Subsonic server
+/// reports its suffix ("flac"), and a record is one format however its
+/// sources spelt it. A codec the indexer does not name is put in upper case.
+pub fn codec_spelling(codec: &str) -> String {
+    [
+        "FLAC", "MP3", "AAC", "ALAC", "Vorbis", "Opus", "WAV", "AIFF", "PCM",
+    ]
+    .into_iter()
+    .find(|known| known.eq_ignore_ascii_case(codec))
+    .map_or_else(|| codec.to_ascii_uppercase(), str::to_owned)
+}
+
 /// Extract embedded front cover art bytes from an audio file.
 /// Returns raw image bytes (JPEG/PNG) or None. TIFF images are
 /// skipped — the `image` crate only has jpeg+png features and macOS
