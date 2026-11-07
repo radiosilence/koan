@@ -19,7 +19,12 @@ pub use gpui::ListOffset as RowOffset;
 /// The list may lead with one item before its rows, a page's header that
 /// scrolls with them (`RowList::lead`); row indices count the rows alone.
 #[derive(Clone)]
-pub struct RowListState(ListState, std::rc::Rc<std::cell::Cell<usize>>);
+pub struct RowListState(
+    ListState,
+    std::rc::Rc<std::cell::Cell<usize>>,
+    /// A row to centre when the list next draws (`centre`).
+    std::rc::Rc<std::cell::Cell<Option<usize>>>,
+);
 
 impl Default for RowListState {
     fn default() -> Self {
@@ -32,6 +37,7 @@ impl RowListState {
         // How far past the screen rows are made ahead of a scroll.
         Self(
             ListState::new(0, ListAlignment::Top, px(400.)),
+            Default::default(),
             Default::default(),
         )
     }
@@ -82,6 +88,31 @@ impl RowListState {
     /// Scrolls as little as shows row `ix` whole.
     pub fn reveal(&self, ix: usize) {
         self.0.scroll_to_reveal_item(ix + self.lead());
+    }
+
+    /// Scrolls row `ix` to the middle of what shows of the list between the
+    /// bar and the foot drawn over it, as far as the list's ends allow. Done
+    /// as the list next draws, which knows those insets.
+    pub fn centre(&self, ix: usize) {
+        self.2.set(Some(ix));
+    }
+
+    fn apply_centre(&self, bar: Pixels, foot: Pixels) {
+        let Some(ix) = self.2.take() else {
+            return;
+        };
+        let item_ix = ix + self.lead();
+        self.0.scroll_to(RowOffset {
+            item_ix,
+            offset_in_item: Pixels::ZERO,
+        });
+        let row = self
+            .0
+            .bounds_for_item(item_ix)
+            .map_or(Pixels::ZERO, |b| b.size.height);
+        let shown = self.0.viewport_bounds().size.height - bar - foot;
+        self.0
+            .scroll_by(-(bar + (shown - row).max(Pixels::ZERO) / 2.));
     }
 
     /// Scrolls the neighbour of row `ix` a screen reader is heading for on
@@ -198,6 +229,7 @@ impl RenderOnce for RowList {
         } else {
             Pixels::ZERO
         };
+        self.state.apply_centre(under_bar, under_foot);
         super::accessible(div().id("row-list"), gpui::Role::List, self.name)
             .relative()
             .size_full()

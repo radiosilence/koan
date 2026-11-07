@@ -663,7 +663,7 @@ impl Render for Shell {
                     .left_0()
                     .right_0()
                     .occlude()
-                    .child(crate::components::Frost::foot().feathered())
+                    .child(crate::components::Frost::foot())
                     .child(crate::components::foot_probe())
                     .child(
                         transport.clone().cached(
@@ -904,7 +904,7 @@ impl Render for Shell {
                                     .flex()
                                     .flex_col()
                                     .occlude()
-                                    .child(crate::components::Frost::bar().feathered())
+                                    .child(crate::components::Frost::bar())
                                     .child(crate::components::bar_probe())
                                     .child(self.toolbar(window, cx))
                                     .child(self.banner.clone())

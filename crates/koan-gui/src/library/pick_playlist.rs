@@ -319,9 +319,8 @@ impl Render for PickPlaylist {
                 .into_any_element(),
         };
         let total = self.playlists.as_ref().map_or(0, Vec::len);
-        ask::panel("add to playlist", look)
-            // Tall enough to scroll through many, whatever the filter keeps.
-            .h(look.spaced(560.0))
+        // Tall enough to scroll through many, whatever the filter keeps.
+        ask::tall_panel("add to playlist", look, window)
             .child(ask::head(
                 "add to playlist",
                 vec![cancel.into_any_element()],

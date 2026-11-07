@@ -551,8 +551,17 @@ pub fn selection_bar<V: Picking>(
             end(cx);
         }
     };
-    let playlists = lib.feed.read(cx).playlists.clone();
-    let (lib2, picked2, end2) = (lib.clone(), picked.clone(), end.clone());
+    let to_playlist = {
+        let (lib, picked, end) = (lib.clone(), picked.clone(), end.clone());
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            if picked.is_empty() {
+                return;
+            }
+            let end = end.clone();
+            let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| end(cx)));
+            super::pick_playlist::open(&lib, picked.as_slice().into(), after, window, cx);
+        }
+    };
     let organise = {
         let (lib, picked, end) = (lib.clone(), picked.clone(), end.clone());
         move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
@@ -581,29 +590,7 @@ pub fn selection_bar<V: Picking>(
             "add the selection to the end of the queue",
             verb(|lib, p, cx| actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()),
         )
-        .element(crate::components::opens_panel(
-            "sel-playlist",
-            crate::components::TextTrigger::new("sel-playlist-trigger", "add to playlist"),
-            move |dismiss, _, _| {
-                if playlists.is_empty() {
-                    return MenuPanel::new()
-                        .child(MenuRow::new("sel-pl-none", "no playlists").disabled(true))
-                        .into_any_element();
-                }
-                MenuPanel::new()
-                    .children(playlists.iter().enumerate().map(|(i, (id, name))| {
-                        let (lib, picked, end, id) =
-                            (lib2.clone(), picked2.clone(), end2.clone(), *id);
-                        let dismiss = dismiss.clone();
-                        MenuRow::data(("sel-pl", i), name.clone()).on_click(move |_, window, cx| {
-                            actions::add_to_playlist(&lib, id, &picked, cx);
-                            end(cx);
-                            dismiss(window, cx);
-                        })
-                    }))
-                    .into_any_element()
-            },
-        ))
+        .verb("sel-playlist", "add to playlist…", to_playlist)
         // As the context menu says it: a pick of favourites only is
         // unfavourited.
         .verb(
