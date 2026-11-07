@@ -361,7 +361,7 @@ impl RenderOnce for Frost {
         // ground over it darkens a bold wash. The foot keeps the tint, which
         // sets the transport apart from the page. The ground stays for less
         // transparency, and as the whole frost where nothing blurs.
-        let tint = if SHADED && !look.opaque && self.edge == Edge::Bar {
+        let tint = if SHADED && !look.opaque && matches!(self.edge, Edge::Bar) {
             None
         } else if SHADED {
             animated.set_color(0, color);
