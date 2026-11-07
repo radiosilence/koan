@@ -287,14 +287,14 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 }
             },
         ))
-        .koan_context_menu_at("list-menu", spot, window, cx, move |m, window, cx| {
+        .koan_context_menu_at("list-menu", spot, window, cx, move |m, _, cx| {
             let Some(view) = view.upgrade() else { return m };
             let (lib, target) = {
                 let page = view.read(cx);
                 (page.lib().clone(), page.menu_target_ref().clone())
             };
             match target {
-                Some(t) => menu(m, &lib, t.items, t.album, t.after, window, cx),
+                Some(t) => menu(m, &lib, t.items, t.album, t.after, cx),
                 None => m,
             }
         })
@@ -319,7 +319,6 @@ pub fn menu(
     items: Arc<[Playable]>,
     album: Option<i64>,
     after: After,
-    window: &mut Window,
     cx: &mut Context<Menu>,
 ) -> Menu {
     let single = (items.len() == 1).then(|| items[0]);

@@ -64,16 +64,8 @@ pub fn playable_header(
             )
             .action(
                 div()
-                    .koan_menu_on_press("header-more", window, cx, move |m, window, cx| {
-                        actions::menu(
-                            m,
-                            &more,
-                            Arc::from([item]),
-                            None,
-                            Default::default(),
-                            window,
-                            cx,
-                        )
+                    .koan_menu_on_press("header-more", window, cx, move |m, _, cx| {
+                        actions::menu(m, &more, Arc::from([item]), None, Default::default(), cx)
                     })
                     .child(
                         Button::new("header-more-button", ButtonKind::Compact)

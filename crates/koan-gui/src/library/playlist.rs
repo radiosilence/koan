@@ -1167,12 +1167,7 @@ impl PlaylistPage {
 
 /// The list's one context menu: play from the row, the library's verbs for
 /// the tracks, then what can be done to the entries here.
-fn row_menu(
-    menu: Menu,
-    view: &Entity<PlaylistPage>,
-    window: &mut Window,
-    cx: &mut Context<Menu>,
-) -> Menu {
+fn row_menu(menu: Menu, view: &Entity<PlaylistPage>, cx: &mut Context<Menu>) -> Menu {
     let (lib, id, fillable, tracks, album, first, entries) = {
         let this = view.read(cx);
         let Some(row) = this.menu_row.filter(|&row| row < this.rows.len()) else {
@@ -1202,7 +1197,7 @@ fn row_menu(
             })
         },
     ));
-    let menu = actions::menu(menu.separator(), &lib, tracks, album, None, window, cx);
+    let menu = actions::menu(menu.separator(), &lib, tracks, album, None, cx);
     if !fillable {
         return menu;
     }
@@ -1373,7 +1368,7 @@ impl Render for PlaylistPage {
         )
         .koan_context_menu_at("playlist-menu", Some(self.spot.clone()), window, cx, {
             let view = view.clone();
-            move |menu, window, cx| row_menu(menu, &view, window, cx)
+            move |menu, _, cx| row_menu(menu, &view, cx)
         })
         .into_any_element()
     }

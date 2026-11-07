@@ -63,7 +63,8 @@ impl PickPlaylist {
         // A pointer's person types straight away; a phone keeps its keyboard
         // down until the field is tapped, as iOS pickers do.
         if !crate::theme::Look::of(window, cx).touch {
-            filter.read(cx).focus(window, cx);
+            let handle = filter.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
         }
         let id = cx.entity_id();
         let subscriptions = [
@@ -74,7 +75,8 @@ impl PickPlaylist {
                     match event {
                         InputEvent::Change => {
                             this.refilter(cx);
-                            this.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                            this.scroll
+                                .scroll_to_item(0, crate::components::ScrollStrategy::Top);
                         }
                         // Return takes the first that matches.
                         InputEvent::PressEnter { .. } => {
@@ -319,7 +321,7 @@ impl Render for PickPlaylist {
         let total = self.playlists.as_ref().map_or(0, Vec::len);
         ask::panel("add to playlist", look)
             // Tall enough to scroll through many, whatever the filter keeps.
-            .h(px(560.0))
+            .h(look.spaced(560.0))
             .child(ask::head(
                 "add to playlist",
                 vec![cancel.into_any_element()],
