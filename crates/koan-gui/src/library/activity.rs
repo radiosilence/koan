@@ -55,9 +55,10 @@ impl ProgressReporter for Reporter {
 pub struct Activity {
     scan: Option<Scan>,
     rebuilding: bool,
-    /// A sync asked for here and not yet answered: shown before the engine's
-    /// own report of it arrives.
-    syncing: bool,
+    /// Syncs asked for in this app (the Library menu, Settings) and not yet
+    /// answered. A count: the core runs them one after another, and the row
+    /// stays up until the last has ended.
+    syncing: usize,
     /// The running sync's last report, held while it runs: the engine clears
     /// its progress a tick before it says the sync has ended, and the row
     /// keeps its shape through that tick rather than blanking.
@@ -80,18 +81,22 @@ pub fn init(cx: &mut App) {
         Activity {
             scan: None,
             rebuilding: false,
-            syncing: false,
+            syncing: 0,
             last_sync: None,
             problem: None,
             _watch: [
                 cx.observe(&tasks, |this: &mut Activity, tasks, cx| {
-                    if !this.syncing && !tasks.read(cx).0.syncing {
+                    if this.syncing == 0 && !tasks.read(cx).0.syncing {
                         this.last_sync = None;
                     }
                     cx.notify()
                 }),
+                // Kept only while a sync runs: a report landing in the same
+                // batch as the flag that ended it is not held into the next.
                 cx.observe(&sync, |this: &mut Activity, sync, cx| {
-                    if let Some(progress) = sync.read(cx).0 {
+                    let running =
+                        this.syncing > 0 || cx.global::<Mirror>().tasks.read(cx).0.syncing;
+                    if let Some(progress) = sync.read(cx).0.filter(|_| running) {
                         this.last_sync = Some(progress);
                     }
                     cx.notify()
@@ -230,20 +235,16 @@ impl Activity {
     }
 
     fn sync(&mut self, cx: &mut Context<Self>) {
-        if self.syncing || cx.global::<Mirror>().tasks.read(cx).0.syncing {
+        if self.syncing > 0 || cx.global::<Mirror>().tasks.read(cx).0.syncing {
             return;
         }
         self.problem = None;
-        self.syncing = true;
-        cx.notify();
+        self.sync_started(cx);
         let syncing = engine(cx).sync_remote();
         cx.spawn(async move |this, cx| {
             let result = syncing.await;
             this.update(cx, |this, cx| {
-                this.syncing = false;
-                if !cx.global::<Mirror>().tasks.read(cx).0.syncing {
-                    this.last_sync = None;
-                }
+                this.sync_ended(cx);
                 if let Err(e) = result {
                     log::warn!("sync: {e}");
                     this.problem = Some(format!("sync failed: {e}").into());
@@ -257,7 +258,7 @@ impl Activity {
 
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         // Nor under a sync, whose pages it would delete as they land.
-        if self.busy(cx) || self.syncing || cx.global::<Mirror>().tasks.read(cx).0.syncing {
+        if self.busy(cx) || self.syncing > 0 || cx.global::<Mirror>().tasks.read(cx).0.syncing {
             return;
         }
         self.problem = None;
@@ -324,7 +325,7 @@ impl Activity {
         }
         // Only once the sync reports: a sync that finds the server unchanged
         // walks nothing and ends at once, and a row for it would only blink.
-        let progress = (self.syncing || tasks.syncing)
+        let progress = (self.syncing > 0 || tasks.syncing)
             .then(|| mirror.sync.read(cx).0.or(self.last_sync))
             .flatten();
         if let Some(progress) = progress {
@@ -425,8 +426,25 @@ impl Activity {
     /// A sync started elsewhere in the app (Settings' button) running or
     /// ended, so the row follows it as it follows one started here.
     pub fn follow_sync(&mut self, running: bool, cx: &mut Context<Self>) {
-        self.syncing = running;
-        if !running && !cx.global::<Mirror>().tasks.read(cx).0.syncing {
+        if running {
+            self.sync_started(cx);
+        } else {
+            self.sync_ended(cx);
+        }
+    }
+
+    /// A new sync starts from nothing: no figures left from the last.
+    fn sync_started(&mut self, cx: &mut Context<Self>) {
+        if self.syncing == 0 && !cx.global::<Mirror>().tasks.read(cx).0.syncing {
+            self.last_sync = None;
+        }
+        self.syncing += 1;
+        cx.notify();
+    }
+
+    fn sync_ended(&mut self, cx: &mut Context<Self>) {
+        self.syncing = self.syncing.saturating_sub(1);
+        if self.syncing == 0 && !cx.global::<Mirror>().tasks.read(cx).0.syncing {
             self.last_sync = None;
         }
         cx.notify();
