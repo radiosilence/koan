@@ -261,7 +261,7 @@ impl Fields {
         // Its column's width, from the table.
         div()
             .w_full()
-            .child(TextField::new(&field.input).bare())
+            .child(TextField::new(&field.input).cell())
             .into_any_element()
     }
 }

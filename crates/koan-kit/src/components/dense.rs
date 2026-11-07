@@ -188,6 +188,9 @@ impl RenderOnce for DenseTable {
             .children(self.rows.into_iter().map(|row| {
                 lay_out(&columns, row, self.trailing, gap, &look)
                     .py(look.spaced(2.0))
+                    // Under touch a row is a finger's height, so a figure
+                    // typed into is not a line's sliver to hit.
+                    .min_h(look.target())
                     .text_role(TypeRole::Meta, &look)
                     .text_color(look.palette.ink.hsla())
             }))

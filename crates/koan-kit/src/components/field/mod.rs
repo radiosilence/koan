@@ -51,6 +51,8 @@ pub type AreaState = FieldState;
 pub struct TextField {
     state: Entity<FieldState>,
     ground: bool,
+    /// Bare, and a finger's height under touch.
+    cell: bool,
     disabled: bool,
     role: TypeRole,
     label: Option<SharedString>,
@@ -61,6 +63,7 @@ impl TextField {
         Self {
             state: state.clone(),
             ground: true,
+            cell: false,
             disabled: false,
             role: TypeRole::Control,
             label: None,
@@ -92,6 +95,15 @@ impl TextField {
         self.ground = false;
         self
     }
+
+    /// Bare, as a figure in a table's row: under touch it takes a tap
+    /// anywhere across a finger's height, and a tap there keeps the
+    /// keyboard, rather than its line of text alone.
+    pub fn cell(mut self) -> Self {
+        self.ground = false;
+        self.cell = true;
+        self
+    }
 }
 
 impl RenderOnce for TextField {
@@ -100,6 +112,7 @@ impl RenderOnce for TextField {
         let id = gpui::ElementId::from(("koan-field", self.state.entity_id().as_u64()));
         let answers = super::Answerer::of(&id, window, cx);
         let focused = self.state.read(cx).focus.is_focused(window);
+        let tall = self.cell && look.touch;
         // Taking the keyboard is answered by a line drawn under the field,
         // once each time.
         let was = window.use_keyed_state(super::child(&id, "focused"), cx, |_, _| focused);
@@ -126,10 +139,33 @@ impl RenderOnce for TextField {
             })
             .child(
                 editor(&self.state, &id, self.label, !self.disabled, window, cx)
-                    .h(look.line_height(self.role))
+                    .map(|editor| {
+                        if tall {
+                            editor.h(look.target()).items_center()
+                        } else {
+                            editor.h(look.line_height(self.role))
+                        }
+                    })
                     .text_role(self.role, &look)
                     .text_color(look.palette.ink.hsla()),
             )
+            .when(tall, |field| {
+                let state = self.state.clone();
+                field.child(
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            if state.read(cx).keeps != Some(bounds) {
+                                state.update(cx, |state, _| state.keeps = Some(bounds));
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+            })
             .children(answers.layer(window, cx))
     }
 }
