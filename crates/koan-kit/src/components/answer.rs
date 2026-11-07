@@ -25,6 +25,7 @@ use gpui::*;
 
 use super::ShaderProgram;
 
+use super::gesture::{GESTURE, Gesture};
 use super::{Animated, AnimatedQuad, Ease, Repeat, SHADED, child};
 use crate::theme::{KoanTheme, Motion};
 
@@ -66,6 +67,8 @@ pub enum Answer {
     /// The underline of a choice drawn in from the side the last choice
     /// stood: from the leading edge (`true`) or the trailing one.
     Slide(bool),
+    /// The glyph's raster moved as its verb means (`GESTURE`).
+    Gesture(Gesture),
 }
 
 /// How a glyph turns into another.
@@ -115,6 +118,7 @@ impl Answer {
             Answer::Morph(Morph::CopyToTick) => 22.0,
             Answer::Morph(Morph::TickToCopy) => 23.0,
             Answer::Slide(_) => 3.0,
+            Answer::Gesture(g) => g.code(),
         }
     }
 
@@ -123,7 +127,12 @@ impl Answer {
     pub fn glyph(self) -> bool {
         matches!(
             self,
-            Answer::Fill | Answer::Empty | Answer::Morph(_) | Answer::Nudge(_) | Answer::Tick(_)
+            Answer::Fill
+                | Answer::Empty
+                | Answer::Morph(_)
+                | Answer::Nudge(_)
+                | Answer::Tick(_)
+                | Answer::Gesture(_)
         )
     }
 
@@ -131,6 +140,7 @@ impl Answer {
     fn heading(self) -> f32 {
         match self {
             Answer::Lift => 0.0,
+            Answer::Gesture(g) => g.heading().0,
             Answer::Streak(false) | Answer::Nudge(false) | Answer::Slide(false) => -1.0,
             _ => 1.0,
         }
@@ -148,7 +158,8 @@ impl Answer {
             | Answer::Morph(_)
             | Answer::Nudge(_)
             | Answer::Tick(_)
-            | Answer::Slide(_) => Motion::SETTLE,
+            | Answer::Slide(_)
+            | Answer::Gesture(_) => Motion::SETTLE,
         }
     }
 
@@ -173,7 +184,7 @@ impl Answer {
             Answer::Tick(_) => 1.0,
             Answer::Fill => 7.0,
             Answer::Empty | Answer::Morph(_) => 2.0,
-            Answer::Nudge(_) => 4.0,
+            Answer::Nudge(_) | Answer::Gesture(_) => 4.0,
         }
     }
 }
@@ -907,7 +918,9 @@ impl Answerer {
     ) -> Option<AnyElement> {
         let state = self.cell.borrow().clone()?;
         let s = state.read(cx);
-        let answer = s.live.filter(|a| a.glyph())?;
+        let answer = s
+            .live
+            .filter(|a| a.glyph() && !matches!(a, Answer::Gesture(_)))?;
         let look = crate::theme::Look::of(window, cx);
         let spill = look.spaced(answer.spill());
         let scale = window.scale_factor();
@@ -920,6 +933,44 @@ impl Answerer {
         s.animated.set_all(12, &[f32::from(side) * scale]);
         Some(
             AnimatedQuad::new(&GLYPH, &s.animated)
+                .absolute()
+                .top(-spill)
+                .left(-spill)
+                .w(side + spill * 2.0)
+                .h(side + spill * 2.0)
+                .into_any_element(),
+        )
+    }
+
+    /// The gesture being drawn, in place of `icon` beside type of `points`
+    /// that the control hides meanwhile, in `color`; nothing at rest. As
+    /// `glyph_layer`, over the icon and a little past it.
+    pub fn gesture_layer(
+        &self,
+        icon: crate::theme::Icon,
+        points: f32,
+        color: Hsla,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let state = self.cell.borrow().clone()?;
+        let Some(Answer::Gesture(gesture)) = state.read(cx).live else {
+            return None;
+        };
+        let look = crate::theme::Look::of(window, cx);
+        let side = px(crate::theme::icons::side(points));
+        let scale = window.scale_factor();
+        let image = super::gesture::raster(icon, points, f32::from(side) * scale, cx)?;
+        let s = state.read(cx);
+        let spill = look.spaced(Answer::Gesture(gesture).spill());
+        let (_, dy) = gesture.heading();
+        s.animated.set_all(2, &[f32::from(spill) * scale, dy]);
+        s.animated.set_color(4, color);
+        s.animated.set_color(8, look.accent.hsla());
+        s.animated.set_all(12, &[f32::from(side) * scale]);
+        Some(
+            AnimatedQuad::new(&GESTURE, &s.animated)
+                .image(image)
                 .absolute()
                 .top(-spill)
                 .left(-spill)

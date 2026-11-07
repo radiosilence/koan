@@ -1,0 +1,1 @@
+- **Every button answers a press.** A button's glyph moves as its verb means: queue drops onto a line, share lifts, add pops, remove squeezes away, rescan turns, back steps back. Buttons without a glyph lift when pressed, and the sidebar's queue or playlist row glows when music is sent to it.
