@@ -110,6 +110,8 @@ struct AppState {
     push: bool,
     /// Cancelled when the server stops, which ends every link.
     stop: tokio_util::sync::CancellationToken,
+    /// Every link's session, which the server waits for as it stops.
+    links: tokio_util::task::TaskTracker,
     /// An embedded server's key for the app hosting it: signs in as the first
     /// admin. See `ApiServer::host_key`.
     host_key: Option<String>,
@@ -6166,13 +6168,14 @@ async fn koan_link(
     }
     let pool = state.pool.clone();
     let stop = state.stop.clone();
+    let links = state.links.clone();
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
         expires: None,
     };
     ws.on_upgrade(move |socket| {
-        link_session(
+        links.track_future(link_session(
             socket,
             caller.username,
             lease,
@@ -6188,7 +6191,7 @@ async fn koan_link(
                 remembered,
             },
             pool,
-        )
+        ))
     })
 }
 
@@ -7024,6 +7027,7 @@ pub fn subsonic_router(
     users: Arc<PasswordVerifier>,
     profile: crate::graphql::Profile,
     stop: tokio_util::sync::CancellationToken,
+    links: tokio_util::task::TaskTracker,
     host_key: Option<String>,
 ) -> axum::Router {
     let cfg = Config::cached();
@@ -7076,6 +7080,7 @@ pub fn subsonic_router(
             _ => crate::ServerUrl::Fixed(cfg.server_url()),
         },
         stop: stop.clone(),
+        links,
         host_key,
     });
     spawn_key_publisher(state.pool.clone(), stop);
@@ -7123,6 +7128,7 @@ mod tests {
             push: false,
             server_url: crate::ServerUrl::Fixed(None),
             stop: Default::default(),
+            links: Default::default(),
             host_key: None,
         });
         (state, dir)

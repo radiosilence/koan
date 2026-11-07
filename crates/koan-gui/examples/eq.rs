@@ -55,6 +55,35 @@ const SETTINGS_H: f32 = 820.0;
 const PHONE_W: f32 = 375.0;
 const PHONE_H: f32 = 812.0;
 
+/// The EQ page on the ground its hosts give it: the Settings window's, or
+/// the phone's wash.
+struct Ground(koan_kit::app::AnyView);
+
+impl koan_kit::app::Render for Ground {
+    fn render(
+        &mut self,
+        window: &mut koan_kit::app::Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) -> impl koan_kit::app::IntoElement {
+        use koan_kit::app::{ParentElement, Styled};
+        let look = theme::Look::of(window, cx);
+        koan_kit::app::div()
+            .size_full()
+            .bg(look.palette.bg.hsla())
+            .child(self.0.clone())
+    }
+}
+
+/// `page` on its ground, as a window's root.
+fn grounded(
+    page: koan_kit::app::Entity<EqPage>,
+    window: &mut koan_kit::app::Window,
+    cx: &mut koan_kit::app::App,
+) -> koan_kit::app::Entity<koan_kit::components::Root> {
+    let ground = cx.new(|_| Ground(page.into()));
+    koan_kit::components::host(ground, window, cx)
+}
+
 /// An AutoEQ result as Equalizer APO text: what a correction looks like.
 const HD600: &str = "Preamp: -6.2 dB
 Filter 1: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70
@@ -215,7 +244,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     move |window, cx| {
                         let page =
                             cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
-                        koan_kit::components::host(page, window, cx)
+                        grounded(page, window, cx)
                     },
                 )
                 .expect("the example's window opens");
@@ -281,7 +310,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let page = cx.new(|cx| EqPage::new(dsp.clone(), Some(DEVICE.into()), window, cx));
             open_sheets(&page, &dsp, profile, sheet.as_deref(), window, cx);
-            koan_kit::components::host(page, window, cx)
+            grounded(page, window, cx)
         })?;
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(dark), window, cx)
@@ -455,7 +484,7 @@ fn drag(
         });
         graph = Some(view.read(cx).graph());
         sheets.update(cx, |s, cx| s.view(view, cx));
-        koan_kit::components::host(page, window, cx)
+        grounded(page, window, cx)
     })?;
     let graph = graph.expect("the profile page has a graph");
     cx.allow_parking();

@@ -19,7 +19,7 @@ use super::graph::{Editing, Graph, Part, Stroke};
 use super::menu::{Item, Trigger, menu};
 use super::model::{Dsp, GRAPH_RATE, SYNC_EXTENSION, joined, khz};
 use super::page::thumb;
-use super::sheet::{Confirm, Sheets, body, head, head_data, note, section};
+use super::sheet::{Confirm, Sheets, body, content, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{
     Badge, Button, ButtonKind, Clear, FormRow, ScrollArea, SectionHeader, Segmented, TextField,
@@ -131,24 +131,16 @@ impl Render for ProfilePage {
                 .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.close(me, cx)));
             head_data(name, vec![done.into_any_element()], &look).into_any_element()
         };
-        // A definite height, so the cached body has one to lay out in; on
-        // a phone no taller than the sheet's panel may be over the keyboard.
-        let viewport = window.viewport_size().height;
-        let mut height = viewport * 0.8;
-        let mut keyboard = false;
-        if look.touch {
-            let clear = system_insets(Clear::Keyboard, window);
-            keyboard = clear.bottom > system_insets(Clear::System, window).bottom;
-            let room =
-                viewport - clear.top - clear.bottom - look.space(Space::L) - look.space(Space::S);
-            height = height.min(room * 0.85);
-        }
+        // A definite height, so the cached body has one to lay out in: on
+        // the desktop most of the window, on a phone the whole of the
+        // sheet's screen, which stops at the keyboard.
+        let keyboard = look.touch
+            && system_insets(Clear::Keyboard, window).bottom
+                > system_insets(Clear::System, window).bottom;
         let frame = self.frame(look.touch, keyboard, window, cx);
-        div()
-            .flex()
-            .flex_col()
+        content()
             .w_full()
-            .h(height)
+            .when(!look.touch, |d| d.h(window.viewport_size().height * 0.8))
             .child(head)
             .when(!curve, |d| {
                 // The frame's margins fold away with its last quarter.

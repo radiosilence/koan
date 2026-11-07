@@ -14,7 +14,7 @@ use koan_runtime::{
 
 use super::graph::{Graph, Shown};
 use super::model::{Dsp, describe};
-use super::sheet::{Confirm, Sheets, body, choice_row, head, head_data, note, section};
+use super::sheet::{Confirm, Sheets, body, choice_row, content, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{Button, ButtonKind, EmptyState, FormRow, Segmented, TextField};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -318,9 +318,7 @@ impl Render for AutoEqSearch {
                 rows.push(self.entry_row(i, e, &look, cx));
             }
         }
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head("AutoEQ", vec![cancel.into_any_element()], &look))
             .child(
                 body("autoeq-body", &look)
@@ -1061,9 +1059,7 @@ impl Render for MeasurementFlow {
             );
         }
         let steps = self.step_body(window, cx);
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head(self.step.title(), actions, &look))
             .child(
                 body("measure-body", &look)
@@ -1390,9 +1386,7 @@ impl Render for SplitFlow {
             )
             .into_any_element(),
         );
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head_data(
                 format!("{} {name}", label("Split")),
                 vec![cancel.into_any_element(), go.into_any_element()],
