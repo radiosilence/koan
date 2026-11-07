@@ -53,6 +53,7 @@ pub struct ProgressBar {
     id: ElementId,
     fraction: Option<f32>,
     glide: Option<super::Glide>,
+    thin: bool,
 }
 
 impl ProgressBar {
@@ -61,7 +62,14 @@ impl ProgressBar {
             id: id.into(),
             fraction,
             glide: None,
+            thin: false,
         }
+    }
+
+    /// A hairline high, as an edge it draws along: the mini player's top.
+    pub fn thin(mut self) -> Self {
+        self.thin = true;
+        self
     }
 
     /// Filled to `glide`'s value as it moves, on the GPU, where the renderer
@@ -77,15 +85,20 @@ impl RenderOnce for ProgressBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let accent = look.color(crate::theme::Tone::Accent);
+        let height = if self.thin {
+            f32::from(look.hairline)
+        } else {
+            BAR
+        };
         let track = div()
             .w_full()
-            .h(px(BAR))
+            .h(px(height))
             .bg(look.palette.rule.hsla())
             .relative()
             .overflow_hidden();
         if let Some(glide) = self.glide.filter(|_| SHADED) {
             return track
-                .child(super::slider::glide_fill(glide, accent, BAR))
+                .child(super::slider::glide_fill(glide, accent, height))
                 .into_any_element();
         }
         match self.fraction {
@@ -153,6 +166,7 @@ pub struct ProgressRow {
     detail: Option<SharedString>,
     fraction: Option<f32>,
     on_stop: Option<Handler<ClickEvent>>,
+    flush: bool,
 }
 
 impl ProgressRow {
@@ -165,7 +179,14 @@ impl ProgressRow {
             detail: None,
             fraction: None,
             on_stop: None,
+            flush: false,
         }
+    }
+
+    /// No padding of its own, for a container that pads it (a card).
+    pub fn flush(mut self, flush: bool) -> Self {
+        self.flush = flush;
+        self
     }
 
     /// How far it has come, in its own units ("1,204 of 5,000 files").
@@ -257,13 +278,34 @@ impl RenderOnce for ProgressRow {
         .flex()
         .flex_col()
         .gap(look.spaced(3.0))
-        .px(look.space(Space::L))
-        .pt(look.space(Space::S))
-        .pb(look.space(Space::M))
-        .child(line(self.title, TypeRole::Fine, muted))
-        .children(
-            self.counts
-                .map(|c| line(c, TypeRole::Meta, muted.opacity(0.7))),
+        .when(!self.flush, |d| {
+            d.px(look.space(Space::L))
+                .pt(look.space(Space::S))
+                .pb(look.space(Space::M))
+        })
+        // The title, and the counts at its end: one line whether or not a
+        // count is known yet, so the row does not jump when one arrives.
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_baseline()
+                .gap(look.space(Space::S))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(line(self.title, TypeRole::Fine, muted)),
+                )
+                .children(self.counts.map(|c| {
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_role(TypeRole::Fine, &look)
+                        .text_color(muted.opacity(0.7))
+                        .child(c)
+                })),
         )
         .child(
             div()

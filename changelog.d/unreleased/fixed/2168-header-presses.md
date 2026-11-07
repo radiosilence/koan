@@ -1,0 +1,1 @@
+- **Every header press answers.** A record or artist page's play lifts and its shuffle crosses its arrows when pressed, on the phone as on the desktop; the phone's record heart pops as hearts do elsewhere. The phone's mini player sits on a solid ground under a hairline playhead; only the bar at the top is frosted.

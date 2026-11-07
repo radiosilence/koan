@@ -1,36 +1,34 @@
 //! What a profile or a device's chain does to the sound, drawn on a
-//! log-frequency axis on the GPU, and for an EQ that can be edited, the
-//! editor: a band's handle dragged for frequency and gain, option-dragged
-//! for Q, a graphic curve painted with a brush.
+//! log-frequency axis by koan-kit's `Chart`, and for an EQ that can be
+//! edited, the editor: a band's handle dragged for frequency and gain,
+//! option-dragged for Q, a graphic curve painted with a brush.
 //!
-//! Every curve comes from the core; this draws them. Each curve's path is
-//! tessellated once, at the plot's origin, when the curve, the plot's size
-//! or the scale changes, and moved into place as it is painted. A drag moves
-//! its handle at once and asks the core for a preview, one at a time and
-//! always the newest; when it arrives only the curves it changed are built
-//! again.
+//! Every curve comes from the core; this hands the chart the core's values
+//! at the core's frequencies, and the chart draws them on the GPU, easing
+//! from one response to the next. A drag moves its handle at once and asks
+//! the core for a preview, one at a time and always the newest.
 //!
 //! The EQ view is drawn at the level the profile plays at: its curves moved
 //! by the preamp, a dashed rule at the preamp and any flat gain, and the
 //! plot centred there, so two profiles of one shape draw alike however each
 //! states its gain.
 
-use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_kit::app::*;
+use koan_kit::components::{
+    Axis, Base, Chart, ChartDrag, ChartPoint, DataMotion, Legend, PointPlaces, Rule, Series,
+    Swatch, Ticks,
+};
 use koan_runtime::{DspBand, DspBrush, DspPoint, DspResponse};
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::{DispatchPhase, Path, PathBuilder, canvas, fill};
-// text measured or shaped at runtime.
-use koan_kit::raw::{Font, FontWeight, TextRun, font};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, TextAlign, point, px, size};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
-use crate::theme::{FONT_FAMILY, KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent};
+use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent};
+// a stroke's colour, and the default height, given to the chart.
+use koan_kit::raw::{Hsla, px};
 
 /// How a curve is drawn, the same in its stage's block and on the graph.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -152,6 +150,11 @@ pub struct Graph {
     flat_note: Option<SharedString>,
     shown: Shown,
     height: Pixels,
+    /// The chart takes the height its frame leaves, rather than `height`.
+    fills: bool,
+    /// The curves alone, with no legend, switch or brushes: a frame folded
+    /// small.
+    compact: bool,
     editing: Option<Editing>,
     pub brush: DspBrush,
     edit: Edit,
@@ -161,30 +164,16 @@ pub struct Graph {
     previewing: bool,
     /// Filters read again while a drag was held, applied once it ends.
     queued: Option<Option<Editing>>,
-    cache: Rc<RefCell<Cache>>,
+    /// Where each handle was last laid out, in the window.
+    places: PointPlaces,
     _subscriptions: Vec<Subscription>,
 }
 
-/// One frequency's place on the axis.
-fn x_of(hz: f64, width: f32) -> f32 {
-    ((hz.clamp(20.0, 20_000.0) / 20.0).log10() / 3.0) as f32 * width
-}
-
-fn hz_at(x: f32, width: f32) -> f64 {
-    20.0 * 10f64.powf(3.0 * (x / width).clamp(0.0, 1.0) as f64)
-}
-
-const HZ_TICKS: [f64; 10] = [
-    20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0,
-];
-
-/// The left margin for the dB labels, and the foot for the Hz labels.
-const AXIS_W: f32 = 30.0;
-const AXIS_H: f32 = 16.0;
-/// A handle's radius, and how near the pointer must come to take it.
+/// A handle's radius, and its radius while held.
 const HANDLE: f32 = 4.0;
 const HANDLE_HELD: f32 = 6.0;
-const REACH: f32 = 24.0;
+/// How long a curve takes to reach a new response.
+const SETTLE: Duration = Duration::from_millis(150);
 /// How often a drag's edit is saved, and so played, while it goes on.
 const SAVE_EVERY: Duration = Duration::from_millis(250);
 /// A drag away from every handle paints only once it has travelled this
@@ -211,13 +200,15 @@ impl Graph {
             parts: Vec::new(),
             flat_note: None,
             height: px(220.0),
+            fills: false,
+            compact: false,
             editing: None,
             brush: DspBrush::Narrow,
             edit: Edit::Idle,
             painted: None,
             previewing: false,
             queued: None,
-            cache: Rc::new(RefCell::new(Cache::default())),
+            places: PointPlaces::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -253,6 +244,20 @@ impl Graph {
     pub fn height(mut self, height: Pixels) -> Self {
         self.height = height;
         self
+    }
+
+    /// The chart as tall as its frame leaves it, so a frame that folds
+    /// carries the curves with it.
+    pub fn fills(mut self) -> Self {
+        self.fills = true;
+        self
+    }
+
+    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
+        if self.compact != compact {
+            self.compact = compact;
+            cx.notify();
+        }
     }
 
     /// A response read as the `Dsp` stood at `stamp`. While an edit is under
@@ -307,11 +312,10 @@ impl Graph {
     /// Where band `index`'s handle was last drawn, in the window: for a
     /// test or a measurement to press on.
     pub fn handle_position(&self, index: usize) -> Option<Point<Pixels>> {
-        self.cache
+        self.places
             .borrow()
-            .handles
             .iter()
-            .find(|(i, _)| *i == index)
+            .find(|(i, _)| *i == index as u64)
             .map(|(_, p)| *p)
     }
 
@@ -552,198 +556,117 @@ impl Curve {
     }
 }
 
-/// Paths built at the plot's origin, relative to the level the curves sit
-/// at, kept while their curve, the plot's size, the scale and the range
-/// around the level are unchanged: a preamp that moves with an edit moves
-/// the level and nothing else, so it rebuilds nothing.
-#[derive(Default)]
-struct Cache {
-    plot: Option<(Size, f32, (f64, f64), usize)>,
-    paths: Vec<(Curve, Option<Rc<Path<Pixels>>>)>,
-    /// Where each handle was last drawn, in the window.
-    handles: Vec<(usize, Point<Pixels>)>,
-}
-
-type Size = koan_kit::app::Size<Pixels>;
-
-/// A curve's path and how it is drawn.
-type Drawn = (Option<Stroke>, Rc<Path<Pixels>>);
-
-impl Cache {
-    fn paths(
-        &mut self,
-        curves: Vec<Curve>,
-        freqs: &[f64],
-        plot: Size,
-        scale: f32,
-        (lo, hi): (f64, f64),
-        level: f64,
-    ) -> Vec<Drawn> {
-        let domain = (lo - level, hi - level);
-        let key = (plot, scale, domain, freqs.len());
-        if self.plot != Some(key) {
-            self.plot = Some(key);
-            self.paths.clear();
-        }
-        let mut kept = std::mem::take(&mut self.paths);
-        self.paths = curves
-            .into_iter()
-            .map(|mut curve| {
-                curve.shift -= level;
-                if let Some(at) = kept.iter().position(|(c, _)| c == &curve) {
-                    return kept.swap_remove(at);
-                }
-                let path = build(&curve, freqs, plot, domain).map(Rc::new);
-                (curve, path)
-            })
-            .collect();
-        self.paths
-            .iter()
-            .filter_map(|(c, p)| p.clone().map(|p| (c.stroke, p)))
-            .collect()
-    }
-}
-
-fn y_of(db: f64, height: f32, (lo, hi): (f64, f64)) -> f32 {
-    ((hi - db) / (hi - lo)) as f32 * height
-}
-
-fn build(curve: &Curve, freqs: &[f64], plot: Size, domain: (f64, f64)) -> Option<Path<Pixels>> {
-    let (w, h) = (f32::from(plot.width), f32::from(plot.height));
-    let n = curve.db.len().min(freqs.len());
-    if n < 2 {
-        return None;
-    }
-    let at = |i: usize, db: f64| point(px(x_of(freqs[i], w)), px(y_of(db, h, domain)));
-    match curve.stroke {
-        Some(stroke) => {
-            let mut b = PathBuilder::stroke(px(stroke.width));
-            if !stroke.dash.is_empty() {
-                let dash: Vec<Pixels> = stroke.dash.iter().map(|d| px(*d)).collect();
-                b = b.dash_array(&dash);
-            }
-            b.move_to(at(0, curve.db[0] + curve.shift));
-            for i in 1..n {
-                b.line_to(at(i, curve.db[i] + curve.shift));
-            }
-            b.build().ok()
-        }
-        None => {
-            let mut b = PathBuilder::fill();
-            b.move_to(at(0, curve.shift));
-            for i in 0..n {
-                b.line_to(at(i, curve.shift + curve.db[i]));
-            }
-            b.line_to(at(n - 1, curve.shift));
-            b.close();
-            b.build().ok()
-        }
-    }
-}
-
-/// A path built at the origin, moved to `by`.
-fn moved(path: &Path<Pixels>, by: Point<Pixels>) -> Path<Pixels> {
-    let mut p = path.clone();
-    p.bounds.origin += by;
-    for v in &mut p.vertices {
-        v.xy_position += by;
-    }
-    p
-}
-
-/// What prepaint hands paint.
-struct Frame {
-    plot: Bounds<Pixels>,
-    domain: (f64, f64),
-    level: f64,
-    paths: Vec<Drawn>,
-    // painted and hit-tested by hand: drawing koan-kit has no component for.
-    hitbox: koan_kit::raw::Hitbox,
-    handles: Vec<Handle>,
-    held: Option<usize>,
-    showing_eq: bool,
-}
+const HZ: (f64, f64) = (20.0, 20_000.0);
 
 impl Render for Graph {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let response = self.shown_response().clone();
-        let handles = if self.showing_eq() {
+        let showing_eq = self.showing_eq();
+        let handles = if showing_eq {
             self.handles(cx)
         } else {
             Vec::new()
         };
         let curves = self.curves(&response);
-        let domain = self.domain(&response, &curves, &handles);
+        let (lo, hi) = self.domain(&response, &curves, &handles);
         let level = self.level(&response);
         let held = match &self.edit {
             Edit::Dragging(d) if matches!(d.kind, Grab::Band { .. }) => Some(d.index),
             _ => None,
         };
-        let showing_eq = self.showing_eq();
-        let cache = self.cache.clone();
-        let this = cx.weak_entity();
         let editable = self.editing.is_some() && showing_eq;
-        let height = self.height;
         let measured = self.measured();
         let shown = self.shown;
 
-        let chart = canvas(
-            {
-                let response = response.clone();
-                move |bounds, window, _cx| {
-                    let plot = Bounds::new(
-                        bounds.origin + point(px(AXIS_W), px(0.0)),
-                        size(
-                            bounds.size.width - px(AXIS_W),
-                            bounds.size.height - px(AXIS_H),
+        let freqs: Arc<[f64]> = response.freqs.clone().into();
+        let muted = look.palette.muted.hsla();
+        let series = curves.into_iter().map(|c| {
+            let id = SharedString::from(format!("{}:{}", c.slot.0, c.slot.1));
+            let db: Vec<f64> = c.db.iter().map(|v| v + c.shift).collect();
+            match c.stroke {
+                Some(stroke) => Series::line(id, freqs.clone(), db)
+                    .width(stroke.width)
+                    .dash(stroke.dash)
+                    .color(stroke.color(&look)),
+                None => Series::area(id, freqs.clone(), db)
+                    .base(Base::Level(c.shift))
+                    .color(muted.opacity(0.15)),
+            }
+            .motion(DataMotion::Ease(SETTLE))
+        });
+        let mut rules = Vec::new();
+        if showing_eq {
+            // No change, and the level the curves sit at.
+            rules.push(Rule::horizontal("zero", 0.0));
+            if level.abs() >= 0.05 {
+                rules.push(
+                    Rule::horizontal("level", level)
+                        .color(muted)
+                        .width(1.0)
+                        .dash(&[4.0, 3.0])
+                        .label(
+                            format!("{} {}", label("Preamp"), db_label(level)),
+                            level < 0.0,
                         ),
-                    );
-                    let geometry = Geometry {
-                        plot,
-                        domain,
-                        level,
-                    };
-                    cache.borrow_mut().handles =
-                        handles.iter().map(|h| (h.index, geometry.at(h))).collect();
-                    let paths = cache.borrow_mut().paths(
-                        curves,
-                        &response.freqs,
-                        plot.size,
-                        window.scale_factor(),
-                        domain,
-                        level,
-                    );
-                    // painted and hit-tested by hand: drawing koan-kit has no component for.
-                    let hitbox = window.insert_hitbox(plot, koan_kit::raw::HitboxBehavior::Normal);
-                    Frame {
-                        plot,
-                        domain,
-                        level,
-                        paths,
-                        hitbox,
-                        handles,
-                        held,
-                        showing_eq,
-                    }
-                }
-            },
-            move |bounds, frame, window, cx| {
-                paint_chart(bounds, &frame, &look, window, cx);
-                if editable {
-                    listen(this, &frame, window);
-                }
-            },
+                );
+            }
+        }
+        let bounds = self.editing.as_ref().map(|e| e.dsp.read(cx).bounds.clone());
+        let points = handles.iter().map(|h| {
+            let point = ChartPoint::new(h.index as u64, h.hz, level + h.db)
+                .radius(HANDLE, HANDLE_HELD)
+                .held(held == Some(h.index));
+            match &bounds {
+                Some(b) => point.ranges((b.hz_min, b.hz_max), (b.db_min + level, b.db_max + level)),
+                None => point,
+            }
+        });
+        let stride = if hi - lo > 30.0 { 10.0 } else { 6.0 };
+        let chart = Chart::new(
+            "eq-graph",
+            Axis::log(HZ.0, HZ.1).format(hz_label),
+            Axis::linear(lo, hi)
+                .ticks(Ticks::Every(stride))
+                .format(|db| format!("{}", db.round() as i64).replace('-', "−")),
         )
-        .w_full()
-        .h(height);
+        .series(series)
+        .rules(rules)
+        .points(points)
+        .report_points(self.places.clone());
+        let mut chart = if self.fills {
+            chart.fill()
+        } else {
+            chart.height(self.height)
+        };
+        if editable {
+            let this = cx.weak_entity();
+            let press = this.clone();
+            let step = this.clone();
+            chart = chart
+                .on_press(move |d, _, cx| {
+                    press
+                        .update(cx, |g, cx| {
+                            g.grab(d.point.map(|i| i as usize), d.position, cx)
+                        })
+                        .ok();
+                })
+                .on_step(move |d, _, cx| {
+                    step.update(cx, |g, cx| g.step(d, cx)).ok();
+                })
+                .on_release(move |_, _, cx| {
+                    this.update(cx, |g, cx| g.let_go(cx)).ok();
+                });
+        }
 
+        let compact = self.compact;
         div()
             .flex()
             .flex_col()
             .w_full()
+            .when(self.fills, |d| d.h_full())
             .gap(look.space(Space::M))
-            .when(measured, |d| {
+            .when(measured && !compact, |d| {
                 d.child(
                     Segmented::new(
                         "graph-shown",
@@ -765,8 +688,9 @@ impl Render for Graph {
             .child(
                 div()
                     .relative()
+                    .when(self.fills, |d| d.flex().flex_col().flex_1().min_h_0())
                     .child(chart)
-                    .children(self.flat_note.clone().map(|note| {
+                    .children(self.flat_note.clone().filter(|_| !compact).map(|note| {
                         div()
                             .absolute()
                             .top(look.space(Space::Xl))
@@ -779,10 +703,11 @@ impl Render for Graph {
                             .child(label(note))
                     })),
             )
-            .child(self.legend(&response, &look))
-            .when(self.curve_index().is_some() && showing_eq, |d| {
-                d.child(self.brushes(cx))
-            })
+            .when(!compact, |d| d.child(self.legend(&response, &look)))
+            .when(
+                self.curve_index().is_some() && showing_eq && !compact,
+                |d| d.child(self.brushes(cx)),
+            )
     }
 }
 
@@ -857,20 +782,11 @@ impl Graph {
             label("Preamp"),
             db_label(r.preamp_db + self.gain(r))
         );
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(look.space(Space::M))
-            .text_role(TypeRole::Fine, look)
-            .text_color(look.text_color(Tone::Muted))
-            .children(keys.into_iter().map(|(name, stroke, thin)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(5.0))
-                    .child(swatch(stroke, thin, look))
-                    .child(name)
-            }))
+        keys.into_iter()
+            .fold(Legend::new(), |legend, (name, stroke, thin)| {
+                let swatch = Swatch::line(stroke.color(look)).dashed(!stroke.dash.is_empty());
+                legend.key(name, if thin { swatch.thin() } else { swatch })
+            })
             .child(preamp)
     }
 
@@ -893,20 +809,6 @@ impl Graph {
     }
 }
 
-/// A key's line: the stroke as drawn, short.
-fn swatch(stroke: Stroke, thin: bool, look: &Look) -> impl IntoElement {
-    let color = stroke.color(look);
-    let height = if thin { look.hairline } else { px(2.0) };
-    if stroke.dash.is_empty() {
-        return div().w(px(14.0)).h(height).bg(color).into_any_element();
-    }
-    div()
-        .flex()
-        .gap(px(2.0))
-        .children((0..3).map(move |_| div().w(px(3.0)).h(height).bg(color)))
-        .into_any_element()
-}
-
 pub fn db_label(db: f64) -> String {
     if db.abs() < 0.05 {
         "0.0 dB".into()
@@ -923,301 +825,22 @@ fn hz_label(hz: f64) -> String {
     }
 }
 
-fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Window, cx: &mut App) {
-    let plot = f.plot;
-    let (w, h) = (f32::from(plot.size.width), f32::from(plot.size.height));
-    let rule = look.palette.rule.hsla();
-    let muted = look.palette.muted.hsla();
-    let text = look.text_color(Tone::Muted);
-    let font_size = look.font_size(TypeRole::Fine);
-    let line_height = look.line_height(TypeRole::Fine);
-    let mono = Font {
-        weight: FontWeight::NORMAL,
-        ..font(FONT_FAMILY)
-    };
-    let label_at = |s: String,
-                    origin: Point<Pixels>,
-                    align: TextAlign,
-                    width: Pixels,
-                    window: &mut Window,
-                    cx: &mut App| {
-        let run = TextRun {
-            len: s.len(),
-            font: mono.clone(),
-            color: text,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let line = window
-            .text_system()
-            .shape_line(s.into(), font_size, &[run], None);
-        line.paint(origin, line_height, align, Some(width), window, cx)
-            .ok();
-    };
-
-    // The grid: a line at each tick, and the axes' labels. A label is left
-    // out where it would run into the one before, as on a phone's narrow
-    // graph, where each is also kept inside the plot's width.
-    let mut labelled_to: Option<Pixels> = None;
-    for hz in HZ_TICKS {
-        let x = plot.origin.x + px(x_of(hz, w));
-        window.paint_quad(fill(
-            Bounds::new(
-                point(x, plot.origin.y),
-                size(look.hairline, plot.size.height),
-            ),
-            rule.opacity(0.5),
-        ));
-        let tick = hz_label(hz);
-        let width = window
-            .text_system()
-            .shape_line(
-                tick.clone().into(),
-                font_size,
-                &[TextRun {
-                    len: tick.len(),
-                    font: mono.clone(),
-                    color: text,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-                None,
-            )
-            .width;
-        let centred = f32::from(x - width / 2.0);
-        let left = Pixels::from(if look.touch {
-            centred
-                .min(f32::from(plot.origin.x + plot.size.width - width))
-                .max(f32::from(plot.origin.x))
-        } else {
-            centred
-        });
-        if labelled_to.is_some_and(|to| left < to + look.space(Space::S)) {
-            continue;
-        }
-        labelled_to = Some(left + width);
-        label_at(
-            tick,
-            point(left, plot.origin.y + plot.size.height + px(2.0)),
-            TextAlign::Left,
-            width + look.hairline,
-            window,
-            cx,
-        );
-    }
-    let (lo, hi) = f.domain;
-    let stride = if hi - lo > 30.0 { 10.0 } else { 6.0 };
-    let mut db = (lo / stride).ceil() * stride;
-    while db <= hi + 1e-9 {
-        let y = plot.origin.y + px(y_of(db, h, f.domain));
-        window.paint_quad(fill(
-            Bounds::new(
-                point(plot.origin.x, y),
-                size(plot.size.width, look.hairline),
-            ),
-            rule.opacity(0.5),
-        ));
-        label_at(
-            format!("{}", db.round() as i64),
-            point(bounds.origin.x, y - line_height / 2.0),
-            TextAlign::Right,
-            px(AXIS_W - 6.0),
-            window,
-            cx,
-        );
-        db += stride;
-    }
-
-    if f.showing_eq {
-        // No change, and the level the curves sit at.
-        let zero = plot.origin.y + px(y_of(0.0, h, f.domain));
-        window.paint_quad(fill(
-            Bounds::new(
-                point(plot.origin.x, zero),
-                size(plot.size.width, look.hairline),
-            ),
-            rule,
-        ));
-        if f.level.abs() >= 0.05 {
-            let y = px(y_of(f.level, h, f.domain));
-            let mut b = PathBuilder::stroke(px(1.0)).dash_array(&[px(4.0), px(3.0)]);
-            b.move_to(point(px(0.0), y));
-            b.line_to(point(plot.size.width, y));
-            if let Ok(path) = b.build() {
-                window.paint_path(moved(&path, plot.origin), muted);
-            }
-            label_at(
-                format!("{} {}", label("Preamp"), db_label(f.level)),
-                point(
-                    plot.origin.x + px(4.0),
-                    plot.origin.y
-                        + y
-                        + if f.level < 0.0 {
-                            px(2.0)
-                        } else {
-                            -line_height - px(2.0)
-                        },
-                ),
-                TextAlign::Left,
-                plot.size.width,
-                window,
-                cx,
-            );
-        }
-    }
-
-    window.with_content_mask(
-        // painted and hit-tested by hand: drawing koan-kit has no component for.
-        Some(koan_kit::raw::ContentMask { bounds: plot }),
-        |window| {
-            for (stroke, path) in &f.paths {
-                let color = match stroke {
-                    Some(stroke) => stroke.color(look),
-                    None => muted.opacity(0.15),
-                };
-                window.paint_path(moved(path, plot.origin), color);
-            }
-        },
-    );
-
-    let accent = look.accent.hsla();
-    for handle in &f.handles {
-        let r = if f.held == Some(handle.index) {
-            HANDLE_HELD
-        } else {
-            HANDLE
-        };
-        let c = point(
-            plot.origin.x + px(x_of(handle.hz, w)),
-            plot.origin.y + px(y_of(f.level + handle.db, h, f.domain)),
-        );
-        window.paint_quad(
-            fill(
-                Bounds::new(c - point(px(r), px(r)), size(px(2.0 * r), px(2.0 * r))),
-                accent,
-            )
-            .corner_radii(px(r)),
-        );
-    }
-}
-
-/// The drag's listeners, live while the graph is painted: a press on the
-/// plot starts one; moves and the release are heard wherever the pointer
-/// is, so a drag let go outside the graph still ends.
-fn listen(this: WeakEntity<Graph>, f: &Frame, window: &mut Window) {
-    let plot = f.plot;
-    let (domain, level) = (f.domain, f.level);
-    let handles = f.handles.clone();
-    let hitbox = f.hitbox.clone();
-    let geometry = Geometry {
-        plot,
-        domain,
-        level,
-    };
-    {
-        let this = this.clone();
-        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble
-                || e.button != MouseButton::Left
-                || !hitbox.is_hovered(window)
-            {
-                return;
-            }
-            let near = nearest(&handles, e.position, &geometry);
-            this.update(cx, |g, cx| g.grab(near, e.position, cx)).ok();
-        });
-    }
-    {
-        let this = this.clone();
-        window.on_mouse_event(move |e: &MouseMoveEvent, phase, _window, cx| {
-            if phase != DispatchPhase::Bubble {
-                return;
-            }
-            this.update(cx, |g, cx| {
-                if matches!(g.edit, Edit::Dragging(_)) {
-                    if e.pressed_button != Some(MouseButton::Left) {
-                        g.let_go(cx);
-                    } else {
-                        g.step(e.position, e.modifiers, &geometry, cx);
-                    }
-                }
-            })
-            .ok();
-        });
-    }
-    window.on_mouse_event(move |e: &MouseUpEvent, phase, _window, cx| {
-        if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
-            return;
-        }
-        this.update(cx, |g, cx| g.let_go(cx)).ok();
-    });
-}
-
-#[derive(Clone, Copy)]
-struct Geometry {
-    plot: Bounds<Pixels>,
-    domain: (f64, f64),
-    level: f64,
-}
-
-impl Geometry {
-    fn at(&self, h: &Handle) -> Point<Pixels> {
-        let (w, ht) = (
-            f32::from(self.plot.size.width),
-            f32::from(self.plot.size.height),
-        );
-        point(
-            self.plot.origin.x + px(x_of(h.hz, w)),
-            self.plot.origin.y + px(y_of(self.level + h.db, ht, self.domain)),
-        )
-    }
-
-    /// The frequency and the gain under `p`, as a band adds them to the
-    /// level.
-    fn value(&self, p: Point<Pixels>) -> (f64, f64) {
-        let (w, ht) = (
-            f32::from(self.plot.size.width),
-            f32::from(self.plot.size.height),
-        );
-        let x = f32::from(p.x - self.plot.origin.x);
-        let y = f32::from(p.y - self.plot.origin.y).clamp(0.0, ht);
-        let (lo, hi) = self.domain;
-        let db = hi - (y / ht) as f64 * (hi - lo);
-        (hz_at(x, w), db - self.level)
-    }
-}
-
-fn nearest(handles: &[Handle], p: Point<Pixels>, g: &Geometry) -> Option<Handle> {
-    handles
-        .iter()
-        .map(|h| {
-            let at = g.at(h);
-            let (dx, dy) = (f32::from(at.x - p.x), f32::from(at.y - p.y));
-            (*h, (dx * dx + dy * dy).sqrt())
-        })
-        .filter(|(_, d)| *d < REACH)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(h, _)| h)
-}
-
 impl Graph {
     /// A press on the plot: the handle under it, or the start of a stroke
     /// where there is a curve to paint. Nothing starts while the last edit
     /// is still being saved.
-    fn grab(&mut self, near: Option<Handle>, at: Point<Pixels>, cx: &mut Context<Self>) {
+    fn grab(&mut self, near: Option<usize>, at: Point<Pixels>, cx: &mut Context<Self>) {
         if matches!(self.edit, Edit::Dragging(_) | Edit::Settling(_)) {
             return;
         }
         let Some(e) = &self.editing else { return };
         let (index, kind) = match near {
-            Some(h) => {
-                let Some(band) = e.bands.get(h.index) else {
+            Some(index) => {
+                let Some(band) = e.bands.get(index) else {
                     return;
                 };
                 (
-                    h.index,
+                    index,
                     Grab::Band {
                         kind: band.kind.clone(),
                     },
@@ -1248,21 +871,17 @@ impl Graph {
     /// once and previewed, and saved if a quarter second has passed since
     /// the last save. A drag held still saves nothing until it moves again
     /// or is let go.
-    fn step(
-        &mut self,
-        at: Point<Pixels>,
-        modifiers: Modifiers,
-        g: &Geometry,
-        cx: &mut Context<Self>,
-    ) {
+    fn step(&mut self, d: &ChartDrag, cx: &mut Context<Self>) {
+        let (at, modifiers) = (d.position, d.modifiers);
         let Some(e) = self.editing.clone() else {
             return;
         };
+        let level = self.level(&self.shown_response().clone());
         let Edit::Dragging(drag) = &mut self.edit else {
             return;
         };
         let bounds = e.dsp.read(cx).bounds.clone();
-        let (hz, db) = g.value(at);
+        let (hz, db) = (d.x, d.y - level);
         let (hz, db) = (
             hz.clamp(bounds.hz_min, bounds.hz_max),
             db.clamp(bounds.db_min, bounds.db_max),
@@ -1487,16 +1106,6 @@ fn same_step(a: &Commit, b: &Commit) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_axis_is_logarithmic_from_20_hz_to_20_khz() {
-        assert_eq!(x_of(20.0, 300.0), 0.0);
-        assert!((x_of(20_000.0, 300.0) - 300.0).abs() < 1e-3);
-        assert!((x_of(632.455_5, 300.0) - 150.0).abs() < 1e-2);
-        for hz in [25.0, 440.0, 9000.0] {
-            assert!((hz_at(x_of(hz, 300.0), 300.0) - hz).abs() / hz < 1e-5);
-        }
-    }
 
     #[test]
     fn labels_say_the_level_and_the_tick() {

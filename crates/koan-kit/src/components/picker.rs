@@ -100,6 +100,11 @@ impl RenderOnce for Picker {
 
         let toggle = open.clone();
         let (pointer, lit) = super::hover_fill(&self.id, &look, window, cx);
+        // A press lifts the bordered ground, as a bordered button's does,
+        // before the panel opens under it.
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let lifted = answers.layer(window, cx);
+        let accent = look.accent.hsla();
         // A combo box to a screen reader: what is chosen is its value, and
         // a click opens it as the pointer's does.
         let mut picker = accessible(
@@ -143,13 +148,17 @@ impl RenderOnce for Picker {
             KoanIcon::new(Icon::Choose)
                 .role(TypeRole::Control)
                 .color(color),
-        );
+        )
+        .children(lifted);
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
             let opens: Handler<gpui::ClickEvent> = {
                 let toggle = open.clone();
+                let answers = answers.clone();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 std::sync::Arc::new(move |_, _, cx| {
+                    answers.start(super::Answer::Lift, accent, cx);
                     toggle.update(cx, |open, cx| {
                         *open = true;
                         cx.notify();
@@ -162,6 +171,7 @@ impl RenderOnce for Picker {
                 // Opens only: a click on the picker while the panel is up
                 // lands outside the panel, which closes it.
                 .on_click(move |_, _, cx| {
+                    answers.start(super::Answer::Lift, accent, cx);
                     toggle.update(cx, |open, cx| {
                         *open = true;
                         cx.notify();

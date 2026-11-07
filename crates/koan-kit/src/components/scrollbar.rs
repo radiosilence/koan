@@ -251,12 +251,12 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
         let touch = Look::of(window, cx).touch;
         let edge = if touch { FINGER_EDGE } else { EDGE };
         let below = if self.under_bar {
-            super::bar_inset(cx)
+            super::bar_inset(window, cx)
         } else {
             px(0.0)
         };
         let above = if self.under_foot {
-            super::foot_inset(cx)
+            super::foot_inset(window, cx)
         } else {
             px(0.0)
         };
@@ -267,6 +267,15 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
         let max = self.source.max_offset();
         let offset = -self.source.offset().y;
         let content = bounds.size.height + max;
+        // Content passing under what is drawn over the page frosts it.
+        if self.under_bar || self.under_foot {
+            super::report_scroll_edges(
+                self.under_bar && offset > px(0.5),
+                self.under_foot && offset < max - px(0.5),
+                window,
+                cx,
+            );
+        }
         if max <= px(0.5) || bounds.size.height <= px(0.0) {
             bar.borrow_mut().drawn = Some(offset);
             return Prepaint {

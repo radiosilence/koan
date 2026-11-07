@@ -124,6 +124,7 @@ pub struct RowList {
     name: Option<SharedString>,
     under_bar: bool,
     under_foot: bool,
+    follow: Option<super::CursorSpot>,
 }
 
 /// Makes the item leading the rows.
@@ -142,12 +143,13 @@ impl RowList {
             name: None,
             under_bar: false,
             under_foot: false,
+            follow: None,
         }
     }
 
-    /// An item before the rows that scrolls with them: a page's header, on a
-    /// phone, where a header held above the list leaves it too little of the
-    /// screen. The state must have been told (`RowListState::set_lead`).
+    /// An item before the rows that scrolls with them: a page's header,
+    /// which then passes under the bar with the rows rather than holding
+    /// them below a line. The state must have been told (`RowListState::set_lead`).
     pub fn lead(mut self, lead: impl FnMut(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
         self.lead = Some(Box::new(lead));
         self
@@ -170,6 +172,13 @@ impl RowList {
         self
     }
 
+    /// Holds the keyboard cursor at `spot` clear of the bar and the foot the
+    /// rows pass under as the keys move it (`keep_clear`).
+    pub fn follow(mut self, spot: &super::CursorSpot) -> Self {
+        self.follow = Some(spot.clone());
+        self
+    }
+
     /// What the list is of, for a screen reader: "queue", a playlist's name.
     pub fn named(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
@@ -178,14 +187,14 @@ impl RowList {
 }
 
 impl RenderOnce for RowList {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let under_bar = if self.under_bar {
-            super::bar_inset(cx)
+            super::bar_inset(window, cx)
         } else {
             Pixels::ZERO
         };
         let under_foot = if self.under_foot {
-            super::foot_inset(cx)
+            super::foot_inset(window, cx)
         } else {
             Pixels::ZERO
         };
@@ -209,6 +218,9 @@ impl RenderOnce for RowList {
                 // A list lays its rows out over its bottom padding as it
                 // scrolls, and ends its last row above it.
                 .pb(under_foot)
+            })
+            .when_some(self.follow, |d, spot| {
+                d.child(super::keep_clear(&spot, &self.state.0))
             })
             .child(
                 Scrollbar::vertical(&self.state.0)

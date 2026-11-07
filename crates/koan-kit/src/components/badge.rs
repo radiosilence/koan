@@ -97,9 +97,14 @@ impl Chip {
 impl RenderOnce for Chip {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        // A press lifts the chip's ground, as an outlined button's does.
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let lifted = answers.layer(window, cx);
+        let accent = look.accent.hsla();
         let on_click = self.on_click;
         div()
             .id(self.id)
+            .relative()
             .flex_none()
             .px(look.spaced(12.0))
             .py(look.spaced(6.0))
@@ -109,9 +114,12 @@ impl RenderOnce for Chip {
             .text_color(look.palette.ink.hsla())
             .whitespace_nowrap()
             .child(self.text)
+            .children(lifted)
             .when_some(on_click, |chip, on_click| {
-                chip.cursor_pointer()
-                    .on_click(move |event, window, cx| on_click(event, window, cx))
+                chip.cursor_pointer().on_click(move |event, window, cx| {
+                    answers.start(super::Answer::Lift, accent, cx);
+                    on_click(event, window, cx)
+                })
             })
     }
 }

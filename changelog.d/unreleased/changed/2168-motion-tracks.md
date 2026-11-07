@@ -1,0 +1,1 @@
+- **The phone's moving parts run on the GPU.** A page pushed or swiped back, the tab bar's rule, a queue row swiped and Now Playing pulled down are layers composed from keyframe tracks, so they keep the display's rate while the app is busy and draw no frames as they move.

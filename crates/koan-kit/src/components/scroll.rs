@@ -25,6 +25,7 @@ pub struct ScrollArea {
     shrinks: bool,
     under_bar: bool,
     under_foot: bool,
+    handle: Option<ScrollHandle>,
 }
 
 enum Content {
@@ -43,6 +44,7 @@ impl ScrollArea {
             shrinks: false,
             under_bar: false,
             under_foot: false,
+            handle: None,
         }
     }
 
@@ -57,6 +59,7 @@ impl ScrollArea {
             shrinks: false,
             under_bar: false,
             under_foot: false,
+            handle: None,
         }
     }
 
@@ -87,6 +90,13 @@ impl ScrollArea {
         self
     }
 
+    /// Scrolled through the owner's handle, which reads how far it is
+    /// scrolled: a page folding its header as its body scrolls.
+    pub fn handle(mut self, handle: &ScrollHandle) -> Self {
+        self.handle = Some(handle.clone());
+        self
+    }
+
     /// Scrolls item `ix` into view when it changes, and leaves the scroll
     /// to the pointer otherwise.
     pub fn reveal(mut self, ix: Option<usize>) -> Self {
@@ -106,10 +116,13 @@ impl ScrollArea {
 
 impl RenderOnce for ScrollArea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let handle = window
-            .use_keyed_state(child(&self.id, "scroll"), cx, |_, _| ScrollHandle::new())
-            .read(cx)
-            .clone();
+        let handle = match self.handle.clone() {
+            Some(handle) => handle,
+            None => window
+                .use_keyed_state(child(&self.id, "scroll"), cx, |_, _| ScrollHandle::new())
+                .read(cx)
+                .clone(),
+        };
         let revealed = window.use_keyed_state(child(&self.id, "revealed"), cx, |_, _| None);
         if *revealed.read(cx) != self.reveal {
             revealed.update(cx, |r, _| *r = self.reveal);
@@ -126,12 +139,12 @@ impl RenderOnce for ScrollArea {
             .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
             .clone();
         let under_bar = if self.under_bar {
-            super::bar_inset(cx)
+            super::bar_inset(window, cx)
         } else {
             Pixels::ZERO
         };
         let under_foot = if self.under_foot {
-            super::foot_inset(cx)
+            super::foot_inset(window, cx)
         } else {
             Pixels::ZERO
         };

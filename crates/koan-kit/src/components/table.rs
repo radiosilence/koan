@@ -295,8 +295,18 @@ impl RenderOnce for RowNumber {
         } else {
             look.text_color(crate::theme::Tone::Accent)
         };
+        // A press on the play mark rings it; the ring stays drawn as the
+        // bars take the number's place once the row starts playing.
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let rung = answers.layer(window, cx);
         if let Some(bars) = self.bars {
-            return div().flex().justify_end().child(bars).into_any_element();
+            return div()
+                .relative()
+                .flex()
+                .justify_end()
+                .child(bars)
+                .children(rung)
+                .into_any_element();
         }
         let tone = if self.current || self.picked {
             accent
@@ -322,7 +332,9 @@ impl RenderOnce for RowNumber {
             .flex()
             .justify_end()
             .child(number)
+            .children(rung)
             .when_some(self.on_play, |d, play| {
+                let accent = look.accent.hsla();
                 d.child(
                     div()
                         .id(self.id)
@@ -341,6 +353,7 @@ impl RenderOnce for RowNumber {
                         )
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
+                            answers.start(super::Answer::Ring, accent, cx);
                             play(window, cx)
                         }),
                 )

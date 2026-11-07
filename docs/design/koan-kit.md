@@ -192,7 +192,7 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 ### Controls
 
-`ScrollArea::items(id, items).reveal(ix)` is a scrolling column whose arrow-key position is kept in view.
+`ScrollArea::items(id, items).reveal(ix)` is a scrolling column whose arrow-key position is kept in view. A `ScrollArea` keeps the field being typed in clear of a phone's keyboard; `handle` scrolls it through the owner's `ScrollHandle`, for a page that changes with how far its body is scrolled, as the EQ profile's sheet folds its graph.
 
 `Button::help` and `ToolbarButton::help` give the tooltip as the Mac's buttons do, what it does and its keys ("back (⌘[)"), in place of a glyph-only button's label.
 
@@ -251,10 +251,25 @@ progress.to(0, share, Duration::from_millis(66), Ease::Linear);  // as the engin
 - **Parking** is the kit's: a window presents while any track on screen moves and once more as the last comes to rest, then parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
 - **Reduce Motion:** a `.decorative()` quad's tracks stand at their ends, a repeating one at its start. Progress is not decorative.
 - **`AnimatedLayer`** moves what an element paints: its content is drawn into a texture of its own (a GPUI layer group) and composed at each present with opacity, offset and reveal tracks (`LAYER`). It is a layer only while a track moves, painted plainly once settled; shaders inside it are drawn over it at their own place. `FadeIn` and `Reveal` are built on it.
+- **Motion a finger drives** (`components/follow.rs`) is a layer too, composed at rest as well while a finger holds it away from its place. Each gesture event holds the track at the finger's value (`hold`), with no frame drawn; the release hands the GPU the rest of the way as a segment, and the owner draws again only when the layer is let go, a timer of the settle's length later (`settle_length`, nothing under Reduce Motion, which lands a release at once but still follows the finger). `Follow` offsets a layer (Now Playing pulled down, a queue row swiped); `SwipeAction` slides a row over the action filling the strip it uncovers; `Push` is a navigation stack's push, one progress track that the page in front (`PUSH_FRONT`) and the page under it (`PUSH_UNDER`: a third of its way behind, clipped to the uncovered strip, under a fading veil) both read. The phone tab bar's rule glides by an offset track on its layer the same way.
+- **Only reflow is computed on the CPU**: motion where layout changes, such as `SplitView` and `Slide` opening a column and the filter field opening across a phone's toolbar (its text, caret and clear mark are laid out at each width). Everything else is tracks. `request_animation_frame` remains only for that reflow, for waiting on a layout to measure, for pacing sleeves into the atlas, and in the fallbacks for a renderer without shaders.
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
 - `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback from `Animated::at`.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (the fork's shader quad commit describes the layering).
+
+### Chart (Mac: the EQ's response graph)
+
+`Chart` draws data on the keyframe layer above, so data, ranges and points move on the GPU and a chart at rest costs nothing. A page declares it each render: an x and a y `Axis` (linear or logarithmic, ticks chosen or given, labels formatted), `Series` (a line, solid or dashed, or an area from a line to a level or to another line), horizontal `Rule`s with an optional label, `ChartPoint`s that drag within ranges, and a `Legend` that wraps. It is as wide as its container, and as tall as a height given or, with `fill`, as its container leaves it, so a frame that folds carries the plot with it; its y labels' column is as wide as its widest label. The chart compares what it is given with what it last drew and writes only what changed.
+
+- **Data is an image.** A series' samples are packed into a small image, five rows of 24-bit values (x, the y it moves from and to, and an auxiliary row moving with it: a line's length so far for its dashes, or an area's second line). A fragment program draws the line from it by its distance to the nearest segments, or the area between its edges. New values make a new image whose `from` row is the series as drawn at that moment, and track 0 moves the phase between the rows, so a series eases between data sets with no frame drawn.
+- **Data and display rates are decoupled.** Each series says how it meets new values (`DataMotion`): eased over a length; interpolated over the sample interval, drawn one sample behind and exactly through every sample; or extrapolated, drawn current as each sample lands and carried along the last two samples' rate for one interval, which the next sample corrects. A feed at 15 Hz is fifteen images a second and the GPU draws every frame between them.
+- **Axes are tracks.** An axis's range is an affine map from a value to its share of the plot, and a rescale eases the map's two coefficients. Every value then moves in a straight line between where the two ranges put it, so the series (whose tracks hold the map framed for their own box), the grid, the points and the labels (as `LAYER`s moved by offset tracks with the same curve and start) move together exactly.
+- **Points** stand under the pointer while dragged and settle where their owner puts them. A drag calls `on_press`, `on_step` and `on_release` with the values under the pointer, held to the point's ranges, and the owner moves the point; a drag on the plot away from every point is reported the same way, for painting a curve. Under touch the plot claims a drag (`koan_touch_drag`) and a point is taken within a finger's reach.
+- **Only layout runs on the CPU**: the ticks, which labels fit (thinned by rank so they never collide as the plot narrows: decades before 2s and 5s on a logarithmic axis, every other step on a linear one), and the images, made again when the data, the plot's size or a dashed line's range changes.
+- Under Reduce Motion every change lands at once. Where the renderer draws no shaders the chart paints its resting state as paths.
+
+The EQ's response graph is a client: it hands the chart the core's values at the core's frequencies (the AutoEQ grid), the bands' handles as points, the level as a dashed rule, and its drag rules (Option for Q, painting a graphic curve) as handlers. The storybook's charts page shows each part.
 
 ### Answers (Mac: `symbolEffect(.bounce)`, the toggles' and fields' transitions)
 

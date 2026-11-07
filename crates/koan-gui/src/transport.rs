@@ -83,9 +83,14 @@ pub struct Transport {
     mini_glide: crate::components::Glide,
     /// How far Now Playing has been pulled down by a finger, while it is.
     pull: Option<Pixels>,
-    /// A pull let go: where, when, and whether it closes Now Playing (held
-    /// there while the screen goes down) or eases back up.
-    released: Option<(Pixels, std::time::Instant, bool)>,
+    /// A pull let go: whether it closes Now Playing (held there while the
+    /// screen goes down) or eases back up.
+    released: Option<bool>,
+    /// The pull's offset, which the GPU composes the page at: held by the
+    /// finger, eased back up on a release short of closing.
+    pulled: crate::components::Follow,
+    /// The ease back up, letting the page's layer go once it is in place.
+    returning: Option<Task<()>>,
     /// How far a finger has pushed the mini player up, while it does.
     lift: Option<Pixels>,
     _subscriptions: [Subscription; 8],
@@ -263,6 +268,8 @@ impl Transport {
             mini_glide: crate::components::Glide::new(),
             pull: None,
             released: None,
+            pulled: crate::components::Follow::new(),
+            returning: None,
             lift: None,
         };
         this.reload_eq(cx);
@@ -1302,9 +1309,7 @@ impl Render for Transport {
             .items_center()
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
-            .bg(p.bg)
-            .border_t(p.look.hairline)
-            .border_color(p.rule)
+            // No ground: the shell draws it over the pages, on their frost.
             // The width the bar was laid out at, for the next frame to fit
             // the trailing group to.
             .child(crate::components::width_probe(

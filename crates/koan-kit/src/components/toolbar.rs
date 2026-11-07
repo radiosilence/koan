@@ -71,7 +71,8 @@ impl Toolbar {
         Self::default()
     }
 
-    /// No ground and no rule: a phone's bar, which the page runs up to.
+    /// No ground and no rule: a bar the page runs under, standing on the
+    /// frost its shell draws (`Frost`).
     pub fn flush(mut self) -> Self {
         self.flush = true;
         self

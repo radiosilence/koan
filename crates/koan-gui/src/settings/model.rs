@@ -752,26 +752,34 @@ impl SettingsModel {
     }
 
     pub fn sync(&mut self, cx: &mut Context<Self>) {
+        let activity = cx
+            .global::<crate::library::activity::ActivityHandle>()
+            .0
+            .clone();
+        activity.update(cx, |a, cx| a.follow_sync(true, cx));
         self.run(
             "Syncing with the server",
             Uses::REMOTE_TRACKS,
             cx,
             |engine| engine.sync_remote(),
-            |model, result, cx| match result {
-                // "0 tracks across 0 albums" reads as a failure, and is what
-                // an empty server answers.
-                Ok(s) if s.tracks == 0 && s.favourites_imported == 0 => {
-                    model.done("Already up to date", cx)
-                }
-                Ok(s) => model.done(
-                    format!(
-                        "{} tracks across {} albums",
-                        count(s.tracks.into()),
-                        count(s.albums.into())
+            move |model, result, cx| {
+                activity.update(cx, |a, cx| a.follow_sync(false, cx));
+                match result {
+                    // "0 tracks across 0 albums" reads as a failure, and is what
+                    // an empty server answers.
+                    Ok(s) if s.tracks == 0 && s.favourites_imported == 0 => {
+                        model.done("Already up to date", cx)
+                    }
+                    Ok(s) => model.done(
+                        format!(
+                            "{} tracks across {} albums",
+                            count(s.tracks.into()),
+                            count(s.albums.into())
+                        ),
+                        cx,
                     ),
-                    cx,
-                ),
-                Err(e) => model.report(describe(&e), cx),
+                    Err(e) => model.report(describe(&e), cx),
+                }
             },
         );
     }

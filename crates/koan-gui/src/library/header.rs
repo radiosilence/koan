@@ -52,14 +52,10 @@ pub fn playable_header(
     if crate::mobile::phone() {
         let more = lib.clone();
         return header
+            // The heart itself, so it pops and deflates as everywhere else.
             .action(
-                Button::new("header-favourite", ButtonKind::Compact)
-                    .icon(if favourite {
-                        Icon::Favourited
-                    } else {
-                        Icon::Favourite
-                    })
-                    .label(if favourite { "favourited" } else { "favourite" })
+                crate::components::Heart::new("header-heart", favourite)
+                    .role(TypeRole::Body)
                     .on_click(move |_, _, cx| {
                         heart
                             .feed

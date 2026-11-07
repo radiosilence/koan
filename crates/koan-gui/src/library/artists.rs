@@ -16,7 +16,7 @@ use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::navigator::{Listing, Shelf};
-use crate::theme::Icon;
+use crate::theme::{Icon, KoanStyled};
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -330,22 +330,30 @@ impl ArtistBrowser {
         let play = cx.weak_entity();
         let count = self.artists.len();
         let scroll = self.scroll.clone();
-        TableRow::new(("artist", id as u64), RowKind::Line)
-            .when(p.a11y, |row| {
-                row.spoken(crate::components::spoken([
-                    artist.name.as_str(),
-                    chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
-                    chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
-                    if favourite { "favourite" } else { "" },
-                ]))
-                .place(index, count)
-                .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
-            })
-            .selected(selected)
-            .cursor(self.keyed && self.cursor.at == Some(index))
-            .spot(&self.spot)
-            // Exactly the glyph's width, so it starts on the header's edge.
-            .lead_exact(
+        let phone = crate::mobile::phone();
+        let albums = chrome::count(artist.album_count.max(0) as u64, "album", "albums");
+        // A phone's row is the name over its record count, and the heart: no
+        // glyph to play from, no columns to read across.
+        TableRow::new(
+            ("artist", id as u64),
+            if phone { RowKind::Text } else { RowKind::Line },
+        )
+        .when(p.a11y, |row| {
+            row.spoken(crate::components::spoken([
+                artist.name.as_str(),
+                chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
+                chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
+                if favourite { "favourite" } else { "" },
+            ]))
+            .place(index, count)
+            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+        })
+        .selected(selected)
+        .cursor(self.keyed && self.cursor.at == Some(index))
+        .spot(&self.spot)
+        // Exactly the glyph's width, so it starts on the header's edge.
+        .when(!phone, |row| {
+            row.lead_exact(
                 crate::components::RowMetrics::lead_glyph(&p.look),
                 if starting {
                     crate::components::Spinner::new(p.look.font_size(Type::Meta)).into_any_element()
@@ -358,34 +366,40 @@ impl ArtistBrowser {
                         .into_any_element()
                 },
             )
-            .title(name)
-            .figure(if p.look.touch { 44.0 } else { HEART }, heart)
-            .figure(
-                COUNT,
-                chrome::count(artist.album_count.max(0) as u64, "album", "albums"),
-            )
-            // A phone's row keeps the name its width: the record count alone.
-            .when(!crate::mobile::phone(), |row| {
-                row.figure(
+        })
+        .title(name)
+        .map(|row| {
+            if phone {
+                row.line(
+                    div()
+                        .text_role(Type::Meta, &p.look)
+                        .text_color(p.muted)
+                        .child(albums),
+                )
+                // The heart's column narrow, its target reaching past it.
+                .figure(28.0, div().w_full().flex().justify_center().child(heart))
+            } else {
+                row.figure(HEART, heart).figure(COUNT, albums).figure(
                     COUNT,
                     chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
                 )
-            })
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                window.focus(&this.focus, cx);
-                // The keyboard carries on from the row clicked.
-                this.cursor.click(index, e.modifiers().shift);
-                let order = &this.order;
-                if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
-                    this.lib
-                        .nav
-                        .update(cx, |n, cx| n.open(Page::Artist(id), cx));
-                }
-                cx.notify();
-            }))
-            .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-            .on_mouse_down(MouseButton::Right, actions::mark(view, target))
-            .into_any_element()
+            }
+        })
+        .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            window.focus(&this.focus, cx);
+            // The keyboard carries on from the row clicked.
+            this.cursor.click(index, e.modifiers().shift);
+            let order = &this.order;
+            if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
+                this.lib
+                    .nav
+                    .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+            }
+            cx.notify();
+        }))
+        .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
+        .on_mouse_down(MouseButton::Right, actions::mark(view, target))
+        .into_any_element()
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -456,28 +470,34 @@ impl Render for ArtistBrowser {
         // Until its first listing lands the page draws nothing, then header,
         // total and rows together.
         let held = self.loaded.is_none() && self.failed.is_none();
-        // A phone's list scrolls its header away with the rows, as the iOS
-        // app's does.
-        let phone = crate::mobile::phone() && !held;
-        // The header starts below the phone's bar, which the list scrolls
-        // under.
+        // The list scrolls its header away with the rows, as the iOS app's
+        // does, and passes under the toolbar.
+        let away = !held;
+        let phone = crate::mobile::phone();
+        // The header starts below the bar, which the list scrolls under; a
+        // phone's filter field a step further down.
+        let bar = crate::components::bar_inset(window, cx);
         let above = if phone {
-            crate::components::bar_inset(cx) + p.look.spaced(10.0)
+            bar + p.look.spaced(10.0)
         } else {
-            Pixels::ZERO
+            bar
         };
-        let lead = if phone {
-            self.header_height.get().unwrap_or_default() + above
+        let lead = if away {
+            self.header_height.get().unwrap_or_default() + bar + p.look.spaced(10.0)
         } else {
             Pixels::ZERO
         };
         let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
-        let (inline_header, away_header) = if phone {
-            (None, Some(chrome::with_filter(&self.search, p)))
-        } else {
-            ((!held).then_some(header), None)
-        };
+        // A phone's bar names the page: its list leads with the filter field
+        // alone.
+        let away_header = away.then(|| {
+            if phone {
+                chrome::with_filter(&self.search, p)
+            } else {
+                header.into_any_element()
+            }
+        });
         let body = if held {
             div().into_any_element()
         } else if self.loaded.is_none() {
@@ -491,7 +511,7 @@ impl Render for ArtistBrowser {
             chrome::empty_state(crate::theme::Icon::Artist, empty_title, empty_detail)
                 .into_any_element()
         } else {
-            let under_foot = crate::components::rows_under_foot(rows::height(p), cx);
+            let under_foot = crate::components::rows_under_foot(rows::height(p), window, cx);
             crate::components::uniform_list(
                 "artists",
                 // Blank rows after the last pass under a phone's foot.
@@ -541,19 +561,18 @@ impl Render for ArtistBrowser {
         .flex()
         .flex_col()
         .typeset(p, Type::Body, p.ink)
-        .children(inline_header)
         .child(
             div()
                 .id("artist-list")
                 .overflow_hidden()
                 .flex_1()
                 .min_h_0()
-                .when(!phone, |d| d.pt(p.look.spaced(10.0)))
                 .relative()
                 .child(body)
+                .child(crate::components::keep_clear(&self.spot, &self.scroll))
                 .child(
                     crate::components::Scrollbar::vertical(&self.scroll)
-                        .when(phone, crate::components::Scrollbar::under_bar),
+                        .when(away, crate::components::Scrollbar::under_bar),
                 )
                 .children(away_header.map(|header| {
                     crate::components::scrolls_away(

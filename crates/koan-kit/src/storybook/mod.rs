@@ -9,6 +9,7 @@
 //! content as two cached views, so a frame of the drift redraws the wash
 //! alone.
 
+mod charts;
 mod more;
 mod playground;
 
@@ -55,11 +56,12 @@ pub enum Story {
     Motion,
     Guide,
     Rainbow,
+    Charts,
     Playground,
 }
 
 impl Story {
-    pub const ALL: [Story; 20] = [
+    pub const ALL: [Story; 21] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -79,6 +81,7 @@ impl Story {
         Story::Motion,
         Story::Guide,
         Story::Rainbow,
+        Story::Charts,
         Story::Playground,
     ];
 
@@ -104,6 +107,7 @@ impl Story {
             Story::Motion => "motion and drag",
             Story::Guide => "choices and checklists",
             Story::Rainbow => "rainbow",
+            Story::Charts => "charts",
             Story::Playground => "motion playground",
         }
     }
@@ -209,6 +213,7 @@ pub struct StoryContent {
     outputs: Entity<Menu>,
     more: more::State,
     playground: playground::State,
+    charts: Entity<charts::Charts>,
     /// On a narrow window, whether the pages and the controls are open over
     /// the page, from the menu button.
     menu_open: bool,
@@ -305,6 +310,7 @@ impl StoryContent {
             }),
             more: more::State::new(window, cx),
             playground: playground::State::new(),
+            charts: cx.new(|_| charts::Charts::new()),
             menu_open: false,
             rows: (0..ROWS.len()).collect(),
             _accent: theme::observe_accent(cx),
@@ -439,6 +445,7 @@ impl StoryContent {
         };
         match self.story {
             Story::Playground => self.playground(look, window, cx),
+            Story::Charts => vec![self.charts.clone().into_any_element()],
             Story::Collections
             | Story::Lists
             | Story::Panels
