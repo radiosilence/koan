@@ -340,8 +340,8 @@ enum Edge {
 /// The ground of what a shell draws over its pages, filling its parent,
 /// which is `relative`, and drawn before the rest of it: clear while
 /// nothing is under it, and frosted as the system's bars are while the
-/// page's content runs under it (what lies under blurred and tinted with
-/// the page's ground), fading between the two on the GPU. With less
+/// page's content runs under it (what lies under blurred; tinted with the
+/// page's ground only where the renderer cannot blur). With less
 /// transparency asked for, opaque and unblurred while content is under it.
 #[derive(IntoElement)]
 pub struct Frost {
@@ -407,7 +407,12 @@ impl RenderOnce for Frost {
                 Edge::Foot => column.flex_col_reverse().child(full).children(steps),
             }
         });
-        let tint = if SHADED {
+        // Blurred alone where the renderer blurs: a tint of the ground
+        // over it darkens a bold wash. The ground stays for less
+        // transparency, and as the whole frost where nothing blurs.
+        let tint = if SHADED && !look.opaque {
+            None
+        } else if SHADED {
             animated.set_color(0, color);
             animated.set_all(
                 4,
@@ -421,20 +426,23 @@ impl RenderOnce for Frost {
                 .absolute()
                 .inset_0()
                 .into_any_element()
+                .into()
         } else {
-            div()
-                .absolute()
-                .inset_0()
-                .when(under, |d| d.bg(color))
-                .into_any_element()
+            Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .when(under, |d| d.bg(color))
+                    .into_any_element(),
+            )
         };
-        div().absolute().inset_0().children(blur).child(tint)
+        div().absolute().inset_0().children(blur).children(tint)
     }
 }
 
 pub trait KoanFrosted: Styled + Sized {
     /// A frosted ground standing as it is, whatever is under it: what lies
-    /// under blurred and tinted with the page's ground. With less
+    /// under blurred. With less
     /// transparency asked for, the ground opaque and nothing blurred. Where
     /// the renderer cannot blur, the tint alone. A bar a page scrolls under
     /// takes `Frost`, which stays clear while nothing is.
@@ -442,6 +450,8 @@ pub trait KoanFrosted: Styled + Sized {
         let ground = look.palette.bg.hsla();
         if look.opaque {
             self.bg(ground)
+        } else if SHADED {
+            self.backdrop_blur(FROST_BLUR)
         } else {
             self.backdrop_blur(FROST_BLUR)
                 .bg(ground.opacity(FROST_TINT))
