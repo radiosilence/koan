@@ -1,0 +1,1 @@
+- **Smooth at 4K and above.** A frame of the desktop app costs half the GPU time it did at a 4K or 6K window: the wash works out its drift once a frame and its colour field once a record instead of at every pixel, and frosted bars and layers are composed only where they draw. Full screen on a 4K display holds 120 fps.
