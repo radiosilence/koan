@@ -36,13 +36,14 @@
 //! its sampling; the CPU's fallback, drawn as an image sprite, which takes no
 //! transform, breathes and travels alone.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Bounds, Context, Corners, Entity, Global, IntoElement, ParentElement, Pixels, Render,
-    RenderImage, Styled, Task, Window, canvas, div, point, px, size,
+    RenderImage, Styled, Task, WeakEntity, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
@@ -573,16 +574,32 @@ struct Layer<T> {
     shader: Animated,
 }
 
-/// The window's wash, for a screen over the page (Now Playing, a full
-/// sheet on a phone) to draw behind itself, as the page's ground does;
-/// `None` with less transparency asked for. The window's root sets it.
-pub struct WindowWash(pub Option<Entity<Wash>>);
+/// Each window's wash, for a screen over the page (Now Playing, a full
+/// sheet on a phone) to draw behind itself, as the page's ground does. Per
+/// window: a wash is coloured for the appearance of the window it draws in,
+/// and windows can be pinned to different ones. A window's root sets its
+/// own; `None` with less transparency asked for. Held weakly, so a closed
+/// window's wash goes with it.
+#[derive(Default)]
+pub struct WindowWash(HashMap<gpui::WindowId, WeakEntity<Wash>>);
 
 impl Global for WindowWash {}
 
 impl WindowWash {
-    pub fn shared(cx: &App) -> Option<Entity<Wash>> {
-        cx.try_global::<Self>().and_then(|w| w.0.clone())
+    /// Sets `window`'s wash, or takes it away with `None`.
+    pub fn set(window: &Window, wash: Option<&Entity<Wash>>, cx: &mut App) {
+        let id = window.window_handle().window_id();
+        let washes = &mut cx.default_global::<Self>().0;
+        washes.retain(|_, wash| wash.upgrade().is_some());
+        match wash {
+            Some(wash) => washes.insert(id, wash.downgrade()),
+            None => washes.remove(&id),
+        };
+    }
+
+    pub fn shared(window: &Window, cx: &App) -> Option<Entity<Wash>> {
+        let id = window.window_handle().window_id();
+        cx.try_global::<Self>()?.0.get(&id)?.upgrade()
     }
 }
 
@@ -598,7 +615,7 @@ pub struct Wash {
     lab: Option<(u64, Arc<Vec<[f64; 3]>>)>,
     /// The record before, held under the current one while it dissolves in,
     /// or fading out to the bare ground when there is none.
-    previous: Option<Layer<Arc<RenderImage>>>,
+    previous: Option<Layer<Texture>>,
     /// Whether the caller wants the drift: something playing, and the
     /// graphics setting allowing it.
     wanted: bool,
@@ -652,7 +669,7 @@ impl Wash {
         self.sleeve = sleeve;
         self.generation += 1;
         if self.sleeve.is_none() {
-            self.install(None, true);
+            self.install(None);
         }
         cx.notify();
     }
@@ -676,25 +693,27 @@ impl Wash {
         cx.notify();
     }
 
-    /// Puts a texture on, or takes the wash off with `None`. A new record
-    /// dissolves in over the old; the same record rebaked for another
-    /// appearance or tint replaces everything at once, since a texture of the
-    /// old appearance must not linger under the new.
-    fn install(&mut self, texture: Option<Texture>, dissolve: bool) {
+    /// The current record coloured again for another appearance or tint:
+    /// its texture swapped where it stands, its dissolve and the record
+    /// under it going on as they were, so a tint dragged or an appearance
+    /// flipped mid-dissolve neither cuts the dissolve short nor drops what
+    /// it dissolves from. Each layer is drawn over the ground it was
+    /// coloured for.
+    fn recolour(&mut self, texture: Texture) {
+        match self.current.as_mut() {
+            Some(layer) => {
+                let old = std::mem::replace(&mut layer.texture, texture);
+                self.released.push(old.image);
+            }
+            None => self.install(Some(texture)),
+        }
+    }
+
+    /// Puts a new record's texture on, dissolving in over the old, or takes
+    /// the wash off with `None`.
+    fn install(&mut self, texture: Option<Texture>) {
         let now = Instant::now();
         let outgoing = self.current.take();
-        if !dissolve {
-            self.released
-                .extend(outgoing.map(|layer| layer.texture.image));
-            self.released
-                .extend(self.previous.take().map(|layer| layer.texture));
-            self.current = texture.map(|texture| Layer {
-                texture,
-                opacity: Ramp::still(1.0),
-                shader: Animated::new(),
-            });
-            return;
-        }
         let Some(texture) = texture else {
             // Taken off: what shows fades out to the ground from where it
             // stands, a record part-way through dissolving in and the one
@@ -720,12 +739,12 @@ impl Wash {
                 Ramp::still(1.0)
             };
             let held = Layer {
-                texture: outgoing.texture.image,
+                texture: outgoing.texture,
                 opacity,
                 shader: outgoing.shader,
             };
             self.released
-                .extend(self.previous.replace(held).map(|layer| layer.texture));
+                .extend(self.previous.replace(held).map(|layer| layer.texture.image));
         }
         // With no record on before, `previous` keeps fading as it was.
         self.current = Some(Layer {
@@ -783,7 +802,11 @@ impl Wash {
                     dark,
                     hold,
                 };
-                wash.install(Some(texture), !same_record);
+                if same_record {
+                    wash.recolour(texture);
+                } else {
+                    wash.install(Some(texture));
+                }
                 cx.notify();
             })
             .ok();
@@ -873,7 +896,7 @@ impl Render for Wash {
             .is_some_and(|layer| !layer.opacity.moving(now) && layer.opacity.at(now) <= 0.0);
         if covered || faded {
             self.released
-                .extend(self.previous.take().map(|layer| layer.texture));
+                .extend(self.previous.take().map(|layer| layer.texture.image));
         }
         // Taken off and faded out to the ground: nothing left to draw.
         let gone = self
@@ -937,7 +960,7 @@ impl Render for Wash {
         let previous = self
             .previous
             .as_ref()
-            .map(|l| (l.texture.clone(), l.opacity.at(now)))
+            .map(|l| (l.texture.image.clone(), l.opacity.at(now)))
             .filter(|(_, opacity)| *opacity > 0.0);
         let current = self
             .current
@@ -973,20 +996,26 @@ impl Wash {
         // The person's turn (Settings → Appearance); the pace is followed
         // in `render`, for both ways of drawing.
         let turn = cx.global::<KoanTheme>().wash_turn as f32 * std::f32::consts::PI / 180.0;
-        let previous = self
-            .previous
-            .as_ref()
-            .map(|l| (l.texture.clone(), l.opacity, l.shader.clone(), bg));
-        // Laid over the ground of the appearance it was coloured for: for the
-        // frame or two an appearance's colouring takes to land, the wash
-        // before shows whole rather than its colours over the new ground.
-        let current = self.current.as_ref().map(|l| {
-            let ground = if l.texture.dark == look.dark {
+        // Each laid over the ground of the appearance it was coloured for:
+        // for the frame or two an appearance's colouring takes to land, and
+        // for a record coloured for the one before dissolving out, the wash
+        // shows whole rather than its colours over another ground.
+        let ground = |dark: bool| {
+            if dark == look.dark {
                 bg
             } else {
-                Palette::of(l.texture.dark).bg.hsla().to_rgb()
-            };
-            (l.texture.image.clone(), l.opacity, l.shader.clone(), ground)
+                Palette::of(dark).bg.hsla().to_rgb()
+            }
+        };
+        let [previous, current] = [&self.previous, &self.current].map(|layer| {
+            layer.as_ref().map(|l| {
+                (
+                    l.texture.image.clone(),
+                    l.opacity,
+                    l.shader.clone(),
+                    ground(l.texture.dark),
+                )
+            })
         });
         for (image, opacity, shader, bg) in previous.into_iter().chain(current) {
             let first = quads.is_empty();
@@ -1269,14 +1298,37 @@ mod tests {
         }
     }
 
+    /// The record coming in coloured again mid-dissolve (a tint dragged, the
+    /// appearance flipped) keeps dissolving in over the record under it:
+    /// only its texture changes, and the old one is released.
+    #[test]
+    fn recoloured_mid_dissolve_it_keeps_dissolving() {
+        let mut wash = Wash::new();
+        wash.install(Some(texture(1)));
+        wash.install(Some(texture(2)));
+        let ramp = wash.current.as_ref().unwrap().opacity;
+        let mut dark = texture(2);
+        dark.dark = true;
+        wash.recolour(dark);
+        let current = wash.current.as_ref().unwrap();
+        assert!(current.texture.dark);
+        assert_eq!(current.opacity.started, ramp.started);
+        assert_eq!(current.opacity.to, ramp.to);
+        assert_eq!(
+            wash.previous.as_ref().map(|l| l.texture.generation),
+            Some(1)
+        );
+        assert_eq!(wash.released.len(), 1);
+    }
+
     /// Taking the wash off while a record dissolves in fades what shows from
     /// where it stands: the record coming in at its part-way opacity, the
     /// one under it whole, both toward the ground.
     #[test]
     fn taken_off_mid_dissolve_it_fades_from_where_it_stands() {
         let mut wash = Wash::new();
-        wash.install(Some(texture(1)), false);
-        wash.install(Some(texture(2)), true);
+        wash.install(Some(texture(1)));
+        wash.install(Some(texture(2)));
         let now = Instant::now();
         // Half-way in.
         if let Some(current) = wash.current.as_mut() {
@@ -1285,7 +1337,7 @@ mod tests {
         let coming = wash.current.as_ref().unwrap().opacity.at(now);
         assert!(coming > 0.2 && coming < 0.8);
 
-        wash.install(None, true);
+        wash.install(None);
         let current = wash
             .current
             .as_ref()

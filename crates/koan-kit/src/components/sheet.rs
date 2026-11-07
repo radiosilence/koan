@@ -73,7 +73,7 @@ pub fn screen(
     let ground = div()
         .absolute()
         .inset_0()
-        .map(|d| match WindowWash::shared(cx) {
+        .map(|d| match WindowWash::shared(window, cx) {
             Some(wash) => d.child(wash.cached(StyleRefinement::default().size_full())),
             None => d.bg(look.palette.bg.hsla()),
         });

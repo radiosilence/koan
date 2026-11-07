@@ -192,8 +192,8 @@ impl WindowRoot {
         let mut root = Self {
             wash: {
                 let wash = cx.new(|_| Wash::new());
-                let shared = (!KoanTheme::opaque(cx)).then(|| wash.clone());
-                cx.set_global(WindowWash(shared));
+                let shared = (!KoanTheme::opaque(cx)).then_some(&wash);
+                WindowWash::set(window, shared, cx);
                 wash
             },
             content: content.into(),
