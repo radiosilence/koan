@@ -287,7 +287,7 @@ impl Transport {
                 .children(e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
                     let album = e.album_id;
                     div()
-                        .koan_menu_on_press("np-more", window, cx, move |m, window, cx| {
+                        .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
                             crate::library::actions::menu(
                                 m,
                                 &lib,
@@ -296,7 +296,6 @@ impl Transport {
                                 )]),
                                 album,
                                 None,
-                                window,
                                 cx,
                             )
                         })

@@ -1031,12 +1031,7 @@ impl QueueView {
 /// The queue's verbs on the rows a right click acts on, then the library's
 /// on their tracks: a playlist to add them to, a favourite, organising,
 /// their record, their files on this device, a share link.
-fn row_menu(
-    menu: Menu,
-    view: &Entity<QueueView>,
-    window: &mut Window,
-    cx: &mut Context<Menu>,
-) -> Menu {
+fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut Context<Menu>) -> Menu {
     let this = view.read(cx);
     let Some(row) = this.menu_row.filter(|&row| row < this.rows(cx).len()) else {
         return menu;
@@ -1115,7 +1110,9 @@ fn row_menu(
                 }),
         );
     if let Some(lib) = lib.as_ref().filter(|_| !picked.is_empty()) {
-        menu = actions::playlist_submenu(menu.separator(), lib, picked, None, window, cx);
+        menu = menu
+            .separator()
+            .item(actions::playlist_entry(lib, picked, None));
     }
     // A phone keeps no folders of its own to organise, as on iOS.
     if !crate::mobile::phone() {
@@ -2208,7 +2205,7 @@ impl Render for QueueView {
             })
             .koan_context_menu_at("queue-menu", Some(self.spot.clone()), window, cx, {
                 let view = view.clone();
-                move |menu, window, cx| row_menu(menu, &view, window, cx)
+                move |menu, _, cx| row_menu(menu, &view, cx)
             })
     }
 }

@@ -736,19 +736,14 @@ impl Render for HistoryPage {
             Some(self.spot.clone()),
             window,
             cx,
-            move |menu, window, cx| row_menu(menu, &view, window, cx),
+            move |menu, _, cx| row_menu(menu, &view, cx),
         )
     }
 }
 
 /// The list's one context menu: the library's verbs for the tracks, then
 /// forgetting the plays the right-click landed on.
-fn row_menu(
-    menu: Menu,
-    view: &Entity<HistoryPage>,
-    window: &mut Window,
-    cx: &mut Context<Menu>,
-) -> Menu {
+fn row_menu(menu: Menu, view: &Entity<HistoryPage>, cx: &mut Context<Menu>) -> Menu {
     let (lib, target, plays) = {
         let this = view.read(cx);
         let wanted: HashSet<i64> = this.menu_plays.iter().copied().collect();
@@ -764,7 +759,7 @@ fn row_menu(
     let Some(target) = target else {
         return menu;
     };
-    let menu = actions::menu(menu, &lib, target.items, target.album, None, window, cx);
+    let menu = actions::menu(menu, &lib, target.items, target.album, None, cx);
     if plays.is_empty() {
         return menu;
     }
