@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.71.3
+
+### Changed
+
+- **Lyrics lines answer the pointer.** On the desktop, the line under the pointer brightens, since a click on it seeks there.
+- **The lyrics panel resizes.** Drag its left edge to widen or narrow it, as the sidebar's edge does; a double click restores it, and the width is kept with the window's.
+- **Add to playlist is a sheet.** Every playlist that takes tracks, with its sleeve and size and a filter as you type, in place of a submenu that thousands of playlists or a finger could not use.
+- **Rules, the selected row and the frosted bars take the wash's colour.** Hairlines and a picked row's ground in the kōan GUI app are translucent white in dark (black in light) instead of opaque grey, and the bars a page scrolls under blur what passes beneath without darkening it.
+
+### Fixed
+
+- **The lyrics panel fills its width.** On the desktop, the hairline under its title spans the whole panel, and "nothing playing" and "no lyrics found" sit in the middle of it at any width, rather than above it.
+- **Submenus open on a tap on iOS.** A submenu row had no tap of its own and opened only under a resting pointer, which touch no longer counts, so tapping it did nothing.
+- **EQ sheets on a phone scroll and fit the screen.** Manage EQ, the correction and EQ pickers and the AutoEQ and measurement flows ran off the bottom of the screen without scrolling in the GPUI app on iOS; they are now screens over the whole window, on the record's wash, their content inside the safe area and scrolling. The EQ editor uses the whole screen rather than sitting low with a wide margin above it. Every kōan sheet on a phone keeps to the safe area on all edges.
+- **The EQ editor keeps its frame rate on phones.** Each mark of a chart draws over only the part of the plot it can reach, rather than the whole plot, so the EQ graph costs about a tenth of what it did per frame; the EQ page shows the wash behind it, and a band's figures take a tap across a finger's height.
+- **Stopping a server ends its links.** An embedded server waits for its link sessions to close before it stops, so a device it was serving is no longer left listed as linked.
+- **Albums show the format their files are now in.** An album whose files were replaced in another format, such as MP3 by FLAC, kept its old format in its header; it now follows its tracks, and the next sync puts existing albums right.
+- **Smooth at 4K and above.** A frame of the desktop app costs half the GPU time it did at a 4K or 6K window: the wash works out its drift once a frame and its colour field once a record instead of at every pixel, and frosted bars and layers are composed only where they draw. Full screen on a 4K display holds 120 fps.
+- **Empty states fit small areas.** In a narrow column or the lyrics beside a small window, the empty state draws itself smaller, down to half size, and is clipped past that rather than drawn over the sidebar.
+- **The wash at 6K holds 120 fps.** Its colour is worked out once per record, appearance and tint rather than at every pixel, so full screen on a 4K panel at its sharpest scaled size keeps up with a 120 Hz display.
+
 ## 0.71.2
 
 ### Changed
