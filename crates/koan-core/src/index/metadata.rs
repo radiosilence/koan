@@ -582,7 +582,7 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
 /// sources spelt it. A codec the indexer does not name is put in upper case.
 pub fn codec_spelling(codec: &str) -> String {
     [
-        "FLAC", "MP3", "AAC", "ALAC", "Vorbis", "Opus", "WAV", "AIFF", "PCM",
+        "FLAC", "MP3", "AAC", "ALAC", "Vorbis", "Opus", "WAV", "AIFF", "PCM", "Unknown",
     ]
     .into_iter()
     .find(|known| known.eq_ignore_ascii_case(codec))
