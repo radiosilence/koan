@@ -631,6 +631,11 @@ impl Render for Shell {
         }
         let p = Paint::of(window, cx);
         let washed = theme::KoanTheme::washes_window(cx);
+        let inspector = RowMetrics::inspector(&p.look);
+        let lyrics_width = self.lyrics_width.unwrap_or(inspector).clamp(
+            RowMetrics::inspector_min(&p.look),
+            RowMetrics::inspector_max(&p.look),
+        );
         // The strip above the sidebar: the traffic lights' room on macOS, a
         // title bar's where the app draws the window's decorations.
         let strip = if crate::components::draws_decorations(window) {
