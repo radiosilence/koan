@@ -583,6 +583,19 @@ struct Layer<T> {
     shader: Animated,
 }
 
+/// The window's wash, for a screen over the page (Now Playing, a full
+/// sheet on a phone) to draw behind itself, as the page's ground does;
+/// `None` with less transparency asked for. The window's root sets it.
+pub struct WindowWash(pub Option<Entity<Wash>>);
+
+impl Global for WindowWash {}
+
+impl WindowWash {
+    pub fn shared(cx: &App) -> Option<Entity<Wash>> {
+        cx.try_global::<Self>().and_then(|w| w.0.clone())
+    }
+}
+
 pub struct Wash {
     sleeve: Option<Sleeve>,
     /// Which sleeve is set: a bake for an earlier one is dropped.

@@ -11,7 +11,8 @@ use crate::components::field::{FieldState as InputState, InputEvent};
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{Button, ButtonKind, Fading, Rise, TextField, Veil};
+use super::{Button, ButtonKind, Fading, Rise, SlideUp, TextField, Veil};
+use crate::theme::wash::WindowWash;
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
@@ -52,16 +53,51 @@ pub fn step_focus(forward: bool, window: &mut Window, cx: &mut App) {
     super::focus_trap::step(forward, window, cx);
 }
 
-/// A panel taking all the room a phone leaves a sheet, inside the safe
-/// area and clear of the keyboard: a sheet that is a screen on a phone (a
-/// list to choose from, a flow of steps), its body filling what its content
-/// does not. Content-sized on the desktop.
-pub fn fill(panel: Stateful<Div>, look: &Look, window: &Window) -> Stateful<Div> {
+/// A sheet that is a screen on a phone (a list to choose from, a flow of
+/// steps, an editor): the whole window, standing on the window's wash as Now
+/// Playing does rather than on an opaque ground, its content inside the safe
+/// area and clear of the keyboard, coming up from the foot. On the desktop,
+/// `panel` over a `scrim` as any sheet. `content` is rooted in `content()`.
+pub fn screen(
+    id: impl Into<ElementId>,
+    name: impl AsRef<str>,
+    content: impl IntoElement,
+    look: &Look,
+    window: &Window,
+    cx: &App,
+) -> Stateful<Div> {
     if !look.touch {
-        return panel;
+        return scrim(id, look, window).child(Rise::new(panel(name, look).child(content)));
     }
-    let room = room(look, window);
-    panel.h(room).max_h(room)
+    let insets = super::system_insets(super::Clear::Keyboard, window);
+    let ground = div()
+        .absolute()
+        .inset_0()
+        .map(|d| match WindowWash::shared(cx) {
+            Some(wash) => d.child(wash.cached(StyleRefinement::default().size_full())),
+            None => d.bg(look.palette.bg.hsla()),
+        });
+    let screen = super::accessible(
+        div().id("sheet-screen"),
+        gpui::Role::Dialog,
+        Some(label(name)),
+    )
+    .relative()
+    .size_full()
+    .flex()
+    .flex_col()
+    .pt(insets.top)
+    .pb(insets.bottom)
+    .pl(insets.left)
+    .pr(insets.right)
+    .child(ground)
+    .child(content);
+    div()
+        .id(id.into())
+        .absolute()
+        .inset_0()
+        .occlude()
+        .child(SlideUp::new(screen))
 }
 
 /// The height a sheet's panel may take on a phone: the window less the
@@ -72,7 +108,7 @@ pub fn room(look: &Look, window: &Window) -> Pixels {
 }
 
 /// The root of a view drawn in a panel: a column that shrinks to the
-/// panel's height, so its `body` scrolls, and grows to fill a `fill` panel.
+/// panel's height, so its `body` scrolls, and grows to fill a `screen`.
 pub fn content() -> Div {
     div()
         .flex()
@@ -140,7 +176,7 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .pt(look.space(Space::M))
         .pb(look.space(Space::L))
         // Shrinks below its content inside the panel's height, and scrolls;
-        // in a `fill` panel, takes what the head and foot leave.
+        // in a `screen`, takes what the head and foot leave.
         .flex_grow_1()
         .min_h_0()
         .overflow_y_scroll()

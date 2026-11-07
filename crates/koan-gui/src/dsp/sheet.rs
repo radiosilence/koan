@@ -1,14 +1,15 @@
 //! What the EQ pages present over themselves: a stack of sheets, each a
 //! square panel in a hairline over the page, the top one taking the pointer.
-//! On a phone a view's sheet fills the room the window leaves it, as the
-//! screens the Mac app pushes there do; a confirmation stays its own size.
+//! On a phone a view's sheet is a screen over the whole window, on its wash,
+//! as the pages the SwiftUI app pushes there are; a confirmation stays a
+//! panel of its own size.
 //! A confirmation says what a change will do before it is made.
 
 use std::rc::Rc;
 
 use koan_kit::app::*;
 
-use crate::components::sheet::{fill, scrim};
+use crate::components::sheet::{screen, scrim};
 use crate::components::{Button, ButtonKind, Rise};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
@@ -95,15 +96,14 @@ impl Sheets {
         let layers = stack.into_iter().enumerate().map(|(depth, sheet)| {
             // Named for a screen reader: a question by its title, a view by
             // the window it belongs to.
-            let framed = match sheet {
-                Sheet::View(view) => fill(panel("eq", &look), &look, window).child(view),
-                Sheet::Confirm(c) => {
-                    panel(c.title.clone(), &look).child(confirm_body(c, this.clone(), &look))
-                }
-            };
-            scrim(("dsp-sheet", depth), &look, window)
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(Rise::new(framed))
+            let id = ("dsp-sheet", depth);
+            match sheet {
+                Sheet::View(view) => screen(id, "eq", view, &look, window, cx),
+                Sheet::Confirm(c) => scrim(id, &look, window).child(Rise::new(
+                    panel(c.title.clone(), &look).child(confirm_body(c, this.clone(), &look)),
+                )),
+            }
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         });
         Some(
             div()
