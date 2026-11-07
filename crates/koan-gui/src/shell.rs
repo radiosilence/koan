@@ -852,10 +852,12 @@ impl Render for Shell {
                                                 RowMetrics::inspector_max(&p.look),
                                                 inspector,
                                             )
-                                            .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
-                                                this.lyrics_width = Some(*width);
-                                                cx.notify();
-                                            }))
+                                            .on_resize(cx.listener(
+                                                |this, width: &Pixels, _, cx| {
+                                                    this.lyrics_width = Some(*width);
+                                                    cx.notify();
+                                                },
+                                            ))
                                             .on_commit(cx.listener(
                                                 move |this, width: &Pixels, window, cx| {
                                                     // The reset width is no
