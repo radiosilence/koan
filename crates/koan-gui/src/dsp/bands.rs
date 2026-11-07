@@ -209,7 +209,11 @@ impl Fields {
             (figure(value_of(&s.band, part), part.digits()), s.reset)
         };
         if let std::collections::hash_map::Entry::Vacant(vacant) = row.fields.entry(part) {
-            let input = cx.new(|cx| InputState::new(window, cx).default_value(text.clone()));
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .number()
+                    .default_value(text.clone())
+            });
             let shown = Rc::new(RefCell::new(text.clone()));
             let sub = {
                 let (shown, state) = (shown.clone(), state.clone());
@@ -261,7 +265,7 @@ impl Fields {
         // Its column's width, from the table.
         div()
             .w_full()
-            .child(TextField::new(&field.input).bare())
+            .child(TextField::new(&field.input).cell())
             .into_any_element()
     }
 }

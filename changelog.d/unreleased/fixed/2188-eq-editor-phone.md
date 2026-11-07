@@ -1,0 +1,1 @@
+- **The EQ editor keeps its frame rate on phones.** Each mark of a chart draws over only the part of the plot it can reach, rather than the whole plot, so the EQ graph costs about a tenth of what it did per frame; the EQ page shows the wash behind it, and a band's figures take a tap across a finger's height.

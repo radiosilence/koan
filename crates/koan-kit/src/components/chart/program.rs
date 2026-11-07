@@ -8,6 +8,13 @@
 //! (x) or height (y, from the foot). Tracks 1 to 4 are `Ax`, `Bx`, `Ay` and
 //! `By`; track 0, where a program has data, is the phase between the
 //! keyframe's `from` and `to` rows.
+//!
+//! A mark's quad covers only the part of its frame (the plot, or the plot
+//! grown by the points' reach) the mark can touch until it is laid out
+//! again, so a band's area costs its band and not the plot. Uniforms 12 and
+//! 13 are where the quad stands in that frame and 14 and 15 the frame's
+//! size, all in device pixels, and `shade` hands the mark positions in the
+//! whole frame (`chart_place_msl!`, `chart_place_wgsl!`).
 
 use crate::components::ShaderProgram;
 
@@ -120,6 +127,38 @@ fn koan_chart_axes(u: array<vec4<f32>, 20>, time: f32) -> vec4<f32> {
     };
 }
 
+/// `shade` for a mark drawn by `koan_chart_mark`, given positions in its
+/// whole frame rather than its quad.
+macro_rules! chart_place_msl {
+    () => {
+        r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    if (u[14] > 0.0) {
+        position += float2(u[12], u[13]);
+        size = float2(u[14], u[15]);
+    }
+    return koan_chart_mark(position, size, time, u, image, tile);
+}
+"#
+    };
+}
+
+macro_rules! chart_place_wgsl {
+    () => {
+        r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    var p = position;
+    var s = size;
+    if (u[3].z > 0.0) {
+        p = position + u[3].xy;
+        s = u[3].zw;
+    }
+    return koan_chart_mark(p, s, time, u, tile);
+}
+"#
+    };
+}
+
 /// A series' line. Uniforms: 0..4 the colour, 4 half the stroke's width
 /// and 6 the line's whole length, both in device pixels, 5 the samples;
 /// 8..12 the dash, on and off lengths in device pixels (all zero for a
@@ -130,7 +169,7 @@ pub static LINE: ShaderProgram = ShaderProgram {
     msl: concat!(
         chart_msl!(),
         r#"
-float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+float4 koan_chart_mark(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float n = u[5];
     if (n < 2.0) {
         return float4(0.0);
@@ -180,12 +219,13 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     }
     return float4(u[0], u[1], u[2], u[3] * cover);
 }
-"#
+"#,
+        chart_place_msl!()
     ),
     wgsl: concat!(
         chart_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let n = u[1].y;
     if (n < 2.0) {
         return vec4<f32>(0.0);
@@ -249,7 +289,8 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     }
     return vec4<f32>(u[0].xyz, u[0].w * cover);
 }
-"#
+"#,
+        chart_place_wgsl!()
     ),
     prepare: None,
 };
@@ -262,7 +303,7 @@ pub static AREA: ShaderProgram = ShaderProgram {
     msl: concat!(
         chart_msl!(),
         r#"
-float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+float4 koan_chart_mark(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float n = u[5];
     if (n < 2.0) {
         return float4(0.0);
@@ -287,15 +328,19 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float base = (1.0 - (m.z * base_share + m.w)) * size.y;
     float top = min(line, base);
     float bottom = max(line, base);
-    float cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0);
+    // A sliver thinner than a pixel covers it by its height, so where the
+    // line meets its base nothing is drawn.
+    float cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0)
+        * clamp(bottom - top, 0.0, 1.0);
     return float4(u[0], u[1], u[2], u[3] * cover);
 }
-"#
+"#,
+        chart_place_msl!()
     ),
     wgsl: concat!(
         chart_wgsl!(),
         r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let n = u[1].y;
     if (n < 2.0) {
         return vec4<f32>(0.0);
@@ -323,10 +368,12 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let base = (1.0 - (m.z * base_share + m.w)) * size.y;
     let top = min(line, base);
     let bottom = max(line, base);
-    let cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0);
+    let cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0)
+        * clamp(bottom - top, 0.0, 1.0);
     return vec4<f32>(u[0].xyz, u[0].w * cover);
 }
-"#
+"#,
+        chart_place_wgsl!()
     ),
     prepare: None,
 };
@@ -390,14 +437,15 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
-/// A point. Uniforms: 0..4 the colour, 4 how far the quad reaches past the
+/// A point. Uniforms: 0..4 the colour, 4 how far its frame reaches past the
 /// plot on each side, in device pixels. Tracks: 0 and 1 where it stands, as
 /// shares of the plot's width and height (from the foot), 2 its radius in
 /// device pixels.
 pub static DOT: ShaderProgram = ShaderProgram {
     name: "koan-chart-dot",
-    msl: r#"
-float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    msl: concat!(
+        r#"
+float4 koan_chart_mark(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
     float pad = u[4];
     float2 plot = size - 2.0 * pad;
     float2 centre = float2(koan_track(u, 0, time) * plot.x, (1.0 - koan_track(u, 1, time)) * plot.y) + pad;
@@ -405,8 +453,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     return float4(u[0], u[1], u[2], u[3] * cover);
 }
 "#,
-    wgsl: r#"
-fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+        chart_place_msl!()
+    ),
+    wgsl: concat!(
+        r#"
+fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
     let pad = u[1].x;
     let plot = size - 2.0 * pad;
     let centre = vec2<f32>(koan_track(u, 0u, time) * plot.x, (1.0 - koan_track(u, 1u, time)) * plot.y) + pad;
@@ -414,5 +465,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     return vec4<f32>(u[0].xyz, u[0].w * cover);
 }
 "#,
+        chart_place_wgsl!()
+    ),
     prepare: None,
 };
