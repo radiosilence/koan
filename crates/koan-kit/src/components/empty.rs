@@ -56,7 +56,7 @@ impl RenderOnce for EmptyState {
         )
         .size_full()
         // Centred in what a phone's foot leaves of the page.
-        .pb(super::foot_inset(cx))
+        .pb(super::foot_inset(window, cx))
         .flex()
         .items_center()
         .justify_center()

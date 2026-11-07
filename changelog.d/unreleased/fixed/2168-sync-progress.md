@@ -1,0 +1,1 @@
+- **Sync progress reads as one task.** The GUI app shows a sync under one title with the phase beneath the bar and the counts beside the title, as the iOS app does; the row no longer blanks for a frame as a sync ends, and the phone card drops its border.

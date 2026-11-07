@@ -439,11 +439,25 @@ impl RenderOnce for PlayButton {
         let loading = self.loading;
         // Either way there is nothing to press.
         let idle = loading || self.disabled;
+        // A press lifts the square's ground, as an outlined button's does.
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let lifted = answers.layer(window, cx);
+        let on_click = self.on_click.filter(|_| !idle).map(|on_click| {
+            let (answers, accent) = (answers.clone(), look.accent.hsla());
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
+            let press: super::Handler<ClickEvent> = std::sync::Arc::new(move |e, window, cx| {
+                answers.start(super::Answer::Lift, accent, cx);
+                on_click(e, window, cx)
+            });
+            press
+        });
         super::accessible(
             div().id(self.id),
             gpui::Role::Button,
             Some(self.label.clone()),
         )
+        .relative()
+        .children(lifted)
         .size(crate::theme::HIT)
         .flex_none()
         .flex()
@@ -462,7 +476,7 @@ impl RenderOnce for PlayButton {
                 .color(look.text_color(crate::theme::Tone::Accent))
                 .into_any_element()
         })
-        .when_some(self.on_click.filter(|_| !idle), |d, on_click| {
+        .when_some(on_click, |d, on_click| {
             super::answers_click(d, on_click.clone())
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })
@@ -515,6 +529,36 @@ impl RenderOnce for ShuffleButton {
         let group = SharedString::from(format!("shuffle-{:?}", self.id));
         let disabled = self.disabled;
         let help: SharedString = format!("{} {}", crate::theme::label("shuffle"), self.name).into();
+        // A press swings the arrows apart and crosses them again, as the
+        // transport's shuffle turning on, drawn over the glyph it hides.
+        let answers = super::Answerer::of(&self.id, window, cx);
+        let points = SHUFFLE_GLYPH * look.scale.size;
+        let color = if look.touch && !disabled {
+            ink
+        } else {
+            look.color(crate::theme::Tone::Muted)
+        };
+        let hidden = answers.glyph_live(cx);
+        let drawn = answers.glyph_layer(
+            px(crate::theme::icons::side(points)),
+            color,
+            None,
+            window,
+            cx,
+        );
+        let on_click = self.on_click.filter(|_| !disabled).map(|on_click| {
+            let (answers, accent) = (answers.clone(), look.accent.hsla());
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
+            let press: super::Handler<ClickEvent> = std::sync::Arc::new(move |e, window, cx| {
+                answers.start(
+                    super::Answer::Morph(super::answer::Morph::ShuffleOn),
+                    accent,
+                    cx,
+                );
+                on_click(e, window, cx)
+            });
+            press
+        });
         super::accessible(div().id(self.id), gpui::Role::Button, Some(help.clone()))
             .group(group.clone())
             .aria_disabled(disabled)
@@ -526,19 +570,20 @@ impl RenderOnce for ShuffleButton {
             .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
             .when(!disabled, |d| d.cursor_pointer())
             .child(
-                crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
-                    .points(SHUFFLE_GLYPH * look.scale.size)
-                    .map(|i| {
-                        if look.touch && !disabled {
-                            i.color(ink)
-                        } else {
-                            i.tone(crate::theme::Tone::Muted)
-                        }
-                    })
-                    .when(!disabled, |i| i.hover_color(group, ink)),
+                div()
+                    .relative()
+                    .child(
+                        div().when(hidden, |d| d.invisible()).child(
+                            crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
+                                .points(points)
+                                .color(color)
+                                .when(!disabled, |i| i.hover_color(group, ink)),
+                        ),
+                    )
+                    .children(drawn),
             )
             .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
-            .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
+            .when_some(on_click, |d, on_click| {
                 super::answers_click(d, on_click.clone())
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
@@ -581,7 +626,7 @@ impl RenderOnce for Page {
         // A header held above the body sits clear of a phone's bar; a bare
         // page's body scrolls under it by its own lights.
         let under_bar = match self.header {
-            Some(_) => super::bar_inset(cx),
+            Some(_) => super::bar_inset(window, cx),
             None => Pixels::ZERO,
         };
         div()

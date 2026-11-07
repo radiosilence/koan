@@ -250,7 +250,7 @@ impl RenderOnce for Collection {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .when(self.under_bar, |d| d.pt(super::bar_inset(cx)))
+                        .when(self.under_bar, |d| d.pt(super::bar_inset(window, cx)))
                         .child(div().w_full().flex().flex_col().children(lines))
                         .child(div().flex_1().flex().child(state)),
                 ),
