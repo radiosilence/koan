@@ -74,7 +74,12 @@ pub fn room(look: &Look, window: &Window) -> Pixels {
 /// The root of a view drawn in a panel: a column that shrinks to the
 /// panel's height, so its `body` scrolls, and grows to fill a `fill` panel.
 pub fn content() -> Div {
-    div().flex().flex_col().flex_grow().flex_shrink().min_h_0()
+    div()
+        .flex()
+        .flex_col()
+        .flex_grow_1()
+        .flex_shrink_1()
+        .min_h_0()
 }
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
@@ -136,7 +141,7 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .pb(look.space(Space::L))
         // Shrinks below its content inside the panel's height, and scrolls;
         // in a `fill` panel, takes what the head and foot leave.
-        .flex_grow()
+        .flex_grow_1()
         .min_h_0()
         .overflow_y_scroll()
 }
