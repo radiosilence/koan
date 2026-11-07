@@ -390,6 +390,11 @@ pub fn sync_library(
         Ok(n) => log::info!("{n} undated albums dated from their tracks"),
         Err(e) => log::warn!("failed to date undated albums: {e}"),
     }
+    match queries::settle_album_codecs(&db.conn) {
+        Ok(0) => {}
+        Ok(n) => log::info!("{n} albums given the codec their tracks are now in"),
+        Err(e) => log::warn!("failed to settle album codecs: {e}"),
+    }
 
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
@@ -1120,6 +1125,64 @@ mod tests {
             album_dates(&db),
             vec![("The Wall".into(), Some("1979".into()))]
         );
+    }
+
+    fn album_codec(db: &Database, title: &str) -> Option<String> {
+        db.conn
+            .query_row("SELECT codec FROM albums WHERE title = ?1", [title], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn songs_in(id: &str, suffix: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "name": "Calling The Vultures",
+            "artist": "Enduser",
+            "artistId": "ar-enduser",
+            "song": [
+                {"id": "s-1", "title": "Another Door Opens", "albumId": id, "track": 1,
+                 "suffix": suffix},
+                {"id": "s-2", "title": "Rights of Passage", "albumId": id, "track": 2,
+                 "suffix": suffix},
+            ],
+        })
+    }
+
+    /// The server's files replaced in another format: the tracks are found
+    /// by the server's album id, and the album takes their new codec too.
+    #[test]
+    fn an_album_replaced_in_another_format_takes_its_tracks_codec() {
+        let (db, _dir) = test_db();
+        write_server_albums(&db, &[songs_in("al-vultures", "mp3")]);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("mp3")
+        );
+
+        write_server_albums(&db, &[songs_in("al-vultures", "flac")]);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("flac")
+        );
+    }
+
+    /// A library an earlier build left with an album in its old format is put
+    /// right without its tracks changing.
+    #[test]
+    fn an_album_left_in_its_old_format_is_settled() {
+        let (db, _dir) = test_db();
+        write_server_albums(&db, &[songs_in("al-vultures", "flac")]);
+        db.conn
+            .execute("UPDATE albums SET codec = 'mp3'", [])
+            .unwrap();
+        assert_eq!(queries::settle_album_codecs(&db.conn).unwrap(), 1);
+        assert_eq!(
+            album_codec(&db, "Calling The Vultures").as_deref(),
+            Some("flac")
+        );
+        assert_eq!(queries::settle_album_codecs(&db.conn).unwrap(), 0);
     }
 
     /// A library an earlier build left with an undated album whose tracks are
