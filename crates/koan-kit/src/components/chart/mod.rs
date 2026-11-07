@@ -1247,11 +1247,31 @@ impl State {
                     Fallback::Area(polygon, color)
                 }
             };
+            // Until it is laid out again the mark stays within its spans
+            // under every map the axes pass through, and an area to a level
+            // only where it leaves the level. A series carried on past its
+            // samples can go anywhere.
+            let bounds = if matches!(series.motion, DataMotion::Extrapolate(_)) {
+                plot
+            } else {
+                let grow = match &series.mark {
+                    Mark::Line { width, .. } => width / 2.0 + 1.0,
+                    Mark::Area { .. } => 1.0,
+                };
+                let across = match &series.mark {
+                    Mark::Area {
+                        base: Base::Level(v),
+                    } => departs(&s.keyframe, yt(*v), yg, h * scale),
+                    _ => xspan,
+                };
+                reach_of(plot, plot, (xg, yg), (across, yspan), grow, scale)
+            };
+            place(&s.animated, plot, bounds, scale);
             quads.push(Quad {
                 program: if area { &program::AREA } else { &program::LINE },
                 animated: s.animated.clone(),
                 image: s.image.clone(),
-                bounds: plot,
+                bounds,
                 fallback,
             });
         }
@@ -1354,12 +1374,29 @@ impl State {
             let color = point_spec.color.unwrap_or(look.accent.hsla());
             p.animated.set_color(0, color);
             p.animated.set(4, pad * scale);
+            // From where it is drawn now to where it settles, at its
+            // widest.
+            let drawn = (p.animated.at(0, now) as f64, p.animated.at(1, now) as f64);
+            let r = p.animated.at(2, now).max(radius) / scale + 1.0;
+            let unit = Glide::still(Map { a: 1.0, b: 0.0 }, now);
+            let bounds = reach_of(
+                plot,
+                dot_bounds,
+                (unit, unit),
+                (
+                    Span::of([drawn.0, ux as f64]),
+                    Span::of([drawn.1, uy as f64]),
+                ),
+                r,
+                scale,
+            );
+            place(&p.animated, dot_bounds, bounds, scale);
             let at = to_px(point_spec.x, point_spec.y);
             quads.push(Quad {
                 program: &program::DOT,
                 animated: p.animated.clone(),
                 image: None,
-                bounds: dot_bounds,
+                bounds,
                 fallback: Fallback::Dot(at, px(radius / scale), color),
             });
             let range = |given: Option<(f64, f64)>, axis: &Axis| {
@@ -1554,6 +1591,92 @@ impl State {
             animated: animated.clone(),
             strip,
         }
+    }
+}
+
+/// An edge in device pixels as GPUI places a quad's: the logical value
+/// scaled and rounded half toward zero, so the size a program is handed
+/// for its frame is the one its quad would have been drawn at.
+fn snap(v: Pixels, scale: f32) -> f32 {
+    let d = f32::from(v) * scale;
+    (d.abs() - 0.5).ceil().copysign(d)
+}
+
+/// The part of `frame` a mark spanning `spans` (in the axes' transformed
+/// units) reaches under each axis's map now and at the end of its glide,
+/// grown by `grow` points and widened to whole device pixels.
+fn reach_of(
+    plot: Bounds<Pixels>,
+    frame: Bounds<Pixels>,
+    (xg, yg): (Glide, Glide),
+    (xs, ys): (Span, Span),
+    grow: f32,
+    scale: f32,
+) -> Bounds<Pixels> {
+    let shares = |g: Glide, s: Span| {
+        Span::of([
+            g.from.unit(s.lo),
+            g.from.unit(s.hi),
+            g.to.unit(s.lo),
+            g.to.unit(s.hi),
+        ])
+    };
+    let (ux, uy) = (shares(xg, xs), shares(yg, ys));
+    let (w, h) = (f32::from(plot.size.width), f32::from(plot.size.height));
+    let (x0, y0) = (f32::from(plot.origin.x), f32::from(plot.origin.y));
+    let (fl, ft) = (snap(frame.left(), scale), snap(frame.top(), scale));
+    let (fr, fb) = (snap(frame.right(), scale), snap(frame.bottom(), scale));
+    let left = ((x0 + ux.lo as f32 * w - grow) * scale)
+        .floor()
+        .clamp(fl, fr);
+    let right = ((x0 + ux.hi as f32 * w + grow) * scale)
+        .ceil()
+        .clamp(left, fr);
+    let top = ((y0 + (1.0 - uy.hi as f32) * h - grow) * scale)
+        .floor()
+        .clamp(ft, fb);
+    let bottom = ((y0 + (1.0 - uy.lo as f32) * h + grow) * scale)
+        .ceil()
+        .clamp(top, fb);
+    Bounds::from_corners(
+        point(px(left / scale), px(top / scale)),
+        point(px(right / scale), px(bottom / scale)),
+    )
+}
+
+/// Tells a mark's program where its quad stands in its frame, both as
+/// GPUI snaps them, so a mark reads the plot at the size the grid does.
+fn place(animated: &Animated, frame: Bounds<Pixels>, quad: Bounds<Pixels>, scale: f32) {
+    let (fl, ft) = (snap(frame.left(), scale), snap(frame.top(), scale));
+    animated.set_all(
+        12,
+        &[
+            snap(quad.left(), scale) - fl,
+            snap(quad.top(), scale) - ft,
+            snap(frame.right(), scale) - fl,
+            snap(frame.bottom(), scale) - ft,
+        ],
+    );
+}
+
+/// The stretch of x over which an area to `level` stands more than a
+/// twentieth of a device pixel off it, under either of the y axis's maps,
+/// with a sample to spare each side: where it can be seen, as `AREA`
+/// covers a sliver by its height.
+fn departs(k: &Keyframe, level: f64, yg: Glide, height: f32) -> Span {
+    let off = |y: f64| {
+        [yg.from, yg.to]
+            .iter()
+            .any(|m| ((m.unit(y) - m.unit(level)) * height as f64).abs() > 0.05)
+    };
+    let seen: Vec<usize> = (0..k.xs.len())
+        .filter(|&i| off(k.from[i]) || off(k.to[i]))
+        .collect();
+    match (seen.first(), seen.last()) {
+        (Some(&a), Some(&b)) => {
+            Span::of([k.xs[a.saturating_sub(1)], k.xs[(b + 1).min(k.xs.len() - 1)]])
+        }
+        _ => Span::of([k.xs.first().copied().unwrap_or(0.0)]),
     }
 }
 

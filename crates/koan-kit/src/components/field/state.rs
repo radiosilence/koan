@@ -128,6 +128,8 @@ pub struct FieldState {
     /// control the field is part of (a filter field's clear mark), as its
     /// owner lays it out.
     pub(crate) keeps: Option<Bounds<Pixels>>,
+    /// The kind of text it takes, which a software keyboard lays out for.
+    mode: gpui::TextInputMode,
     _focus: [Subscription; 4],
 }
 
@@ -188,6 +190,7 @@ impl FieldState {
             blink: Task::ready(()),
             drawn_in: None,
             keeps: None,
+            mode: gpui::TextInputMode::Unspecified,
             _focus: [focused, blurred, activation, redraw],
         }
     }
@@ -203,6 +206,13 @@ impl FieldState {
         self.text = value.into().to_string();
         self.selected = self.text.len()..self.text.len();
         self.rehighlight();
+        self
+    }
+
+    /// A number, which may be negative or fractional: a software keyboard
+    /// shows figures and the minus sign.
+    pub fn number(mut self) -> Self {
+        self.mode = gpui::TextInputMode::SignedDecimal;
         self
     }
 
@@ -1034,6 +1044,17 @@ impl FieldState {
 }
 
 impl EntityInputHandler for FieldState {
+    fn text_input_configuration(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> gpui::TextInputConfiguration {
+        gpui::TextInputConfiguration {
+            input_mode: self.mode,
+            ..Default::default()
+        }
+    }
+
     fn text_for_range(
         &mut self,
         range: Range<usize>,

@@ -89,18 +89,18 @@ impl EqPage {
 }
 
 impl Render for EqPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let look = Look::of(window, cx);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The page's host draws its sheets over the whole of itself
         // (`overlay`): Settings' window on the desktop, so the tab strip is
-        // covered too, and the phone's shell, over its bar and foot.
+        // covered too, and the phone's shell, over its bar and foot. The
+        // host gives it its ground too: the Settings window's, or the
+        // phone's wash.
         let dsp = self.dsp.clone();
         let device = self.body.read(cx).device();
         div()
             .id("eq-page")
             .relative()
             .size_full()
-            .bg(look.palette.bg.hsla())
             .on_drop(move |paths: &ExternalPaths, _, cx| {
                 let into = device.clone().map(|device| Placement {
                     device,
