@@ -57,7 +57,7 @@ impl Grip {
         look: &Look,
         window: &mut Window,
         cx: &mut App,
-    ) -> (Stateful<Div>, impl IntoElement) {
+    ) -> (Stateful<Div>, impl IntoElement + use<>) {
         // Set on a press on the grip and cleared on release, without a
         // notify: nothing is drawn from it.
         let drag = window.use_keyed_state(child(&self.id, "drag"), cx, |_, _| None::<Drag>);
