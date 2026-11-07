@@ -1,0 +1,1 @@
+- **The wash at 6K holds 120 fps.** Its colour is worked out once per record, appearance and tint rather than at every pixel, so full screen on a 4K panel at its sharpest scaled size keeps up with a 120 Hz display.
