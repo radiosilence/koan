@@ -156,6 +156,7 @@ impl RenderOnce for Picker {
             let opens: Handler<gpui::ClickEvent> = {
                 let toggle = open.clone();
                 let answers = answers.clone();
+                #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
                 std::sync::Arc::new(move |_, _, cx| {
                     answers.start(super::Answer::Lift, accent, cx);
                     toggle.update(cx, |open, cx| {
