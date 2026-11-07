@@ -1,0 +1,1 @@
+- **Empty states fit small areas.** In a narrow column or the lyrics beside a small window, the empty state draws itself smaller, down to half size, and is clipped past that rather than drawn over the sidebar.
