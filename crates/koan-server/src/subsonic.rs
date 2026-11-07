@@ -7128,6 +7128,7 @@ mod tests {
             push: false,
             server_url: crate::ServerUrl::Fixed(None),
             stop: Default::default(),
+            links: Default::default(),
             host_key: None,
         });
         (state, dir)
