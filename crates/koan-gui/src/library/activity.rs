@@ -322,26 +322,26 @@ impl Activity {
                 stop: None,
             });
         }
-        if self.syncing || tasks.syncing {
+        // Only once the sync reports: a sync that finds the server unchanged
+        // walks nothing and ends at once, and a row for it would only blink.
+        let progress = (self.syncing || tasks.syncing)
+            .then(|| mirror.sync.read(cx).0.or(self.last_sync))
+            .flatten();
+        if let Some(progress) = progress {
             // One title for the whole sync, as the iOS app has it; the phase
             // is the line under the bar, so the row keeps its shape from
             // phase to phase.
-            let progress = mirror.sync.read(cx).0.or(self.last_sync);
-            let (detail, unit) = match progress.map(|p| p.phase) {
-                Some(SyncPhase::Albums) => ("listing albums", Some("albums")),
-                Some(SyncPhase::Tracks) => ("fetching tracks", Some("tracks")),
-                Some(SyncPhase::Artists) => ("recording artists", None),
-                Some(SyncPhase::Finishing) => ("finishing", None),
-                None => ("asking the server", None),
+            let (detail, unit) = match progress.phase {
+                SyncPhase::Albums => ("listing albums", Some("albums")),
+                SyncPhase::Tracks => ("fetching tracks", Some("tracks")),
+                SyncPhase::Artists => ("recording artists", None),
+                SyncPhase::Finishing => ("finishing", None),
             };
             rows.push(Row {
                 id: "activity-sync",
                 label: "syncing with server".into(),
-                done: progress.filter(|_| unit.is_some()).map(|p| p.done),
-                total: progress
-                    .filter(|_| unit.is_some())
-                    .and_then(|p| p.total)
-                    .filter(|t| *t > 0),
+                done: unit.map(|_| progress.done),
+                total: unit.and(progress.total).filter(|t| *t > 0),
                 unit,
                 detail: Some(detail.into()),
                 stop: None,
@@ -422,6 +422,16 @@ fn grouped(n: u64) -> String {
 }
 
 impl Activity {
+    /// A sync started elsewhere in the app (Settings' button) running or
+    /// ended, so the row follows it as it follows one started here.
+    pub fn follow_sync(&mut self, running: bool, cx: &mut Context<Self>) {
+        self.syncing = running;
+        if !running && !cx.global::<Mirror>().tasks.read(cx).0.syncing {
+            self.last_sync = None;
+        }
+        cx.notify();
+    }
+
     /// Whether anything is under way or a task's failure stands: a phone
     /// floats the rows as a card only then.
     pub fn shows(&self, cx: &App) -> bool {
