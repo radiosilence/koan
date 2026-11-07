@@ -769,7 +769,7 @@ impl Render for PhoneShell {
         // the window wears that record's colours until it has gone down.
         crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
-            let wash = crate::theme::wash::WindowWash::shared(cx);
+            let wash = crate::theme::wash::WindowWash::shared(window, cx);
             div().absolute().inset_0().occlude().child(
                 crate::components::SlideUp::new(
                     div()

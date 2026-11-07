@@ -10,10 +10,13 @@
 //! Where the renderer draws shaders, the wash is the GPU's to make: each
 //! record is reduced once, on a worker, to a small field (`field`: the
 //! sleeve saturated and blurred, 32 texels a side, its cubic B-spline drawn
-//! at 128), and the program (`WASH`) reads it in one filtered sample at
-//! every present and does the rest per pixel:
-//! the tone's luminance hold, the ground at the wash's strength and the
-//! dither. An appearance or tint change is a uniform, not a bake. Each
+//! at 128 in OKLab), coloured there for the appearance and tint (the tone's
+//! luminance hold, encoded), and the program (`WASH`) reads it in one
+//! filtered sample at every present and lays it over the ground at the
+//! wash's strength with the dither: a few operations a pixel, which a 6K
+//! window presents at 120 Hz. An appearance or tint change colours the
+//! record's kept field again on a worker, 16,384 texels, and replaces the
+//! texture at once. Each
 //! record's field is one shader quad, handed the drift's and the dissolve's
 //! ramps once per render, its pose and opacity worked out as each frame is
 //! presented (`prepare`), so a drifting wash costs no GPUI frame and the
@@ -33,13 +36,14 @@
 //! its sampling; the CPU's fallback, drawn as an image sprite, which takes no
 //! transform, breathes and travels alone.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Bounds, Context, Corners, Entity, Global, IntoElement, ParentElement, Pixels, Render,
-    RenderImage, Styled, Task, Window, canvas, div, point, px, size,
+    RenderImage, Styled, Task, WeakEntity, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
@@ -83,49 +87,20 @@ pub const FIELD: u32 = 32;
 /// the straight line between to show.
 pub const FIELD_DRAWN: u32 = 128;
 
-/// The span of OKLab's a and b the field encodes, centred on grey: wider
-/// than any sRGB colour reaches.
-const LAB_SPAN: f64 = 0.7;
-
 /// The wash as a fragment program, made from the record's field (`field`) at
-/// each present: the field's B-spline as `field` drew it, the tone's luminance
-/// hold, the ground at the wash's strength, and a dither of a level either
-/// way, so a gradient this soft shows no bands at any size. Uniforms: 0
-/// whether to lay it over `bg` (the layer drawn first), 1 whether the
-/// appearance is dark, 2..5 `bg`, 5 the hold (0 to 1), 6 the tone's luminance
-/// limit (`Tone::limit`, the one place it is set), 7 to 11 the pose
-/// `prepare` works out from the tracks. Tracks: 0 the drift's
+/// each present: the field as `field` coloured it, the ground at the wash's
+/// strength, and a dither of a level either way, so a gradient this soft
+/// shows no bands at any size. Uniforms: 0 whether to lay it over `bg` (the
+/// layer drawn first), 2..5 `bg`, 7 to 11 the pose `prepare` works out from
+/// the tracks. Tracks: 0 the drift's
 /// amplitude, 1 the opacity, 2 the breath's scale, 3 the travel (-1 to 1),
 /// 4 the turn's swing (-1 to 1) and 5 how far it turns, in radians, each at
 /// full amplitude; a new turn eases there rather than jumping (#1883). The
-/// field is OKLab: L in red, a and b in green and blue over `LAB_SPAN`. The
-/// overscan (1.38), reach (0.12), rise (0.10), the span (0.7) and
-/// strength (0.6) are written into the source; a test holds them to the
-/// constants.
+/// overscan (1.38), reach (0.12), rise (0.10) and strength (0.6) are written
+/// into the source; a test holds them to the constants.
 pub static WASH: ShaderProgram = ShaderProgram {
     name: "koan-wash",
     msl: r#"
-float3 koan_wash_from_lab(float3 f) {
-    float L = f.r;
-    float A = (f.g - 0.5) * 0.7;
-    float B = (f.b - 0.5) * 0.7;
-    float l = L + 0.3963377774 * A + 0.2158037573 * B;
-    float m = L - 0.1055613458 * A - 0.0638541728 * B;
-    float s = L - 0.0894841775 * A - 1.2914855480 * B;
-    l = l * l * l;
-    m = m * m * m;
-    s = s * s * s;
-    return max(float3(
-        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), 0.0);
-}
-
-float3 koan_wash_gamma(float3 c) {
-    c = clamp(c, 0.0, 1.0);
-    return select(1.055 * pow(c, 1.0 / 2.4) - 0.055, 12.92 * c, c <= 0.0031308);
-}
-
 float koan_wash_ign(float2 p) {
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }
@@ -143,26 +118,11 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     float2 d = position - centre;
     float2 uv = float2(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
 
-    // The field as `field` evaluated it, its cubic B-spline drawn finer
-    // than the eye can tell from the curve: one filtered read.
-    float3 field = koan_sample(image, tile, uv).rgb;
-
-    // The tone's hold: under `muted`'s limit in the dark, over `surface`'s
-    // in the light, by the person's tint.
-    float3 light = koan_wash_from_lab(field);
-    float y = dot(light, float3(0.2126, 0.7152, 0.0722));
-    float limit = u[6];
-    if (u[1] > 0.5) {
-        if (y > limit) {
-            light *= 1.0 + (limit / y - 1.0) * u[5];
-        }
-    } else {
-        if (y < limit) {
-            light += (1.0 - light) * ((limit - y) / (1.0 - y) * u[5]);
-        }
-    }
+    // The wash as `field` coloured it, its cubic B-spline drawn finer than
+    // the eye can tell from the curve: one filtered read.
+    float3 wash = koan_sample(image, tile, uv).rgb;
     float3 ground = float3(u[2], u[3], u[4]);
-    float3 colour = ground + (koan_wash_gamma(light) - ground) * 0.6;
+    float3 colour = ground + (wash - ground) * 0.6;
     colour += (koan_wash_ign(position) + koan_wash_ign(position + float2(37.0, 91.0)) - 1.0) / 255.0;
     if (u[0] > 0.5) {
         return float4(mix(ground, colour, opacity), 1.0);
@@ -171,27 +131,6 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
 }
 "#,
     wgsl: r#"
-fn koan_wash_from_lab(f: vec3<f32>) -> vec3<f32> {
-    let L = f.x;
-    let A = (f.y - 0.5) * 0.7;
-    let B = (f.z - 0.5) * 0.7;
-    let l0 = L + 0.3963377774 * A + 0.2158037573 * B;
-    let m0 = L - 0.1055613458 * A - 0.0638541728 * B;
-    let s0 = L - 0.0894841775 * A - 1.2914855480 * B;
-    let l = l0 * l0 * l0;
-    let m = m0 * m0 * m0;
-    let s = s0 * s0 * s0;
-    return max(vec3<f32>(
-        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), vec3<f32>(0.0));
-}
-
-fn koan_wash_gamma(c0: vec3<f32>) -> vec3<f32> {
-    let c = clamp(c0, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, 12.92 * c, c <= vec3<f32>(0.0031308));
-}
-
 fn koan_wash_ign(p: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }
@@ -206,21 +145,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     let centre = size * 0.5 + vec2<f32>(size.x * 0.12, size.y * 0.10) * travel;
     let d = position - centre;
     let uv = vec2<f32>(c * d.x + s * d.y, c * d.y - s * d.x) / side + 0.5;
-    let field = koan_sample(tile, uv).rgb;
-    var light = koan_wash_from_lab(field);
-    let y = dot(light, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let limit = u[1].z;
-    if (u[0].y > 0.5) {
-        if (y > limit) {
-            light = light * (1.0 + (limit / y - 1.0) * u[1].y);
-        }
-    } else {
-        if (y < limit) {
-            light = light + (1.0 - light) * ((limit - y) / (1.0 - y) * u[1].y);
-        }
-    }
+    let wash = koan_sample(tile, uv).rgb;
     let ground = vec3<f32>(u[0].z, u[0].w, u[1].x);
-    var colour = ground + (koan_wash_gamma(light) - ground) * 0.6;
+    var colour = ground + (wash - ground) * 0.6;
     colour = colour + (koan_wash_ign(position) + koan_wash_ign(position + vec2<f32>(37.0, 91.0)) - 1.0) / 255.0;
     if (u[0].x > 0.5) {
         return vec4<f32>(mix(ground, colour, opacity), 1.0);
@@ -283,12 +210,6 @@ impl Tone {
             Tone::Light => 0.86,
         }
     }
-}
-
-/// The luminance limit the wash is held to in an appearance, as the program
-/// takes it (uniform 6).
-pub fn tone_limit(dark: bool) -> f32 {
-    if dark { Tone::Dark } else { Tone::Light }.limit() as f32
 }
 
 /// A decoded sleeve, as straight-alpha RGBA.
@@ -356,20 +277,27 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
     dither_up(&mixed)
 }
 
-/// The wash's field for the GPU: the sleeve saturated and blurred as `bake`
-/// does it, at `FIELD` texels a side, its cubic B-spline drawn at
-/// `FIELD_DRAWN`, encoded. The program reads it once a pixel and does the rest (the tone's hold, the ground, the dither) per
-/// pixel at each present, so a new appearance or tint is a uniform, not a
-/// bake. BGRA, as GPUI's images are. The field is band-limited by the blur,
-/// so this many texels lose nothing a cubic reconstruction would show; the
-/// reconstruction is made here, once a record, not by every pixel.
-pub fn field(sleeve: &Sleeve) -> image::RgbaImage {
+/// The wash's field for the GPU, for one appearance and tint: the sleeve
+/// saturated and blurred as `bake` does it, at `FIELD` texels a side, its
+/// cubic B-spline drawn at `FIELD_DRAWN` in OKLab (`lab_field`), each texel
+/// then held to the tone's luminance limit and encoded (`coloured`). The
+/// program reads it once a pixel and lays it over the ground with the
+/// dither. BGRA, as GPUI's images are.
+pub fn field(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
+    coloured(&lab_field(sleeve), dark, hold)
+}
+
+/// A record's field in OKLab at `FIELD_DRAWN` a side, kept per record so a
+/// new appearance or tint colours it again without blurring the sleeve
+/// again. Spline-drawn in OKLab, so the field blends in an even space, not
+/// in sRGB's encoding, which would darken and dull a colour edge. The field
+/// is band-limited by the blur, so `FIELD` texels lose nothing a cubic
+/// reconstruction would show.
+fn lab_field(sleeve: &Sleeve) -> Vec<[f64; 3]> {
     let channels = blurred(sleeve);
     let side = SIDE as usize;
     let n = FIELD as usize;
     let cell = side / n;
-    // The field in OKLab, so the reads blend in an even space, not in
-    // sRGB's encoding, which would darken and dull a colour edge.
     let lab: Vec<[f64; 3]> = (0..n * n)
         .map(|i| {
             let (x, y) = (i % n, i / n);
@@ -385,12 +313,36 @@ pub fn field(sleeve: &Sleeve) -> image::RgbaImage {
             super::accent::oklch::lab(linear)
         })
         .collect();
-    let drawn = spline_up(&lab, n, FIELD_DRAWN as usize);
-    let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-    let chroma = |v: f64| byte(v / LAB_SPAN + 0.5);
+    spline_up(&lab, n, FIELD_DRAWN as usize)
+}
+
+/// `lab` (`FIELD_DRAWN` a side) held to the tone's luminance limit by
+/// `hold`, as `bake` holds it, and encoded, BGRA.
+fn coloured(lab: &[[f64; 3]], dark: bool, hold: f64) -> image::RgbaImage {
+    use super::accent::oklch::{gamma, linear_from_lab};
+    let tone = if dark { Tone::Dark } else { Tone::Light };
+    let limit = tone.limit();
+    let byte = |v: f64| (gamma(v.clamp(0.0, 1.0)) * 255.0).round() as u8;
     let mut out = image::RgbaImage::new(FIELD_DRAWN, FIELD_DRAWN);
-    for (pixel, [l, a, b]) in out.pixels_mut().zip(drawn) {
-        pixel.0 = [chroma(b), chroma(a), byte(l), 255];
+    for (pixel, texel) in out.pixels_mut().zip(lab) {
+        let [mut r, mut g, mut b] = linear_from_lab(*texel).map(|v| v.max(0.0));
+        let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        match tone {
+            Tone::Dark if y > limit => {
+                let k = 1.0 + (limit / y - 1.0) * hold;
+                r *= k;
+                g *= k;
+                b *= k;
+            }
+            Tone::Light if y < limit => {
+                let t = (limit - y) / (1.0 - y) * hold;
+                r += (1.0 - r) * t;
+                g += (1.0 - g) * t;
+                b += (1.0 - b) * t;
+            }
+            _ => {}
+        }
+        pixel.0 = [byte(b), byte(g), byte(r), 255];
     }
     out
 }
@@ -622,16 +574,32 @@ struct Layer<T> {
     shader: Animated,
 }
 
-/// The window's wash, for a screen over the page (Now Playing, a full
-/// sheet on a phone) to draw behind itself, as the page's ground does;
-/// `None` with less transparency asked for. The window's root sets it.
-pub struct WindowWash(pub Option<Entity<Wash>>);
+/// Each window's wash, for a screen over the page (Now Playing, a full
+/// sheet on a phone) to draw behind itself, as the page's ground does. Per
+/// window: a wash is coloured for the appearance of the window it draws in,
+/// and windows can be pinned to different ones. A window's root sets its
+/// own; `None` with less transparency asked for. Held weakly, so a closed
+/// window's wash goes with it.
+#[derive(Default)]
+pub struct WindowWash(HashMap<gpui::WindowId, WeakEntity<Wash>>);
 
 impl Global for WindowWash {}
 
 impl WindowWash {
-    pub fn shared(cx: &App) -> Option<Entity<Wash>> {
-        cx.try_global::<Self>().and_then(|w| w.0.clone())
+    /// Sets `window`'s wash, or takes it away with `None`.
+    pub fn set(window: &Window, wash: Option<&Entity<Wash>>, cx: &mut App) {
+        let id = window.window_handle().window_id();
+        let washes = &mut cx.default_global::<Self>().0;
+        washes.retain(|_, wash| wash.upgrade().is_some());
+        match wash {
+            Some(wash) => washes.insert(id, wash.downgrade()),
+            None => washes.remove(&id),
+        };
+    }
+
+    pub fn shared(window: &Window, cx: &App) -> Option<Entity<Wash>> {
+        let id = window.window_handle().window_id();
+        cx.try_global::<Self>()?.0.get(&id)?.upgrade()
     }
 }
 
@@ -642,9 +610,12 @@ pub struct Wash {
     /// The bake running, or the last one tried, as (generation, dark, hold).
     baked: Option<(u64, bool, u32)>,
     current: Option<Layer<Texture>>,
+    /// The record's field in OKLab, once drawn, which an appearance or tint
+    /// change colours again (`coloured`).
+    lab: Option<(u64, Arc<Vec<[f64; 3]>>)>,
     /// The record before, held under the current one while it dissolves in,
     /// or fading out to the bare ground when there is none.
-    previous: Option<Layer<Arc<RenderImage>>>,
+    previous: Option<Layer<Texture>>,
     /// Whether the caller wants the drift: something playing, and the
     /// graphics setting allowing it.
     wanted: bool,
@@ -671,6 +642,7 @@ impl Wash {
             generation: 0,
             baked: None,
             current: None,
+            lab: None,
             previous: None,
             wanted: false,
             amplitude: Ramp::still(0.0),
@@ -697,7 +669,7 @@ impl Wash {
         self.sleeve = sleeve;
         self.generation += 1;
         if self.sleeve.is_none() {
-            self.install(None, true);
+            self.install(None);
         }
         cx.notify();
     }
@@ -721,25 +693,27 @@ impl Wash {
         cx.notify();
     }
 
-    /// Puts a texture on, or takes the wash off with `None`. A new record
-    /// dissolves in over the old; the same record rebaked for another
-    /// appearance or tint replaces everything at once, since a texture of the
-    /// old appearance must not linger under the new.
-    fn install(&mut self, texture: Option<Texture>, dissolve: bool) {
+    /// The current record coloured again for another appearance or tint:
+    /// its texture swapped where it stands, its dissolve and the record
+    /// under it going on as they were, so a tint dragged or an appearance
+    /// flipped mid-dissolve neither cuts the dissolve short nor drops what
+    /// it dissolves from. Each layer is drawn over the ground it was
+    /// coloured for.
+    fn recolour(&mut self, texture: Texture) {
+        match self.current.as_mut() {
+            Some(layer) => {
+                let old = std::mem::replace(&mut layer.texture, texture);
+                self.released.push(old.image);
+            }
+            None => self.install(Some(texture)),
+        }
+    }
+
+    /// Puts a new record's texture on, dissolving in over the old, or takes
+    /// the wash off with `None`.
+    fn install(&mut self, texture: Option<Texture>) {
         let now = Instant::now();
         let outgoing = self.current.take();
-        if !dissolve {
-            self.released
-                .extend(outgoing.map(|layer| layer.texture.image));
-            self.released
-                .extend(self.previous.take().map(|layer| layer.texture));
-            self.current = texture.map(|texture| Layer {
-                texture,
-                opacity: Ramp::still(1.0),
-                shader: Animated::new(),
-            });
-            return;
-        }
         let Some(texture) = texture else {
             // Taken off: what shows fades out to the ground from where it
             // stands, a record part-way through dissolving in and the one
@@ -765,12 +739,12 @@ impl Wash {
                 Ramp::still(1.0)
             };
             let held = Layer {
-                texture: outgoing.texture.image,
+                texture: outgoing.texture,
                 opacity,
                 shader: outgoing.shader,
             };
             self.released
-                .extend(self.previous.replace(held).map(|layer| layer.texture));
+                .extend(self.previous.replace(held).map(|layer| layer.texture.image));
         }
         // With no record on before, `previous` keeps fading as it was.
         self.current = Some(Layer {
@@ -784,30 +758,35 @@ impl Wash {
         let Some(sleeve) = self.sleeve.clone() else {
             return;
         };
-        // Where the GPU makes the wash, the field depends on the record
-        // alone: the appearance and the tint are the program's uniforms.
-        let (dark, hold) = if SHADED {
-            (false, 0)
-        } else {
-            (dark, self.hold)
-        };
+        let hold = self.hold;
         let key = (self.generation, dark, hold);
         if self.baked == Some(key) {
             return;
         }
         self.baked = Some(key);
+        // Where the GPU makes the wash, a record's field is drawn once and
+        // coloured again for each appearance and tint: 16,384 texels.
+        let lab = self
+            .lab
+            .as_ref()
+            .filter(|(generation, _)| *generation == key.0)
+            .map(|(_, lab)| lab.clone());
         let task = cx.background_executor().spawn(async move {
             if SHADED {
-                field(&sleeve)
+                let lab = lab.unwrap_or_else(|| Arc::new(lab_field(&sleeve)));
+                (coloured(&lab, dark, hold as f64 / 100.0), Some(lab))
             } else {
-                bake(&sleeve, dark, hold as f64 / 100.0)
+                (bake(&sleeve, dark, hold as f64 / 100.0), None)
             }
         });
         cx.spawn(async move |wash, cx| {
-            let baked = task.await;
+            let (baked, lab) = task.await;
             wash.update(cx, |wash, cx| {
                 if wash.generation != key.0 || wash.baked != Some(key) {
                     return;
+                }
+                if let Some(lab) = lab {
+                    wash.lab = Some((key.0, lab));
                 }
                 let same_record = wash
                     .current
@@ -823,7 +802,11 @@ impl Wash {
                     dark,
                     hold,
                 };
-                wash.install(Some(texture), !same_record);
+                if same_record {
+                    wash.recolour(texture);
+                } else {
+                    wash.install(Some(texture));
+                }
                 cx.notify();
             })
             .ok();
@@ -889,8 +872,8 @@ impl Render for Wash {
         let stale = match &self.current {
             Some(layer) => {
                 layer.texture.generation != self.generation
-                    || (!SHADED
-                        && (layer.texture.dark != look.dark || layer.texture.hold != self.hold))
+                    || layer.texture.dark != look.dark
+                    || layer.texture.hold != self.hold
             }
             None => true,
         };
@@ -913,7 +896,7 @@ impl Render for Wash {
             .is_some_and(|layer| !layer.opacity.moving(now) && layer.opacity.at(now) <= 0.0);
         if covered || faded {
             self.released
-                .extend(self.previous.take().map(|layer| layer.texture));
+                .extend(self.previous.take().map(|layer| layer.texture.image));
         }
         // Taken off and faded out to the ground: nothing left to draw.
         let gone = self
@@ -977,7 +960,7 @@ impl Render for Wash {
         let previous = self
             .previous
             .as_ref()
-            .map(|l| (l.texture.clone(), l.opacity.at(now)))
+            .map(|l| (l.texture.image.clone(), l.opacity.at(now)))
             .filter(|(_, opacity)| *opacity > 0.0);
         let current = self
             .current
@@ -1013,28 +996,30 @@ impl Wash {
         // The person's turn (Settings → Appearance); the pace is followed
         // in `render`, for both ways of drawing.
         let turn = cx.global::<KoanTheme>().wash_turn as f32 * std::f32::consts::PI / 180.0;
-        let previous = self
-            .previous
-            .as_ref()
-            .map(|l| (l.texture.clone(), l.opacity, l.shader.clone()));
-        let current = self
-            .current
-            .as_ref()
-            .map(|l| (l.texture.image.clone(), l.opacity, l.shader.clone()));
-        for (image, opacity, shader) in previous.into_iter().chain(current) {
+        // Each laid over the ground of the appearance it was coloured for:
+        // for the frame or two an appearance's colouring takes to land, and
+        // for a record coloured for the one before dissolving out, the wash
+        // shows whole rather than its colours over another ground.
+        let ground = |dark: bool| {
+            if dark == look.dark {
+                bg
+            } else {
+                Palette::of(dark).bg.hsla().to_rgb()
+            }
+        };
+        let [previous, current] = [&self.previous, &self.current].map(|layer| {
+            layer.as_ref().map(|l| {
+                (
+                    l.texture.image.clone(),
+                    l.opacity,
+                    l.shader.clone(),
+                    ground(l.texture.dark),
+                )
+            })
+        });
+        for (image, opacity, shader, bg) in previous.into_iter().chain(current) {
             let first = quads.is_empty();
-            shader.set_all(
-                0,
-                &[
-                    if first { 1.0 } else { 0.0 },
-                    if look.dark { 1.0 } else { 0.0 },
-                    bg.r,
-                    bg.g,
-                    bg.b,
-                    self.hold as f32 / 100.0,
-                    tone_limit(look.dark),
-                ],
-            );
+            shader.set_all(0, &[if first { 1.0 } else { 0.0 }, 0.0, bg.r, bg.g, bg.b]);
             self.amplitude.write(&shader, 0);
             opacity.write(&shader, 1);
             if drifting {
@@ -1116,7 +1101,6 @@ mod tests {
                 format!("size.x * {REACH:.2}"),
                 format!("size.y * {RISE:.2}"),
                 format!("* {STRENGTH:?};"),
-                format!("- 0.5) * {LAB_SPAN:?};"),
             ] {
                 assert!(source.contains(&figure), "{figure} missing");
             }
@@ -1144,7 +1128,7 @@ mod tests {
             bake(&sleeve, true, 1.0);
         });
         let field = time(&|| {
-            field(&sleeve);
+            field(&sleeve, true, 1.0);
         });
         println!("bake {baked:?}, field {field:?} per record");
     }
@@ -1204,21 +1188,38 @@ mod tests {
     #[test]
     fn the_field_is_the_blurred_sleeve_in_little() {
         let red = Sleeve::new([220, 20, 20, 255].repeat(64 * 64).into(), 64, 64).unwrap();
-        let field = field(&red);
+        let field = field(&red, false, 0.0);
         assert_eq!(field.dimensions(), (FIELD_DRAWN, FIELD_DRAWN));
-        let [b, a_ch, l, alpha] = field.get_pixel(FIELD_DRAWN / 2, FIELD_DRAWN / 2).0;
-        let lab = [
-            l as f64 / 255.0,
-            (a_ch as f64 / 255.0 - 0.5) * LAB_SPAN,
-            (b as f64 / 255.0 - 0.5) * LAB_SPAN,
-        ];
-        let [r, g, bl] = super::super::accent::oklch::linear_from_lab(lab)
-            .map(super::super::accent::oklch::gamma);
-        assert!(
-            r > 0.75 && g < 0.25 && bl < 0.25,
-            "red {r} green {g} blue {bl}"
-        );
+        let [b, g, r, alpha] = field.get_pixel(FIELD_DRAWN / 2, FIELD_DRAWN / 2).0;
+        assert!(r > 190 && g < 64 && b < 64, "red {r} green {g} blue {b}");
         assert_eq!(alpha, 255);
+    }
+
+    /// The field coloured for an appearance and tint is the bake's colour
+    /// before the ground: laid over the ground at the strength, within a
+    /// couple of levels of what the CPU's bake draws, in both appearances.
+    #[test]
+    fn the_field_is_coloured_as_the_bake_is() {
+        for (sleeve, dark, hold) in [
+            (solid(220, 20, 20), true, 1.0),
+            (solid(30, 60, 200), false, 1.0),
+            (solid(240, 230, 200), true, 0.5),
+            (solid(10, 10, 12), false, 0.0),
+        ] {
+            let field = field(&sleeve, dark, hold);
+            let baked = bake(&sleeve, dark, hold);
+            let ground = Palette::of(dark).bg.channels();
+            let w = field.get_pixel(FIELD_DRAWN / 2, FIELD_DRAWN / 2).0;
+            let o = baked.get_pixel(OUT / 2, OUT / 2).0;
+            for (c, g) in [(0, 2), (1, 1), (2, 0)] {
+                let mixed = ground[c] as f64 + (w[g] as f64 - ground[c] as f64) * STRENGTH as f64;
+                assert!(
+                    (mixed - o[g] as f64).abs() <= 2.0,
+                    "{dark} {hold}: channel {c} field {mixed} bake {}",
+                    o[g]
+                );
+            }
+        }
     }
 
     fn solid(r: u8, g: u8, b: u8) -> Sleeve {
@@ -1297,14 +1298,37 @@ mod tests {
         }
     }
 
+    /// The record coming in coloured again mid-dissolve (a tint dragged, the
+    /// appearance flipped) keeps dissolving in over the record under it:
+    /// only its texture changes, and the old one is released.
+    #[test]
+    fn recoloured_mid_dissolve_it_keeps_dissolving() {
+        let mut wash = Wash::new();
+        wash.install(Some(texture(1)));
+        wash.install(Some(texture(2)));
+        let ramp = wash.current.as_ref().unwrap().opacity;
+        let mut dark = texture(2);
+        dark.dark = true;
+        wash.recolour(dark);
+        let current = wash.current.as_ref().unwrap();
+        assert!(current.texture.dark);
+        assert_eq!(current.opacity.started, ramp.started);
+        assert_eq!(current.opacity.to, ramp.to);
+        assert_eq!(
+            wash.previous.as_ref().map(|l| l.texture.generation),
+            Some(1)
+        );
+        assert_eq!(wash.released.len(), 1);
+    }
+
     /// Taking the wash off while a record dissolves in fades what shows from
     /// where it stands: the record coming in at its part-way opacity, the
     /// one under it whole, both toward the ground.
     #[test]
     fn taken_off_mid_dissolve_it_fades_from_where_it_stands() {
         let mut wash = Wash::new();
-        wash.install(Some(texture(1)), false);
-        wash.install(Some(texture(2)), true);
+        wash.install(Some(texture(1)));
+        wash.install(Some(texture(2)));
         let now = Instant::now();
         // Half-way in.
         if let Some(current) = wash.current.as_mut() {
@@ -1313,7 +1337,7 @@ mod tests {
         let coming = wash.current.as_ref().unwrap().opacity.at(now);
         assert!(coming > 0.2 && coming < 0.8);
 
-        wash.install(None, true);
+        wash.install(None);
         let current = wash
             .current
             .as_ref()
