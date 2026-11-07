@@ -10,6 +10,8 @@
 //! `playlist:<id>`) draws that page instead of the queue. With
 //! `KOAN_SHOT_TRACKS`, a playlist of the same tracks is made too, and its id
 //! printed. `KOAN_SHOT_WIDTH` draws it that many points wide.
+//! `KOAN_SHOT_LYRICS` shows the lyrics beside the page, at that many points
+//! wide as though dragged there, or at its own width given `default`.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -93,10 +95,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok()
             .and_then(|w| w.parse().ok())
             .unwrap_or(WIDTH);
+        let lyrics = std::env::var("KOAN_SHOT_LYRICS").ok();
+        let dragged = lyrics.as_deref().and_then(|w| w.parse::<f32>().ok());
+        koan_gui::window_state::LYRICS_WIDTH.store(
+            dragged.unwrap_or(0.0).to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let window = cx.open_window(size(px(width), px(HEIGHT)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
             if let Some(route) = route() {
                 shell.update(cx, |shell, cx| shell.show(route, cx));
+            }
+            if lyrics.is_some() {
+                shell.update(cx, |shell, cx| shell.show_lyrics(true, cx));
             }
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
             koan_kit::components::host(root, window, cx)

@@ -1,6 +1,6 @@
 use gpui::{
     App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
-    div, px,
+    div, prelude::FluentBuilder as _, px,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -13,6 +13,7 @@ pub struct EmptyState {
     title: SharedString,
     detail: Option<SharedString>,
     tone: Tone,
+    inset: bool,
 }
 
 impl EmptyState {
@@ -22,6 +23,7 @@ impl EmptyState {
             title: label(title),
             detail: None,
             tone: Tone::Muted,
+            inset: true,
         }
     }
 
@@ -29,6 +31,14 @@ impl EmptyState {
     /// `bad`, as the Mac's startup error draws its warning.
     pub fn warning(mut self) -> Self {
         self.tone = Tone::Bad;
+        self
+    }
+
+    /// In a panel that already stands clear of the window's foot (the
+    /// lyrics between the toolbar and the transport): centred in the panel,
+    /// with no room left for the foot again.
+    pub fn in_panel(mut self) -> Self {
+        self.inset = false;
         self
     }
 
@@ -56,7 +66,7 @@ impl RenderOnce for EmptyState {
         )
         .size_full()
         // Centred in what a phone's foot leaves of the page.
-        .pb(super::foot_inset(window, cx))
+        .when(self.inset, |d| d.pb(super::foot_inset(window, cx)))
         .flex()
         .items_center()
         .justify_center()

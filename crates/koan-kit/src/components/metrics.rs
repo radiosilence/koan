@@ -307,9 +307,18 @@ impl RowMetrics {
     };
 
     /// An inspector's width beside the page, the Mac's ideal for its
-    /// lyrics.
+    /// lyrics, and what a double click on its edge restores; a drag keeps
+    /// it between `inspector_min` and `inspector_max`.
     pub fn inspector(look: &Look) -> Pixels {
         look.spaced(280.)
+    }
+
+    pub fn inspector_min(look: &Look) -> Pixels {
+        look.spaced(220.)
+    }
+
+    pub fn inspector_max(look: &Look) -> Pixels {
+        look.spaced(560.)
     }
 
     /// Between columns of a row.

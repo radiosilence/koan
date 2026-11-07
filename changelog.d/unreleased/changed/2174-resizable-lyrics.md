@@ -1,0 +1,1 @@
+- **The lyrics panel resizes.** Drag its left edge to widen or narrow it, as the sidebar's edge does; a double click restores it, and the width is kept with the window's.
