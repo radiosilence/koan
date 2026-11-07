@@ -6777,8 +6777,10 @@ impl KoanEngine {
             let (meter, reading) = (sync_progress.clone(), sync_progress.clone());
             koan_core::helpers::spawn_auto_sync(
                 db_path.clone(),
-                // The flag first: a client reading the two between ticks sees
-                // the sync ended, never one running with no progress.
+                // The flag first, so a client never sees this sync running
+                // with its progress gone as it ends; one reading between the
+                // two writes sees the sync ended with its last figures, which
+                // a client following the flag does not draw.
                 move |running| {
                     finished(&flag, running);
                     if !running {

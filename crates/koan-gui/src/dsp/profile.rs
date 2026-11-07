@@ -160,8 +160,12 @@ impl Render for ProfilePage {
                         .overflow_hidden()
                         .px(look.space(Space::L))
                         .py(margin)
-                        .border_b(look.hairline)
-                        .border_color(look.palette.rule.hsla())
+                        // No rule over the field being typed in once the
+                        // graph has folded away.
+                        .when(frame > 0.0, |d| {
+                            d.border_b(look.hairline)
+                                .border_color(look.palette.rule.hsla())
+                        })
                         .child(
                             div().h(Pixels::from(frame)).child(
                                 koan_kit::app::AnyView::from(self.graph.clone())

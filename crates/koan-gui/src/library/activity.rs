@@ -323,26 +323,29 @@ impl Activity {
                 stop: None,
             });
         }
-        // Only once the sync reports: a sync that finds the server unchanged
-        // walks nothing and ends at once, and a row for it would only blink.
+        // A sync asked for here shows at once. koan's own shows only once it
+        // reports: one that finds the server unchanged walks nothing and ends
+        // at once, and a row for it would only blink.
         let progress = (self.syncing > 0 || tasks.syncing)
             .then(|| mirror.sync.read(cx).0.or(self.last_sync))
             .flatten();
-        if let Some(progress) = progress {
+        if progress.is_some() || self.syncing > 0 {
             // One title for the whole sync, as the iOS app has it; the phase
             // is the line under the bar, so the row keeps its shape from
             // phase to phase.
-            let (detail, unit) = match progress.phase {
-                SyncPhase::Albums => ("listing albums", Some("albums")),
-                SyncPhase::Tracks => ("fetching tracks", Some("tracks")),
-                SyncPhase::Artists => ("recording artists", None),
-                SyncPhase::Finishing => ("finishing", None),
+            let (detail, unit) = match progress.map(|p| p.phase) {
+                Some(SyncPhase::Albums) => ("listing albums", Some("albums")),
+                Some(SyncPhase::Tracks) => ("fetching tracks", Some("tracks")),
+                Some(SyncPhase::Artists) => ("recording artists", None),
+                Some(SyncPhase::Finishing) => ("finishing", None),
+                None => ("asking the server", None),
             };
+            let progress = progress.filter(|_| unit.is_some());
             rows.push(Row {
                 id: "activity-sync",
                 label: "syncing with server".into(),
-                done: unit.map(|_| progress.done),
-                total: unit.and(progress.total).filter(|t| *t > 0),
+                done: progress.map(|p| p.done),
+                total: progress.and_then(|p| p.total).filter(|t| *t > 0),
                 unit,
                 detail: Some(detail.into()),
                 stop: None,

@@ -285,6 +285,9 @@ pub fn page_shown(page: impl Hash, window: &mut Window, cx: &mut App) {
     }
     edges.page = Some(page);
     report_scroll_edges(false, false, window, cx);
+    // A page drawn from a cached view would otherwise keep its last
+    // prepaint, and its scroll would never report its edges again.
+    window.refresh();
 }
 
 /// How much a frosted ground blurs what lies under it.
