@@ -1,0 +1,1 @@
+- **EQ sheets on a phone scroll and fit the screen.** Manage EQ, the correction and EQ pickers and the AutoEQ and measurement flows ran off the bottom of the screen without scrolling in the GPUI app on iOS; they now fill the room inside the safe area and scroll. Every kōan sheet on a phone keeps to the safe area on all edges.
