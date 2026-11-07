@@ -328,7 +328,10 @@ float4 koan_chart_mark(float2 position, float2 size, float time, constant float 
     float base = (1.0 - (m.z * base_share + m.w)) * size.y;
     float top = min(line, base);
     float bottom = max(line, base);
-    float cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0);
+    // A sliver thinner than a pixel covers it by its height, so where the
+    // line meets its base nothing is drawn.
+    float cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0)
+        * clamp(bottom - top, 0.0, 1.0);
     return float4(u[0], u[1], u[2], u[3] * cover);
 }
 "#,
@@ -365,7 +368,8 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
     let base = (1.0 - (m.z * base_share + m.w)) * size.y;
     let top = min(line, base);
     let bottom = max(line, base);
-    let cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0);
+    let cover = clamp(min(position.y - top, bottom - position.y) + 0.5, 0.0, 1.0)
+        * clamp(bottom - top, 0.0, 1.0);
     return vec4<f32>(u[0].xyz, u[0].w * cover);
 }
 "#,

@@ -1594,6 +1594,14 @@ impl State {
     }
 }
 
+/// An edge in device pixels as GPUI places a quad's: the logical value
+/// scaled and rounded half toward zero, so the size a program is handed
+/// for its frame is the one its quad would have been drawn at.
+fn snap(v: Pixels, scale: f32) -> f32 {
+    let d = f32::from(v) * scale;
+    (d.abs() - 0.5).ceil().copysign(d)
+}
+
 /// The part of `frame` a mark spanning `spans` (in the axes' transformed
 /// units) reaches under each axis's map now and at the end of its glide,
 /// grown by `grow` points and widened to whole device pixels.
@@ -1615,49 +1623,51 @@ fn reach_of(
     };
     let (ux, uy) = (shares(xg, xs), shares(yg, ys));
     let (w, h) = (f32::from(plot.size.width), f32::from(plot.size.height));
-    let (ox, oy) = (
-        f32::from(plot.origin.x - frame.origin.x),
-        f32::from(plot.origin.y - frame.origin.y),
-    );
-    let (fw, fh) = (
-        f32::from(frame.size.width) * scale,
-        f32::from(frame.size.height) * scale,
-    );
-    let device = |v: f32, hi: f32| (v * scale).clamp(0.0, hi);
-    let left = device(ox + ux.lo as f32 * w - grow, fw).floor();
-    let right = device(ox + ux.hi as f32 * w + grow, fw).ceil();
-    let top = device(oy + (1.0 - uy.hi as f32) * h - grow, fh).floor();
-    let bottom = device(oy + (1.0 - uy.lo as f32) * h + grow, fh).ceil();
-    Bounds::new(
-        frame.origin + point(px(left / scale), px(top / scale)),
-        size(
-            px((right - left).max(0.0) / scale),
-            px((bottom - top).max(0.0) / scale),
-        ),
+    let (x0, y0) = (f32::from(plot.origin.x), f32::from(plot.origin.y));
+    let (fl, ft) = (snap(frame.left(), scale), snap(frame.top(), scale));
+    let (fr, fb) = (snap(frame.right(), scale), snap(frame.bottom(), scale));
+    let left = ((x0 + ux.lo as f32 * w - grow) * scale)
+        .floor()
+        .clamp(fl, fr);
+    let right = ((x0 + ux.hi as f32 * w + grow) * scale)
+        .ceil()
+        .clamp(left, fr);
+    let top = ((y0 + (1.0 - uy.hi as f32) * h - grow) * scale)
+        .floor()
+        .clamp(ft, fb);
+    let bottom = ((y0 + (1.0 - uy.lo as f32) * h + grow) * scale)
+        .ceil()
+        .clamp(top, fb);
+    Bounds::from_corners(
+        point(px(left / scale), px(top / scale)),
+        point(px(right / scale), px(bottom / scale)),
     )
 }
 
-/// Tells a mark's program where its quad stands in its frame.
+/// Tells a mark's program where its quad stands in its frame, both as
+/// GPUI snaps them, so a mark reads the plot at the size the grid does.
 fn place(animated: &Animated, frame: Bounds<Pixels>, quad: Bounds<Pixels>, scale: f32) {
+    let (fl, ft) = (snap(frame.left(), scale), snap(frame.top(), scale));
     animated.set_all(
         12,
         &[
-            f32::from(quad.origin.x - frame.origin.x) * scale,
-            f32::from(quad.origin.y - frame.origin.y) * scale,
-            f32::from(frame.size.width) * scale,
-            f32::from(frame.size.height) * scale,
+            snap(quad.left(), scale) - fl,
+            snap(quad.top(), scale) - ft,
+            snap(frame.right(), scale) - fl,
+            snap(frame.bottom(), scale) - ft,
         ],
     );
 }
 
-/// The stretch of x over which an area to `level` stands more than half a
-/// device pixel off it, under either of the y axis's maps, with a sample
-/// to spare each side: where it can be seen.
+/// The stretch of x over which an area to `level` stands more than a
+/// twentieth of a device pixel off it, under either of the y axis's maps,
+/// with a sample to spare each side: where it can be seen, as `AREA`
+/// covers a sliver by its height.
 fn departs(k: &Keyframe, level: f64, yg: Glide, height: f32) -> Span {
     let off = |y: f64| {
         [yg.from, yg.to]
             .iter()
-            .any(|m| ((m.unit(y) - m.unit(level)) * height as f64).abs() > 0.5)
+            .any(|m| ((m.unit(y) - m.unit(level)) * height as f64).abs() > 0.05)
     };
     let seen: Vec<usize> = (0..k.xs.len())
         .filter(|&i| off(k.from[i]) || off(k.to[i]))
