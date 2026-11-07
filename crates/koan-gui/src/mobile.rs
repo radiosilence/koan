@@ -930,11 +930,9 @@ impl Render for PhoneShell {
                                     + p.space(crate::theme::Space::S),
                             )
                             .child(crate::components::Rise::in_place(
-                                // The rows pad themselves at the sides and
-                                // foot; the card evens the top to match.
+                                // Even on every side, as the iOS app's card.
                                 div()
-                                    .pt(p.space(crate::theme::Space::S))
-                                    .pb(p.space(crate::theme::Space::Xs))
+                                    .p(p.space(crate::theme::Space::M))
                                     .bg(p.look.palette.surface.hsla())
                                     .child(activity.clone()),
                             ))

@@ -153,6 +153,7 @@ pub struct ProgressRow {
     detail: Option<SharedString>,
     fraction: Option<f32>,
     on_stop: Option<Handler<ClickEvent>>,
+    flush: bool,
 }
 
 impl ProgressRow {
@@ -165,7 +166,14 @@ impl ProgressRow {
             detail: None,
             fraction: None,
             on_stop: None,
+            flush: false,
         }
+    }
+
+    /// No padding of its own, for a container that pads it (a card).
+    pub fn flush(mut self, flush: bool) -> Self {
+        self.flush = flush;
+        self
     }
 
     /// How far it has come, in its own units ("1,204 of 5,000 files").
@@ -257,9 +265,11 @@ impl RenderOnce for ProgressRow {
         .flex()
         .flex_col()
         .gap(look.spaced(3.0))
-        .px(look.space(Space::L))
-        .pt(look.space(Space::S))
-        .pb(look.space(Space::M))
+        .when(!self.flush, |d| {
+            d.px(look.space(Space::L))
+                .pt(look.space(Space::S))
+                .pb(look.space(Space::M))
+        })
         // The title, and the counts at its end: one line whether or not a
         // count is known yet, so the row does not jump when one arrives.
         .child(

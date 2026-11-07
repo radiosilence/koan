@@ -440,7 +440,10 @@ impl Activity {
 }
 
 impl Render for Activity {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // On a phone the rows sit in a card that pads them.
+        let look = crate::theme::Look::of(window, cx);
+        let flush = look.touch;
         let rows = self.rows(cx);
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();
@@ -450,9 +453,11 @@ impl Render for Activity {
             .min_w_0()
             .flex()
             .flex_col()
+            .when(flush, |d| d.gap(look.space(crate::theme::Space::M)))
             .children(rows.iter().map(|row| {
-                let mut progress =
-                    ProgressRow::new(row.id, row.label.clone()).fraction(row.fraction());
+                let mut progress = ProgressRow::new(row.id, row.label.clone())
+                    .fraction(row.fraction())
+                    .flush(flush);
                 if let Some(counts) = row.counts() {
                     progress = progress.counts(counts);
                 }
