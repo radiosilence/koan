@@ -1,0 +1,1 @@
+- **Lyrics lines answer the pointer.** On the desktop, the line under the pointer brightens, since a click on it seeks there.

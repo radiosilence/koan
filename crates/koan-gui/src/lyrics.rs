@@ -255,6 +255,7 @@ impl Render for LyricsPanel {
                     "no lyrics found"
                 },
             )
+            .in_panel()
             .into_any_element(),
         };
         panel.body(body)

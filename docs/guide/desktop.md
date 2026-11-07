@@ -128,7 +128,7 @@ Choosing a result never plays it: only ⌘Return, ⌥Return and ⇧⌘Return do.
 
 ## Lyrics, track info and artwork
 
-The toolbar's lyrics button, ⌥⌘L or `L` shows the playing track's lyrics beside the page. Synced lyrics follow the song with the line being sung larger and kept in view, and a click on a line seeks to it; lyrics without timings are shown whole. They come from the file, a sidecar or LRCLIB, which the panel's head names. Drag the panel's left edge to widen or narrow it, as the sidebar's right edge does; a double click puts it back. The width is kept with the window's.
+The toolbar's lyrics button, ⌥⌘L or `L` shows the playing track's lyrics beside the page. Synced lyrics follow the song with the line being sung larger and kept in view, and a click on a line seeks to it (the line under the pointer brightens); lyrics without timings are shown whole. They come from the file, a sidecar or LRCLIB, which the panel's head names. Drag the panel's left edge to widen or narrow it, as the sidebar's right edge does; a double click puts it back. The width is kept with the window's.
 
 A track's context menu has Track Info, which lists what each of its sources says (the file's tags, the server's entry), its ReplayGain and the library's ids for it. A click on a record page's sleeve, or on the transport's cover, shows the cover as large as the window allows; a click anywhere or Escape closes it.
 

@@ -10,9 +10,12 @@
 //!
 //! The sung line is drawn in `title small`, the rest in `control`, as the
 //! Mac's panel draws them, all in `strong`; the program sets each line's
-//! opacity. Where the renderer draws no shaders, the lines are drawn in
-//! their colours and the column steps.
+//! opacity. The line under the pointer, which a click seeks to, is lifted
+//! nearly to the sung line's strength. Where the renderer draws no shaders,
+//! the lines are drawn in their colours and the column steps.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Instant;
 
 use super::Scrollbar;
@@ -27,7 +30,8 @@ use crate::theme::{KoanStyled, KoanTheme, Look, Motion, TypeRole};
 /// laid out; 4 a line to come's opacity, 5 a past line's, 6 the sung line's
 /// opacity as it starts to ease in, 7 the line before's as it ends, 8 the
 /// height of the edge's fade, 9 the line before's opacity as it starts to
-/// ease out (1, or where a change still running had brought it). Tracks: 0 the emphasis moving from the line
+/// ease out (1, or where a change still running had brought it), 10 and 11
+/// the hovered line's top and bottom, 12 its least opacity. Tracks: 0 the emphasis moving from the line
 /// before to the sung line, 0 to 1; 1 the column's offset down, in device
 /// pixels, as it glides to its place.
 pub static LYRICS: ShaderProgram = ShaderProgram {
@@ -52,6 +56,9 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         a = u[5];
     } else {
         a = u[4];
+    }
+    if (y >= u[10] && y < u[11]) {
+        a = max(a, u[12]);
     }
     float band = max(u[8], 1.0);
     float edge = smoothstep(0.0, band, position.y) * smoothstep(0.0, band, size.y - position.y);
@@ -80,6 +87,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     } else if (y < u[0].x) {
         a = u[1].y;
     }
+    if (y >= u[2].z && y < u[2].w) {
+        a = max(a, u[3].x);
+    }
     let band = max(u[2].x, 1.0);
     let edge = smoothstep(0.0, band, position.y) * smoothstep(0.0, band, size.y - position.y);
     return vec4<f32>(rgb, c.a * a * edge * edge);
@@ -92,6 +102,9 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// past the quieter of the two.
 const UPCOMING: f32 = 0.5;
 const PAST: f32 = 0.3;
+/// The line under the pointer: nearly the sung line's strength, so what a
+/// click would seek to stands out without being mistaken for it.
+const HOVERED: f32 = 0.85;
 
 /// Lines of timed text, the one at `active` emphasised and kept mid-panel as
 /// the song moves. A click on a line hands its index to `on_line`.
@@ -168,6 +181,8 @@ struct State {
     /// one had brought them, rather than flashing.
     from_sung: f32,
     from_before: f32,
+    /// The line under the pointer, read where the layer is placed.
+    hovered: Rc<Cell<Option<usize>>>,
 }
 
 /// How many frames to wait for the sung line's first layout before placing
@@ -206,6 +221,7 @@ impl RenderOnce for SyncedLines {
                 at: Instant::now(),
                 from_sung: UPCOMING,
                 from_before: 1.0,
+                hovered: Rc::default(),
             }
         });
         let count = self.lines.len();
@@ -214,7 +230,7 @@ impl RenderOnce for SyncedLines {
         // An item for each line, after the room above the first.
         let item = |line: usize| line + 1;
         let moving = KoanTheme::motion_allowed(cx);
-        let (scroll, animated, before, waiting, (from_sung, from_before)) =
+        let (scroll, animated, before, waiting, (from_sung, from_before), hovered) =
             state.update(cx, |s, _| {
                 // Another song lands at once, from the top of its own lines.
                 if s.song != song {
@@ -224,6 +240,7 @@ impl RenderOnce for SyncedLines {
                     s.active = None;
                     s.before = None;
                     s.placing = None;
+                    s.hovered.set(None);
                     s.animated.hold(0, 1.0);
                     s.animated.hold(1, 0.0);
                 }
@@ -326,6 +343,7 @@ impl RenderOnce for SyncedLines {
                     s.before,
                     waiting,
                     (s.from_sung, s.from_before),
+                    s.hovered.clone(),
                 )
             });
         if waiting {
@@ -348,6 +366,7 @@ impl RenderOnce for SyncedLines {
             // A click finds its line by where the lines are drawn: mid-glide
             // the column stands off its layout by the glide's offset.
             let (glide, lines_at) = (animated.clone(), scroll.clone());
+            let (hover, lifted, lifted_at) = (hovered.clone(), animated.clone(), scroll.clone());
             items.push(
                 div()
                     .id(ix)
@@ -369,6 +388,25 @@ impl RenderOnce for SyncedLines {
                         &look,
                     )
                     .text_color(color)
+                    // The program lifts the line under the pointer; where
+                    // there is none, its colour does.
+                    .on_hover(move |inside, window, _| {
+                        if *inside {
+                            hover.set(Some(item(ix)));
+                        } else if hover.get() == Some(item(ix)) {
+                            hover.set(None);
+                        }
+                        if SHADED {
+                            lift(
+                                &lifted,
+                                &lifted_at,
+                                lifted_at.bounds(),
+                                window.scale_factor(),
+                                hover.get(),
+                            );
+                        }
+                    })
+                    .when(!SHADED, |d| d.hover(|s| s.text_color(p.strong.hsla())))
                     .when_some(on_line, |d, f| {
                         d.on_click(move |e, window, cx| {
                             let offset = px(glide.at(1, Animated::now()) / window.scale_factor());
@@ -410,6 +448,7 @@ impl RenderOnce for SyncedLines {
                     let band = f32::from(band);
                     let placed = animated.clone();
                     let lines = scroll.clone();
+                    let hovered = hovered.clone();
                     // Not decorative: which line is sung is information,
                     // so its emphasis shows under Reduce Motion too, landing
                     // at once as its owner sets it.
@@ -428,7 +467,8 @@ impl RenderOnce for SyncedLines {
                                     from_sung,
                                     from_before,
                                     band,
-                                )
+                                );
+                                lift(&placed, &lines, bounds, scale, hovered.get());
                             }),
                     )
                 } else {
@@ -437,6 +477,39 @@ impl RenderOnce for SyncedLines {
             })
             .child(Scrollbar::vertical(&scroll))
     }
+}
+
+/// Where an item of the column stands in the layer, in device pixels from
+/// its top, as laid out and scrolled now; nowhere when no row is it.
+fn rect_of(
+    scroll: &ScrollHandle,
+    bounds: Bounds<Pixels>,
+    scale: f32,
+    item: Option<usize>,
+) -> [f32; 2] {
+    item.and_then(|i| scroll.bounds_for_item(i))
+        .map(|b| {
+            let top = b.top() + scroll.offset().y - bounds.top();
+            [
+                f32::from(top) * scale,
+                f32::from(top + b.size.height) * scale,
+            ]
+        })
+        .unwrap_or([-1.0, -1.0])
+}
+
+/// The hovered line's place, for the program to lift it. Written as the
+/// pointer moves, with no frame drawn, and again wherever the layer is
+/// placed, so a scroll or a glide carries it along.
+fn lift(
+    animated: &Animated,
+    scroll: &ScrollHandle,
+    bounds: Bounds<Pixels>,
+    scale: f32,
+    hovered: Option<usize>,
+) {
+    let [h0, h1] = rect_of(scroll, bounds, scale, hovered);
+    animated.set_all(10, &[h0, h1, HOVERED]);
 }
 
 /// Where the sung line and the one before stand in the layer, in device
@@ -454,18 +527,7 @@ fn place(
     from_before: f32,
     band: f32,
 ) {
-    let rect = |item: Option<usize>| {
-        item.and_then(|i| scroll.bounds_for_item(i))
-            .map(|b| {
-                let top = b.top() + scroll.offset().y - bounds.top();
-                [
-                    f32::from(top) * scale,
-                    f32::from(top + b.size.height) * scale,
-                ]
-            })
-            // Nowhere: no row of the layer is that line.
-            .unwrap_or([-1.0, -1.0])
-    };
+    let rect = |item: Option<usize>| rect_of(scroll, bounds, scale, item);
     let [n0, n1] = rect(sung);
     let [o0, o1] = rect(before);
     // The line before ends as what it now is: past when the song moved on,

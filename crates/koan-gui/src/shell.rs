@@ -316,8 +316,12 @@ impl Shell {
 
     /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
     fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
-        self.lyrics_shown = !self.lyrics_shown;
-        if self.lyrics_shown && self.lyrics.is_none() {
+        self.show_lyrics(!self.lyrics_shown, cx);
+    }
+
+    pub fn show_lyrics(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.lyrics_shown = shown;
+        if shown && self.lyrics.is_none() {
             self.lyrics = Some(cx.new(crate::lyrics::LyricsPanel::new));
         }
         cx.notify();
