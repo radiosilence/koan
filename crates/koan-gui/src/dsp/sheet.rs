@@ -1,17 +1,19 @@
 //! What the EQ pages present over themselves: a stack of sheets, each a
 //! square panel in a hairline over the page, the top one taking the pointer.
+//! On a phone a view's sheet fills the room the window leaves it, as the
+//! screens the Mac app pushes there do; a confirmation stays its own size.
 //! A confirmation says what a change will do before it is made.
 
 use std::rc::Rc;
 
 use koan_kit::app::*;
 
-use crate::components::sheet::scrim;
+use crate::components::sheet::{fill, scrim};
 use crate::components::{Button, ButtonKind, Rise};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
 /// The sheet's parts are koan-kit's.
-pub use crate::components::sheet::{body, head, head_data, note, panel};
+pub use crate::components::sheet::{body, content, head, head_data, note, panel};
 
 /// What a choice or a confirmation does.
 pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -93,16 +95,15 @@ impl Sheets {
         let layers = stack.into_iter().enumerate().map(|(depth, sheet)| {
             // Named for a screen reader: a question by its title, a view by
             // the window it belongs to.
-            let (name, body) = match sheet {
-                Sheet::View(view) => (SharedString::from("eq"), view.into_any_element()),
-                Sheet::Confirm(c) => (
-                    c.title.clone(),
-                    confirm_body(c, this.clone(), &look).into_any_element(),
-                ),
+            let framed = match sheet {
+                Sheet::View(view) => fill(panel("eq", &look), &look, window).child(view),
+                Sheet::Confirm(c) => {
+                    panel(c.title.clone(), &look).child(confirm_body(c, this.clone(), &look))
+                }
             };
             scrim(("dsp-sheet", depth), &look, window)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(Rise::new(panel(name, &look).child(body)))
+                .child(Rise::new(framed))
         });
         Some(
             div()
@@ -149,6 +150,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
         .child(
             div()
                 .flex()
+                .flex_wrap()
                 .justify_end()
                 .gap(look.space(Space::M))
                 .child(

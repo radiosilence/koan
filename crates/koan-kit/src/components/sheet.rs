@@ -16,6 +16,9 @@ use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
 /// a screen reader, named `name` in the app's words: what its head says.
+/// As tall as its content up to the room the window leaves it, where its
+/// `body` scrolls; a view drawn in it makes `content` its root, or its body
+/// cannot shrink.
 pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     super::accessible(
         div().id("sheet-panel"),
@@ -47,6 +50,31 @@ pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle, cx: &mut App) -> im
 /// own, which the root's binding never reaches.
 pub fn step_focus(forward: bool, window: &mut Window, cx: &mut App) {
     super::focus_trap::step(forward, window, cx);
+}
+
+/// A panel taking all the room a phone leaves a sheet, inside the safe
+/// area and clear of the keyboard: a sheet that is a screen on a phone (a
+/// list to choose from, a flow of steps), its body filling what its content
+/// does not. Content-sized on the desktop.
+pub fn fill(panel: Stateful<Div>, look: &Look, window: &Window) -> Stateful<Div> {
+    if !look.touch {
+        return panel;
+    }
+    let room = room(look, window);
+    panel.h(room).max_h(room)
+}
+
+/// The height a sheet's panel may take on a phone: the window less the
+/// system's insets and the keyboard, a step off each edge.
+pub fn room(look: &Look, window: &Window) -> Pixels {
+    let insets = super::system_insets(super::Clear::Keyboard, window);
+    window.viewport_size().height - insets.top - insets.bottom - look.space(Space::L) * 2.
+}
+
+/// The root of a view drawn in a panel: a column that shrinks to the
+/// panel's height, so its `body` scrolls, and grows to fill a `fill` panel.
+pub fn content() -> Div {
+    div().flex().flex_col().flex_grow().flex_shrink().min_h_0()
 }
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
@@ -106,7 +134,9 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         // A step off the head's rule, as most sheets set it for themselves.
         .pt(look.space(Space::M))
         .pb(look.space(Space::L))
-        // Shrinks below its content inside the panel's height, and scrolls.
+        // Shrinks below its content inside the panel's height, and scrolls;
+        // in a `fill` panel, takes what the head and foot leave.
+        .flex_grow()
         .min_h_0()
         .overflow_y_scroll()
 }
@@ -117,8 +147,9 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// draws its panel in a `Rise`.
 ///
 /// On a phone the panel stands on the foot of the window instead, the
-/// width less a margin, clear of the home indicator and of the keyboard
-/// while it is up, as an iOS sheet does; its `Rise` brings it up from there.
+/// width less a margin, inside the safe area on every edge and clear of the
+/// keyboard while it is up, as an iOS sheet does; its `Rise` brings it up
+/// from there.
 pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
     if !look.touch {
         return scrim_top(id, look);
@@ -131,9 +162,10 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful
         .flex()
         .justify_center()
         .items_end()
-        .px(look.space(Space::S))
+        .pl(insets.left + look.space(Space::S))
+        .pr(insets.right + look.space(Space::S))
         .pt(insets.top + look.space(Space::L))
-        .pb(insets.bottom + look.space(Space::S))
+        .pb(insets.bottom + look.space(Space::L))
         .occlude()
         .child(Veil::new(look.veil(0.6)))
 }

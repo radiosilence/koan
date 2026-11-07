@@ -188,11 +188,7 @@ impl RenderOnce for SlideUp {
         // the system's insets, a step in, shrinking its body to scroll; Now
         // Playing takes the whole screen.
         let inner = if self.fits {
-            let insets = super::system_insets(super::Clear::Keyboard, window);
-            let room = window.viewport_size().height
-                - insets.top
-                - insets.bottom
-                - Look::of(window, cx).space(Space::L) * 2.;
+            let room = super::sheet::room(&Look::of(window, cx), window);
             div()
                 .w_full()
                 .flex()

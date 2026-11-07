@@ -11,7 +11,7 @@ use super::flows;
 use super::menu::{Item, Trigger, menu};
 use super::model::{Dsp, Placement, Stage, describe_profile};
 use super::page::EqPage;
-use super::sheet::{Sheets, body, choice_row, head, note, section};
+use super::sheet::{Sheets, body, choice_row, content, head, note, section};
 use crate::components::{Badge, Button, ButtonKind, FormRow, Segmented, TextField};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
@@ -341,9 +341,7 @@ impl Render for StagePicker {
             )
             .into_any_element(),
         );
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head(title, vec![done.into_any_element()], &look))
             .child(body("picker-body", &look).children(sections))
             .into_any_element()
@@ -543,9 +541,7 @@ impl Render for Explainer {
         let done = Button::new("explain-done", ButtonKind::Standard)
             .label("Done")
             .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.pop(cx)));
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head("How EQ works", vec![done.into_any_element()], &look))
             .child(
                 body("explain-body", &look)
@@ -715,9 +711,7 @@ impl Render for NewEq {
                     this.update(cx, |n, cx| n.create(window, cx)).ok();
                 }
             });
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head("New EQ", vec![cancel.into_any_element(), create.into_any_element()], &look))
             .child(
                 body("new-body", &look)
