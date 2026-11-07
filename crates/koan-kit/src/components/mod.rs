@@ -39,6 +39,7 @@ mod filter_field;
 pub mod focus_trap;
 mod form;
 mod gesture;
+mod grip;
 mod guide;
 mod heart;
 mod insets;

@@ -69,6 +69,10 @@ pub struct Shell {
     lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
+    /// The lyrics panel's width once dragged; until then, and after a
+    /// double click on its edge, the inspector's, which follows the text
+    /// size. Kept with the window's bounds.
+    lyrics_width: Option<Pixels>,
     /// The search box over the window, while it is open.
     _opened: Subscription,
     search_bar: Option<(Entity<crate::search::bar::SearchBar>, Subscription)>,
@@ -186,6 +190,11 @@ impl Shell {
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
+            lyrics_width: Some(f32::from_bits(
+                window_state::LYRICS_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
+            ))
+            .filter(|w| *w > 0.0)
+            .map(Pixels::from),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -808,15 +817,40 @@ impl Render for Shell {
                                             "lyrics-slide",
                                             &self.lyrics_slide,
                                             self.lyrics_shown,
-                                            RowMetrics::inspector(&p.look),
+                                            lyrics_width,
                                         )
+                                        .resizable(
+                                            RowMetrics::inspector_min(&p.look),
+                                            RowMetrics::inspector_max(&p.look),
+                                            inspector,
+                                        )
+                                        .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
+                                            this.lyrics_width = Some(*width);
+                                            cx.notify();
+                                        }))
+                                        .on_commit(cx.listener(
+                                            move |this, width: &Pixels, window, cx| {
+                                                // The reset width is no
+                                                // width of the person's: it
+                                                // follows the text size.
+                                                this.lyrics_width =
+                                                    (*width != inspector).then_some(*width);
+                                                window_state::LYRICS_WIDTH.store(
+                                                    this.lyrics_width
+                                                        .map_or(0.0, f32::from)
+                                                        .to_bits(),
+                                                    std::sync::atomic::Ordering::Relaxed,
+                                                );
+                                                window_state::save(window.window_bounds(), cx);
+                                            },
+                                        ))
                                         .when_some(
                                             self.lyrics.clone(),
                                             |slide, lyrics| {
                                                 slide.child(
                                                     lyrics.cached(
                                                         StyleRefinement::default()
-                                                            .w(RowMetrics::inspector(&p.look))
+                                                            .w(lyrics_width)
                                                             .h_full()
                                                             .flex_none(),
                                                     ),
