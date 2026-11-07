@@ -11,7 +11,7 @@ use koan_kit::app::{InteractiveElement, Styled};
 use koan_runtime::DspRole;
 
 use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
-use super::sheet::{body, choice_row, head, note, panel, section};
+use super::sheet::{body, choice_row, content, head, note, panel, section};
 use crate::components::sheet::scrim;
 use crate::components::{Button, ButtonKind, Rise, SectionHeader, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -90,9 +90,7 @@ fn import_plan(dsp: &Entity<Dsp>, look: &Look, window: &mut Window, cx: &mut App
                 .into_any_element()
         })
         .collect();
-    div()
-        .flex()
-        .flex_col()
+    content()
         .child(head(
             "Import",
             vec![cancel.into_any_element(), go.into_any_element()],
@@ -124,9 +122,7 @@ fn rate(dsp: &Entity<Dsp>, look: &Look) -> AnyElement {
             .label(format!("{} kHz", khz(r)))
             .on_click(move |_, _, cx| dsp.update(cx, |d, cx| d.retry(r, cx)))
     });
-    div()
-        .flex()
-        .flex_col()
+    content()
         .child(head("What sample rate is it at?", vec![cancel.into_any_element()], look))
         .child(
             body("rate-body", look)
@@ -190,9 +186,7 @@ fn role(dsp: &Entity<Dsp>, ask: RoleAsk, look: &Look, cx: &App) -> AnyElement {
                 dsp.update(cx, |d, cx| d.answer(ask, None, cx));
             })
     };
-    div()
-        .flex()
-        .flex_col()
+    content()
         .child(head(if many { "What are these EQs?" } else { "What is this EQ?" }, Vec::new(), look))
         .child(
             body("role-body", look)

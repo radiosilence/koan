@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::theme::wash::{Sleeve, Wash};
+use crate::theme::wash::{Sleeve, Wash, WindowWash};
 use crate::theme::{self, Accent, KoanTheme, Look};
 use koan_kit::app::*;
 use koan_kit::components::{Burst, Prism, Prisms, SHADED};
@@ -177,13 +177,6 @@ fn wearing(
         .filter(|page| !matches!(page, Shown::Artist(id) if Some(*id) == no_photo))
         .or(playing.map(Shown::Record))
 }
-
-/// The window's wash, for a phone's screen over the page (Now Playing) to
-/// draw behind itself, as the page's ground does; `None` with less
-/// transparency asked for.
-pub struct WindowWash(pub Option<Entity<Wash>>);
-
-impl Global for WindowWash {}
 
 impl Global for ShownRecord {}
 

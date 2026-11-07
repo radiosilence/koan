@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
-    Task, Window, canvas, div, point, px, size,
+    App, Bounds, Context, Corners, Entity, Global, IntoElement, ParentElement, Pixels, Render,
+    RenderImage, Styled, Task, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
@@ -581,6 +581,19 @@ struct Layer<T> {
     texture: T,
     opacity: Ramp,
     shader: Animated,
+}
+
+/// The window's wash, for a screen over the page (Now Playing, a full
+/// sheet on a phone) to draw behind itself, as the page's ground does;
+/// `None` with less transparency asked for. The window's root sets it.
+pub struct WindowWash(pub Option<Entity<Wash>>);
+
+impl Global for WindowWash {}
+
+impl WindowWash {
+    pub fn shared(cx: &App) -> Option<Entity<Wash>> {
+        cx.try_global::<Self>().and_then(|w| w.0.clone())
+    }
 }
 
 pub struct Wash {

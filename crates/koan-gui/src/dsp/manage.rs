@@ -15,7 +15,7 @@ use super::menu::{Item, Trigger, menu};
 use super::model::{DELETED_EXTENSION, Dsp, SYNC_EXTENSION, describe, describe_profile, joined};
 use super::page::EqPage;
 use super::profile::ProfilePage;
-use super::sheet::{Confirm, Sheets, body, head, note, section};
+use super::sheet::{Confirm, Sheets, body, content, head, note, section};
 use crate::components::{Button, ButtonKind, SectionHeader, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
@@ -791,9 +791,7 @@ impl Render for ManageEq {
             )
             .into_any_element(),
         );
-        div()
-            .flex()
-            .flex_col()
+        content()
             .child(head("Manage EQ", vec![done.into_any_element()], &look))
             .child(body("manage-body", &look).children(sections))
     }

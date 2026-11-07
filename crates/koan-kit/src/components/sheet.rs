@@ -11,11 +11,15 @@ use crate::components::field::{FieldState as InputState, InputEvent};
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{Button, ButtonKind, Fading, Rise, TextField, Veil};
+use super::{Button, ButtonKind, Fading, Rise, SlideUp, TextField, Veil};
+use crate::theme::wash::WindowWash;
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
 /// a screen reader, named `name` in the app's words: what its head says.
+/// As tall as its content up to the room the window leaves it, where its
+/// `body` scrolls; a view drawn in it makes `content` its root, or its body
+/// cannot shrink.
 pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     super::accessible(
         div().id("sheet-panel"),
@@ -47,6 +51,71 @@ pub fn trap_focus(panel: Stateful<Div>, focus: &FocusHandle, cx: &mut App) -> im
 /// own, which the root's binding never reaches.
 pub fn step_focus(forward: bool, window: &mut Window, cx: &mut App) {
     super::focus_trap::step(forward, window, cx);
+}
+
+/// A sheet that is a screen on a phone (a list to choose from, a flow of
+/// steps, an editor): the whole window, standing on the window's wash as Now
+/// Playing does rather than on an opaque ground, its content inside the safe
+/// area and clear of the keyboard, coming up from the foot. On the desktop,
+/// `panel` over a `scrim` as any sheet. `content` is rooted in `content()`.
+pub fn screen(
+    id: impl Into<ElementId>,
+    name: impl AsRef<str>,
+    content: impl IntoElement,
+    look: &Look,
+    window: &Window,
+    cx: &App,
+) -> Stateful<Div> {
+    if !look.touch {
+        return scrim(id, look, window).child(Rise::new(panel(name, look).child(content)));
+    }
+    let insets = super::system_insets(super::Clear::Keyboard, window);
+    let ground = div()
+        .absolute()
+        .inset_0()
+        .map(|d| match WindowWash::shared(cx) {
+            Some(wash) => d.child(wash.cached(StyleRefinement::default().size_full())),
+            None => d.bg(look.palette.bg.hsla()),
+        });
+    let screen = super::accessible(
+        div().id("sheet-screen"),
+        gpui::Role::Dialog,
+        Some(label(name)),
+    )
+    .relative()
+    .size_full()
+    .flex()
+    .flex_col()
+    .pt(insets.top)
+    .pb(insets.bottom)
+    .pl(insets.left)
+    .pr(insets.right)
+    .child(ground)
+    .child(content);
+    div()
+        .id(id.into())
+        .absolute()
+        .inset_0()
+        .occlude()
+        .child(SlideUp::new(screen))
+}
+
+/// The height a sheet's panel may take on a phone: the window less the
+/// system's insets and the keyboard, a step off each edge.
+pub fn room(look: &Look, window: &Window) -> Pixels {
+    let insets = super::system_insets(super::Clear::Keyboard, window);
+    window.viewport_size().height - insets.top - insets.bottom - look.space(Space::L) * 2.
+}
+
+/// The root of a view drawn in a panel: a column that shrinks to the
+/// panel's height, so its `body` scrolls, and grows to fill a `screen`.
+pub fn content() -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_grow_1()
+        .flex_shrink_1()
+        .min_h_0()
 }
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
@@ -106,7 +175,9 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         // A step off the head's rule, as most sheets set it for themselves.
         .pt(look.space(Space::M))
         .pb(look.space(Space::L))
-        // Shrinks below its content inside the panel's height, and scrolls.
+        // Shrinks below its content inside the panel's height, and scrolls;
+        // in a `screen`, takes what the head and foot leave.
+        .flex_grow_1()
         .min_h_0()
         .overflow_y_scroll()
 }
@@ -117,8 +188,9 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// draws its panel in a `Rise`.
 ///
 /// On a phone the panel stands on the foot of the window instead, the
-/// width less a margin, clear of the home indicator and of the keyboard
-/// while it is up, as an iOS sheet does; its `Rise` brings it up from there.
+/// width less a margin, inside the safe area on every edge and clear of the
+/// keyboard while it is up, as an iOS sheet does; its `Rise` brings it up
+/// from there.
 pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
     if !look.touch {
         return scrim_top(id, look);
@@ -131,9 +203,10 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful
         .flex()
         .justify_center()
         .items_end()
-        .px(look.space(Space::S))
+        .pl(insets.left + look.space(Space::S))
+        .pr(insets.right + look.space(Space::S))
         .pt(insets.top + look.space(Space::L))
-        .pb(insets.bottom + look.space(Space::S))
+        .pb(insets.bottom + look.space(Space::L))
         .occlude()
         .child(Veil::new(look.veil(0.6)))
 }

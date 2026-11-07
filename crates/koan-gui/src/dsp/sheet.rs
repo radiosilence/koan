@@ -1,17 +1,20 @@
 //! What the EQ pages present over themselves: a stack of sheets, each a
 //! square panel in a hairline over the page, the top one taking the pointer.
+//! On a phone a view's sheet is a screen over the whole window, on its wash,
+//! as the pages the SwiftUI app pushes there are; a confirmation stays a
+//! panel of its own size.
 //! A confirmation says what a change will do before it is made.
 
 use std::rc::Rc;
 
 use koan_kit::app::*;
 
-use crate::components::sheet::scrim;
-use crate::components::{Button, ButtonKind, Rise};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+use crate::components::sheet::{screen, scrim};
+use crate::components::{Button, ButtonKind, Rise, SlideUp};
+use crate::theme::{KoanStyled, KoanTheme, Look, Space, Tone, TypeRole};
 
 /// The sheet's parts are koan-kit's.
-pub use crate::components::sheet::{body, head, head_data, note, panel};
+pub use crate::components::sheet::{body, content, head, head_data, note, panel};
 
 /// What a choice or a confirmation does.
 pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -39,6 +42,9 @@ pub enum Sheet {
 #[derive(Default)]
 pub struct Sheets {
     stack: Vec<Sheet>,
+    /// While a view's screen comes up on a phone: the one under it is drawn
+    /// until it has.
+    rising: Option<Task<()>>,
 }
 
 impl Sheets {
@@ -47,6 +53,16 @@ impl Sheets {
     }
 
     pub fn push(&mut self, sheet: Sheet, cx: &mut Context<Self>) {
+        if matches!(sheet, Sheet::View(_)) {
+            self.rising = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(SlideUp::RISE).await;
+                this.update(cx, |s, cx| {
+                    s.rising = None;
+                    cx.notify();
+                })
+                .ok();
+            }));
+        }
         self.stack.push(sheet);
         cx.notify();
     }
@@ -83,27 +99,43 @@ impl Sheets {
     }
 
     /// The sheets drawn over the page, each panel over a scrim of the one
-    /// beneath.
+    /// beneath. On a phone a view's screen hides everything under it, so
+    /// only the top one is drawn, with the questions over it; and the one
+    /// beneath while it comes up.
     pub fn render(this: &Entity<Self>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let stack = this.read(cx).stack.clone();
-        if stack.is_empty() {
+        let sheets = this.read(cx);
+        if sheets.stack.is_empty() {
             return None;
         }
         let look = Look::of(window, cx);
-        let layers = stack.into_iter().enumerate().map(|(depth, sheet)| {
-            // Named for a screen reader: a question by its title, a view by
-            // the window it belongs to.
-            let (name, body) = match sheet {
-                Sheet::View(view) => (SharedString::from("eq"), view.into_any_element()),
-                Sheet::Confirm(c) => (
-                    c.title.clone(),
-                    confirm_body(c, this.clone(), &look).into_any_element(),
-                ),
-            };
-            scrim(("dsp-sheet", depth), &look, window)
+        let is_view = |s: &Sheet| matches!(s, Sheet::View(_));
+        let first = match sheets.stack.iter().rposition(is_view) {
+            Some(top) if look.touch => {
+                let rising = sheets.rising.is_some() && KoanTheme::motion_allowed(cx);
+                match rising.then(|| sheets.stack[..top].iter().rposition(is_view)) {
+                    Some(under) => under.unwrap_or(0),
+                    None => top,
+                }
+            }
+            _ => 0,
+        };
+        let stack = sheets.stack.clone();
+        let layers = stack
+            .into_iter()
+            .enumerate()
+            .skip(first)
+            .map(|(depth, sheet)| {
+                // Named for a screen reader: a question by its title, a view by
+                // the window it belongs to.
+                let id = ("dsp-sheet", depth);
+                match sheet {
+                    Sheet::View(view) => screen(id, "eq", view, &look, window, cx),
+                    Sheet::Confirm(c) => scrim(id, &look, window).child(Rise::new(
+                        panel(c.title.clone(), &look).child(confirm_body(c, this.clone(), &look)),
+                    )),
+                }
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(Rise::new(panel(name, &look).child(body)))
-        });
+            });
         Some(
             div()
                 .absolute()
@@ -149,6 +181,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
         .child(
             div()
                 .flex()
+                .flex_wrap()
                 .justify_end()
                 .gap(look.space(Space::M))
                 .child(
