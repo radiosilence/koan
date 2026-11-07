@@ -997,12 +997,14 @@ impl Render for SetupWindow {
                 steps.iter().map(|s| s.name()),
                 at,
             ))
-            .child(div().pt(look.space(Space::M)).child(text(
-                label(self.step.title()),
-                TypeRole::Title,
-                Tone::Strong,
-                &look,
-            )))
+            .child(
+                div()
+                    .pt(look.space(Space::M))
+                    .child(crate::components::title_text(
+                        label(self.step.title()),
+                        &look,
+                    )),
+            )
             .child(text(self.step.intro(), TypeRole::Body, Tone::Muted, &look));
         let body = self.body(&look, cx);
         // Only while there is something to say: the guide has no room for
