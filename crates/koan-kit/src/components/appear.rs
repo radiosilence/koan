@@ -137,6 +137,9 @@ pub struct SlideUp {
 }
 
 impl SlideUp {
+    /// How long it takes to come up.
+    pub const RISE: Duration = Duration::from_millis(Motion::SETTLE.as_millis() as u64 * 2);
+
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
@@ -173,7 +176,7 @@ impl RenderOnce for SlideUp {
                 height,
                 0.0,
                 Animated::now(),
-                Motion::SETTLE * 2,
+                Self::RISE,
                 Ease::QuickOut,
                 Repeat::Once,
             );
