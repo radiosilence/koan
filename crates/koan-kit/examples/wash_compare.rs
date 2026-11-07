@@ -103,10 +103,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         theme::init(cx);
     });
     let sleeve = sleeve();
-    let field = image(wash::field(&sleeve));
     let mut shots = Vec::new();
     for dark in [true, false] {
         let baked = image(wash::bake(&sleeve, dark, 1.0));
+        let field = image(wash::field(&sleeve, dark, 1.0));
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), move |_, cx| {
             cx.new(|_| Baked(baked))
         })?;
@@ -115,20 +115,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let bg = Palette::of(dark).bg.hsla().to_rgb();
         let animated = Animated::new();
-        // At rest, whole, laid over the ground: no drift, full opacity, the
-        // appearance and a full hold.
-        animated.set_all(
-            0,
-            &[
-                1.0,
-                if dark { 1.0 } else { 0.0 },
-                bg.r,
-                bg.g,
-                bg.b,
-                1.0,
-                wash::tone_limit(dark),
-            ],
-        );
+        // At rest, whole, laid over the ground: no drift, full opacity.
+        animated.set_all(0, &[1.0, 0.0, bg.r, bg.g, bg.b]);
         animated.hold(0, 0.0);
         animated.hold(1, 1.0);
         animated.hold(2, 1.0);
