@@ -793,11 +793,9 @@ impl Render for Menu {
                     if let Some(icon) = icon {
                         row = row.icon(*icon);
                     }
-                    // A tap opens it, under touch the only way; a pointer's
-                    // hover has already, and the click leaves it open.
-                    let opener = menu.clone();
+                    let menu = menu.clone();
                     row = row.on_click(move |_, window, cx| {
-                        opener.update(cx, |menu, cx| menu.open_submenu(index, false, window, cx))
+                        menu.update(cx, |menu, cx| menu.choose(index, window, cx))
                     });
                     let name = label.clone();
                     panel.child(
