@@ -1,0 +1,1 @@
+- **A shorter koan.rocks.** The homepage now leads with kōan as one player across server, desktop, phone, TV and terminal, and with the GPUI apps, and says what recent releases added; setup detail moves to the documentation. The compare page loses padding and its kōan cells follow the desktop app onto Linux.
