@@ -430,6 +430,20 @@ impl VizStream {
 #[derive(uniffi::Object)]
 pub struct KoanEngine(pub(crate) Arc<koan_runtime::KoanEngine>);
 
+static OPENED: std::sync::OnceLock<Arc<KoanEngine>> = std::sync::OnceLock::new();
+
+/// Make the engine an app written in Rust has opened available to its Swift,
+/// through `opened_engine`. One per process, as engines are.
+pub fn adopt_engine(engine: Arc<koan_runtime::KoanEngine>) {
+    let _ = OPENED.set(Arc::new(KoanEngine(engine)));
+}
+
+/// The engine this process's Rust opened, once it has.
+#[uniffi::export]
+pub fn opened_engine() -> Option<Arc<KoanEngine>> {
+    OPENED.get().cloned()
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.

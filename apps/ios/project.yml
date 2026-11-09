@@ -39,16 +39,17 @@ targets:
         # were made. Without it every call starts on the cooperative pool.
         SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT: YES
 
+  # The kōan GUI app: GPUI in Rust, linked as one static library with the
+  # uniffi bindings, entered from `Sources/KoanGUI/main.swift`. Swift remains
+  # for push and App Attest, driving the same engine (`opened_engine`).
   Koan:
     type: application
     platform: iOS
     sources:
-      - path: Sources/KoanIOS
-      - path: Sources/Koan
+      - path: Sources/KoanGUI
+      - path: Sources/KoanIOS/PushDelegate.swift
+      - path: Sources/KoanIOS/AppAttest.swift
       - path: Resources/Assets.xcassets
-      # Geist Mono, for the kōan theme: the site's own file, read by Core Text as it is.
-      - path: ../../site/public/geist-mono.woff2
-        buildPhase: resources
       - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
@@ -59,16 +60,24 @@ targets:
       - target: KoanShare
     settings:
       base:
-        PRODUCT_NAME: koan
+        # The name the Info.plist's CFBundleExecutable and the plain cargo
+        # bundles give the binary.
+        PRODUCT_NAME: koan-gui
         PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan
         MARKETING_VERSION: ${KOAN_VERSION}
         CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        # `just ios-ffi <platform>` stages the Rust archive per SDK, so a
-        # device and a simulator build never link each other's slice.
-        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/ios-link/$(PLATFORM_NAME)
-        OTHER_LDFLAGS: -lkoan_ffi
+        # The one file the Xcode app and `just gui-ios`/`gui-phone` share.
+        INFOPLIST_FILE: ../../crates/koan-gui/ios/Info.plist
+        # `just gui-ios-lib <platform>` stages the Rust archive per SDK.
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/gui-link/$(PLATFORM_NAME)
+        OTHER_LDFLAGS: >-
+          -lkoan_gui -lc++ -framework Metal -framework MetalKit -framework QuartzCore
+          -framework UIKit -framework Foundation -framework CoreFoundation
+          -framework CoreGraphics -framework CoreText -framework CoreVideo
+          -framework CoreAudio -framework AudioToolbox -framework AVFAudio
+          -framework Security -framework SystemConfiguration -framework Network
     # Push. `development` is the sandbox gateway a development build's token
     # belongs to; exporting for the App Store rewrites it to `production`.
     entitlements:
@@ -90,65 +99,6 @@ targets:
         # Where the share extension leaves what it was handed.
         com.apple.security.application-groups:
           - group.cc.blit.koan
-    info:
-      path: ../../target/ios-project/Info.plist
-      properties:
-        CFBundleDisplayName: kōan
-        # XcodeGen writes 1.0 and 1 here unless told otherwise, whatever the
-        # build settings above say, and App Store Connect reads these.
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        LSRequiresIPhoneOS: true
-        # `koan://join`, the join page's button where a universal link did not
-        # open the app.
-        CFBundleURLTypes:
-          - CFBundleURLName: cc.blit.koan
-            CFBundleURLSchemes: [koan]
-        # The ensō on the icon's ground, drawn by the system before koan has
-        # run a line. `Splash` repeats it exactly, so the handoff is invisible.
-        UILaunchScreen:
-          UIImageName: LaunchEnso
-          UIColorName: LaunchBackground
-        # "Open in kōan" for EQ and correction filters, from Files, Mail or a
-        # chat. Alternate: koan is never the app these files belong to.
-        CFBundleDocumentTypes:
-          - CFBundleTypeName: EQ or correction filter
-            LSHandlerRank: Alternate
-            LSItemContentTypes:
-              - com.pkware.zip-archive
-              - public.plain-text
-              - public.yaml
-              - com.microsoft.waveform-audio
-              - public.aiff-audio
-              - org.xiph.flac
-        LSSupportsOpeningDocumentsInPlace: false
-        # Without this the process is suspended when the screen locks, and the
-        # audio thread with it.
-        # `remote-notification`: a background push from the server wakes the
-        # app to link and take what waits for it. See `PushDelegate`.
-        UIBackgroundModes: [audio, remote-notification]
-        # A Navidrome on the home network is the common case, and iOS refuses
-        # connections to local addresses until the user has been asked. The
-        # engine's HTTP is its own sockets rather than URLSession, so App
-        # Transport Security does not apply; local network privacy does.
-        NSLocalNetworkUsageDescription: >-
-          koan connects to your music server when it is on your local network,
-          finds other koan apps on it to play music on, and finds amplifiers
-          and speakers to play through.
-        # How koan apps on one network find each other, and the Apple TVs
-        # they wake. See `remote::nearby` and `remote::companion`.
-        NSBonjourServices: [_koan._tcp, _companion-link._tcp]
-        # Controlling another device shows it on the lock screen.
-        NSSupportsLiveActivities: true
-        # HTTPS and nothing else, which is exempt from export documentation.
-        ITSAppUsesNonExemptEncryption: false
-        UISupportedInterfaceOrientations~iphone:
-          - UIInterfaceOrientationPortrait
-        UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
 
   # The same module for tvOS, which links its own Rust slice.
   KoanFFITV:

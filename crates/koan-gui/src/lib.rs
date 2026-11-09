@@ -1,5 +1,5 @@
-//! The kōan GUI app, drawn with GPUI over koan-ffi. Desktop builds, macOS
-//! and Linux, for now.
+//! The kōan GUI app, drawn with GPUI over koan-runtime: macOS, Linux and
+//! iOS.
 
 pub mod app;
 pub mod artwork;
@@ -8,6 +8,7 @@ pub mod devices;
 pub mod downloads;
 pub mod dsp;
 pub mod engine;
+pub mod launch;
 pub mod levels;
 pub mod library;
 pub mod links;

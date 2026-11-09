@@ -1039,12 +1039,16 @@ const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 /// are not reached through uniffi.
 impl KoanEngine {
     /// `open`, for the desktop app: this machine's app, as the Mac app was
-    /// (`LinkIdentity::desktop`).
-    pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
-        offload::offload(|| {
+    /// (`LinkIdentity::desktop`). `device_name` is as for `open`; on iOS the
+    /// system's name for the phone, which the hostname is not.
+    pub async fn open_desktop(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+        offload::offload(move || {
             init_logging();
-            let identity = koan_core::remote::link::LinkIdentity::desktop();
-            let engine = Self::build(None, identity)?;
+            let identity = match device_name.clone() {
+                Some(_) => koan_core::remote::link::LinkIdentity::this_device(device_name.clone()),
+                None => koan_core::remote::link::LinkIdentity::desktop(),
+            };
+            let engine = Self::build(device_name, identity)?;
             engine
                 .state
                 .downloads()

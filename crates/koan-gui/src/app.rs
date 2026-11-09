@@ -50,6 +50,8 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.observe_global::<crate::platform::Links>(answer_links)
         .detach();
     answer_links(cx);
+    #[cfg(target_os = "ios")]
+    crate::platform::ios::started(engine.clone(), cx);
 }
 
 /// Hands each link waiting to Settings, as an invite or a pairing; anything

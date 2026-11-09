@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__NEARBY", "false");
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
-    let engine = futures::executor::block_on(KoanEngine::open_desktop())?;
+    let engine = futures::executor::block_on(KoanEngine::open_desktop(None))?;
     futures::executor::block_on(engine.clone().scan_reporting(false, None))?;
     let ids: Vec<i64> = futures::executor::block_on(engine.clone().random_tracks(400, None))?
         .iter()

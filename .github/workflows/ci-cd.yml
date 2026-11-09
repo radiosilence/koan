@@ -1005,23 +1005,11 @@ jobs:
   testflight:
     name: TestFlight
     needs: [changes, check-version]
-    if: ${{ !cancelled() && needs.check-version.result == 'success' && (needs.changes.outputs.apple_apps == 'true' || needs.check-version.outputs.should_release == 'true') }}
+    if: ${{ !cancelled() && needs.check-version.result == 'success' && (needs.changes.outputs.apple_apps == 'true' || needs.changes.outputs.gui_mac == 'true' || needs.check-version.outputs.should_release == 'true') }}
     uses: ./.github/workflows/ios.yml
     with:
       platform: ${{ needs.check-version.outputs.should_release == 'true' && 'both' || 'ios' }}
       public: ${{ needs.check-version.outputs.should_release == 'true' }}
-    secrets: inherit
-
-  # The GPUI app, "kōan GPUI" (`cc.blit.koan.gpui`), to TestFlight's internal
-  # testers on every push that changes it: built beside the released SwiftUI
-  # app, which it replaces once it is ready, and never submitted to the store.
-  gpui-testflight:
-    name: TestFlight (kōan GPUI)
-    needs: [changes, check-version]
-    if: ${{ !cancelled() && needs.check-version.result == 'success' && (needs.changes.outputs.gui_mac == 'true' || needs.check-version.outputs.should_release == 'true') }}
-    uses: ./.github/workflows/ios.yml
-    with:
-      platform: gpui
     secrets: inherit
 
   # The bundle the Android job built, to Google Play's internal testing track,
