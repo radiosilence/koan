@@ -749,7 +749,78 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::theme::KoanTheme;
     use core::prelude::v1::test;
+
+    struct Tall {
+        in_place: bool,
+    }
+
+    impl Render for Tall {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let look = Look::of(window, cx);
+            let panel = panel("tall", &look)
+                .debug_selector(|| "panel".into())
+                .child(
+                    body("body", &look)
+                        .debug_selector(|| "body".into())
+                        .child(div().h(px(20_000.0))),
+                );
+            div().size_full().child(if self.in_place {
+                scrim_top("scrim", &look).child(Rise::in_place(panel))
+            } else {
+                scrim("scrim", &look, window).child(Rise::new(panel))
+            })
+        }
+    }
+
+    /// Draws a sheet taller than the window and checks it stops at `tallest`
+    /// of the window's height, its body inside it.
+    fn stays_inside(
+        cx: &mut TestAppContext,
+        touch: bool,
+        reduce_motion: bool,
+        in_place: bool,
+        tallest: f32,
+    ) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            cx.global_mut::<KoanTheme>().touch = touch;
+            cx.set_reduce_motion(reduce_motion);
+        });
+        let (_view, cx) = cx.add_window_view(|_, _| Tall { in_place });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let height = cx.update(|window, _| window.viewport_size().height);
+        let panel = cx.debug_bounds("panel").expect("the panel is drawn");
+        let body = cx.debug_bounds("body").expect("the body is drawn");
+        assert!(
+            panel.size.height <= height * tallest,
+            "{panel:?} in a window {height:?} tall"
+        );
+        assert!(panel.bottom() <= height, "{panel:?} runs past the foot");
+        assert!(body.bottom() <= panel.bottom(), "{body:?} leaves {panel:?}");
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_the_window(cx: &mut TestAppContext) {
+        stays_inside(cx, false, false, false, TALLEST);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_hung_near_the_top_stays_inside_the_window(cx: &mut TestAppContext) {
+        stays_inside(cx, false, false, true, TALLEST);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_a_phone(cx: &mut TestAppContext) {
+        stays_inside(cx, true, false, false, 1.0);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_a_phone_without_motion(cx: &mut TestAppContext) {
+        stays_inside(cx, true, true, false, 1.0);
+    }
 
     struct Asker {
         focus: FocusHandle,
