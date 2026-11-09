@@ -294,44 +294,24 @@ pub fn page_shown(page: impl Hash, window: &mut Window, cx: &mut App) {
 const FROST_BLUR: Pixels = px(14.);
 /// How much of the ground's colour a frosted ground lays over the blur.
 const FROST_TINT: f32 = 0.45;
-/// How far a feathered frost fades out towards the page, and in how many
-/// steps its blur does.
-const FEATHER: Pixels = px(18.);
-const FEATHER_STEPS: usize = 3;
-
-/// A frost's tint: track 0 how much of it shows; `u[0..4]` its colour,
-/// `u[4]` how far in device pixels it fades out towards the page, `u[5]` 1
-/// when the page is below it (a bar), 0 when above (a foot).
+/// A frost's tint: track 0 how much of it shows; `u[0..4]` its colour.
 static FROST: ShaderProgram = ShaderProgram {
     name: "koan-frost",
     msl: r#"
 float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
-    float shown = u[3] * koan_track(u, 0, time);
-    if (u[4] > 0.0) {
-        float reach = u[5] > 0.5 ? size.y - position.y : position.y;
-        shown *= smoothstep(0.0, u[4], reach);
-    }
-    return float4(u[0], u[1], u[2], shown);
+    return float4(u[0], u[1], u[2], u[3] * koan_track(u, 0, time));
 }
 "#,
     wgsl: r#"
 fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
-    var shown = u[0].w * koan_track(u, 0u, time);
-    if (u[1].x > 0.0) {
-        var reach = position.y;
-        if (u[1].y > 0.5) {
-            reach = size.y - position.y;
-        }
-        shown = shown * smoothstep(0.0, u[1].x, reach);
-    }
-    return vec4<f32>(u[0].xyz, shown);
+    return vec4<f32>(u[0].xyz, u[0].w * koan_track(u, 0u, time));
 }
 "#,
     prepare: None,
 };
 
 /// Which of a window's edges a frost grounds.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum Edge {
     Bar,
     Foot,
@@ -340,38 +320,24 @@ enum Edge {
 /// The ground of what a shell draws over its pages, filling its parent,
 /// which is `relative`, and drawn before the rest of it: clear while
 /// nothing is under it, and frosted as the system's bars are while the
-/// page's content runs under it (what lies under blurred; tinted with the
-/// page's ground only where the renderer cannot blur). With less
+/// page's content runs under it (what lies under blurred, and under a foot
+/// tinted with the page's ground; a bar is tinted only where the renderer
+/// cannot blur). With less
 /// transparency asked for, opaque and unblurred while content is under it.
 #[derive(IntoElement)]
 pub struct Frost {
     edge: Edge,
-    feather: bool,
 }
 
 impl Frost {
     /// Under a bar at the top of the pages.
     pub fn bar() -> Self {
-        Self {
-            edge: Edge::Bar,
-            feather: false,
-        }
+        Self { edge: Edge::Bar }
     }
 
     /// Under a foot at the end of the pages.
     pub fn foot() -> Self {
-        Self {
-            edge: Edge::Foot,
-            feather: false,
-        }
-    }
-
-    /// Fading out towards the page rather than ending at a line, so the bar
-    /// reads as part of the ground it stands on rather than a band of its
-    /// own.
-    pub fn feathered(mut self) -> Self {
-        self.feather = true;
-        self
+        Self { edge: Edge::Foot }
     }
 }
 
@@ -389,38 +355,16 @@ impl RenderOnce for Frost {
             Edge::Bar => (edges.bar.clone(), edges.under.0),
             Edge::Foot => (edges.foot.clone(), edges.under.1),
         };
-        let feather = if self.feather { FEATHER } else { Pixels::ZERO };
-        // The blur, stepping down towards the page where it is feathered.
-        let blur = (!look.opaque).then(|| {
-            let step = feather / FEATHER_STEPS as f32;
-            let steps = (0..FEATHER_STEPS).filter(|_| self.feather).map(|i| {
-                let fraction = (FEATHER_STEPS - i) as f32 / (FEATHER_STEPS + 1) as f32;
-                div()
-                    .h(step)
-                    .flex_shrink_0()
-                    .backdrop_blur(FROST_BLUR * fraction)
-            });
-            let full = div().flex_1().backdrop_blur(FROST_BLUR);
-            let column = div().absolute().inset_0().flex();
-            match self.edge {
-                Edge::Bar => column.flex_col().child(full).children(steps),
-                Edge::Foot => column.flex_col_reverse().child(full).children(steps),
-            }
-        });
-        // Blurred alone where the renderer blurs: a tint of the ground
-        // over it darkens a bold wash. The ground stays for less
+        // The blur, whole from the first pixel to the last.
+        let blur = (!look.opaque).then(|| div().absolute().inset_0().backdrop_blur(FROST_BLUR));
+        // A bar is blurred alone where the renderer blurs: a tint of the
+        // ground over it darkens a bold wash. The foot keeps the tint, which
+        // sets the transport apart from the page. The ground stays for less
         // transparency, and as the whole frost where nothing blurs.
-        let tint = if SHADED && !look.opaque {
+        let tint = if SHADED && !look.opaque && matches!(self.edge, Edge::Bar) {
             None
         } else if SHADED {
             animated.set_color(0, color);
-            animated.set_all(
-                4,
-                &[
-                    f32::from(feather) * window.scale_factor(),
-                    if self.edge == Edge::Bar { 1.0 } else { 0.0 },
-                ],
-            );
             AnimatedQuad::new(&FROST, &animated)
                 .decorative()
                 .absolute()

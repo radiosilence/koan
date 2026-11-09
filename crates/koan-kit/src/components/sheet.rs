@@ -15,9 +15,13 @@ use super::{Button, ButtonKind, Fading, Rise, SlideUp, TextField, Veil};
 use crate::theme::wash::WindowWash;
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
+/// The most of the window's height a sheet's panel takes on the desktop.
+pub const TALLEST: f32 = 0.8;
+
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide. A dialog to
 /// a screen reader, named `name` in the app's words: what its head says.
-/// As tall as its content up to the room the window leaves it, where its
+/// As tall as its content up to `TALLEST` of the window (on a phone, the
+/// `room` it has), where its
 /// `body` scrolls; a view drawn in it makes `content` its root, or its body
 /// cannot shrink.
 pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
@@ -30,7 +34,8 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .flex_col()
     .w(px(560.0))
     .max_w_full()
-    .max_h(relative(0.85))
+    // On a phone the room above the keyboard holds it instead (`Rise`).
+    .when(!look.touch, |panel| panel.max_h(relative(TALLEST)))
     // Shrinks within what holds it, its body scrolling.
     .min_h_0()
     .bg(look.palette.bg.hsla())
@@ -121,7 +126,19 @@ pub fn content() -> Div {
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
 pub fn wide_panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
-    panel(name, look).w(px(880.0)).h(relative(0.85))
+    panel(name, look).w(px(880.0)).h(relative(TALLEST))
+}
+
+/// A sheet's panel as tall as it may be, whatever its content: one holding
+/// a long list to choose from. The whole room on a phone (`room`),
+/// `TALLEST` of the window on the desktop.
+pub fn tall_panel(name: impl AsRef<str>, look: &Look, window: &Window) -> Stateful<Div> {
+    let panel = panel(name, look);
+    if look.touch {
+        panel.h(room(look, window))
+    } else {
+        panel.h(relative(TALLEST))
+    }
 }
 
 /// A sheet's head: its title in the app's words, and its actions trailing.
@@ -183,7 +200,7 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 }
 
 /// What a sheet sits on: the whole window dimmed, taking every click, the
-/// panel hung near the top. The owner listens to it for a click outside the
+/// panel in its middle. The owner listens to it for a click outside the
 /// panel, which the panel stops. The dim fades in as it comes up; the owner
 /// draws its panel in a `Rise`.
 ///
@@ -193,7 +210,16 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// from there.
 pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
     if !look.touch {
-        return scrim_top(id, look);
+        return div()
+            .id(id.into())
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .items_center()
+            .p(look.space(Space::L))
+            .occlude()
+            .child(Veil::new(look.veil(0.6)));
     }
     let insets = super::system_insets(super::Clear::Keyboard, window);
     div()

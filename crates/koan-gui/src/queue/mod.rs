@@ -1648,7 +1648,7 @@ impl QueueView {
         if !self.following {
             self.toggle_follow(cx);
         } else if let Some((_, row)) = self.playing_row(cx) {
-            self.list.reveal(row);
+            self.list.centre(row);
             cx.notify();
         }
     }
@@ -1673,7 +1673,7 @@ impl QueueView {
         if self.following {
             self.following = false;
         } else if let Some((id, row)) = self.playing_row(cx) {
-            self.list.reveal(row);
+            self.list.centre(row);
             self.following = true;
             self.followed = Some(id);
             self.followed_row = Some(row);
@@ -1692,7 +1692,7 @@ impl QueueView {
             // Revealed when it changes, and when an edit moves it.
             Some((id, row)) => {
                 if self.followed.as_ref() != Some(&id) || self.followed_row != Some(row) {
-                    self.list.reveal(row);
+                    self.list.centre(row);
                     self.followed = Some(id);
                     self.followed_row = Some(row);
                     cx.notify();
@@ -1756,37 +1756,22 @@ impl QueueView {
         });
         if let Some((lib, _)) = self.lib.as_ref().filter(|_| !tracks.is_empty()) {
             let lib = lib.clone();
-            let playlists = lib.feed.read(cx).playlists.clone();
             let end = view.clone();
-            bar = bar.element(crate::components::opens_panel(
+            bar = bar.verb(
                 "queue-pick-playlist",
-                crate::components::TextTrigger::new("queue-pick-playlist-trigger", "playlist"),
-                move |dismiss, _, _| {
-                    if playlists.is_empty() {
-                        return MenuPanel::new()
-                            .child(MenuRow::new("queue-pick-none", "no playlists").disabled(true))
-                            .into_any_element();
-                    }
-                    MenuPanel::new()
-                        .children(playlists.iter().enumerate().map(|(i, (id, name))| {
-                            let (lib, tracks, end, id) =
-                                (lib.clone(), tracks.clone(), end.clone(), *id);
-                            let dismiss = dismiss.clone();
-                            MenuRow::data(("queue-pick-pl", i), name.clone()).on_click(
-                                move |_, window, cx| {
-                                    actions::add_to_playlist(&lib, id, &tracks, cx);
-                                    end.update(cx, |this, cx| {
-                                        this.picking = false;
-                                        this.selected.clear();
-                                        cx.notify();
-                                    });
-                                    dismiss(window, cx);
-                                },
-                            )
-                        }))
-                        .into_any_element()
+                "playlist…",
+                move |_, window, cx| {
+                    let end = end.clone();
+                    let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
+                        end.update(cx, |this, cx| {
+                            this.picking = false;
+                            this.selected.clear();
+                            cx.notify();
+                        })
+                    }));
+                    crate::library::pick_playlist::open(&lib, tracks.clone(), after, window, cx);
                 },
-            ));
+            );
         }
         let (remove, done) = (view.clone(), view);
         bar.element(
