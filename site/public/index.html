@@ -4,9 +4,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>kōan: a music player for macOS, iOS, Android and Linux</title>
+  <title>kōan: one music player for server, desktop, phone, TV and terminal</title>
   <meta name="description"
-    content="A fast music player for local and Subsonic/Navidrome libraries: a desktop app on macOS and Linux, SwiftUI apps on iOS and Apple TV, an Android app, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
+    content="One music player for your own library: a server, GPU-drawn desktop apps for macOS and Linux, phone and Apple TV apps, and a terminal player, on one Rust core. Plays local files and any OpenSubsonic server.">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -15,15 +15,15 @@
   <meta property="og:url" content="https://koan.rocks/">
   <meta property="og:title" content="kōan">
   <meta property="og:description"
-    content="A music player for local and Subsonic/Navidrome libraries. A desktop app on macOS and Linux, SwiftUI on iOS, a terminal UI, and a server for the rest, on one Rust core.">
+    content="One music player for your own library: server, desktop, phone, TV and terminal, on one Rust core.">
   <meta property="og:image" content="https://koan.rocks/og.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="kōan: the macOS app playing an album, beside Now Playing on an iPhone">
+  <meta property="og:image:alt" content="kōan: the desktop app playing an album, beside Now Playing on an iPhone">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="kōan">
   <meta name="twitter:description"
-    content="A music player for local and Subsonic/Navidrome libraries. A desktop app on macOS and Linux, SwiftUI on iOS, a terminal UI, and a server for the rest, on one Rust core.">
+    content="One music player for your own library: server, desktop, phone, TV and terminal, on one Rust core.">
   <meta name="twitter:image" content="https://koan.rocks/og.jpg">
   <link rel="icon" href="/icon-32.png" sizes="32x32">
   <link rel="icon" href="/icon-192.png" sizes="192x192">
@@ -41,11 +41,10 @@
     <nav
       class="flex flex-wrap gap-x-2.5 gap-y-1 text-sm whitespace-nowrap sm:gap-x-5 [&>a]:text-muted [&>a]:no-underline [&>a:hover]:text-ink"
       aria-label="Site">
-      <a href="#pieces">Pieces</a>
+      <a href="#everything">Everything</a>
+      <a href="#gpui">GPUI</a>
+      <a href="#new">New</a>
       <a href="#install">Install</a>
-      <a href="#setup">Set up</a>
-      <a href="#features">Features</a>
-      <a href="#assistants">Assistants</a>
       <a href="/compare/">Compare</a>
       <a href="/docs/">Docs</a>
       <a href="https://github.com/radiosilence/koan">GitHub</a>
@@ -55,60 +54,14 @@
   <main id="main">
     <figure class="mx-auto max-w-6xl px-5 pt-4">
       <img class="h-auto w-full" src="/screens/hero.webp" width="2800" height="1750" fetchpriority="high"
-        alt="kōan in a browser, on a Mac and on an iPhone: the web UI's search, an album playing in the macOS app, and Now Playing on the phone">
+        alt="kōan in a browser, on a desktop and on an iPhone: the web UI's search, an album in the desktop app, and Now Playing on the phone">
     </figure>
 
     <section class="mx-auto max-w-2xl px-5 pt-8 pb-4">
       <h1 class="mb-8 text-6xl font-extralight sm:text-7xl">kōan</h1>
-      <p>It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote
-        libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all
-        the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built
-        from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream
-        application.</p>
-      <p>The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas
-        that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a
-        Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly,
-        iOS and Apple TV apps, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
-        were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.</p>
-
-    </section>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-favourites.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="Favourites in the macOS app: artists, records and tracks">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-artist.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="An artist page in the macOS app, with a photo and a biography from Wikipedia">
-      </figure>
-    </div>
-
-    <section class="mx-auto max-w-2xl px-5">
-      <p>I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now
-        battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ
-        profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so
-        you never have to remember to download your whole queue first. The best of every world, why not?</p>
-      <p>My philosophy is that you should lead with your opinions, but let people customise and tweak them to match
-        theirs.</p>
-      <p>Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its
-        own. You can use the macOS app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the
-        way down and get the non-standard (sorry) features such as remote control. I think a shared standard like
-        OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting
-        to compete with how well the professional streaming platforms integrate.</p>
-      <p>One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically
-        solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone,
-        which is laggy. With kōan's remote features, the device you send it to plays its own copy.</p>
-      <p>I did use AI-assisted coding for this project. I've been building fairly high-quality software for a
-        <em>loooong</em> time (decades) before AI existed, and I'd like to think the decisions reflect that rather than
-        vibing slop. I probably could have written it myself, but I wanted to step back and be more of an architect,
-        technical lead and product owner than the person typing out the code, as I'm just one person.</p>
-      <p>If it gets traction I'll happily look at more platforms like Android, but I'm already out $99 for an Apple
-        Developer account, so I'm not shelling out for an Android phone just yet. There IS an <a href="https://github.com/radiosilence/koan/releases/latest">APK on GitHub releases</a> that
-        I've got my mates to test sporadically, and it should work decently, however it will lag behind iOS as I can't
-        give it the same amount of TLC. Also apparently you need an actual Android device to sign up to the Play Console
-        etc so I can't release it on the store yet.</p>
-      <p>&mdash; <a href="https://github.com/radiosilence">@radiosilence</a></p>
+      <p>One music player for your own music, wherever you listen. It is a server, a desktop app, a phone app, an Apple
+        TV app and a terminal player, all on one Rust core. It plays folders on your computer, a kōan server, or any
+        OpenSubsonic server such as Navidrome.</p>
       <p class="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3">
         <a class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90"
           href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download for Mac</a>
@@ -120,625 +73,164 @@
           href="#install">Other ways to install</a>
         <span class="text-sm text-muted">desktop app for macOS and Linux · iOS and tvOS 26+ apps · Android APK · terminal UI · server · AGPL</span>
       </p>
-
     </section>
 
-    <div class="carousel my-8" role="region" aria-roledescription="carousel" aria-label="Screenshots of the iPhone app">
+    <section id="everything" class="mx-auto max-w-2xl scroll-mt-4 px-5 py-8">
+      <h2>Use it as everything</h2>
+      <ul>
+        <li id="server" class="scroll-mt-4"><strong>Server.</strong> <code>koan --headless</code> or the container
+          image, on the machine with the music. A web UI with gapless playback, public share links, an OpenSubsonic API
+          and MCP for assistants. It replaces Navidrome: <a href="/docs/migrating-from-navidrome/">how to move</a>.</li>
+        <li><strong>Desktop.</strong> macOS and Linux. Local folders, a server, or both merged into one library. On a
+          Mac it can <a href="/docs/sharing-your-mac/">serve its library</a> to your phone without a separate
+          server.</li>
+        <li><strong>Phone.</strong> iPhone and iPad through TestFlight, Android as an APK. Plays from a server, fetches
+          the queue ahead and keeps what it plays, so it carries on with no signal.</li>
+        <li><strong>TV.</strong> Apple TV, signed in from a phone with no password to type. Your phone or computer can
+          play to it.</li>
+        <li><strong>Terminal.</strong> <code>koan</code> on macOS and Linux: a full player, plus scanning, search, file
+          organisation and the server, in one binary.</li>
+        <li><strong>Other apps.</strong> Each part works alone. kōan's apps play from Navidrome, and Play:Sub or any
+          other Subsonic app plays from a kōan server.</li>
+      </ul>
+    </section>
+
+    <div class="mx-auto my-4 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-3">
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/web-search.webp" width="1600"
+          height="1000" loading="lazy" decoding="async" alt="Search in the web UI: matching artists and their albums">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/tv-now-playing.webp" width="2400"
+          height="1350" loading="lazy" decoding="async" alt="Now Playing on Apple TV: the sleeve, the track and what comes next">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/tui-now-playing.webp" width="2000"
+          height="1600" loading="lazy" decoding="async" alt="The terminal UI's Now playing page: the cover, signal path, meters, spectrum and lyrics">
+      </figure>
+    </div>
+
+    <section id="gpui" class="mx-auto max-w-2xl scroll-mt-4 px-5 py-8">
+      <h2>The new GPUI apps</h2>
+      <p>The desktop app is drawn with GPUI, the GPU framework built for the Zed editor. It has been kōan's only app on
+        the Mac since 0.70, and it runs on Linux too. There is no Electron and no web view, and it links the audio
+        engine directly.</p>
+      <p>The moving parts are shaders: the colour wash from the record's sleeve, the playing bars, the seek bar,
+        the lyrics and the answer to a press. It moves at the display's refresh rate, full screen on a 4K display holds
+        120 fps, and nothing is drawn while nothing moves.</p>
+    </section>
+
+    <div class="mx-auto my-4 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-album.webp" width="2000"
+          height="1086" loading="lazy" decoding="async" alt="A record's page in the desktop app, washed in the colours of its sleeve">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-queue.webp" width="2000"
+          height="1086" loading="lazy" decoding="async" alt="The queue in the desktop app, grouped by record">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-albums.webp" width="2000"
+          height="1086" loading="lazy" decoding="async" alt="The album grid in the desktop app">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-eq.webp" width="2000"
+          height="1086" loading="lazy" decoding="async" alt="The EQ page in the desktop app: a device's chain and the response graph">
+      </figure>
+    </div>
+
+    <section class="mx-auto max-w-2xl px-5 py-4">
+      <p>The same app now runs on the iPhone, with four tabs, a mini player, Now Playing and touch throughout. It is
+        with internal testers and not yet released; the iPhone app on TestFlight is the SwiftUI one.</p>
+    </section>
+
+    <div class="carousel my-8" role="region" aria-roledescription="carousel" aria-label="Screenshots of the GPUI app on iPhone">
       <button type="button" class="carousel-btn left-1" data-dir="-1" aria-label="Previous screenshots">‹</button>
       <div class="carousel-track" tabindex="0">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-now-playing.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Now Playing on iPhone, over the colours of the album, with a sleep timer running, the EQ preset in use and the output rows beneath the controls">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-library.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The Library tab on iPhone: albums, artists, favourites, playlists, recently played, downloaded, history and downloads">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-artist.webp" width="660" height="1434" loading="lazy" decoding="async" alt="An artist page on iPhone, with a photo, a short biography and the artist's records">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-queue.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The queue on iPhone, grouped by album, with the playing track marked">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-search.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Search on iPhone: matching artists as pills, then their records">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-playlists.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Playlists on iPhone, each with a mosaic of its covers">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-albums.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The album grid on iPhone">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-album.webp" width="660" height="1434" loading="lazy" decoding="async" alt="An album page on iPhone, with its tracks and favourite hearts">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-eq.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The EQ page on iPhone: a headphone correction drawn as a curve, with the device and preset chosen above it">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-now-playing.webp" width="660" height="1435" loading="lazy" decoding="async" alt="Now Playing in the GPUI app on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-album.webp" width="660" height="1435" loading="lazy" decoding="async" alt="A record's page in the GPUI app on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-queue.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The queue in the GPUI app on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-library.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The Library tab in the GPUI app on iPhone">
       </div>
       <button type="button" class="carousel-btn right-1" data-dir="1" aria-label="Next screenshots">›</button>
     </div>
 
-    <section class="mx-auto max-w-2xl px-5 pb-4">
-      <h2>What is unusual about it</h2>
+    <section id="new" class="mx-auto max-w-2xl scroll-mt-4 px-5 py-8">
+      <h2>Recently added</h2>
       <ul>
-        <li><strong>Your DAC runs at the track's rate.</strong> Every track flips the device to its own sample rate.
-          Nothing gets resampled to suit the device, and if a device refuses, the format badge tells you so. <a
-            href="#features">Playback</a></li>
-        <li><strong>Gapless survives you messing with the queue.</strong> The decoder lines the next track up early, so
-          if you then reorder or remove it, playback restarts at the playhead with your edit, instead of playing the
-          thing you just got rid of. <a href="#features">Playback</a></li>
-        <li><strong>Room and headphone correction, per output.</strong> Roon filter packs, REW and rePhase impulses,
-          CamillaDSP and Equalizer APO configs: they all import as they are. Or pick your headphones from AutoEQ by
-          maker and model, move the correction to another target curve, and stack a bass shelf on top without touching
-          it. The graph shows what actually plays, worked out from the same filters the DSP runs. A device without a
-          profile runs nothing at all. <a href="/docs/dsp/">Equalisation and convolution</a></li>
-        <li><strong>Network amps get the actual file.</strong> A UPnP/DLNA renderer gets handed the file itself. Or, if
-          you've given it a correction profile, one FLAC stream for the whole queue, gapless whether the amp can do
-          gapless or not. <a href="/docs/devices/#amplifiers-and-streamers-upnp">Amplifiers and streamers</a></li>
-        <li><strong>Music moves between devices, properly.</strong> It picks up exactly where it stopped, straight away
-          if the other device already has the track, and with none of AirPlay's buffering. That device plays its own
-          copy, so it keeps going if your phone sleeps or drops signal, and the app tells you if it's still waiting for
-          that device to wake or the music never got there. Devices on the same network can control each other
-          whoever's signed in; yours prove to each other they're on your account, so they get everything a stranger's
-          doesn't. You can share a device with another account on your server to control it from anywhere. One device at a time though, no multiroom yet. <a
-            href="/docs/devices/#controlling-and-moving">Controlling and moving</a></li>
-        <li><strong>Built for losing signal on the Tube.</strong> While you've got signal, the queue gets fetched ahead
-          of the playhead (current track first) as far as the cache limit allows, so it keeps playing underground, and
-          anything you've played once plays again offline. A long queue can't push the cache past its limit either. <a
-            href="/docs/cache-management/">Cache management</a></li>
-        <li><strong>Sync is fast.</strong> A full sync is about a second per 10,000 tracks on an iPhone against a kōan
-          server: songs come a page at a time, so it's about a hundred requests for fifty thousand tracks rather than
-          one per album. And if the server's library hasn't changed, it doesn't walk it at all. <a
-            href="/docs/remote-servers/">Remote servers</a></li>
-        <li><strong>A whole ecosystem that's still plain OpenSubsonic.</strong> Apps, terminal UI, web UI, share links
-          and server all come from kōan, but the apps play from Navidrome too, and Play:Sub or any other Subsonic app
-          plays from a kōan server. <a href="#server">As a server</a></li>
-        <li><strong>Light on the machine.</strong> Nothing polls. The player sleeps until something actually happens,
-          and the analyser stops when nothing's drawing it. Playing, with a 51,000-track library loaded, the Mac app
-          sits at about 200 MB and 1% of one core, and the server holding that library idles at 30 MB and a thousandth
-          of a core. The app is 33 MB installed and the command line is a single 45 MB binary. <a href="#pieces">The
-            pieces</a></li>
-        <li><strong>An assistant as a remote.</strong> Add the server to Claude as a connector and sign in with your
-          kōan account, no gateway or identity provider faff. It plays on whichever phone or Mac you name, and builds
-          playlists that reach every device and even hold places for albums still downloading, filling them in when
-          they land. It can never move, rename or delete a file, whatever the account. <a href="#assistants">With an
-            assistant</a></li>
-        <li><strong>Inviting someone is one link.</strong> Open it, or scan its QR code, on a phone or Mac with kōan and it signs that device
-          in with a key of its own and syncs the library, nothing to type. Each device's key can be revoked on its own,
-          and changing the password kills every link already sent. The QR code works for ten minutes, so a screenshot of
-          it is no use to anyone later. Signing in another of your own phones works the same way: every account's page
-          opens with a <strong>Link a device</strong> code to scan. <a
-            href="/docs/authentication/#invites">Invites</a></li>
-        <li><strong>One Rust core, linked right in.</strong> The desktop app and the iOS app call the audio engine
-          in-process. No Electron, and no daemon or port sitting between the interface and the sound. <a
-            href="#pieces">The pieces</a></li>
+        <li><strong>0.71.3</strong> The lyrics panel resizes, and the line under the pointer brightens because a click
+          seeks to it. Add to playlist is a sheet that filters as you type.</li>
+        <li><strong>0.71.2</strong> Pages scroll under a toolbar and transport that frost as content passes beneath.
+          Every button answers a press, with a glyph that moves as its verb means.</li>
+        <li><strong>0.71.1</strong> The window takes on the colours of the record or artist on the page. EQ moved into
+          Settings.</li>
+        <li><strong>0.71.0</strong> A first launch walks you through setup: your folders, sharing them with your phone,
+          reaching them through Tailscale, or signing in to a server. The app offers to restart into an update.</li>
+        <li><strong>0.70.5</strong> A kōan server looks up artist biographies and photographs ahead of time, so artist
+          pages open with them in place.</li>
+        <li><strong>0.70.4</strong> The desktop app updates itself, checking each release's digest and signature.</li>
+        <li><strong>0.70.0</strong> The GPUI app replaced the SwiftUI app on the Mac.</li>
       </ul>
-
-      <p>If you want to see how all that stacks up against NaviBeat, Navidrome, Jellyfin, Roon and the rest, <a
-          href="/compare/">How kōan compares</a> goes feature by feature, including the stuff kōan doesn't do (yet).</p>
-
-      <h2 class="mt-12">The basics, done properly</h2>
-      <ul>
-        <li><strong>Compilations stay one album.</strong> Albums group by album artist, so a various-artists record
-          doesn't explode into one album per track artist, and two editions with different MusicBrainz releases stay
-          two.</li>
-        <li><strong>The queue comes back how you left it.</strong> Restart and it's all there, at the point in the track
-          where you stopped, and it only plays if it was playing.</li>
-        <li><strong>You can queue a track twice.</strong> Every entry has its own id, so moving or removing one copy
-          leaves the other alone, and you can undo the last 100 queue edits.</li>
-        <li><strong>One artist is one artist.</strong> <code>SIGUR RÓS</code> on a server and <code>Sigur Rós</code> on
-          disk are the same act, whatever the case or Unicode form.</li>
-        <li><strong>Your tags are left alone.</strong> kōan reads them and never writes them back. Favourites belong to
-          the track, so they follow it when the file moves.</li>
-      </ul>
+      <p>Everything else is in the <a href="/docs/changelog/">changelog</a>.</p>
     </section>
 
-    <section id="pieces" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>The pieces</h2>
-      <p>Every part of kōan is the same Rust core with a different front on it. The apps link the core in-process, so
-        nothing between the interface and the audio engine is a network hop.</p>
+    <section id="features" class="mx-auto max-w-2xl scroll-mt-4 px-5 py-8">
+      <h2>What it does that others don't</h2>
       <ul>
-        <li><strong>Desktop app.</strong> For the machine you actually sit and listen at, on macOS and Linux. Plays
-          local folders, a server, or both merged into one library.</li>
-        <li><strong>iOS app.</strong> The same SwiftUI app in a phone's shell. A phone doesn't have a music folder, so
-          it plays from a server and keeps what it's played in a local cache. The Apple TV app is the same again,
-          built around the remote.</li>
-        <li><strong>Android app.</strong> Compose over the same core, with the iPhone's pages, playing from a server
-          the same way.</li>
-        <li><strong>Terminal UI and CLI.</strong> <code>koan</code> on macOS and Linux: the player in a terminal, plus
-          scanning, search, file organisation and the server itself.</li>
-        <li><strong>Server.</strong> <code>koan --headless</code>, or the container image, on whatever machine holds the
-          music. It serves a web UI, share links, an OpenSubsonic API and MCP.</li>
+        <li><strong>Your DAC runs at the track's rate.</strong> The output switches to each track's sample rate, gapless
+          and bit-perfect where the system allows, and the format badge says when it isn't.</li>
+        <li><strong>Correction per output.</strong> AutoEQ, Equalizer APO, CamillaDSP, REW and Roon filters import as
+          they are, each tied to a device. A device with no profile runs nothing. <a
+            href="/docs/dsp/">EQ and convolution</a>.</li>
+        <li><strong>Devices control each other.</strong> Any kōan app can drive another or move the music to it, and the
+          other device plays its own copy. UPnP amps get the original file. <a href="/docs/devices/">Devices</a>.</li>
+        <li><strong>Inviting someone is one link.</strong> A link or QR code signs a device in with a key of its own.
+          <a href="/docs/authentication/#invites">Invites</a>.</li>
+        <li><strong>An assistant can drive it.</strong> The server speaks MCP with its own sign-in, and can never move,
+          rename or delete a file. <a href="/docs/mcp-integration/">MCP</a>.</li>
       </ul>
-      <p>If it's one computer with the music on it, the app on its own is all you need. If you want to listen from a
-        phone, another computer or a browser, run the server where the music lives and point everything else at it.
-        The apps sync its library, stream what they play and cache it, so a record you've played once plays again with
-        no signal. Any Subsonic client works against it too.</p>
-      <svg class="my-8 h-auto w-full" viewBox="0 0 640 290" role="img" font-size="13"
-        aria-label="Music feeds a kōan server, which serves its library, web UI, shares, MCP and the OpenSubsonic API to the desktop app, the phone and TV apps, the terminal UI and other Subsonic apps">
-        <g fill="none" stroke="var(--rule)" stroke-width="1.5">
-          <path d="M320 132 V170 M85 170 H555 M85 170 V206 M235 170 V206 M405 170 V206 M555 170 V206" />
-          <rect x="20" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
-          <rect x="170" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
-          <rect x="340" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
-          <rect x="490" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
-        </g>
-        <path d="M70 81 H138" stroke="var(--brand)" stroke-width="1.5" />
-        <path d="M132 76 L140 81 L132 86" fill="none" stroke="var(--brand)" stroke-width="1.5" />
-        <rect x="150" y="30" width="340" height="102" rx="14" fill="var(--surface)" stroke="var(--brand)"
-          stroke-width="1.5" />
-        <g fill="var(--ink)" text-anchor="middle">
-          <text x="34" y="86">music</text>
-          <text x="320" y="62" font-size="16" fill="var(--brand)">kōan server</text>
-          <text x="320" y="88">library · web UI · shares · MCP</text>
-          <text x="320" y="110" fill="var(--muted)">OpenSubsonic API</text>
-          <text x="85" y="234">desktop app</text>
-          <text x="235" y="234">phone and TV apps</text>
-          <text x="405" y="234">terminal UI</text>
-          <text x="555" y="234">Subsonic apps</text>
-        </g>
-        <g fill="var(--muted)" text-anchor="middle" font-size="11">
-          <text x="85" y="254">GPUI, linked in</text>
-          <text x="235" y="254">cached for the Tube</text>
-          <text x="405" y="254">macOS and Linux</text>
-          <text x="555" y="254">Play:Sub and the rest</text>
-        </g>
-      </svg>
+      <p class="text-muted">Not there yet: Windows, tag editing, crossfade, CarPlay, Chromecast, Sonos. <a
+          href="/compare/">How kōan compares</a> goes through it feature by feature.</p>
     </section>
 
     <section id="install" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>Install</h2>
+      <p><strong>Mac:</strong> <a href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg"><code>Koan.dmg</code></a>
+        (macOS 26 or later on Apple silicon), or Homebrew:</p>
+      <pre><code>brew install --cask radiosilence/tap/koan-app</code></pre>
+      <p><strong>Linux:</strong> each <a href="https://github.com/radiosilence/koan/releases/latest">release</a> has an
+        AppImage and a <code>.deb</code> for x86-64 and ARM64.</p>
+      <p><strong>iPhone, iPad and Apple TV:</strong> the <a href="https://testflight.apple.com/join/96w2gjFz">TestFlight
+          beta</a>, iOS or tvOS 26 or later.</p>
+      <p><strong>Android:</strong> sideload <a
+          href="https://github.com/radiosilence/koan/releases/latest/download/koan-android-arm64.apk"><code>koan-android-arm64.apk</code></a>
+        on an arm64 phone running Android 10 or later.</p>
+      <p><strong>Terminal:</strong></p>
+      <pre><code>mise use -g github:radiosilence/koan@latest
+# or: brew install radiosilence/tap/koan
+# or: cargo install koan-cli</code></pre>
+      <p><strong>Server:</strong> the container is below; <a href="/docs/headless-server/">Running a server</a> has
+        the rest, including the reverse proxy it expects.</p>
+      <pre><code>docker run -d --name koan -p 4000:4000 \
+  -v koan-config:/config \
+  -v /path/to/music:/music:ro \
+  -e 'KOAN_LIBRARY__FOLDERS=["/music"]' \
+  -e 'KOAN_GRAPHQL__ALLOWED_HOSTS=["music.example.com"]' \
+  -e KOAN_SERVER__URL=https://music.example.com \
+  -e KOAN_SUBSONIC__ENABLED=true \
+  ghcr.io/radiosilence/koan:latest
 
-      <h3>Desktop app</h3>
-      <p>On a Mac, <a href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">download
-          <code>Koan.dmg</code></a>, open it and drag kōan into Applications. It's signed and notarised. Or with
-        Homebrew:</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">brew</span> install <span class="at">--cask</span> radiosilence/tap/koan-app</span></code></pre></div>
-      <p>You might have to update Homebrew's trust settings to trust the tap.</p>
-      <p>Requires macOS 26 or later on Apple silicon. On Linux, each release carries an AppImage and a
-        <code>.deb</code> for x86-64 and ARM64. See <a href="/docs/desktop/">The desktop app</a>.</p>
-
-      <h3>iOS and Apple TV apps</h3>
-      <p>They're in App Review. Until they're out, <a href="https://testflight.apple.com/join/96w2gjFz">join the
-          TestFlight beta</a> on the iPhone, iPad or Apple TV. Or build the iOS app from source with Xcode and put it on
-        a phone plugged into your Mac, signed with your own (free) Apple developer team:</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
-<span><span class="ex">just</span> ios-phone</span></code></pre></div>
-      <p>Needs iOS or tvOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
+docker exec -it koan koan auth setup   # the admin account</code></pre>
       <p>No server yet? Sign in to <a href="https://demo.koan.rocks">demo.koan.rocks</a> as <code>demo</code>, password
-        <code>demo</code>, from any of the apps or a browser. It's a kōan server with a small, freely licensed library,
-        everyone shares the one account, and it resets every day at midnight UTC.</p>
-
-      <h3>Android app</h3>
-      <p>Each release carries <a
-          href="https://github.com/radiosilence/koan/releases/latest/download/koan-android-arm64.apk"><code>koan-android-arm64.apk</code></a>.
-        Sideload it on an arm64 phone running Android 10 or later; later releases install over it. It plays from a
-        server, like the iOS app. See <a href="/docs/android/">Android</a>.</p>
-
-      <h3>Command line and terminal UI</h3>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># mise (recommended)</span></span>
-<span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/koan@latest</span>
-<span></span>
-<span><span class="co"># homebrew</span></span>
-<span><span class="ex">brew</span> install radiosilence/tap/koan</span>
-<span></span>
-<span><span class="co"># or via cargo</span></span>
-<span><span class="ex">cargo</span> install koan-cli</span>
-<span></span>
-<span><span class="co"># or build from source</span></span>
-<span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
-<span><span class="ex">cargo</span> install <span class="at">--path</span> crates/koan-cli</span></code></pre></div>
-      <p>It's a single binary. macOS needs nothing else; Linux needs the ALSA and D-Bus development headers:</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># Debian/Ubuntu</span></span>
-<span><span class="fu">sudo</span> apt install libasound2-dev libdbus-1-dev</span>
-<span></span>
-<span><span class="co"># Fedora</span></span>
-<span><span class="fu">sudo</span> dnf install alsa-lib-devel dbus-devel</span>
-<span></span>
-<span><span class="co"># Arch</span></span>
-<span><span class="fu">sudo</span> pacman <span class="at">-S</span> alsa-lib dbus</span></code></pre></div>
-    </section>
-
-    <section id="setup" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>Setting it up</h2>
-
-      <h3>One computer</h3>
-      <p>In the desktop app it's all in Settings: <strong>Library</strong> points kōan at your music and scans it,
-        and playback and devices have their own panes. No terminal needed.</p>
-      <p>Or from the command line:</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">koan</span> config init   <span class="co"># create the config dir and a commented template</span></span>
-<span><span class="co"># edit ~/.config/koan/config.local.toml:</span></span>
-<span><span class="co">#   [library]</span></span>
-<span><span class="co">#   folders = [&quot;/path/to/your/music&quot;]</span></span>
-<span><span class="ex">koan</span> scan          <span class="co"># index your library</span></span>
-<span><span class="ex">koan</span>               <span class="co"># launch the TUI</span></span></code></pre></div>
-      <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> finds tracks, the number keys
-        switch pages, <kbd>?</kbd> lists every key, <kbd>q</kbd> quits. The mouse works too.</p>
-
-      <h3>A server for everything else</h3>
-      <p>Run the container on the machine with the music. It doesn't need a sound card, keeps its config, index
-        and keys in <code>/config</code>, and only ever reads the library.</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">docker</span> run <span class="at">-d</span> <span class="at">--name</span> koan <span class="at">-p</span> 4000:4000 <span class="dt">\</span></span>
-<span>  <span class="at">-v</span> koan-config:/config <span class="dt">\</span></span>
-<span>  <span class="at">-v</span> /path/to/music:/music:ro <span class="dt">\</span></span>
-<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_LIBRARY__FOLDERS=[&quot;/music&quot;]&#39;</span> <span class="dt">\</span></span>
-<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_GRAPHQL__ALLOWED_HOSTS=[&quot;music.example.com&quot;]&#39;</span> <span class="dt">\</span></span>
-<span>  <span class="at">-e</span> KOAN_SERVER__URL=https://music.example.com <span class="dt">\</span></span>
-<span>  <span class="at">-e</span> KOAN_SUBSONIC__ENABLED=true <span class="dt">\</span></span>
-<span>  ghcr.io/radiosilence/koan:latest</span>
-<span></span>
-<span><span class="ex">docker</span> exec <span class="at">-it</span> koan koan auth setup   <span class="co"># the admin account</span></span></code></pre></div>
-      <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
-          href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
-        certificate out itself. The server refuses any <code>Host</code> it wasn't given, and won't start without
-        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. Run the <code>koan auth setup</code> line straight away: until an account exists the server shows a setup page, and whoever reaches it first becomes the admin. Opening the hostname and filling that page in works too. After that,
-        add people from the web UI's Users page or with <code>koan auth create-user</code>. Without a container,
-        <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>. <a
-          href="/docs/headless-server/">Running a server</a> has the details, and <a
-          href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> translates a Navidrome setup.</p>
-      <p>Then sign in from each client with a kōan account:</p>
-      <ul>
-        <li><strong>Browser:</strong> open the hostname.</li>
-        <li><strong>macOS and iOS apps:</strong> Settings → Server.</li>
-        <li><strong>Terminal:</strong> <code>koan remote login https://music.example.com &lt;user&gt;</code>, then
-          <code>koan remote sync</code>.
-        </li>
-        <li><strong>Other Subsonic apps:</strong> the same URL and account.</li>
-      </ul>
-      <p>A Navidrome or other Subsonic server works in the kōan server's place for the apps and terminal UI; the web
-        UI, share pages, linked apps and MCP are kōan's own. Local and remote tracks merge into one library, local files
-        win for playback, and remote tracks stream while they download.</p>
-
-      <h3>On Kubernetes</h3>
-      <p>Each release publishes a Pulumi component at the same version, <a
-          href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>,
-        on GitHub Packages. It builds the Deployment, its Service and a NetworkPolicy that only lets your ingress in:</p>
-      <div class="sourceCode"><pre
-class="sourceCode ini"><code class="sourceCode ini"><span><span class="co"># .npmrc (GitHub Packages wants a token even for public packages)</span></span>
-<span><span class="dt">@radiosilence:registry</span><span class="ot">=</span><span class="st">https://npm.pkg.github.com</span></span></code></pre></div>
-      <div class="sourceCode"><pre
-class="sourceCode typescript"><code class="sourceCode typescript"><span><span class="im">import</span> { createKoan } <span class="im">from</span> <span class="st">&quot;@radiosilence/koan-pulumi&quot;</span><span class="op">;</span></span>
-<span></span>
-<span><span class="fu">createKoan</span>(provider<span class="op">,</span> <span class="st">&quot;media&quot;</span><span class="op">,</span> {</span>
-<span>  hostname<span class="op">:</span> <span class="st">&quot;music.example.com&quot;</span><span class="op">,</span></span>
-<span>  library<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/mnt/music&quot;</span> }<span class="op">,</span></span>
-<span>  state<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/var/lib/koan&quot;</span> }<span class="op">,</span></span>
-<span>  nodeSelector<span class="op">:</span> { <span class="st">&quot;kubernetes.io/hostname&quot;</span><span class="op">:</span> <span class="st">&quot;media-node&quot;</span> }<span class="op">,</span></span>
-<span>})<span class="op">;</span></span></code></pre></div>
-      <p>Route the hostname to the <code>koan</code> Service with whatever ingress you run. Pin the package version and
-        the server follows it, since the image tag is the package's version.</p>
-
-      <h3>Filing new music</h3>
-      <p>kōan reads tags as they are and won't rewrite them. For getting new music in, there's <a
-          href="https://github.com/radiosilence/sift">sift</a>, a separate tool I wrote: it matches a download against
-        MusicBrainz, tags it, embeds the cover and files it into the library, reading an existing beets config. A server
-        watching that folder picks the album up on its own.</p>
-      <div class="sourceCode"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/sift</span>
-<span><span class="ex">sift</span> import ~/Downloads/some-album</span></code></pre></div>
-    </section>
-
-    <section id="features" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>What it does</h2>
-      <h3>Playback</h3>
-      <ul>
-        <li><strong>Bit-perfect output</strong> through CoreAudio on macOS and ALSA on Linux. The device gets switched
-          to the source's sample rate instead of resampling to reach it, and if a device refuses, the format badge says
-          the output's resampled.</li>
-        <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
-        <li><strong>Shuffle and repeat</strong>, of the whole queue or one track. Repeats are gapless and each pass
-          counts in history. Shuffle plays the queue in a random order without moving it, and turning it off carries on
-          in queue order.</li>
-        <li><strong>Network amplifiers and streamers</strong>: the Mac, iPhone and Android apps and the terminal UI play to UPnP/DLNA
-          renderers, like a WiiM or an Arcam amp. The queue stays in kōan and the renderer gets sent the original file,
-          so it's bit-perfect up to its DAC, and gapless where the renderer can do it. Give an amp its own EQ or
-          convolution profile and kōan processes the queue itself and sends one continuous FLAC stream instead, gapless
-          whatever the amp supports. See <a href="/docs/devices/#amplifiers-and-streamers-upnp">Playing on another
-            device</a>.</li>
-        <li><strong>EQ and convolution</strong>, picked per output device, so headphones only get their correction when
-          they're the output. Profiles import from what other tools write: Roon and Convolver configs, impulse responses
-          from REW or rePhase, CamillaDSP and Equalizer APO (mixers, delays and graphic EQ included), and AutoEQ. A
-          device without a profile runs nothing and stays bit-perfect, and the format badge tells you when audio's being
-          processed. AutoEQ is searchable from the apps and the command line, by name or by maker and model, and a
-          correction can be moved to another target (Harman, oratory1990's, diffuse field, or your own) or layered under
-          other profiles. The EQ page draws the response with each band behind the total, and the bands can be edited
-          in a table or dragged on the graph. See <a href="/docs/dsp/">Equalisation and convolution</a>.</li>
-        <li><strong>Sleep timer</strong>: after 15 to 60 minutes, fading out, or at the end of the track or record. It
-          pauses and keeps the queue, and a phone controlling a Mac sets the Mac's.</li>
-        <li><strong>Formats</strong>: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg,
-          Matroska/WebM and MP4 containers.</li>
-        <li><strong>ReplayGain</strong> in track and album modes, with peak limiting and a configurable pre-amp.</li>
-        <li><strong>Media keys</strong> and now-playing through Control Center on macOS and MPRIS on Linux.</li>
-      </ul>
-
-      <h3>Library</h3>
-      <ul>
-        <li><strong>Local and Subsonic/Navidrome in one library</strong>, synced when the server changes, with
-          streaming, and favourites and playlists synced both ways.</li>
-        <li><strong>A download cache with a size limit</strong> that copes with however long the queue is: tracks get
-          fetched ahead of the cursor as far as the limit allows, played ones get evicted first, and tracks you
-          downloaded to keep go last. You choose how far ahead it fetches, from nothing to the whole queue, and a limit
-          of zero keeps only what plays next. See <a href="/docs/cache-management/">Cache management</a>.</li>
-        <li><strong>Artist pages that read like a discography.</strong> Records are grouped under Albums, EPs &amp;
-          Singles, Live, Compilations and Other releases, from the MusicBrainz release type in the tags or the one an
-          OpenSubsonic server sends, and a reissue is dated by its original release, so it sits where the record came
-          out rather than at the year it was pressed again.</li>
-        <li><strong>Search</strong> across the whole library, with SQLite full-text search.</li>
-        <li><strong>Queue</strong> grouped by album, with drag reordering, multi-select, 100 levels of undo and Finder
-          drag and drop. It survives restarts.</li>
-        <li><strong>Playlists</strong>, ordered and named, exportable as M3U8. Smart playlists hold whatever matches a
-          set of rules, and Navidrome's <code>.nsp</code> files and <code>.m3u</code> files in the library folders get
-          imported. See <a href="/docs/smart-playlists/">Smart playlists</a>.</li>
-        <li><strong>Play history and Recently played</strong>, shared between an account's devices on a kōan server.
-          Forget a play and it's forgotten on all of them.</li>
-        <li><strong>Synced lyrics</strong> from LRCLIB, current line highlighted.</li>
-        <li><strong>File organisation</strong> with <a href="https://github.com/radiosilence/sift">sift</a>'s
-          foobar2000-compatible format strings (<code>%field%</code>, <code>[conditionals]</code> and 59
-          <code>$functions()</code>). Every move gets previewed, collisions included, before anything's touched.</li>
-      </ul>
-
-      <h3>Automation</h3>
-      <ul>
-        <li><strong>GraphQL API</strong> for full control alongside the app or TUI, or headless as a music server.</li>
-        <li><strong>Subsonic-compatible API</strong>, so other Subsonic clients can play from a kōan server.</li>
-        <li><strong>MCP</strong> for assistants: at <code>/mcp</code> on a server, signing in with a kōan account, or
-          <code>koan mcp</code> for a desktop client. See <a href="#assistants">below</a>.</li>
-        <li><strong>Accounts</strong> with Ed25519 JWTs, three roles and 1Password CLI integration.</li>
-      </ul>
-
-      <p class="text-muted">Not there yet: tag editing. It's planned.</p>
-    </section>
-
-    <figure class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <img class="h-auto w-full" src="/screens/mac-output.webp" width="680" height="444" loading="lazy"
-        decoding="async" alt="The Output menu in the macOS app: the Mac's audio devices, each with the EQ preset it plays through and an EQ button">
-      <img class="h-auto w-full" src="/screens/mac-control.webp" width="680" height="252" loading="lazy"
-        decoding="async" alt="The Control menu in the macOS app: this Mac, and another kōan device with what it is playing and a button to move the music there">
-      <figcaption class="text-muted md:col-span-2">Output and Control in the Mac's transport bar: where the sound goes,
-        with an EQ per output, and every other kōan you can drive or send the music to.</figcaption>
-    </figure>
-
-    <figure class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <img class="h-auto w-full rounded-xl border border-rule" src="/screens/mac-eq.webp" width="1640" height="880"
-        loading="lazy" decoding="async"
-        alt="The EQ page in the macOS app: a headphone correction and a tuning drawn as curves with their total in white, each band's shape behind them, and the device and preset chosen above">
-      <img class="h-auto w-full rounded-xl border border-rule" src="/screens/mac-eq-target.webp" width="1640"
-        height="600" loading="lazy" decoding="async"
-        alt="The signal chain in the macOS app: music in, a correction for the 8S moved to Harman in-ear 2019, a tuning named Lush on top, and the output device">
-      <figcaption class="text-muted md:col-span-2">The EQ page: what the profile on the output does, and the chain it runs in,
-        from a headphone's correction to a tuning on top.</figcaption>
-    </figure>
-
-    <section id="app" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>The desktop app</h2>
-      <p>Drawn with GPUI, on macOS 26 and Linux. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue,
-        keep playlists, favourite tracks, albums and artists, read synced lyrics, dig through play history and what you
-        played recently, set a sleep timer and reorganise files on disk. The Output menu sends the music to this computer's
-        audio devices or to UPnP amps on the network, each with its own EQ or convolution preset, and marks the speaker
-        button whenever what you're hearing is processed. Once you've got another kōan device, Control drives that one
-        instead, the transport names it in a badge so you know where play and pause go, and Output then lists its
-        outputs. Settings covers library folders and sign-in, and the server side too: accounts and passwords, API keys for other apps, ListenBrainz, and the
-        address to give an assistant. Turn on <strong>Keep running in the menu bar</strong> and closing the window
-        leaves it running, so your phone can still reach it.</p>
-      <p>It links the Rust core in-process instead of talking to a server, so there's no daemon, port or
-        auth surface between the interface and the audio engine, and the audio output never leaves Rust. It shares one
-        library and one config with the terminal UI, so a queue saved in one shows up in the other.</p>
-      <p>Two things it leaves to the terminal: visualisers, and running the server (<code>koan --headless</code>).</p>
-    </section>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-search.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="Search in the macOS app: matching artists as pills and their records">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-lyrics.webp" width="2574"
-          height="1500" loading="lazy" decoding="async" alt="Synced lyrics beside the queue in the macOS app, the current line enlarged">
-      </figure>
-    </div>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-queue.webp" width="2400"
-          height="1500" loading="lazy" decoding="async" alt="The queue in the macOS app: a record's tracks with the playing one marked, status icons, formats and lengths">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-playlist.webp" width="2400"
-          height="1500" loading="lazy" decoding="async" alt="A playlist in the macOS app, with a mosaic of its covers and its tracks beneath">
-      </figure>
-    </div>
-
-    <section id="ios" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>The iOS app</h2>
-      <p>SwiftUI over the same engine, in a phone's shell: a tab bar for the queue, the library, search and settings,
-        and Now Playing with synced lyrics and AirPlay over the playing record's colour. It plays from a server and
-        caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a
-        sidebar it goes for the desktop layout. A USB DAC that supports the track's rate is switched to it, with no
-        resampling in koan or iOS; on any other route iOS resamples, and the format badge says so (the built-in speaker stays at its own rate, Apple's
-        headphone adapters go to 48 kHz at most, Bluetooth is lossy,
-        AirPlay is 16-bit/44.1 kHz). EQ and convolution profiles follow the route, so your AirPods and your wired headphones each
-        get their own.</p>
-      <p><a href="https://testflight.apple.com/join/96w2gjFz">Join the TestFlight beta</a> to install it.</p>
-    </section>
-
-    <section id="tv" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>The Apple TV app</h2>
-      <p>The same pages and engine again, built around the remote: Now Playing first, the tabs across the top, a long
-        press for a row's menu. It's mostly something your phone or Mac plays to, and it plays gaplessly through HDMI.
-        Signing in doesn't involve typing a password with a remote: open kōan on a phone that's signed in, the TV finds
-        your server, and you scan its code. No kōan on the phone? The code opens your server's own page instead.
-        <a href="/docs/apple-tv/">How signing in works</a>.</p>
-      <p>Once it's set up with the code the TV shows, a phone or Mac on the same network turns the TV on and opens kōan
-        there when you play to it, over the protocol Apple's Remote app uses. Your server keeps that pairing for the
-        account, so every device you sign in can do it. <a href="/docs/apple-tv/#playing-to-it-while-it-sleeps">Playing
-          to it while it sleeps</a>.</p>
-      <p>It's in the same <a href="https://testflight.apple.com/join/96w2gjFz">TestFlight beta</a> as the iOS app.</p>
-    </section>
-
-    <div class="carousel my-8" role="region" aria-roledescription="carousel" aria-label="Screenshots of the Apple TV app">
-      <button type="button" class="carousel-btn left-1" data-dir="-1" aria-label="Previous screenshots">‹</button>
-      <div class="carousel-track" tabindex="0">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-now-playing.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="Now Playing on Apple TV: the sleeve, the track, its controls, and what comes next">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-albums.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="The album grid on Apple TV, with the filter and sort buttons above it">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-album.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="An album page on Apple TV, washed in the colours of its cover">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-artists.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="The artist list on Apple TV">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-artist.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="An artist page on Apple TV, with the artist's records">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-search.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="Search on Apple TV: the on-screen keyboard, then matching artists and records">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-playlist.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="A playlist on Apple TV">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-queue.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="The queue on Apple TV, grouped by album">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-settings.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="Settings → Server on Apple TV: the account it is signed in to and what the server offers">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-signin-found.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="The Apple TV's sign-in page, offering the server a phone on the network is signed in to">
-        <img class="h-[min(16rem,40vh)] w-auto flex-none rounded-xl border border-rule bg-surface" src="/screens/tv-signin-code.webp" width="2400" height="1350" loading="lazy" decoding="async" alt="The Apple TV showing a QR code and a code, for a phone to approve">
-        </div>
-      <button type="button" class="carousel-btn right-1" data-dir="1" aria-label="Next screenshots">›</button>
-    </div>
-
-    <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>The terminal UI</h2>
-      <p>Where it all started: a full-screen Ratatui interface on macOS and Linux, now shaped like the apps. It has
-        their pages (the queue, now playing, the album, artist and track browsers with their filters, favourites,
-        recent, search, playlists, history, downloads, the EQ and settings) with a sidebar that becomes a tab bar on a
-        narrow terminal, record and artist pages reached by links, and an actions menu on every row, so the mouse alone
-        gets you everywhere. Cover art is drawn as real images where the terminal supports it, the now-playing page
-        shows the signal path and the EQ in use, and the accent follows the cover. It's a device like the apps, too:
-        other kōans can control it, and it can control them. Plus lyrics, a fuzzy picker and 22 visualiser modes
-        (because why not).</p>
-    </section>
-
-    <div class="mx-auto my-8 grid max-w-6xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-albums.webp" width="2000"
-          height="1600" loading="lazy" decoding="async"
-          alt="The TUI's Albums page: a grid of cover art, with the page list at the left and the transport and spectrum below">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-now-playing.webp" width="2000"
-          height="1600" loading="lazy" decoding="async"
-          alt="The TUI's Now playing page: the cover, the signal path, level meters, the spectrum, lyrics and the EQ curve">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-artist.webp" width="2000"
-          height="1600" loading="lazy" decoding="async"
-          alt="The TUI's artist page: a photograph, the opening of the Wikipedia article and the artist's records">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/organize.webp" width="2000"
-          height="1600" loading="lazy" decoding="async"
-          alt="The TUI organise dialog previewing where each file will be moved">
-      </figure>
-    </div>
-
-    <section id="server" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>As a server</h2>
-      <p>Run kōan on the machine that holds the music (<code>koan --headless</code>, or a container) and it serves the
-        library to everything else. It stands in for Navidrome rather than needing it, and <a
-          href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> covers the move.</p>
-      <ul>
-        <li><strong>Web UI.</strong> Every album, artist and track on one page, search and a queue, laid out for a phone
-          as well as a desktop. Filters apply as you type and live in the URL, so you can bookmark or send a filtered
-          view. Favourites, Recently played and History are there like in the apps, with hearts and a track menu on
-          every row. And playback is gapless, in the browser.</li>
-        <li><strong>Share links.</strong> Share a track and you share its album, cued to that track. An album shares the
-          album, and an artist their albums. The page plays without an account, and a pasted link unfurls with its
-          cover.</li>
-        <li><strong>OpenSubsonic API.</strong> Subsonic apps like Play:Sub, and kōan's own app and terminal UI on other
-          machines, connect with a kōan account: by password, with an API key, or with an app password for apps that
-          only sign in with a token. Favourites, ratings, bookmarks and a saved play queue are kept per account, so
-          Symfonium or Feishin can pick up a queue another device left, and a stream gets transcoded to Opus, MP3 or AAC
-          for an app that asks for a lower bitrate.</li>
-        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, from the web UI or the apps' settings, or Last.fm through the web UI,
-          and the server sends every play its apps report, so you don't have to set it up in each app. See <a
-            href="/docs/headless-server/#scrobbling">Scrobbling</a>.</li>
-        <li><strong>Accounts.</strong> Admin, user and read-only roles, plus API keys and app passwords you can revoke
-          from the web UI's Account page or the apps' settings. Behind Authelia, Authentik or another authenticating
-          proxy, the web UI can take the signed-in user from the proxy's header. See <a
-            href="/docs/headless-server/#behind-an-authenticating-proxy">Behind an authenticating proxy</a>.</li>
-        <li><strong>Linked apps.</strong> kōan's apps and terminal UI keep a connection open to a kōan server, which makes
-          each one a remote the server can drive: see what it's playing and its queue, start an album on it, queue,
-          pause and skip. Playlist edits and library changes reach every device without a sync, and one that's away
-          gets them when it next connects. A plain Subsonic server can only answer what an app asks it.</li>
-        <li><strong>MCP.</strong> At <code>/mcp</code>, with the server as its own sign-in, so an assistant can browse
-          the library and drive playback on any of your linked devices. See <a href="#assistants">With an
-            assistant</a>.</li>
-      </ul>
-    </section>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-end gap-6 px-5 md:grid-cols-[3fr_1fr]">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/web-search.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="Search in the web UI: matching artists as pills and their albums as tiles">
-      </figure>
-      <figure>
-        <img class="mx-auto h-auto w-full max-w-[260px] rounded-[2rem] shadow-2xl shadow-black/40"
-          src="/screens/web-phone-album.webp" width="600" height="1298" loading="lazy" decoding="async"
-          alt="An album page in the web UI on a phone, with the player and tab bar at the foot">
-      </figure>
-    </div>
-
-    <section id="assistants" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>With an assistant</h2>
-      <p>A kōan server is an MCP server. Claude, or any assistant that speaks MCP, works with your library and with the
-        kōan apps you listen on, as you. It can see every phone and computer linked to your account, what each is
-        playing and what's queued, and send commands to whichever one you name.</p>
-
-      <h3>What it's good for</h3>
-      <ul>
-        <li><strong>Playing on your devices.</strong> "Play something like Polar Bear on my phone." It finds the music
-          in your library and starts it on the iPhone; "pause the desktop", "skip this", "play the Phace remix next" go
-          to whichever device you mean. If iOS has put the phone to sleep it gets a notification to tap, and queue
-          changes wait for it to wake up.</li>
-        <li><strong>Making playlists that reach every device.</strong> "Make me a playlist for a long drive, mostly
-          instrumental, nothing over seven minutes." It researches what fits, picks it from your library in order, and
-          the playlist shows up on your Mac and phone straight away, no sync needed.</li>
-        <li><strong>Playlists that fill as the music arrives.</strong> For picks your library doesn't have yet, it can
-          leave a placeholder in the playlist: when the album lands in your library, the tracks it wanted get added. You
-          hear what's there now, and the rest turns up when it arrives.</li>
-        <li><strong>Knowing what's on.</strong> "What's this song?" and "what's left in the queue on my phone?" read the
-          device's own state.</li>
-        <li><strong>Sharing.</strong> "Make a link to this album I can send a friend" creates a share page that plays
-          without an account, once you've said yes to it.</li>
-      </ul>
-
-      <h3>Connecting</h3>
-      <p>In Claude, open Settings → Connectors → Add custom connector and put in your server's address with
-        <code>/mcp</code> on the end:</p>
-      <pre><code>https://music.example.com/mcp</code></pre>
-      <p>Claude opens a page on your server. Sign in with your kōan account, check it says <code>claude.ai</code>, and
-        allow it. Other assistants that support OAuth connect the same way, and the server's web UI has an Assistants
-        page with the address to copy. There's no gateway or identity provider involved: the server is its own sign-in,
-        it just needs <code>server.url</code> set to the address it's reached at.</p>
-
-      <h3>What it can and can't do</h3>
-      <p>A connection acts as the account that approved it, on that account's devices and playlists. It can never move,
-        rename or delete a file, or change where the library is. Those are refused through MCP whatever the account,
-        because track titles and tags reach the model, and any of them could be carrying an instruction. An admin
-        account connects with ordinary rights for the same reason, and its tokens work at <code>/mcp</code> and nowhere
-        else.</p>
-      <p>No server? <code>koan mcp</code> runs the player on this machine for a desktop client like Claude Desktop. The
-        <a href="/docs/mcp-integration/">MCP guide</a> covers both.</p>
-    </section>
-
-    <section id="docs" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>Documentation</h2>
-      <ul class="list-none columns-2 ps-0 [&>li]:break-inside-avoid">
-        <li><a href="/docs/getting-started/">Getting started</a></li>
-        <li><a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a></li>
-        <li><a href="/docs/headless-server/">Running a server</a></li>
-        <li><a href="/docs/authentication/">Authentication</a></li>
-        <li><a href="/docs/devices/">Playing on another device</a></li>
-        <li><a href="/docs/apple-tv/">Apple TV</a></li>
-        <li><a href="/docs/android/">Android</a></li>
-        <li><a href="/docs/shuffle-and-repeat/">Shuffle and repeat</a></li>
-        <li><a href="/docs/remote-servers/">Remote servers</a></li>
-        <li><a href="/docs/dsp/">Equalisation and convolution</a></li>
-        <li><a href="/docs/headphone-eq/">Headphone EQ, explained</a></li>
-        <li><a href="/docs/cache-management/">Cache management</a></li>
-        <li><a href="/docs/smart-playlists/">Smart playlists</a></li>
-        <li><a href="/docs/file-organization/">File organisation</a></li>
-        <li><a href="/docs/format-strings/">Format strings</a></li>
-        <li><a href="/docs/mcp-integration/">MCP integration</a></li>
-        <li><a href="/docs/graphql-api/">GraphQL API</a></li>
-        <li><a href="/docs/configuration/">Configuration</a></li>
-        <li><a href="/docs/cli/">CLI</a></li>
-        <li><a href="/docs/keybindings/">Keybindings</a></li>
-        <li><a href="/docs/troubleshooting/">Troubleshooting</a></li>
-        <li><a href="/docs/protocol/">Protocol</a></li>
-      </ul>
-      <p><a href="/compare/">How kōan compares</a> with other apps, players and servers. Architecture and contributing
-        are in the <a href="https://github.com/radiosilence/koan">repository</a>.</p>
+        <code>demo</code>, from any of the apps or a browser. It resets every day at midnight UTC. <a
+          href="/docs/getting-started/">Getting started</a> covers the first run.</p>
     </section>
   </main>
 
   <footer class="mx-auto max-w-2xl border-t border-rule px-5 pt-8 pb-12 text-sm text-muted [&>p]:my-1">
     <p>kōan is open source under the GNU AGPL. <a href="https://github.com/radiosilence/koan">Source</a> · <a
         href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="/docs/changelog/">Changelog</a></p>
+    <p>Written with AI-assisted coding, by <a href="https://github.com/radiosilence">@radiosilence</a>.</p>
     <p>This site has no tracking, analytics or cookies. <a href="/privacy.html">Privacy</a></p>
   </footer>
   <dialog id="zoom" class="zoom" aria-label="Screenshot, full size"><img src="" alt=""></dialog>
