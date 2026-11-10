@@ -445,12 +445,14 @@ impl PhoneShell {
     /// under let go once the page in front is back in place. The one frame
     /// drawn is the layout changing.
     fn land(&mut self, after: std::time::Duration, back: bool, cx: &mut Context<Self>) {
+        let tab = self.nav.read(cx).tab();
         self.settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             this.update(cx, |this, cx| {
                 this.settle = None;
                 this.pushing = false;
-                if back {
+                // A tab chosen while the page slid away has its own history.
+                if back && this.nav.read(cx).tab() == tab {
                     this.back(cx);
                 } else if let Some(library) = &this.library {
                     library.update(cx, |library, _| library.drop_under());

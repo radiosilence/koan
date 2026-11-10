@@ -9,6 +9,7 @@ use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
+use symphonia::core::errors::SeekErrorKind;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -830,9 +831,13 @@ fn wait_for_drain(producer: &rtrb::Producer<f32>, stop: &AtomicBool, format: Opt
         if left == 0 {
             return;
         }
-        thread::park_timeout(time_to_play(left, format));
+        // While the output is paused nothing drains: a few samples left
+        // would otherwise be a wait of microseconds, over and over.
+        thread::park_timeout(time_to_play(left, format).max(DRAIN_POLL_FLOOR));
     }
 }
+
+const DRAIN_POLL_FLOOR: std::time::Duration = std::time::Duration::from_millis(5);
 
 // ---------------------------------------------------------------------------
 // Core decode single track
@@ -964,7 +969,16 @@ fn decode_single(
         )
     };
     let mut opus_bridge = if is_opus_codec {
-        Some(OpusBridge::new(codec_params).map_err(|e| DecodeError::Decode(e.to_string()))?)
+        let opus = OpusBridge::new(codec_params).map_err(|e| DecodeError::Decode(e.to_string()))?;
+        // The engine is set up from the container's count; the decoder goes
+        // by the Opus header's.
+        if opus.channels() != channels as usize {
+            return Err(DecodeError::Decode(format!(
+                "Opus header has {} channels, the container {channels}",
+                opus.channels()
+            )));
+        }
+        Some(opus)
     } else {
         None
     };
@@ -987,32 +1001,40 @@ fn decode_single(
     let mut discard = 0usize;
     if seek_ms > 0 {
         let preroll = if is_opus_codec { OPUS_PREROLL_MS } else { 0 };
-        let seeked = reader
-            .seek(
-                SeekMode::Accurate,
-                SeekTo::Time {
-                    time: Time::from_millis_u64(seek_ms.saturating_sub(preroll)),
-                    track_id: Some(track_id),
-                },
-            )
-            .map_err(|e| DecodeError::Decode(format!("seek failed: {}", e)))?;
-        seek_samples = landing_samples(time_base, seeked.actual_ts, sample_rate, channels)
-            .unwrap_or(
-                seek_ms.saturating_sub(preroll) * sample_rate as u64 * channels as u64 / 1000,
-            );
-        let landed_at_start = seek_samples == 0;
-        // Every codec lands on a packet's start, short of the request by up
-        // to a packet; what is decoded before the request is discarded, so
-        // playback resumes, and the playhead reads, exactly where it was
-        // asked to. A seek to a lyric's line starts on that line.
-        let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
-        discard = wanted.saturating_sub(seek_samples) as usize;
-        seek_samples += discard as u64;
-        if let Some(ref mut dec) = symphonia_decoder {
-            dec.reset();
-        }
-        if let Some(ref mut opus) = opus_bridge {
-            opus.reset(landed_at_start);
+        let target = SeekTo::Time {
+            time: Time::from_millis_u64(seek_ms.saturating_sub(preroll)),
+            track_id: Some(track_id),
+        };
+        match reader.seek(SeekMode::Accurate, target) {
+            Ok(seeked) => {
+                seek_samples = landing_samples(time_base, seeked.actual_ts, sample_rate, channels)
+                    .unwrap_or(
+                        seek_ms.saturating_sub(preroll) * sample_rate as u64 * channels as u64
+                            / 1000,
+                    );
+                let landed_at_start = seek_samples == 0;
+                // Every codec lands on a packet's start, short of the request by up
+                // to a packet; what is decoded before the request is discarded, so
+                // playback resumes, and the playhead reads, exactly where it was
+                // asked to. A seek to a lyric's line starts on that line.
+                let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
+                discard = wanted.saturating_sub(seek_samples) as usize;
+                seek_samples += discard as u64;
+                if let Some(ref mut dec) = symphonia_decoder {
+                    dec.reset();
+                }
+                if let Some(ref mut opus) = opus_bridge {
+                    opus.reset(landed_at_start);
+                }
+            }
+            // Past the end of what the file holds, whatever its header or
+            // the library said of its length: the track is over.
+            Err(symphonia::core::errors::Error::SeekError(SeekErrorKind::OutOfRange)) => {
+                log::warn!("{}: {seek_ms} ms is past the end", path.display());
+                return Ok(Decoded::Complete(format));
+            }
+            // A source that cannot seek still plays, from where it stands.
+            Err(e) => log::warn!("{}: cannot seek to {seek_ms} ms: {e}", path.display()),
         }
     }
 
@@ -1032,12 +1054,14 @@ fn decode_single(
     }
 
     // Record this track's boundary in the timeline.
-    let write_offset = timeline.samples_written();
-    timeline.push_boundary(TrackBoundary {
+    // Pushed once the first packet has decoded in the format the header
+    // gave: a file that decodes otherwise is refused before the timeline
+    // holds a track that never sounds.
+    let mut boundary = Some(TrackBoundary {
         id: queue_item_id,
         path: path.to_path_buf(),
         info,
-        sample_offset: write_offset,
+        sample_offset: timeline.samples_written(),
         samples_written: 0,
         seek_samples,
         output_rate: out_rate,
@@ -1079,7 +1103,12 @@ fn decode_single(
 
         let packet = match reader.next_packet() {
             Ok(Some(p)) => p,
-            Ok(None) => return Ok(Decoded::Complete(format)),
+            Ok(None) => {
+                if let Some(boundary) = boundary.take() {
+                    timeline.push_boundary(boundary);
+                }
+                return Ok(Decoded::Complete(format));
+            }
             Err(e) => return Err(DecodeError::Decode(e.to_string())),
         };
 
@@ -1121,11 +1150,20 @@ fn decode_single(
                     sample_rate,
                     channels
                 );
+                if boundary.is_some() {
+                    return Err(DecodeError::Decode(format!(
+                        "decodes as {decoded_rate} Hz, {decoded_channels} channels, not the \
+                         {sample_rate} Hz, {channels} channels its header gives"
+                    )));
+                }
                 return Ok(Decoded::FormatMismatch);
             }
             decoded.copy_to_vec_interleaved(&mut sample_buf);
             &sample_buf[..]
         };
+        if let Some(boundary) = boundary.take() {
+            timeline.push_boundary(boundary);
+        }
 
         let samples = if discard > 0 {
             let dropped = discard.min(samples.len());

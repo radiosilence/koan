@@ -541,7 +541,20 @@ pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
     answer_repeat(engine.clone());
     let lifecycle_engine = engine.clone();
     cx.on_app_lifecycle(move |phase, cx| match phase {
-        AppLifecyclePhase::Background => lifecycle_engine.set_background(true),
+        AppLifecyclePhase::Background => {
+            lifecycle_engine.set_background(true);
+            // iOS ends a suspended app without telling it, so this is where
+            // a phone saves what a quit saves elsewhere.
+            let saving = lifecycle_engine.clone();
+            std::thread::spawn(move || {
+                futures::executor::block_on(async {
+                    if let Err(e) = saving.clone().save_session().await {
+                        log::warn!("background: saving the session: {e}");
+                    }
+                    saving.save_server_queue_now().await;
+                });
+            });
+        }
         AppLifecyclePhase::Foreground | AppLifecyclePhase::Active => {
             lifecycle_engine.set_background(false);
             // Suspended in the background, the link to the server went with

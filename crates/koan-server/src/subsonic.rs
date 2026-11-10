@@ -3215,6 +3215,13 @@ async fn stream_inner(
                     }
                 },
             }
+            // The original starts at its beginning: a client that asked for
+            // an offset would show one position and play another.
+            if plan.offset_secs > 0.0 {
+                return Err(SubsonicError::internal(
+                    "no transcoder free for a stream from an offset",
+                ));
+            }
         }
     }
     serve_local_file(&path, headers).await.map_err(|e| {
@@ -6585,7 +6592,7 @@ async fn link_session(
                                     let (username, device) = (username.clone(), device.clone());
                                     let pool = pool.clone();
                                     tokio::task::spawn_blocking(move || {
-                                        let known = koan_core::db::pool::shared()
+                                        let known = pool
                                             .get()
                                             .ok()
                                             .and_then(|db| {

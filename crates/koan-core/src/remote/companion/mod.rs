@@ -86,7 +86,7 @@ pub const LONGEST_WAKE: Duration =
     Duration::from_secs(CONNECT.as_secs() + 9 * ANSWER.as_secs() + AWAKE_WITHIN.as_secs());
 /// The largest frame read. A TV's answers are a few kilobytes; a length past
 /// this is from something that is not one.
-const MAX_FRAME: usize = 1 << 20;
+const MAX_FRAME: usize = 1 << 16;
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -254,7 +254,13 @@ impl Conn {
         fields.push((Value::from("_x"), Value::Int(self.xid)));
         self.xid += 1;
         self.send(frame, &opack::pack(&Value::Dict(fields)))?;
+        let until = std::time::Instant::now() + ANSWER;
         let answer = loop {
+            // Other frames arriving do not extend the wait: this runs before
+            // the peer has proved it is the TV.
+            if std::time::Instant::now() >= until {
+                return Err(Error::Protocol("no answer"));
+            }
             let (kind, body) = self.receive()?;
             if kind == Frame::PairSetupNext as u8 || kind == Frame::PairVerifyNext as u8 {
                 break opack::unpack(&body)?;
@@ -288,7 +294,11 @@ impl Conn {
             ("_x", xid.into()),
         ]);
         self.send(Frame::Encrypted, &opack::pack(&msg))?;
+        let until = std::time::Instant::now() + ANSWER;
         loop {
+            if std::time::Instant::now() >= until {
+                return Err(Error::Protocol("no answer"));
+            }
             let Some(answer) = self.message()? else {
                 continue;
             };

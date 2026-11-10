@@ -465,9 +465,13 @@ impl QueueView {
     }
 
     fn row_items<'a>(&self, row: usize, cx: &'a App) -> impl Iterator<Item = &'a String> {
+        // A click is dispatched against the frame last painted, whose rows
+        // the queue may no longer have.
         let queue = self.queue.read(cx);
-        queue.rows[row]
-            .items()
+        queue
+            .rows
+            .get(row)
+            .map_or(0..0, |row| row.items())
             .map(|ix| &queue.base[ix].queue_item_id)
     }
 
@@ -541,6 +545,9 @@ impl QueueView {
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
+        if row >= self.queue.read(cx).rows.len() {
+            return;
+        }
         let modifiers = event.modifiers();
         // A tap plays the row, or while picking ticks it: a touch screen has
         // no click to pick with.
@@ -714,7 +721,7 @@ impl QueueView {
         let count = if self.is_selected(row, cx) {
             self.selected.len()
         } else {
-            queue.rows[row].items().len()
+            queue.rows.get(row).map_or(0, |row| row.items().len())
         };
         if count == 1 {
             queue.base[queue.rows[row].items().start]
